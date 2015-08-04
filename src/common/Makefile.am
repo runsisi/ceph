@@ -14,6 +14,7 @@ libcommon_internal_la_SOURCES = \
 	common/cmdparse.cc \
 	common/escape.c \
 	common/io_priority.cc \
+	common/ceph_time.cc \
 	common/Clock.cc \
 	common/Throttle.cc \
 	common/Timer.cc \
