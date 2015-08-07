@@ -23,6 +23,8 @@
 #include "include/types.h"
 #include "common/strtol.h"
 
+#include "common/ceph_time.h"
+
 
 // --------
 // utime_t
@@ -50,6 +52,10 @@ public:
   utime_t(const struct ceph_timespec &v) {
     decode_timeval(&v);
   }
+  utime_t(const ceph::real_time &t) {
+    ceph_timespec v = ceph::real_clock::to_ceph_timespec(t);
+    decode_timeval(&v);
+  }
   utime_t(const struct timespec v)
   {
     tv.tv_sec = v.tv_sec;
@@ -65,6 +71,12 @@ public:
     ts->tv_sec = tv.tv_sec;
     ts->tv_nsec = tv.tv_nsec;
   }
+
+  operator ceph::real_time() const {
+    return ceph::real_time(std::chrono::seconds(tv.tv_sec) +
+			   std::chrono::nanoseconds(tv.tv_nsec));
+  }
+
   void set_from_double(double d) { 
     tv.tv_sec = (__u32)trunc(d);
     tv.tv_nsec = (__u32)((d - (double)tv.tv_sec) * (double)1000000000.0);
