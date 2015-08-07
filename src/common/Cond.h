@@ -17,13 +17,14 @@
 #define CEPH_COND_H
 
 #include <time.h>
-
-#include "Mutex.h"
-#include "Clock.h"
+#include <pthread.h>
 
 #include "include/Context.h"
 
-#include <pthread.h>
+#include "ceph_time.h"
+#include "Mutex.h"
+#include "Clock.h"
+
 
 class Cond {
   // my bits
@@ -73,10 +74,25 @@ class Cond {
 
     return r;
   }
+
   int WaitInterval(CephContext *cct, Mutex &mutex, utime_t interval) {
     utime_t when = ceph_clock_now(cct);
     when += interval;
     return WaitUntil(mutex, when);
+  }
+
+  template<typename Duration>
+  int WaitInterval(CephContext *cct, Mutex &mutex, Duration interval) {
+    ceph::real_time when(ceph::real_clock::now(cct));
+    when += interval;
+
+    struct timespec ts = ceph::real_clock::to_timespec(when);
+
+    mutex._pre_unlock();
+    int r = pthread_cond_timedwait(&_c, &mutex._m, &ts);
+    mutex._post_lock();
+
+    return r;
   }
 
   int SloppySignal() { 
