@@ -2029,7 +2029,7 @@ void CDir::_omap_commit(int op_prio)
 
       // don't create new dirfrag blindly
       if (!is_new() && !state_test(CDir::STATE_FRAGMENTING))
-	op.stat(NULL, (utime_t*)NULL, NULL);
+	op.stat(NULL, (ceph::real_time*) NULL, NULL);
 
       op.tmap_to_omap(true); // convert tmap to omap
 
@@ -2052,7 +2052,7 @@ void CDir::_omap_commit(int op_prio)
 
   // don't create new dirfrag blindly
   if (!is_new() && !state_test(CDir::STATE_FRAGMENTING))
-    op.stat(NULL, (utime_t*)NULL, NULL);
+    op.stat(NULL, (ceph::real_time*)NULL, NULL);
 
   op.tmap_to_omap(true); // convert tmap to omap
 

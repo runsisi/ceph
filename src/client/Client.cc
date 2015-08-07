@@ -11030,7 +11030,7 @@ int Client::check_pool_perm(Inode *in, int need)
 
     C_SaferCond rd_cond;
     ObjectOperation rd_op;
-    rd_op.stat(NULL, (utime_t*)NULL, NULL);
+    rd_op.stat(NULL, (ceph::real_time*)nullptr, NULL);
 
     objecter->mutate(oid, OSDMap::file_to_object_locator(in->layout), rd_op,
 		     in->snaprealm->get_snap_context(), ceph_clock_now(cct), 0,

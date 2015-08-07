@@ -1441,7 +1441,7 @@ int SyntheticClient::play_trace(Trace& t, string& prefix, bool metadata_only)
       lock.Lock();
       object_locator_t oloc(SYNCLIENT_FIRST_POOL);
       uint64_t size;
-      utime_t mtime;
+      ceph::real_time mtime;
       client->objecter->stat(oid, oloc, CEPH_NOSNAP, &size, &mtime, 0, new C_SafeCond(&lock, &cond, &ack));
       while (!ack) cond.Wait(lock);
       lock.Unlock();
@@ -1636,7 +1636,7 @@ int SyntheticClient::full_walk(string& basedir)
 	actual.nsubdirs++;
       else
 	actual.nfiles++;
-      
+
       // print
       char *tm = ctime(&st.st_mtime);
       tm[strlen(tm)-1] = 0;

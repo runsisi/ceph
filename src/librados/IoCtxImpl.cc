@@ -25,6 +25,9 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "librados: "
 
+using ceph::real_time;
+using ceph::real_clock;
+
 librados::IoCtxImpl::IoCtxImpl() :
   ref_cnt(0), client(NULL), poolid(0), assert_ver(0), last_objver(0),
   notify_timeout(30), aio_write_list_lock("librados::IoCtxImpl::aio_write_list_lock"),
@@ -785,8 +788,8 @@ int librados::IoCtxImpl::aio_stat(const object_t& oid, AioCompletionImpl *c,
   C_aio_stat_Ack *onack = new C_aio_stat_Ack(c, pmtime);
 
   c->tid = objecter->stat(oid, oloc,
-		 snap_seq, psize, &onack->mtime, 0,
-		 onack, &c->objver);
+			  snap_seq, psize, &onack->mtime, 0,
+			  onack, &c->objver);
 
   return 0;
 }
@@ -975,7 +978,7 @@ int librados::IoCtxImpl::sparse_read(const object_t& oid,
 int librados::IoCtxImpl::stat(const object_t& oid, uint64_t *psize, time_t *pmtime)
 {
   uint64_t size;
-  utime_t mtime;
+  real_time mtime;
 
   if (!psize)
     psize = &size;
@@ -986,7 +989,7 @@ int librados::IoCtxImpl::stat(const object_t& oid, uint64_t *psize, time_t *pmti
   int r = operate_read(oid, &rd, NULL);
 
   if (r >= 0 && pmtime) {
-    *pmtime = mtime.sec();
+    *pmtime = real_clock::to_time_t(mtime);
   }
 
   return r;
@@ -1342,7 +1345,7 @@ void librados::IoCtxImpl::C_aio_stat_Ack::finish(int r)
   c->cond.Signal();
 
   if (r >= 0 && pmtime) {
-    *pmtime = mtime.sec();
+    *pmtime = real_clock::to_time_t(mtime);
   }
 
   if (c->callback_complete) {
