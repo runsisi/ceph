@@ -3154,8 +3154,15 @@ def main():
     setup_statedir(args.statedir)
     setup_sysconfdir(args.sysconfdir)
 
-    try:
+    if args.verbose:
         args.func(args)
+    else:
+        main_catch(args.func, args)
+
+def main_catch(func, args):
+
+    try:
+        func(args)
 
     except Error as e:
         raise SystemExit(
