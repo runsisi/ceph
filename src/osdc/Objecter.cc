@@ -465,11 +465,7 @@ void Objecter::_send_linger(LingerOp *info)
   if (info->register_tid) {
     // repeat send.  cancel old registeration op, if any.
     info->session->lock.get_write();
-    if (info->session->ops.count(info->register_tid)) {
-      Op *o = info->session->ops[info->register_tid];
-      _op_cancel_map_check(o);
-      _cancel_linger_op(o);
-    }
+    _op_cancel(info->session, info->register_tid, -ECANCELED);
     info->session->lock.unlock();
 
     info->register_tid = _op_submit(o, lc);
@@ -1140,7 +1136,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
 	_send_op(op);
       }
     } else {
-      _cancel_linger_op(op);
+      _op_cancel(s, p->first, -ECANCELED);
     }
     s->lock.unlock();
     put_session(s);
@@ -1794,7 +1790,7 @@ void Objecter::_kick_requests(OSDSession *session, map<uint64_t, LingerOp *>& lr
       if (!op->target.paused)
 	resend[op->tid] = op;
     } else {
-      _cancel_linger_op(op);
+      _op_cancel(session, op->tid, -ECANCELED);
     }
   }
 
@@ -2202,11 +2198,9 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
   return tid;
 }
 
-int Objecter::op_cancel(OSDSession *s, ceph_tid_t tid, int r)
+int Objecter::_op_cancel(OSDSession *s, ceph_tid_t tid, int r)
 {
-  assert(initialized.read());
-
-  s->lock.get_write();
+  assert(s->lock.is_wlocked());
 
   map<ceph_tid_t, Op*>::iterator p = s->ops.find(tid);
   if (p == s->ops.end()) {
@@ -2239,6 +2233,15 @@ int Objecter::op_cancel(OSDSession *s, ceph_tid_t tid, int r)
   }
   _op_cancel_map_check(op);
   _finish_op(op);
+  return 0;
+}
+
+int Objecter::op_cancel(OSDSession *s, ceph_tid_t tid, int r)
+{
+  assert(initialized.read());
+
+  s->lock.get_write();
+  _op_cancel(s, tid, r);
   s->lock.unlock();
 
   return 0;
@@ -2719,18 +2722,6 @@ int Objecter::_recalc_linger_op_target(LingerOp *linger_op, RWLock::Context& lc)
     return RECALC_OP_TARGET_NEED_RESEND;
   }
   return r;
-}
-
-void Objecter::_cancel_linger_op(Op *op)
-{
-  ldout(cct, 15) << "cancel_op " << op->tid << dendl;
-
-  assert(!op->should_resend);
-  delete op->onack;
-  delete op->oncommit;
-  delete op->oncommit_sync;
-
-  _finish_op(op);
 }
 
 void Objecter::_finish_op(Op *op)
