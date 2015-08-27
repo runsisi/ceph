@@ -1,27 +1,47 @@
+v9.1.0
+======
+
 v9.0.4
 ======
+
+Upgrading
+---------
+
+* Ceph daemons now run as user and group ceph by default.  The ceph user has a
+  static UID assigned by Fedora and Debian (also used by derivative distributions
+  like RHEL/CentOS and Ubuntu).  On SUSE the ceph user will currently get a
+  dynamically assigned UID when the user is created.
+
+  If your systems already have a ceph user, upgrading the package will cause
+  problems.  We suggest you first remove or rename the existing 'ceph' user
+  before upgrading.
+
+  When upgrading, administrators have two options:
+
+   #. Add the following line to ``ceph.conf`` on all hosts::
+
+        setuser match path = /var/lib/ceph/$type/$cluster-$id
+
+      This will make the Ceph daemons run as root (i.e., not drop
+      privileges and switch to user ceph) if the daemon's data
+      directory is still owned by root.  Newly deployed daemons will
+      be created with data owned by user ceph and will run with
+      reduced privileges, but upgraded daemons will continue to run as
+      root.
+
+   #. Fix the data ownership during the upgrade.  This is the preferred option,
+      but is more work.  The process for each host would be to:
+
+      #. Upgrade the ceph package.  This creates the ceph user and group.
+      #. Stop the daemon(s)
+      #. Fix the ownership.  E.g.,::
+
+          chown -R ceph:ceph /var/lib/ceph/mon/ceph-foo
+	  ceph-disk chown /dev/sdb1
+
+      #. Restart the daemon(s)
 
 * The on-disk format for the experimental KeyValueStore OSD backend has
   changed.  You will need to remove any OSDs using that backend before you
   upgrade any test clusters that use it.
 
-
-v9.0.3
-======
-
-* The return code for librbd's rbd_aio_read and Image::aio_read API methods no
-  longer returns the number of bytes read upon success.  Instead, it returns 0
-  upon success and a negative value upon failure.
-
-* 'ceph scrub', 'ceph compact' and 'ceph sync force are now DEPRECATED.  Users
-  should instead use 'ceph mon scrub', 'ceph mon compact' and
-  'ceph mon sync force'.
-
-* 'ceph mon_metadata' should now be used as 'ceph mon metadata'. There is no
-  need to deprecate this command (same major release since it was first
-  introduced).
-
-* The `--dump-json` option of "osdmaptool" is replaced by `--dump json`.
-
-* The commands of "pg ls-by-{pool,primary,osd}" and "pg ls" now take "recovering"
-  instead of "recovery", to include the recovering pgs in the listed pgs.

@@ -220,7 +220,7 @@ class KeyValueStore : public ObjectStore,
 
   string strip_object_key(uint64_t no) {
     char n[100];
-    snprintf(n, 100, "%lld", (long long)no);
+    snprintf(n, 100, "%08lld", (long long)no);
     return string(n);
   }
 
@@ -605,12 +605,6 @@ class KeyValueStore : public ObjectStore,
   int _rmattr(coll_t cid, const ghobject_t& oid, const char *name,
               BufferTransaction &t);
   int _rmattrs(coll_t cid, const ghobject_t& oid, BufferTransaction &t);
-
-  int _collection_setattr(coll_t c, const char *name, const void *value,
-                          size_t size, BufferTransaction &t);
-  int _collection_rmattr(coll_t c, const char *name, BufferTransaction &t);
-  int _collection_setattrs(coll_t cid, map<string,bufferptr> &aset,
-                           BufferTransaction &t);
 
   // collections
   int _collection_hint_expected_num_objs(coll_t cid, uint32_t pg_num,

@@ -808,8 +808,13 @@ int RGWGetObj::handle_user_manifest(const char *prefix)
   if (pos < 0)
     return -EINVAL;
 
-  string bucket_name = prefix_str.substr(0, pos);
-  string obj_prefix = prefix_str.substr(pos + 1);
+  string bucket_name_raw, bucket_name;
+  bucket_name_raw = prefix_str.substr(0, pos);
+  url_decode(bucket_name_raw, bucket_name);
+
+  string obj_prefix_raw, obj_prefix;
+  obj_prefix_raw = prefix_str.substr(pos + 1);
+  url_decode(obj_prefix_raw, obj_prefix);
 
   rgw_bucket bucket;
 
@@ -2181,17 +2186,17 @@ void RGWPutMetadataAccount::filter_out_temp_url(map<string, bufferlist>& add_att
                                                 map<int, string>& temp_url_keys)
 {
   map<string, bufferlist>::iterator iter;
-  for (iter = add_attrs.begin(); iter != add_attrs.end(); ++iter) {
-    const string name = iter->first;
 
-    if (name.compare(RGW_ATTR_TEMPURL_KEY1) == 0) {
-      temp_url_keys[0] = iter->second.c_str();
-      add_attrs.erase(name);
-    }
-    if (name.compare(RGW_ATTR_TEMPURL_KEY2) == 0) {
-      temp_url_keys[1] = iter->second.c_str();
-      add_attrs.erase(name);
-    }
+  iter = add_attrs.find(RGW_ATTR_TEMPURL_KEY1);
+  if (iter != add_attrs.end()) {
+    temp_url_keys[0] = iter->second.c_str();
+    add_attrs.erase(iter);
+  }
+
+  iter = add_attrs.find(RGW_ATTR_TEMPURL_KEY2);
+  if (iter != add_attrs.end()) {
+    temp_url_keys[1] = iter->second.c_str();
+    add_attrs.erase(iter);
   }
 
   set<string>::const_iterator riter;

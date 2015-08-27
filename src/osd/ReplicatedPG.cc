@@ -20,6 +20,7 @@
 #include "ReplicatedPG.h"
 #include "OSD.h"
 #include "OpRequest.h"
+#include "objclass/objclass.h"
 
 #include "common/errno.h"
 #include "common/perf_counters.h"
@@ -111,7 +112,7 @@ void ReplicatedPG::OpContext::start_async_reads(ReplicatedPG *pg)
   pg->pgbackend->objects_read_async(
     obc->obs.oi.soid,
     pending_async_reads,
-    new OnReadComplete(pg, this));
+    new OnReadComplete(pg, this), pg->get_pool().fast_read);
   pending_async_reads.clear();
 }
 void ReplicatedPG::OpContext::finish_read(ReplicatedPG *pg)
@@ -508,6 +509,47 @@ void ReplicatedPG::wait_for_blocked_object(const hobject_t& soid, OpRequestRef o
   op->mark_delayed("waiting for blocked object");
 }
 
+class PGLSPlainFilter : public PGLSFilter {
+  string val;
+public:
+  virtual int init(bufferlist::iterator &params)
+  {
+    try {
+      ::decode(xattr, params);
+      ::decode(val, params);
+    } catch (buffer::error &e) {
+      return -EINVAL;
+    }
+
+    return 0;
+  }
+  virtual ~PGLSPlainFilter() {}
+  virtual bool filter(const hobject_t &obj, bufferlist& xattr_data,
+                      bufferlist& outdata);
+};
+
+class PGLSParentFilter : public PGLSFilter {
+  inodeno_t parent_ino;
+public:
+  PGLSParentFilter() {
+    xattr = "_parent";
+  }
+  virtual int init(bufferlist::iterator &params)
+  {
+    try {
+      ::decode(parent_ino, params);
+    } catch (buffer::error &e) {
+      return -EINVAL;
+    }
+    generic_dout(0) << "parent_ino=" << parent_ino << dendl;
+
+    return 0;
+  }
+  virtual ~PGLSParentFilter() {}
+  virtual bool filter(const hobject_t &obj, bufferlist& xattr_data,
+                      bufferlist& outdata);
+};
+
 bool PGLSParentFilter::filter(const hobject_t &obj,
                               bufferlist& xattr_data, bufferlist& outdata)
 {
@@ -576,16 +618,55 @@ int ReplicatedPG::get_pgls_filter(bufferlist::iterator& iter, PGLSFilter **pfilt
   }
 
   if (type.compare("parent") == 0) {
-    filter = new PGLSParentFilter(iter);
+    filter = new PGLSParentFilter();
   } else if (type.compare("plain") == 0) {
-    filter = new PGLSPlainFilter(iter);
+    filter = new PGLSPlainFilter();
   } else {
-    return -EINVAL;
+    std::size_t dot = type.find(".");
+    if (dot == std::string::npos || dot == 0 || dot == type.size() - 1) {
+      return -EINVAL;
+    }
+
+    const std::string class_name = type.substr(0, dot);
+    const std::string filter_name = type.substr(dot + 1);
+    ClassHandler::ClassData *cls = NULL;
+    int r = osd->class_handler->open_class(class_name, &cls);
+    if (r != 0) {
+      derr << "Error opening class '" << class_name << "': "
+           << cpp_strerror(r) << dendl;
+      return -EINVAL;
+    } else {
+      assert(cls);
+    }
+
+    ClassHandler::ClassFilter *class_filter = cls->get_filter(filter_name);
+    if (class_filter == NULL) {
+      derr << "Error finding filter '" << filter_name << "' in class "
+           << class_name << dendl;
+      return -EINVAL;
+    }
+    filter = class_filter->fn();
+    if (!filter) {
+      // Object classes are obliged to return us something, but let's
+      // give an error rather than asserting out.
+      derr << "Buggy class " << class_name << " failed to construct "
+              "filter " << filter_name << dendl;
+      return -EINVAL;
+    }
   }
 
-  *pfilter = filter;
-
-  return  0;
+  assert(filter);
+  int r = filter->init(iter);
+  if (r < 0) {
+    derr << "Error initializing filter " << type << ": "
+         << cpp_strerror(r) << dendl;
+    delete filter;
+    return -EINVAL;
+  } else {
+    // Successfully constructed and initialized, return it.
+    *pfilter = filter;
+    return  0;
+  }
 }
 
 
@@ -1156,7 +1237,7 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 	       p != info.hit_set.history.end();
 	       ++p) {
 	    if (stamp >= p->begin && stamp <= p->end) {
-	      oid = get_hit_set_archive_object(p->begin, p->end);
+	      oid = get_hit_set_archive_object(p->begin, p->end, p->using_gmt);
 	      break;
 	    }
 	  }
@@ -1955,9 +2036,12 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
       }
 
       // Promote too?
-      bool promoted = maybe_promote(obc, missing_oid, oloc, in_hit_set,
-	                            pool.info.min_read_recency_for_promote,
-				    promote_op);
+      bool promoted = false;
+      if (!op->need_skip_promote()) {
+        promoted = maybe_promote(obc, missing_oid, oloc, in_hit_set,
+                                 pool.info.min_read_recency_for_promote,
+                                 promote_op);
+      }
       if (!promoted && !can_proxy_read) {
 	// redirect the op if it's not proxied and not promoting
 	do_cache_redirect(op);
@@ -6319,6 +6403,8 @@ int ReplicatedPG::fill_in_copy_get(
     reply_obj.flags |= object_copy_data_t::FLAG_OMAP_DIGEST;
     reply_obj.omap_digest = oi.omap_digest;
   }
+  reply_obj.truncate_seq = oi.truncate_seq;
+  reply_obj.truncate_size = oi.truncate_size;
 
   // attrs
   map<string,bufferlist>& out_attrs = reply_obj.attrs;
@@ -6542,6 +6628,8 @@ void ReplicatedPG::_copy_some(ObjectContextRef obc, CopyOpRef cop)
 	      &cop->results.source_data_digest,
 	      &cop->results.source_omap_digest,
 	      &cop->results.reqids,
+	      &cop->results.truncate_seq,
+	      &cop->results.truncate_size,
 	      &cop->rval);
   op.set_last_op_flags(cop->src_obj_fadvise_flags);
 
@@ -7027,11 +7115,15 @@ void ReplicatedPG::finish_promote(int r, CopyResults *results,
     }
     tctx->new_obs.oi.size = results->object_size;
     tctx->new_obs.oi.user_version = results->user_version;
+
     // Don't care src object whether have data or omap digest
     if (results->object_size)
       tctx->new_obs.oi.set_data_digest(results->data_digest);
     if (results->has_omap)
       tctx->new_obs.oi.set_omap_digest(results->omap_digest);
+
+    tctx->new_obs.oi.truncate_seq = results->truncate_seq;
+    tctx->new_obs.oi.truncate_size = results->truncate_size;
 
     if (soid.snap != CEPH_NOSNAP) {
       tctx->new_obs.oi.snaps = results->snaps;
@@ -10535,10 +10627,19 @@ hobject_t ReplicatedPG::get_hit_set_current_object(utime_t stamp)
   return hoid;
 }
 
-hobject_t ReplicatedPG::get_hit_set_archive_object(utime_t start, utime_t end)
+hobject_t ReplicatedPG::get_hit_set_archive_object(utime_t start,
+						   utime_t end,
+						   bool using_gmt)
 {
   ostringstream ss;
-  ss << "hit_set_" << info.pgid.pgid << "_archive_" << start << "_" << end;
+  ss << "hit_set_" << info.pgid.pgid << "_archive_";
+  if (using_gmt) {
+    start.gmtime(ss) << "_";
+    end.gmtime(ss);
+  } else {
+    start.localtime(ss) << "_";
+    end.localtime(ss);
+  }
   hobject_t hoid(sobject_t(ss.str(), CEPH_NOSNAP), "",
 		 info.pgid.ps(), info.pgid.pool(),
 		 cct->_conf->osd_hit_set_namespace);
@@ -10583,7 +10684,7 @@ void ReplicatedPG::hit_set_remove_all()
   for (list<pg_hit_set_info_t>::iterator p = info.hit_set.history.begin();
        p != info.hit_set.history.end();
        ++p) {
-    hobject_t aoid = get_hit_set_archive_object(p->begin, p->end);
+    hobject_t aoid = get_hit_set_archive_object(p->begin, p->end, p->using_gmt);
 
     // Once we hit a degraded object just skip
     if (is_degraded_or_backfilling_object(aoid))
@@ -10595,7 +10696,7 @@ void ReplicatedPG::hit_set_remove_all()
   if (!info.hit_set.history.empty()) {
     list<pg_hit_set_info_t>::reverse_iterator p = info.hit_set.history.rbegin();
     assert(p != info.hit_set.history.rend());
-    hobject_t oid = get_hit_set_archive_object(p->begin, p->end);
+    hobject_t oid = get_hit_set_archive_object(p->begin, p->end, p->using_gmt);
     assert(!is_degraded_or_backfilling_object(oid));
     ObjectContextRef obc = get_object_context(oid, false);
     assert(obc);
@@ -10713,7 +10814,7 @@ void ReplicatedPG::hit_set_persist()
   for (list<pg_hit_set_info_t>::iterator p = info.hit_set.history.begin();
        p != info.hit_set.history.end();
        ++p) {
-    hobject_t aoid = get_hit_set_archive_object(p->begin, p->end);
+    hobject_t aoid = get_hit_set_archive_object(p->begin, p->end, p->using_gmt);
 
     // Once we hit a degraded object just skip further trim
     if (is_degraded_or_backfilling_object(aoid))
@@ -10725,7 +10826,8 @@ void ReplicatedPG::hit_set_persist()
   utime_t start = info.hit_set.current_info.begin;
   if (!start)
      start = hit_set_start_stamp;
-  oid = get_hit_set_archive_object(start, now);
+  oid = get_hit_set_archive_object(start, now, pool.info.use_gmt_hitset);
+  // If the current object is degraded we skip this persist request
   if (scrubber.write_blocked_by_scrub(oid, get_sort_bitwise()))
     return;
 
@@ -10775,48 +10877,13 @@ void ReplicatedPG::hit_set_persist()
   ctx->updated_hset_history = info.hit_set;
   pg_hit_set_history_t &updated_hit_set_hist = *(ctx->updated_hset_history);
 
-  if (updated_hit_set_hist.current_last_stamp != utime_t()) {
-    // FIXME: we cheat slightly here by bundling in a remove on a object
-    // other the RepGather object.  we aren't carrying an ObjectContext for
-    // the deleted object over this period.
-    hobject_t old_obj =
-      get_hit_set_current_object(updated_hit_set_hist.current_last_stamp);
-    ctx->log.push_back(
-      pg_log_entry_t(pg_log_entry_t::DELETE,
-		     old_obj,
-		     ctx->at_version,
-		     updated_hit_set_hist.current_last_update,
-		     0,
-		     osd_reqid_t(),
-		     ctx->mtime));
-    if (pool.info.require_rollback()) {
-      if (ctx->log.back().mod_desc.rmobject(ctx->at_version.version)) {
-	ctx->op_t->stash(old_obj, ctx->at_version.version);
-      } else {
-	ctx->op_t->remove(old_obj);
-      }
-    } else {
-      ctx->op_t->remove(old_obj);
-      ctx->log.back().mod_desc.mark_unrollbackable();
-    }
-    ++ctx->at_version.version;
 
-    struct stat st;
-    int r = osd->store->stat(
-      coll,
-      ghobject_t(old_obj, ghobject_t::NO_GEN, pg_whoami.shard),
-      &st);
-    assert(r == 0);
-    --ctx->delta_stats.num_objects;
-    ctx->delta_stats.num_bytes -= st.st_size;
-  }
-
-  updated_hit_set_hist.current_last_update = info.last_update; // *after* above remove!
+  updated_hit_set_hist.current_last_update = info.last_update;
   updated_hit_set_hist.current_info.version = ctx->at_version;
 
   updated_hit_set_hist.history.push_back(updated_hit_set_hist.current_info);
   hit_set_create();
-  updated_hit_set_hist.current_info = pg_hit_set_info_t();
+  updated_hit_set_hist.current_info = pg_hit_set_info_t(pool.info.use_gmt_hitset);
   updated_hit_set_hist.current_last_stamp = utime_t();
 
   // fabricate an object_info_t and SnapSet
@@ -10879,7 +10946,7 @@ void ReplicatedPG::hit_set_trim(RepGather *repop, unsigned max)
   for (unsigned num = updated_hit_set_hist.history.size(); num > max; --num) {
     list<pg_hit_set_info_t>::iterator p = updated_hit_set_hist.history.begin();
     assert(p != updated_hit_set_hist.history.end());
-    hobject_t oid = get_hit_set_archive_object(p->begin, p->end);
+    hobject_t oid = get_hit_set_archive_object(p->begin, p->end, p->using_gmt);
 
     assert(!is_degraded_or_backfilling_object(oid));
 
@@ -11168,7 +11235,7 @@ void ReplicatedPG::agent_load_hit_sets()
 	  continue;
 	}
 
-	hobject_t oid = get_hit_set_archive_object(p->begin, p->end);
+	hobject_t oid = get_hit_set_archive_object(p->begin, p->end, p->using_gmt);
 	if (is_unreadable_object(oid)) {
 	  dout(10) << __func__ << " unreadable " << oid << ", waiting" << dendl;
 	  break;

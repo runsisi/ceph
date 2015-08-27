@@ -46,6 +46,7 @@ class CopyFromCallback;
 class PromoteCallback;
 
 class ReplicatedPG;
+class PGLSFilter;
 void intrusive_ptr_add_ref(ReplicatedPG *pg);
 void intrusive_ptr_release(ReplicatedPG *pg);
 uint64_t get_with_id(ReplicatedPG *pg);
@@ -56,53 +57,6 @@ void put_with_id(ReplicatedPG *pg, uint64_t id);
 #else
   typedef boost::intrusive_ptr<ReplicatedPG> ReplicatedPGRef;
 #endif
-
-class PGLSFilter {
-protected:
-  string xattr;
-public:
-  PGLSFilter();
-  virtual ~PGLSFilter();
-  virtual bool filter(const hobject_t &obj, bufferlist& xattr_data,
-                      bufferlist& outdata) = 0;
-
-  /**
-   * xattr key, or empty string.  If non-empty, this xattr will be fetched
-   * and the value passed into ::filter
-   */
-   virtual string& get_xattr() { return xattr; }
-
-  /**
-   * If true, objects without the named xattr (if xattr name is not empty)
-   * will be rejected without calling ::filter
-   */
-  virtual bool reject_empty_xattr() { return true; }
-};
-
-class PGLSPlainFilter : public PGLSFilter {
-  string val;
-public:
-  PGLSPlainFilter(bufferlist::iterator& params) {
-    ::decode(xattr, params);
-    ::decode(val, params);
-  }
-  virtual ~PGLSPlainFilter() {}
-  virtual bool filter(const hobject_t &obj, bufferlist& xattr_data,
-                      bufferlist& outdata);
-};
-
-class PGLSParentFilter : public PGLSFilter {
-  inodeno_t parent_ino;
-public:
-  PGLSParentFilter(bufferlist::iterator& params) {
-    xattr = "_parent";
-    ::decode(parent_ino, params);
-    generic_dout(0) << "parent_ino=" << parent_ino << dendl;
-  }
-  virtual ~PGLSParentFilter() {}
-  virtual bool filter(const hobject_t &obj, bufferlist& xattr_data,
-                      bufferlist& outdata);
-};
 
 class ReplicatedPG : public PG, public PGBackend::Listener {
   friend class OSD;
@@ -141,6 +95,8 @@ public:
     uint32_t source_data_digest, source_omap_digest;
     uint32_t data_digest, omap_digest;
     vector<pair<osd_reqid_t, version_t> > reqids; // [(reqid, user_version)]
+    uint64_t truncate_seq;
+    uint64_t truncate_size;
     bool is_data_digest() {
       return flags & object_copy_data_t::FLAG_DATA_DIGEST;
     }
@@ -154,7 +110,8 @@ public:
 	has_omap(false),
 	flags(0),
 	source_data_digest(-1), source_omap_digest(-1),
-	data_digest(-1), omap_digest(-1)
+	data_digest(-1), omap_digest(-1),
+	truncate_seq(0), truncate_size(0)
     {}
   };
 
@@ -959,7 +916,9 @@ protected:
   void hit_set_remove_all();
 
   hobject_t get_hit_set_current_object(utime_t stamp);
-  hobject_t get_hit_set_archive_object(utime_t start, utime_t end);
+  hobject_t get_hit_set_archive_object(utime_t start,
+				       utime_t end,
+				       bool using_gmt);
 
   // agent
   boost::scoped_ptr<TierAgentState> agent_state;

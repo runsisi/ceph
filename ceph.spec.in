@@ -37,6 +37,10 @@ restorecon -R /var/log/ceph > /dev/null 2>&1;
 %global _with_systemd 1
 %endif
 
+
+#################################################################################
+# common
+#################################################################################
 Name:		ceph
 Version:	@VERSION@
 Release:	@RPM_RELEASE@%{?dist}
@@ -88,6 +92,7 @@ BuildRequires:	/usr/share/selinux/devel/policyhelp
 %endif
 BuildRequires:	gcc-c++
 BuildRequires:	boost-devel
+BuildRequires:  boost-random
 BuildRequires:	cryptsetup
 BuildRequires:	gdbm
 BuildRequires:	hdparm
@@ -490,10 +495,6 @@ python-rados, python-rbd and python-cephfs. Packages still depending on
 python-ceph should be fixed to depend on python-rados, python-rbd or
 python-cephfs instead.
 
-%if 0%{?opensuse} || 0%{?suse_version}
-%debug_package
-%endif
-
 #################################################################################
 # common
 #################################################################################
@@ -543,7 +544,7 @@ export RPM_OPT_FLAGS=`echo $RPM_OPT_FLAGS | sed -e 's/i386/i486/'`
 		--with-rgw-user=root \
 		--with-rgw-group=root \
 %endif
-%if 0%{?opensuse} || 0%{?suse_version}
+%if 0%{?suse_version}
 		--with-systemd-libexec-dir=/usr/lib/ceph/ \
 		--with-rgw-user=wwwrun \
 		--with-rgw-group=www \
@@ -580,6 +581,7 @@ find $RPM_BUILD_ROOT -type f -name "*.la" -exec rm -f {} ';'
 find $RPM_BUILD_ROOT -type f -name "*.a" -exec rm -f {} ';'
 install -D src/rbdmap $RPM_BUILD_ROOT%{_sysconfdir}/ceph/rbdmap
 install -D src/init-rbdmap $RPM_BUILD_ROOT%{_initrddir}/rbdmap
+install -D etc/ceph.limits.d $RPM_BUILD_ROOT%{_sysconfdir}/security/limits.d/ceph.conf
 %if 0%{?_with_systemd}
   install -m 0644 -D systemd/ceph.tmpfiles.d $RPM_BUILD_ROOT%{_tmpfilesdir}/%{name}.conf
   install -m 0644 -D systemd/ceph-rgw.tmpfiles.d $RPM_BUILD_ROOT%{_tmpfilesdir}/%{name}-rgw.conf
@@ -647,12 +649,18 @@ mkdir -p $RPM_BUILD_ROOT%{_localstatedir}/lib/ceph/bootstrap-mds
 mkdir -p $RPM_BUILD_ROOT%{_localstatedir}/lib/ceph/bootstrap-rgw
 mkdir -p $RPM_BUILD_ROOT%{_localstatedir}/log/radosgw
 
+%if %{defined suse_version}
+# Fedora seems to have some problems with this macro, use it only on SUSE
+%fdupes -s $RPM_BUILD_ROOT/%{python_sitelib}
+%fdupes %buildroot
+%endif
+
 %clean
 rm -rf $RPM_BUILD_ROOT
 
 %pre
 %if 0%{?_with_systemd}
-  %if 0%{?opensuse} || 0%{?suse_version}
+  %if 0%{?suse_version}
     # service_add_pre and friends don't work with parameterized systemd service
     # instances, only with single services or targets, so we always pass
     # ceph.target to these macros
@@ -664,7 +672,7 @@ rm -rf $RPM_BUILD_ROOT
 %post
 /sbin/ldconfig
 %if 0%{?_with_systemd}
-  %if 0%{?opensuse} || 0%{?suse_version}
+  %if 0%{?suse_version}
     %service_add_post ceph.target
   %endif
 %else
@@ -674,7 +682,7 @@ mkdir -p %{_localstatedir}/run/ceph/
 
 %preun
 %if 0%{?_with_systemd}
-  %if 0%{?opensuse} || 0%{?suse_version}
+  %if 0%{?suse_version}
     %service_del_preun ceph.target
   %endif
   # Need a special case here when removing the RPM to disable specific
@@ -692,9 +700,6 @@ mkdir -p %{_localstatedir}/run/ceph/
     fi
   fi
 %else
-  %if 0%{?opensuse} || 0%{?suse_version}
-    %stop_on_removal ceph
-  %endif
   %if 0%{?rhel} || 0%{?fedora}
     if [ $1 = 0 ] ; then
       /sbin/service ceph stop >/dev/null 2>&1
@@ -705,9 +710,6 @@ mkdir -p %{_localstatedir}/run/ceph/
 
 %postun
 /sbin/ldconfig
-%if %{defined suse_version}
-%insserv_cleanup
-%endif
 
 #################################################################################
 # files
@@ -782,6 +784,7 @@ mkdir -p %{_localstatedir}/run/ceph/
 %{_libdir}/ceph/erasure-code/libec_*.so*
 %{_udevrulesdir}/60-ceph-partuuid-workaround.rules
 %{_udevrulesdir}/95-ceph-osd.rules
+%config %{_sysconfdir}/security/limits.d/ceph.conf
 %config %{_sysconfdir}/bash_completion.d/ceph
 %config(noreplace) %{_sysconfdir}/logrotate.d/ceph
 %if 0%{?suse_version}
@@ -807,17 +810,15 @@ mkdir -p %{_localstatedir}/run/ceph/
 %{_mandir}/man8/ceph-clsinfo.8*
 %{_mandir}/man8/librados-config.8*
 #set up placeholder directories
-%dir %{_localstatedir}/lib/ceph/
-%dir %{_localstatedir}/lib/ceph/tmp
-%dir %{_localstatedir}/lib/ceph/mon
-%dir %{_localstatedir}/lib/ceph/osd
-%dir %{_localstatedir}/lib/ceph/mds
-%dir %{_localstatedir}/lib/ceph/bootstrap-osd
-%dir %{_localstatedir}/lib/ceph/bootstrap-mds
-%dir %{_localstatedir}/lib/ceph/bootstrap-rgw
-%if  (! 0%{?suse_version}) || ( 0%{?suse_version} && (! 0%{?_with_systemd}) )
-%dir %{_localstatedir}/run/ceph/
-%endif
+%attr(770,ceph,ceph) %dir %{_localstatedir}/lib/ceph/
+%attr(770,ceph,ceph) %dir %{_localstatedir}/lib/ceph/tmp
+%attr(770,ceph,ceph) %dir %{_localstatedir}/lib/ceph/mon
+%attr(770,ceph,ceph) %dir %{_localstatedir}/lib/ceph/osd
+%attr(770,ceph,ceph) %dir %{_localstatedir}/lib/ceph/mds
+%attr(770,ceph,ceph) %dir %{_localstatedir}/lib/ceph/bootstrap-osd
+%attr(770,ceph,ceph) %dir %{_localstatedir}/lib/ceph/bootstrap-mds
+%attr(770,ceph,ceph) %dir %{_localstatedir}/lib/ceph/bootstrap-rgw
+%attr(770,ceph,ceph) %dir %{_localstatedir}/run/ceph/
 
 #################################################################################
 %files -n ceph-common
@@ -856,6 +857,23 @@ mkdir -p %{_localstatedir}/run/ceph/
 %{python_sitelib}/ceph_argparse.py*
 %{python_sitelib}/ceph_daemon.py*
 %{_udevrulesdir}/50-rbd.rules
+%attr(2750,ceph,ceph) %dir %{_localstatedir}/log/ceph/
+
+%pre -n ceph-common
+CEPH_GROUP_ID=""
+CEPH_USER_ID=""
+# disabled for now until we have the numbers
+%if 0%{?rhel} || 0%{?centos} || 0%{?fedora}
+CEPH_GROUP_ID="-g 167"
+CEPH_USER_ID="-u 167"
+%endif
+# %if 0%{?suse_version}
+# CEPH_GROUP_ID="-g "
+# CEPH_USER_ID="-u "
+# %endif
+
+%{_sbindir}/groupadd ceph $CEPH_GROUP_ID -o -r 2>/dev/null || :
+%{_sbindir}/useradd ceph $CEPH_USER_ID -o -r -g ceph -s /sbin/nologin -c "Ceph daemons" -d %{_localstatedir}/lib/ceph 2> /dev/null || :
 
 %postun -n ceph-common
 # Package removal cleanup
@@ -901,17 +919,13 @@ fi
 
 %post radosgw
 /sbin/ldconfig
-%if 0%{?opensuse} || 0%{?suse_version}
+%if 0%{?suse_version}
   # TODO: find out what exactly this systemd-tmpfiles inovcation is for
   systemd-tmpfiles --create /%{_tmpfilesdir}/ceph-rgw.conf
   # explicit systemctl daemon-reload (that's the only relevant bit of
   # service_add_post; the rest is all sysvinit --> systemd migration which
   # isn't applicable in this context (see above comment).
   /usr/bin/systemctl daemon-reload >/dev/null 2>&1 || :
-%else
-  %if 0%{?suse_version} || 0%{?opensuse}
-    %fillup_and_insserv -f -y ceph-radosgw
-  %endif
 %endif
 
 %preun radosgw
@@ -923,10 +937,6 @@ fi
       /usr/bin/systemctl stop $SERVICE > /dev/null 2>&1 || :
     done
   fi
-%else
-  %if 0%{?suse_version} || 0%{?opensuse}
-    %stop_on_removal ceph-radosgw
-  %endif
 %endif
 
 %postun radosgw
@@ -939,19 +949,11 @@ fi
       /usr/bin/systemctl try-restart $SERVICE > /dev/null 2>&1 || :
     done
   fi
-%else
-  %if 0%{?suse_version} || 0%{?opensuse}
-    %restart_on_update ceph-radosgw
-  %endif
 %endif
 # Package removal cleanup
 if [ "$1" -eq "0" ] ; then
     rm -rf /var/log/radosgw
 fi
-
-%if 0%{?suse_version} || 0%{?opensuse}
-  %insserv_cleanup
-%endif
 
 #################################################################################
 %if %{with ocf}
@@ -1137,10 +1139,19 @@ ln -sf %{_libdir}/librbd.so.1 /usr/lib64/qemu/librbd.so.1
 
 %post selinux
 %if 0%{?_with_systemd}
-    /usr/bin/systemctl stop ceph.target > /dev/null 2>&1 || :
+    /usr/bin/systemctl status ceph.target > /dev/null 2>&1
 %else
-    /sbin/service ceph stop >/dev/null 2>&1 || :
+    /sbin/service ceph status >/dev/null 2>&1
 %endif
+STATUS=$?
+
+if test $STATUS -eq 0; then
+%if 0%{?_with_systemd}
+    /usr/bin/systemctl stop ceph.target > /dev/null 2>&1
+%else
+    /sbin/service ceph stop >/dev/null 2>&1
+%endif
+fi
 
 OLD_POLVER=$(%{_sbindir}/semodule -l | grep -P '^ceph[\t ]' | awk '{print $2}')
 %{_sbindir}/semodule -n -i %{_datadir}/selinux/packages/ceph.pp
@@ -1152,34 +1163,51 @@ if %{_sbindir}/selinuxenabled; then
    fi
 fi
 
+# Start iff it was started before
+if test $STATUS -eq 0; then
 %if 0%{?_with_systemd}
     /usr/bin/systemctl start ceph.target > /dev/null 2>&1 || :
 %else
     /sbin/service ceph start >/dev/null 2>&1 || :
 %endif
+fi
+
 exit 0
 
 %postun selinux
 if [ $1 -eq 0 ]; then
     %if 0%{?_with_systemd}
-	/usr/bin/systemctl stop ceph.target > /dev/null 2>&1 || :
+        /usr/bin/systemctl status ceph.target > /dev/null 2>&1
     %else
-	/sbin/service ceph stop >/dev/null 2>&1 || :
+        /sbin/service ceph status >/dev/null 2>&1
     %endif
+    STATUS=$?
+
+    if test $STATUS -eq 0; then
+    %if 0%{?_with_systemd}
+        /usr/bin/systemctl stop ceph.target > /dev/null 2>&1
+    %else
+        /sbin/service ceph stop >/dev/null 2>&1
+    %endif
+    fi
+
     %{_sbindir}/semodule -n -r ceph
     if %{_sbindir}/selinuxenabled ; then
        %{_sbindir}/load_policy
        %relabel_files
     fi;
+
+    if test $STATUS -eq 0; then
     %if 0%{?_with_systemd}
 	/usr/bin/systemctl start ceph.target > /dev/null 2>&1 || :
     %else
 	/sbin/service ceph start >/dev/null 2>&1 || :
     %endif
-fi;
+    fi
+fi
 exit 0
 
-%endif
+%endif # with selinux
 
 #################################################################################
 %if 0%{with libs_compat}

@@ -16,6 +16,7 @@
  *
  */
 
+#include <algorithm>
 #include <sstream>
 #include <boost/assign.hpp>
 
@@ -70,6 +71,14 @@ static ostream& _prefix(std::ostream *_dout, Monitor *mon, OSDMap& osdmap) {
 		<< "(" << mon->get_state_name()
 		<< ").osd e" << osdmap.get_epoch() << " ";
 }
+
+OSDMonitor::OSDMonitor(CephContext *cct, Monitor *mn, Paxos *p, const string& service_name)
+ : PaxosService(mn, p, service_name),
+   inc_osd_cache(g_conf->mon_osd_cache_size),
+   full_osd_cache(g_conf->mon_osd_cache_size),
+   thrash_map(0), thrash_last_up_osd(-1),
+   op_tracker(cct, true, 1)
+{}
 
 bool OSDMonitor::_have_pending_crush()
 {
@@ -1847,6 +1856,40 @@ bool OSDMonitor::preprocess_boot(MonOpRequestRef op)
     goto ignore;
   }
 
+  if (any_of(osdmap.get_pools().begin(),
+	     osdmap.get_pools().end(),
+	     [](const std::pair<int64_t,pg_pool_t>& pool)
+	     { return pool.second.use_gmt_hitset; })) {
+    assert(osdmap.get_num_up_osds() == 0 ||
+	   osdmap.get_up_osd_features() & CEPH_FEATURE_OSD_HITSET_GMT);
+    if (!(m->osd_features & CEPH_FEATURE_OSD_HITSET_GMT)) {
+      dout(0) << __func__ << " one or more pools uses GMT hitsets but osd at "
+	      << m->get_orig_source_inst()
+	      << " doesn't announce support -- ignore" << dendl;
+      goto ignore;
+    }
+  }
+
+  // make sure upgrades stop at hammer
+  //  * OSD_PROXY_FEATURES is the last pre-hammer feature
+  //  * MON_METADATA is the first post-hammer feature
+  if (osdmap.get_num_up_osds() > 0) {
+    if ((m->osd_features & CEPH_FEATURE_MON_METADATA) &&
+	!(osdmap.get_up_osd_features() & CEPH_FEATURE_OSD_PROXY_FEATURES)) {
+      mon->clog->info() << "disallowing boot of post-hammer OSD "
+			<< m->get_orig_source_inst()
+			<< " because one or more up OSDs is pre-hammer\n";
+      goto ignore;
+    }
+    if (!(m->osd_features & CEPH_FEATURE_OSD_PROXY_FEATURES) &&
+	(osdmap.get_up_osd_features() & CEPH_FEATURE_MON_METADATA)) {
+      mon->clog->info() << "disallowing boot of pre-hammer OSD "
+			<< m->get_orig_source_inst()
+			<< " because all up OSDs are post-hammer\n";
+      goto ignore;
+    }
+  }
+
   // already booted?
   if (osdmap.is_up(from) &&
       osdmap.get_inst(from) == m->get_orig_source_inst()) {
@@ -2418,6 +2461,29 @@ void OSDMonitor::send_incremental(epoch_t first,
   }
 }
 
+int OSDMonitor::get_version(version_t ver, bufferlist& bl)
+{
+    if (inc_osd_cache.lookup(ver, &bl)) {
+      return 0;
+    }
+    int ret = PaxosService::get_version(ver, bl);
+    if (!ret) {
+      inc_osd_cache.add(ver, bl);
+    }
+    return ret;
+}
+
+int OSDMonitor::get_version_full(version_t ver, bufferlist& bl)
+{
+    if (full_osd_cache.lookup(ver, &bl)) {
+      return 0;
+    }
+    int ret = PaxosService::get_version_full(ver, bl);
+    if (!ret) {
+      full_osd_cache.add(ver, bl);
+    }
+    return ret;
+}
 
 epoch_t OSDMonitor::blacklist(const entity_addr_t& a, utime_t until)
 {
@@ -2809,13 +2875,14 @@ namespace {
   enum osd_pool_get_choices {
     SIZE, MIN_SIZE, CRASH_REPLAY_INTERVAL,
     PG_NUM, PGP_NUM, CRUSH_RULESET, HIT_SET_TYPE,
-    HIT_SET_PERIOD, HIT_SET_COUNT, HIT_SET_FPP,
+    HIT_SET_PERIOD, HIT_SET_COUNT, HIT_SET_FPP, USE_GMT_HITSET,
     AUID, TARGET_MAX_OBJECTS, TARGET_MAX_BYTES,
     CACHE_TARGET_DIRTY_RATIO, CACHE_TARGET_DIRTY_HIGH_RATIO,
     CACHE_TARGET_FULL_RATIO,
     CACHE_MIN_FLUSH_AGE, CACHE_MIN_EVICT_AGE,
     ERASURE_CODE_PROFILE, MIN_READ_RECENCY_FOR_PROMOTE,
-    WRITE_FADVISE_DONTNEED, MIN_WRITE_RECENCY_FOR_PROMOTE};
+    WRITE_FADVISE_DONTNEED, MIN_WRITE_RECENCY_FOR_PROMOTE,
+    FAST_READ};
 
   std::set<osd_pool_get_choices>
     subtract_second_from_first(const std::set<osd_pool_get_choices>& first,
@@ -3257,6 +3324,7 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
       ("pg_num", PG_NUM)("pgp_num", PGP_NUM)("crush_ruleset", CRUSH_RULESET)
       ("hit_set_type", HIT_SET_TYPE)("hit_set_period", HIT_SET_PERIOD)
       ("hit_set_count", HIT_SET_COUNT)("hit_set_fpp", HIT_SET_FPP)
+      ("use_gmt_hitset", USE_GMT_HITSET)
       ("auid", AUID)("target_max_objects", TARGET_MAX_OBJECTS)
       ("target_max_bytes", TARGET_MAX_BYTES)
       ("cache_target_dirty_ratio", CACHE_TARGET_DIRTY_RATIO)
@@ -3267,7 +3335,8 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
       ("erasure_code_profile", ERASURE_CODE_PROFILE)
       ("min_read_recency_for_promote", MIN_READ_RECENCY_FOR_PROMOTE)
       ("write_fadvise_dontneed", WRITE_FADVISE_DONTNEED)
-      ("min_write_recency_for_promote", MIN_WRITE_RECENCY_FOR_PROMOTE);
+      ("min_write_recency_for_promote", MIN_WRITE_RECENCY_FOR_PROMOTE)
+      ("fast_read", FAST_READ);
 
     typedef std::set<osd_pool_get_choices> choices_set_t;
 
@@ -3374,6 +3443,9 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	      }
 	    }
 	    break;
+	  case USE_GMT_HITSET:
+	    f->dump_bool("use_gmt_hitset", p->use_gmt_hitset);
+	    break;
 	  case TARGET_MAX_OBJECTS:
 	    f->dump_unsigned("target_max_objects", p->target_max_objects);
 	    break;
@@ -3420,6 +3492,9 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	    f->dump_int("min_write_recency_for_promote",
 			p->min_write_recency_for_promote);
 	    break;
+          case FAST_READ:
+            f->dump_int("fast_read", p->fast_read);
+            break;
 	}
 	f->close_section();
 	f->flush(rdata);
@@ -3475,6 +3550,9 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	      }
 	    }
 	    break;
+	  case USE_GMT_HITSET:
+	    ss << "use_gmt_hitset: " << p->use_gmt_hitset << "\n";
+	    break;
 	  case TARGET_MAX_OBJECTS:
 	    ss << "target_max_objects: " << p->target_max_objects << "\n";
 	    break;
@@ -3515,6 +3593,9 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	    ss << "min_write_recency_for_promote: " <<
 	      p->min_write_recency_for_promote << "\n";
 	    break;
+          case FAST_READ:
+            ss << "fast_read: " << p->fast_read << "\n";
+            break;
 	}
 	rdata.append(ss.str());
 	ss.str("");
@@ -3958,12 +4039,12 @@ int OSDMonitor::prepare_new_pool(MonOpRequestRef op)
     return prepare_new_pool(m->name, m->auid, m->crush_rule, ruleset_name,
 			    0, 0,
                             erasure_code_profile,
-			    pg_pool_t::TYPE_REPLICATED, 0, &ss);
+			    pg_pool_t::TYPE_REPLICATED, 0, FAST_READ_OFF, &ss);
   else
     return prepare_new_pool(m->name, session->auid, m->crush_rule, ruleset_name,
 			    0, 0,
                             erasure_code_profile,
-			    pg_pool_t::TYPE_REPLICATED, 0, &ss);
+			    pg_pool_t::TYPE_REPLICATED, 0, FAST_READ_OFF, &ss);
 }
 
 int OSDMonitor::crush_rename_bucket(const string& srcname,
@@ -4003,7 +4084,9 @@ int OSDMonitor::normalize_profile(ErasureCodeProfile &profile, ostream *ss)
   ErasureCodeInterfaceRef erasure_code;
   ErasureCodePluginRegistry &instance = ErasureCodePluginRegistry::instance();
   ErasureCodeProfile::const_iterator plugin = profile.find("plugin");
-  int err = instance.factory(plugin->second, profile, &erasure_code, ss);
+  int err = instance.factory(plugin->second,
+			     g_conf->erasure_code_dir,
+			     profile, &erasure_code, ss);
   if (err)
     return err;
   return erasure_code->init(profile, ss);
@@ -4063,7 +4146,9 @@ int OSDMonitor::get_erasure_code(const string &erasure_code_profile,
     return -EINVAL;
   }
   ErasureCodePluginRegistry &instance = ErasureCodePluginRegistry::instance();
-  return instance.factory(plugin->second, profile, erasure_code, ss);
+  return instance.factory(plugin->second,
+			  g_conf->erasure_code_dir,
+			  profile, erasure_code, ss);
 }
 
 int OSDMonitor::check_cluster_features(uint64_t features,
@@ -4181,10 +4266,6 @@ int OSDMonitor::parse_erasure_code_profile(const vector<string> &erasure_code_pr
 
   if (user_map.count("plugin") && user_map["plugin"] != default_plugin)
     (*erasure_code_profile_map) = user_map;
-
-  if ((*erasure_code_profile_map).count("directory") == 0)
-    (*erasure_code_profile_map)["directory"] =
-      g_conf->osd_pool_default_erasure_code_directory;
 
   return 0;
 }
@@ -4347,6 +4428,7 @@ int OSDMonitor::get_crush_ruleset(const string &ruleset_name,
  * @param erasure_code_profile The profile name in OSDMap to be used for erasure code
  * @param pool_type TYPE_ERASURE, or TYPE_REP
  * @param expected_num_objects expected number of objects on the pool
+ * @param fast_read fast read type. 
  * @param ss human readable error message, if any.
  *
  * @return 0 on success, negative errno on failure.
@@ -4358,6 +4440,7 @@ int OSDMonitor::prepare_new_pool(string& name, uint64_t auid,
 				 const string &erasure_code_profile,
                                  const unsigned pool_type,
                                  const uint64_t expected_num_objects,
+                                 FastReadType fast_read,
 				 ostream *ss)
 {
   if (name.length() == 0)
@@ -4377,27 +4460,39 @@ int OSDMonitor::prepare_new_pool(string& name, uint64_t auid,
         << ", which in this case is " << pg_num;
     return -ERANGE;
   }
+  if (pool_type == pg_pool_t::TYPE_REPLICATED && fast_read == FAST_READ_ON) {
+    *ss << "'fast_read' can only apply to erasure coding pool";
+    return -EINVAL;
+  }
   int r;
   r = prepare_pool_crush_ruleset(pool_type, erasure_code_profile,
 				 crush_ruleset_name, &crush_ruleset, ss);
-  if (r)
+  if (r) {
+    dout(10) << " prepare_pool_crush_ruleset returns " << r << dendl;
     return r;
+  }
   CrushWrapper newcrush;
   _get_pending_crush(newcrush);
   CrushTester tester(newcrush, *ss);
   r = tester.test_with_crushtool(g_conf->crushtool.c_str(),
 				 osdmap.get_max_osd(),
 				 g_conf->mon_lease);
-  if (r)
+  if (r) {
+    dout(10) << " tester.test_with_crushtool returns " << r << dendl;
     return r;
+  }
   unsigned size, min_size;
   r = prepare_pool_size(pool_type, erasure_code_profile, &size, &min_size, ss);
-  if (r)
+  if (r) {
+    dout(10) << " prepare_pool_size returns " << r << dendl;
     return r;
+  }
   uint32_t stripe_width = 0;
   r = prepare_pool_stripe_width(pool_type, erasure_code_profile, &stripe_width, ss);
-  if (r)
+  if (r) {
+    dout(10) << " prepare_pool_stripe_width returns " << r << dendl;
     return r;
+  }
 
   for (map<int64_t,string>::iterator p = pending_inc.new_pool_names.begin();
        p != pending_inc.new_pool_names.end();
@@ -4421,6 +4516,26 @@ int OSDMonitor::prepare_new_pool(string& name, uint64_t auid,
     pi->set_flag(pg_pool_t::FLAG_NOPGCHANGE);
   if (g_conf->osd_pool_default_flag_nosizechange)
     pi->set_flag(pg_pool_t::FLAG_NOSIZECHANGE);
+  if (g_conf->osd_pool_use_gmt_hitset &&
+      (osdmap.get_up_osd_features() & CEPH_FEATURE_OSD_HITSET_GMT))
+    pi->use_gmt_hitset = true;
+
+  if (pool_type == pg_pool_t::TYPE_ERASURE) {
+    switch (fast_read) {
+      case FAST_READ_OFF:
+        pi->fast_read = false;
+        break;
+      case FAST_READ_ON:
+        pi->fast_read = true;
+        break;
+      case FAST_READ_DEFAULT:
+        pi->fast_read = g_conf->mon_osd_pool_ec_fast_read;
+        break;
+      default:
+        *ss << "invalid fast_read setting: " << fast_read;
+        return -EINVAL;
+    }
+  }
 
   pi->size = size;
   pi->min_size = min_size;
@@ -4769,6 +4884,17 @@ int OSDMonitor::prepare_command_pool_set(map<string,cmd_vartype> &cmdmap,
     }
     BloomHitSet::Params *bloomp = static_cast<BloomHitSet::Params*>(p.hit_set_params.impl.get());
     bloomp->set_fpp(f);
+  } else if (var == "use_gmt_hitset") {
+    if (val == "true" || (interr.empty() && n == 1)) {
+      if (!(osdmap.get_up_osd_features() & CEPH_FEATURE_OSD_HITSET_GMT)) {
+	ss << "not all OSDs support GMT hit set.";
+	return -EINVAL;
+      }
+      p.use_gmt_hitset = true;
+    } else {
+      ss << "expecting value 'true' or '1'";
+      return -EINVAL;
+    }
   } else if (var == "debug_fake_ec_pool") {
     if (val == "true" || (interr.empty() && n == 1)) {
       p.flags |= pg_pool_t::FLAG_DEBUG_FAKE_EC_POOL;
@@ -4848,6 +4974,16 @@ int OSDMonitor::prepare_command_pool_set(map<string,cmd_vartype> &cmdmap,
       return -EINVAL;
     }
     p.min_write_recency_for_promote = n;
+  } else if (var == "fast_read") {
+    if (val == "true" || (interr.empty() && n == 1)) {
+      if (p.is_replicated()) {
+        ss << "fast read is not supported in replication pool";
+        return -EINVAL;
+      }
+      p.fast_read = true;
+    } else if (val == "false" || (interr.empty() && n == 0)) {
+      p.fast_read = false;
+    }
   } else {
     ss << "unrecognized variable '" << var << "'";
     return -EINVAL;
@@ -6445,12 +6581,22 @@ done:
       err = -EINVAL;
       goto reply;
     }
+
+    int8_t fast_read_param;
+    cmd_getval(g_ceph_context, cmdmap, "fast_read", fast_read_param, int8_t(-1));
+    FastReadType fast_read = FAST_READ_DEFAULT;
+    if (fast_read_param == 0)
+      fast_read = FAST_READ_OFF;
+    else if (fast_read_param > 0)
+      fast_read = FAST_READ_ON;
+    
     err = prepare_new_pool(poolstr, 0, // auid=0 for admin created pool
 			   -1, // default crush rule
 			   ruleset_name,
 			   pg_num, pgp_num,
 			   erasure_code_profile, pool_type,
                            (uint64_t)expected_num_objects,
+                           fast_read,
 			   &ss);
     if (err < 0) {
       switch(err) {
