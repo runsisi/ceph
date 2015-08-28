@@ -1719,6 +1719,8 @@ public:
    *         the global full flag is set, else false
    */
   bool osdmap_pool_full(const int64_t pool_id) const;
+  bool _osdmap_pool_full(const int64_t pool_id) const;
+  void update_pool_full_map(map<int64_t, bool>& pool_full_map);
 
  private:
   map<uint64_t, LingerOp*>  linger_ops;
@@ -1748,7 +1750,6 @@ public:
   MOSDOp *_prepare_osd_op(Op *op);
   void _send_op(Op *op, MOSDOp *m = NULL);
   void _send_op_account(Op *op);
-  void _cancel_linger_op(Op *op);
   void finish_op(OSDSession *session, ceph_tid_t tid);
   void _finish_op(Op *op);
   static bool is_pg_changed(
@@ -1765,6 +1766,7 @@ public:
     RECALC_OP_TARGET_OSD_DOWN,
   };
   bool _osdmap_full_flag() const;
+  bool _osdmap_has_pool_full() const;
 
   bool target_should_be_paused(op_target_t *op);
   int _calc_target(op_target_t *t, epoch_t *last_force_resend=0, bool any_change=false);
@@ -1928,7 +1930,8 @@ private:
 
   void _scan_requests(OSDSession *s,
                      bool force_resend,
-		     bool force_resend_writes,
+		     bool cluster_full,
+                     map<int64_t, bool> *pool_full_map,
 		     map<ceph_tid_t, Op*>& need_resend,
 		     list<LingerOp*>& need_resend_linger,
 		     map<ceph_tid_t, CommandOp*>& need_resend_command);
@@ -1974,6 +1977,7 @@ private:
 public:
   ceph_tid_t op_submit(Op *op, int *ctx_budget = NULL);
   bool is_active() {
+    RWLock::RLocker l(rwlock);
     return !((!inflight_ops.read()) && linger_ops.empty() && poolstat_ops.empty() && statfs_ops.empty());
   }
 
@@ -2014,6 +2018,7 @@ public:
 
   /// cancel an in-progress request with the given return code
 private:
+  int _op_cancel(OSDSession *s, ceph_tid_t tid, int r);
   int op_cancel(OSDSession *s, ceph_tid_t tid, int r);
   int _op_cancel(ceph_tid_t tid, int r);
   friend class C_CancelOp;
