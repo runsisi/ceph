@@ -86,3 +86,5 @@ GTAGS
 
 # common cmake build dir
 /build
+
+ceph-my.*
