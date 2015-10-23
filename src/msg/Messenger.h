@@ -102,21 +102,44 @@ public:
 	features_required(req) {}
 
   public:
+    // mds -> client
     static Policy stateful_server(uint64_t sup, uint64_t req) {
       return Policy(false, true, true, true, sup, req);
     }
+    // mon -> default
+    // mon -> osd
+    // mon -> client
+    // mon -> mds
+    // osd.ms_public -> default
+    // osd.ms_public -> osd
+    // osd.ms_cluster -> default
+    // osd.ms_cluster -> client
+    // osd.ms_hb_back_server -> osd
+    // osd.ms_hb_front_server -> osd
     static Policy stateless_server(uint64_t sup, uint64_t req) {
       return Policy(true, true, false, false, sup, req);
     }
+    // mds -> mds
+    // osd.ms_cluster -> osd
     static Policy lossless_peer(uint64_t sup, uint64_t req) {
       return Policy(false, false, true, false, sup, req);
     }
+    // mon -> mon
     static Policy lossless_peer_reuse(uint64_t sup, uint64_t req) {
       return Policy(false, false, true, true, sup, req);
     }
+    // fuse -> default
+    // mds -> default
+    // mds -> mon
+    // osd.ms_public -> mon
+    // osd.ms_cluster -> mon
+    // osd.ms_hbclient -> osd
+    // osd.ms_objecter -> default
+    // client -> default
     static Policy lossy_client(uint64_t sup, uint64_t req) {
       return Policy(true, false, false, false, sup, req);
     }
+    // fuse -> mds
     static Policy lossless_client(uint64_t sup, uint64_t req) {
       return Policy(false, false, false, true, sup, req);
     }

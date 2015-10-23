@@ -308,6 +308,7 @@ int Pipe::accept()
   }
   ::encode(socket_addr, addrs);
 
+  // send my_addr + peer_addr, let peer know its socket address
   r = tcp_write(addrs.c_str(), addrs.length());
   if (r < 0) {
     ldout(msgr->cct,10) << "accept couldn't write my+peer addr" << dendl;
@@ -330,6 +331,8 @@ int Pipe::accept()
     bufferptr tp(sizeof(peer_addr));
     addrbl.push_back(tp);
   }
+
+  // read peer_addr
   if (tcp_read(addrbl.c_str(), addrbl.length()) < 0) {
     ldout(msgr->cct,10) << "accept couldn't read peer_addr" << dendl;
     goto fail_unlocked;
@@ -348,9 +351,12 @@ int Pipe::accept()
     ldout(msgr->cct,0) << "accept peer addr is really " << peer_addr
 	    << " (socket is " << socket_addr << ")" << dendl;
   }
+
+  // set peer_addr in connection_state
   set_peer_addr(peer_addr);  // so that connection_state gets set up
   
   while (1) {
+    // read peer connect request
     if (tcp_read((char*)&connect, sizeof(connect)) < 0) {
       ldout(msgr->cct,10) << "accept couldn't read connect" << dendl;
       goto fail_unlocked;
@@ -360,6 +366,9 @@ int Pipe::accept()
     connect.features = ceph_sanitize_features(connect.features);
 
     authorizer.clear();
+
+    // for client -> mon, this field should be 0
+    // for client -> osd, this field should be non-zero
     if (connect.authorizer_len) {
       bp = buffer::create(connect.authorizer_len);
       if (tcp_read(bp.c_str(), connect.authorizer_len) < 0) {
@@ -938,6 +947,8 @@ int Pipe::connect()
     bufferptr p(sizeof(paddr) * 2);
     addrbl.push_back(p);
   }
+
+  // read peer_addr + my_addr
   if (tcp_read(addrbl.c_str(), addrbl.length()) < 0) {
     ldout(msgr->cct,2) << "connect couldn't read peer addrs, " << cpp_strerror(errno) << dendl;
     goto fail;
@@ -950,6 +961,13 @@ int Pipe::connect()
   }
 
   ldout(msgr->cct,20) << "connect read peer addr " << paddr << " on socket " << sd << dendl;
+
+  // entity_addr_t has a field: nonce, to differentiate messenger incarnations,
+  // this field origins from XXXMessenger::nonce, then passed on to Accepter,
+  // then Accepter.bind will set XXXMessenger.my_inst.addr.nonce to its nonce,
+  // messenger in mon always initialize its nonce to 0 in Messenger::create,
+  // for client or utility tools, Messenger::create_client_messenger initialize its nonce to random bytes,
+  // other mesengers initialize its nonce to pid of the process it residents in Messenger::create
   if (peer_addr != paddr) {
     if (paddr.is_blank_ip() &&
 	peer_addr.get_port() == paddr.get_port() &&
@@ -965,8 +983,10 @@ int Pipe::connect()
 
   ldout(msgr->cct,20) << "connect peer addr for me is " << peer_addr_for_me << dendl;
 
+  // for client, it may not know its socket address at this moment
   msgr->learned_addr(peer_addr_for_me);
 
+  // send my address to peer
   ::encode(msgr->my_inst.addr, myaddrbl);
 
   memset(&msg, 0, sizeof(msg));
@@ -984,10 +1004,18 @@ int Pipe::connect()
 
   while (1) {
     delete authorizer;
+    // for mon -> mon, then construct a tick handler and build an authorizer
+    // for others -> mon, then return NULL
+    // for others -> others(except mon), then call monc->auth->build_authorizer to build an authorizer
+    // get authorizer build from AuthClientHandler of MonCient
     authorizer = msgr->get_authorizer(peer_type, false);
     bufferlist authorizer_reply;
 
+    // construct a connect request and send to peer
     ceph_msg_connect connect;
+    // for connect requester, policy is set in SimpleMessenger::connect_rank,
+    // and both peer_type and peer_addr are set in SimpleMessenger::connect_rank
+    // for connect responser, policy, peer_type and peer_addr are set until Pipe::accept called
     connect.features = policy.features_supported;
     connect.host_type = msgr->get_myinst().name.type();
     connect.global_seq = gseq;
