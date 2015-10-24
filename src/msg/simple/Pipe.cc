@@ -356,7 +356,7 @@ int Pipe::accept()
   set_peer_addr(peer_addr);  // so that connection_state gets set up
   
   while (1) {
-    // read peer connect request
+    // read peer's connect request
     if (tcp_read((char*)&connect, sizeof(connect)) < 0) {
       ldout(msgr->cct,10) << "accept couldn't read connect" << dendl;
       goto fail_unlocked;
@@ -367,8 +367,8 @@ int Pipe::accept()
 
     authorizer.clear();
 
-    // for client -> mon, this field should be 0
-    // for client -> osd, this field should be non-zero
+    // for client -> mon request, this field should be 0
+    // for client -> osd request, this field should be non-zero
     if (connect.authorizer_len) {
       bp = buffer::create(connect.authorizer_len);
       if (tcp_read(bp.c_str(), connect.authorizer_len) < 0) {
@@ -1004,10 +1004,10 @@ int Pipe::connect()
 
   while (1) {
     delete authorizer;
+    // get authorizer build from AuthClientHandler of MonCient
     // for mon -> mon, then construct a tick handler and build an authorizer
     // for others -> mon, then return NULL
     // for others -> others(except mon), then call monc->auth->build_authorizer to build an authorizer
-    // get authorizer build from AuthClientHandler of MonCient
     authorizer = msgr->get_authorizer(peer_type, false);
     bufferlist authorizer_reply;
 
@@ -1050,6 +1050,8 @@ int Pipe::connect()
     }
 
     ldout(msgr->cct,20) << "connect wrote (self +) cseq, waiting for reply" << dendl;
+
+    // read connect reply from peer
     ceph_msg_connect_reply reply;
     if (tcp_read((char*)&reply, sizeof(reply)) < 0) {
       ldout(msgr->cct,2) << "connect read reply " << cpp_strerror(errno) << dendl;
@@ -1069,6 +1071,8 @@ int Pipe::connect()
 
     authorizer_reply.clear();
 
+    // if our previous connect request has no authentication protocol specified,
+    // then, the reply should also have no authorizer info attached
     if (reply.authorizer_len) {
       ldout(msgr->cct,10) << "reply.authorizer_len=" << reply.authorizer_len << dendl;
       bufferptr bp = buffer::create(reply.authorizer_len);
