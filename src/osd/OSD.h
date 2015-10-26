@@ -1381,7 +1381,11 @@ public:
   }
   void session_handle_reset(Session *session) {
     Mutex::Locker l(session->session_dispatch_lock);
+    // remove this session from session_waiting_for_map
     clear_session_waiting_on_map(session);
+
+    // get all pgs we are currently waiting for, used for removing
+    // this session from session_waiting_for_pg
     vector<spg_t> pgs_to_clear;
     pgs_to_clear.reserve(session->waiting_for_pg.size());
     for (map<spg_t, list<OpRequestRef> >::iterator i =
@@ -1393,6 +1397,7 @@ public:
     for (vector<spg_t>::iterator i = pgs_to_clear.begin();
 	 i != pgs_to_clear.end();
 	 ++i) {
+      // remove this session from session_waiting_for_pg
       clear_session_waiting_on_pg(session, *i);
     }
     /* Messages have connection refs, we need to clear the
@@ -1400,6 +1405,8 @@ public:
      * cycles which result.
      * Bug #12338
      */
+    // op->message->connection->session, we hvae to free op explicitly
+    // to decrease references on session or session will never be released
     session->waiting_on_map.clear();
     session->waiting_for_pg.clear();
   }

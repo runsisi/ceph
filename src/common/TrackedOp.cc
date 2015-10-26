@@ -167,10 +167,13 @@ bool OpTracker::check_ops_in_flight(std::vector<string> &warning_vector)
     Mutex::Locker locker(sdata->ops_in_flight_lock_sharded);
     if (!sdata->ops_in_flight_sharded.empty()) {
       utime_t oldest_op_tmp = sdata->ops_in_flight_sharded.front()->get_initiated();
+      // the Op(s) in ShardedTrackingData are time-ordered, from old -> new
+      // get oldest op from all ShardedTrackingData(s)
       if (oldest_op_tmp < oldest_op) {
         oldest_op = oldest_op_tmp;
       }
-    } 
+    }
+    // sum all Op currently still recorded in OpTracker
     total_ops_in_flight += sdata->ops_in_flight_sharded.size();
   }
       

@@ -1932,7 +1932,7 @@ int PGMonitor::_warn_slow_request_histogram(const pow2_hist_t& h, string suffix,
   unsigned sum = 0;
   for (unsigned i = h.h.size() - 1; i > 0; --i) {
     float ub = (float)(1 << i) / 1000.0;
-    if (ub < g_conf->mon_osd_max_op_age)
+    if (ub < g_conf->mon_osd_max_op_age)        // default 32
       break;
     ostringstream ss;
     if (h.h[i]) {
@@ -2071,6 +2071,8 @@ void PGMonitor::get_health(list<pair<health_status_t,string> >& summary,
   // slow requests
   if (g_conf->mon_osd_max_op_age > 0 &&
       pg_map.osd_sum.op_queue_age_hist.upper_bound() > g_conf->mon_osd_max_op_age) {
+    // osd->op_tracker.get_age_ms_histogram updates osd_stat.op_queue_age_hist in OSDService::update_osd_stat
+    // and then OSD::send_pg_stats send this info to mon
     unsigned sum = _warn_slow_request_histogram(pg_map.osd_sum.op_queue_age_hist, "", summary, NULL);
     if (sum > 0) {
       ostringstream ss;

@@ -1539,8 +1539,8 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
   heartbeat_thread(this),
   heartbeat_dispatcher(this),
   finished_lock("OSD::finished_lock"),
-  op_tracker(cct, cct->_conf->osd_enable_op_tracker, 
-                  cct->_conf->osd_num_op_tracker_shard),
+  op_tracker(cct, cct->_conf->osd_enable_op_tracker,            // default true
+                  cct->_conf->osd_num_op_tracker_shard),        // default 32
   test_ops_hook(NULL),
   op_shardedwq(
     cct->_conf->osd_op_num_shards,
@@ -1586,8 +1586,8 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
   service(this)
 {
   monc->set_messenger(client_messenger);
-  op_tracker.set_complaint_and_threshold(cct->_conf->osd_op_complaint_time,
-                                         cct->_conf->osd_op_log_threshold);
+  op_tracker.set_complaint_and_threshold(cct->_conf->osd_op_complaint_time,     // default 30s
+                                         cct->_conf->osd_op_log_threshold);     // default 5, max # slow op info to log
   op_tracker.set_history_size_and_duration(cct->_conf->osd_op_history_size,
                                            cct->_conf->osd_op_history_duration);
 }
