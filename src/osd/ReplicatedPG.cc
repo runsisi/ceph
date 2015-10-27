@@ -2877,6 +2877,7 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
   }
 
   // issue replica writes
+  // generate a tid for replica op that issued from us
   ceph_tid_t rep_tid = osd->get_tid();
   RepGather *repop = new_repop(ctx, obc, rep_tid);  // new repop claims our obc, src_obc refs
   // note: repop now owns ctx AND ctx->op

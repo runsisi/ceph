@@ -436,11 +436,12 @@ int librados::RadosClient::wait_for_osdmap()
   }
   objecter->put_osdmap_read();
 
+  // we have never got a osdmap, so try to get the first map from mon
   if (need_map) {
     Mutex::Locker l(lock);
 
     utime_t timeout;
-    if (cct->_conf->rados_mon_op_timeout > 0)
+    if (cct->_conf->rados_mon_op_timeout > 0)   // default is 0, means no limit
       timeout.set_from_double(cct->_conf->rados_mon_op_timeout);
 
     const OSDMap *osdmap = objecter->get_osdmap_read();

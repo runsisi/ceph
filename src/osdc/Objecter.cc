@@ -1032,7 +1032,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
   if (!initialized.read())
     return;
 
-  assert(osdmap); 
+  assert(osdmap);       // allocated in ctor
 
   if (m->fsid != monc->get_fsid()) {
     ldout(cct, 0) << "handle_osd_map fsid " << m->fsid

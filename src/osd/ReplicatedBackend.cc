@@ -556,6 +556,7 @@ void ReplicatedBackend::submit_transaction(
   assert(t->get_temp_added().size() <= 1);
   assert(t->get_temp_cleared().size() <= 1);
 
+  // tid is a replica op tid generated on primary osd
   assert(!in_progress_ops.count(tid));
   InProgressOp &op = in_progress_ops.insert(
     make_pair(
@@ -573,7 +574,7 @@ void ReplicatedBackend::submit_transaction(
     parent->get_actingbackfill_shards().begin(),
     parent->get_actingbackfill_shards().end());
 
-
+  // generate subop and send to replica osds
   issue_op(
     soid,
     at_version,
@@ -596,6 +597,7 @@ void ReplicatedBackend::submit_transaction(
   }
   clear_temp_objs(t->get_temp_cleared());
 
+  // write pg log to pg meta object's omap, and build this write op into local_t
   parent->log_operation(
     log_entries,
     hset_history,
@@ -604,7 +606,10 @@ void ReplicatedBackend::submit_transaction(
     true,
     local_t);
   
+  // register callback contexts on op_t->on_applied list
   op_t->register_on_applied_sync(on_local_applied_sync);
+  // call this callback if pg's peering process never be reset since current epoch,
+  // or do nothing except release the memory the callback occupied
   op_t->register_on_applied(
     parent->bless_context(
       new C_OSD_OnOpApplied(this, &op)));
@@ -619,6 +624,15 @@ void ReplicatedBackend::submit_transaction(
   list<ObjectStore::Transaction*> tls;
   tls.push_back(local_t);
   tls.push_back(op_t);
+
+  // PG::start_peering_interval will call PG::on_change, which calls ReplicatedPG::on_change
+  // for replicated pool, then to pgbackend->on_change
+  // OSD::_remove_pg will call PG::on_removal, which calls ReplicatedPG::on_removal
+  // for replicated pool, then to ReplicatedPG::on_shutdown, then to pgbackend->on_change
+  // finally, if some abnormal conditions met, in_progress_ops will be cleared
+  // in ReplicatedBackend::on_change
+
+  // submit transactions to backstore
   parent->queue_transactions(tls, op.op);
   delete t;
 }
