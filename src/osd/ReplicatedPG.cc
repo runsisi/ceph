@@ -2778,6 +2778,10 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
         reqid.name._num, reqid.tid, reqid.inc);
   }
 
+  // call do_osd_ops to read or build a transaction for write
+  // for sync read, we read the data
+  // for async read, we will start the real read op later
+  // for write, we build a transaction for this wirte op
   int result = prepare_transaction(ctx);
 
   {
@@ -2843,6 +2847,8 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
     return;
   }
 
+  // for write op, we have a long way to go
+
   ctx->reply->set_reply_versions(ctx->at_version, ctx->user_at_version);
 
   assert(op->may_write() || op->may_cache());
@@ -2877,8 +2883,10 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
 
   repop->src_obc.swap(src_obc); // and src_obc.
 
+  // write to local and other replicas
   issue_repop(repop);
 
+  // test if the op finished
   eval_repop(repop);
   repop->put();
 }
@@ -4031,6 +4039,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	ctx->delta_stats.num_rd++;
 
 	// Skip checking the result and just proceed to the next operation
+	// we will start the real async read in ReplicatedPG::execute_ctx
 	if (async)
 	  continue;
 
@@ -8180,6 +8189,8 @@ void ReplicatedPG::issue_repop(RepGather *repop)
     repop->obc,
     repop->ctx->clone_obc,
     unlock_snapset_obc ? repop->ctx->snapset_obc : ObjectContextRef());
+
+  // call issue_op to send transaction to replicas and apply transaction locally
   pgbackend->submit_transaction(
     soid,
     repop->ctx->at_version,
