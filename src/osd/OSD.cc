@@ -368,16 +368,18 @@ void OSDService::init_splits_between(spg_t pgid,
 	 e <= tomap->get_epoch();
 	 ++e) {
       OSDMapRef nextmap(try_get_map(e));
+      // skip the missing map
       if (!nextmap)
 	continue;
       set<spg_t> even_newer_pgs; // pgs added in this loop
       for (set<spg_t>::iterator i = new_pgs.begin(); i != new_pgs.end(); ++i) {
 	set<spg_t> split_pgs;
+        // newly splitted pgs are stored in split_pgs
 	if (i->is_split(curmap->get_pg_num(i->pool()),
 			nextmap->get_pg_num(i->pool()),
 			&split_pgs)) {
           // update child -> parent (pending_splits) and
-          // parent -> [children] (rev_pending_splits) relationships
+          // parent -> [children] (rev_pending_splits) maps
 	  start_split(*i, split_pgs);
           // children may split at next osdmap epoch
 	  even_newer_pgs.insert(split_pgs.begin(), split_pgs.end());
@@ -412,6 +414,7 @@ void OSDService::expand_pg_num(OSDMapRef old_map,
       rev_pending_splits.erase(i->second);
       pending_splits.erase(i++);
     } else {
+      // child.m_seed < old_pg_num ???
       _maybe_split_pgid(old_map, new_map, i->first);
       ++i;
     }
@@ -6673,7 +6676,11 @@ bool OSD::advance_pg(
 	lastmap->get_pg_num(pg->pool.id),
 	nextmap->get_pg_num(pg->pool.id),
 	&children)) {
+      // remove children from service.pending_splits and service.rev_pending_splits
+      // and insert children into in_progress_splits
       service.mark_split_in_progress(pg->info.pgid, children);
+      
+      // allocate child PG(s)
       split_pgs(
 	pg, children, new_pgs, lastmap, nextmap,
 	rctx);
@@ -6752,6 +6759,10 @@ void OSD::consume_map()
   // scan pg's
   {
     RWLock::RLocker l(pg_map_lock);
+    // pgs in service.pending_splits will not be added to pg_map until
+    // peering event process finished, so no new split pgs add to
+    // pending_splits (and rev_pending_splits) for currently still pending pgs,
+    // service.expand_pg_num below will add these new splits
     for (ceph::unordered_map<spg_t,PG*>::iterator it = pg_map.begin();
         it != pg_map.end();
         ++it) {
@@ -6764,6 +6775,7 @@ void OSD::consume_map()
       else
         num_pg_stray++;
 
+      // do not generate split info for pgs to be deleted
       if (!osdmap->have_pg_pool(pg->info.pgid.pool())) {
         //pool is deleted!
         to_remove.push_back(PGRef(pg));
@@ -6771,6 +6783,8 @@ void OSD::consume_map()
         // if new map have a larger pg_num than old map, then pg split may
         // occur on this pg, thus update service.pending_splits and 
         // service.rev_pending_splits (in reverse order)
+        // these three maps (service.pending_splits, service.rev_pending_splits, 
+        // service.in_progress_splits) are only useful for debugging
         service.init_splits_between(it->first, service.get_osdmap(), osdmap);
       }
 
@@ -6789,6 +6803,9 @@ void OSD::consume_map()
   }
   to_remove.clear();
 
+  // add new splits that parent pg is still in its own splitting, 
+  // service.init_splits_between above only generate pending_splits
+  // (and rev_pending_splits) for pgs already on pg_map
   service.expand_pg_num(service.get_osdmap(), osdmap);
 
   // update next_osdmap in service
@@ -7835,6 +7852,8 @@ void OSD::_remove_pg(PG *pg)
   // and handle_notify_timeout
   pg->on_removal(rmt);
 
+  // remove all (parent, children)s from rev_pending_splits and 
+  // remove all (child, parent)s from pending_splits
   service.cancel_pending_splits_for_parent(pg->info.pgid);
 
   store->queue_transaction(
@@ -8515,6 +8534,7 @@ void OSD::process_peering_events(
 			      same_interval_since);
     pg->write_if_dirty(*rctx.transaction);
     if (!split_pgs.empty()) {
+      // when finished, the newly splitted pg will be added to osd.pg_map
       rctx.on_applied->add(new C_CompleteSplits(this, split_pgs));
       split_pgs.clear();
     }
