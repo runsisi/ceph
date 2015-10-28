@@ -464,16 +464,27 @@ bool pg_t::is_split(unsigned old_pg_num, unsigned new_pg_num, set<pg_t> *childre
 
   bool split = false;
   if (true) {
-    int old_bits = pg_pool_t::calc_bits_of(old_pg_num);
+    int old_bits = pg_pool_t::calc_bits_of(old_pg_num); // how many bits to reprensent old_pg_num
     int old_mask = (1 << old_bits) - 1;
     for (int n = 1; ; n++) {
       int next_bit = (n << (old_bits-1));
+      // old_pg_num = 7
+      // ====>
+      // old_bits = 3, old_mask = 7
+      // s = (1,2,3,4...) << 2 | m_seed
+      
+      // old_pg_num = 8
+      // ====> 
+      // old_bits = 4, old_mask = 15
+      // s = (1,2,3,4...) << 3 | m_seed      
       unsigned s = next_bit | m_seed;
 
       if (s < old_pg_num || s == m_seed)
 	continue;
       if (s >= new_pg_num)
 	break;
+      // ensure pg s is splitting from us, if this test is removed, then the same pg
+      // s may be splitted from multiple parent pgs
       if ((unsigned)ceph_stable_mod(s, old_pg_num, old_mask) == m_seed) {
 	split = true;
 	if (children)

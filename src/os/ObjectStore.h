@@ -1615,6 +1615,7 @@ public:
 	                      NULL, NULL, TrackedOpRef(), handle);
   }
 
+  // _three_ Context* parameters, outmost interface
   int queue_transaction(Sequencer *osr, Transaction *t, Context *onreadable, Context *ondisk=0,
 				Context *onreadable_sync=0,
 				TrackedOpRef op = TrackedOpRef(),
@@ -1625,6 +1626,7 @@ public:
 	                      op, handle);
   }
 
+  // _three_ Context* parameters' version
   int queue_transactions(Sequencer *osr, list<Transaction*>& tls,
 			 Context *onreadable, Context *ondisk=0,
 			 Context *onreadable_sync=0,
@@ -1637,12 +1639,13 @@ public:
     return queue_transactions(osr, tls, op, handle);
   }
 
+  // ObjectStore backend will implement this
   virtual int queue_transactions(
     Sequencer *osr, list<Transaction*>& tls,
     TrackedOpRef op = TrackedOpRef(),
     ThreadPool::TPHandle *handle = NULL) = 0;
 
-
+  // _four_ Context* parameters' version, it calls three Context* parameters' version above
   int queue_transactions(
     Sequencer *osr,
     list<Transaction*>& tls,
@@ -1652,6 +1655,7 @@ public:
     Context *oncomplete,
     TrackedOpRef op);
 
+  // _four_ Context* parameters, outmost interface
   int queue_transaction(
     Sequencer *osr,
     Transaction* t,

@@ -354,6 +354,8 @@ void OSDService::init_splits_between(spg_t pgid,
 {
   // First, check whether we can avoid this potentially expensive check
   if (tomap->have_pg_pool(pgid.pool()) &&
+      // ensure there are child pg(s) are splitting from us, if not the case, then
+      // nothing has to be done
       pgid.is_split(
 	frommap->get_pg_num(pgid.pool()),
 	tomap->get_pg_num(pgid.pool()),
@@ -374,10 +376,14 @@ void OSDService::init_splits_between(spg_t pgid,
 	if (i->is_split(curmap->get_pg_num(i->pool()),
 			nextmap->get_pg_num(i->pool()),
 			&split_pgs)) {
+          // update child -> parent (pending_splits) and
+          // parent -> [children] (rev_pending_splits) relationships
 	  start_split(*i, split_pgs);
+          // children may split at next osdmap epoch
 	  even_newer_pgs.insert(split_pgs.begin(), split_pgs.end());
 	}
       }
+      // prepare for next epoch's split 
       new_pgs.insert(even_newer_pgs.begin(), even_newer_pgs.end());
       curmap = nextmap;
     }
@@ -6518,6 +6524,8 @@ void OSD::handle_osd_map(MOSDMap *m)
     _t,
     new C_OnMapApply(&service, _t, pinned_maps, osdmap->get_epoch()),
     0, 0);
+
+  // update superblock in service
   service.publish_superblock(superblock);
 
   map_lock.put_write();
@@ -6760,6 +6768,9 @@ void OSD::consume_map()
         //pool is deleted!
         to_remove.push_back(PGRef(pg));
       } else {
+        // if new map have a larger pg_num than old map, then pg split may
+        // occur on this pg, thus update service.pending_splits and 
+        // service.rev_pending_splits (in reverse order)
         service.init_splits_between(it->first, service.get_osdmap(), osdmap);
       }
 
@@ -6767,6 +6778,7 @@ void OSD::consume_map()
     }
   }
 
+  // remove pgs that the pool has been deleted
   for (list<PGRef>::iterator i = to_remove.begin();
        i != to_remove.end();
        to_remove.erase(i++)) {
@@ -6779,8 +6791,13 @@ void OSD::consume_map()
 
   service.expand_pg_num(service.get_osdmap(), osdmap);
 
+  // update next_osdmap in service
   service.pre_publish_map(osdmap);
+
+  // wait until no one reserves a map before next_osdmap's epoch
   service.await_reserved_maps();
+
+  // update osdmap in service
   service.publish_map(osdmap);
 
   dispatch_sessions_waiting_on_map();
@@ -6818,6 +6835,7 @@ void OSD::consume_map()
         ++it) {
       PG *pg = it->second;
       pg->lock();
+      // queue a CephPeeringEvtRef event into peering_queue, and queue us into peering_wq
       pg->queue_null(osdmap->get_epoch(), osdmap->get_epoch());
       pg->unlock();
     }
