@@ -1974,7 +1974,13 @@ int OSD::init()
   peering_wq.drain();
 
   dout(0) << "done with init, starting boot process" << dendl;
+
+  // state is initialized to STATE_INITIALIZING in OSD's ctor,
+  // then in OSD::handle_osd_map, state will be changed to STATE_ACTIVE if
+  // everything's ok and we are in booting state
   set_state(STATE_BOOTING);
+
+  // send MMonGetVersion to mon to get osdmap version info
   start_boot();
 
   return 0;
@@ -5487,11 +5493,16 @@ bool OSD::ms_dispatch(Message *m)
 void OSD::dispatch_session_waiting(Session *session, OSDMapRef osdmap)
 {
   assert(session->session_dispatch_lock.is_locked());
+  // update_waiting_for_pg has updated session->osdmap to osdmap
   assert(session->osdmap == osdmap);
+
+  // if the new map has a epoch the same as or newer than the op required,
+  // then we can handle this op
   for (list<OpRequestRef>::iterator i = session->waiting_on_map.begin();
        i != session->waiting_on_map.end() && dispatch_op_fast(*i, osdmap);
        session->waiting_on_map.erase(i++));
 
+  // update OSD::session_waiting_for_map, remove or register the session
   if (session->waiting_on_map.empty()) {
     clear_session_waiting_on_map(session);
   } else {
@@ -5508,6 +5519,7 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
     return;
   }
 
+  // the new osdmap is not newer than the osdmap that the session has
   if (newmap->get_epoch() == session->osdmap->get_epoch())
     return;
 
@@ -5529,12 +5541,16 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
 	    session->osdmap->get_pg_num(i->first.pool()),
 	    newmap->get_pg_num(i->first.pool()),
 	    &children)) {
+	// pg is splitting
 	for (set<spg_t>::iterator child = children.begin();
 	     child != children.end();
 	     ++child) {
 	  unsigned split_bits = child->get_split_bits(
 	    newmap->get_pg_num(child->pool()));
+
+          // some ops may need to be redirected to child pg
 	  list<OpRequestRef> child_ops;
+          // each op may keep on parent pg or move to child pg (only op of CEPH_MSG_OSD_OP)
 	  OSD::split_list(&i->second, &child_ops, child->ps(), split_bits);
 	  if (!child_ops.empty()) {
 	    session->waiting_for_pg[*child].swap(child_ops);
@@ -5543,6 +5559,8 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
 	}
       }
     }
+    // if parent pg has no op left, then remove session from OSD::session_waiting_on_pg,
+    // else add remaining ops onto session->waiting_for_pg
     if (i->second.empty()) {
       clear_session_waiting_on_pg(session, i->first);
     } else {
@@ -5550,6 +5568,7 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
     }
   }
 
+  // session got new osdmap
   session->osdmap = newmap;
 }
 
@@ -5578,13 +5597,34 @@ void OSD::session_notify_pg_cleared(
   clear_session_waiting_on_pg(session, pgid);
 }
 
+// for OSD, only those messages below are fast dispatch allowed:
+/*
+        case CEPH_MSG_OSD_OP:
+        case MSG_OSD_SUBOP:
+        case MSG_OSD_REPOP:
+        case MSG_OSD_SUBOPREPLY:
+        case MSG_OSD_REPOPREPLY:
+        case MSG_OSD_PG_PUSH:
+        case MSG_OSD_PG_PULL:
+        case MSG_OSD_PG_PUSH_REPLY:
+        case MSG_OSD_PG_SCAN:
+        case MSG_OSD_PG_BACKFILL:
+        case MSG_OSD_EC_WRITE:
+        case MSG_OSD_EC_WRITE_REPLY:
+        case MSG_OSD_EC_READ:
+        case MSG_OSD_EC_READ_REPLY:
+        case MSG_OSD_REP_SCRUB:
+*/
 void OSD::ms_fast_dispatch(Message *m)
 {
   if (service.is_stopping()) {
     m->put();
     return;
   }
+
+  // allocate an OpRequest, op->request = m
   OpRequestRef op = op_tracker.create_request<OpRequest>(m);
+  
   {
 #ifdef WITH_LTTNG
     osd_reqid_t reqid = op->get_reqid();
@@ -5592,17 +5632,41 @@ void OSD::ms_fast_dispatch(Message *m)
     tracepoint(osd, ms_fast_dispatch, reqid.name._type,
         reqid.name._num, reqid.tid, reqid.inc);
   }
+  
+  // register reservation in service.map_reservations
+  // service.pre_publish_map in consume_map always updates service.next_osdmap,
+  // so service.next_osdmap is guaranted to be initialized before osd transits to 
+  // STATE_ACTIVE (osd can be transit to STATE_ACTIVE only after handled the 
+  // first osdmap)??? need more work here!!!
   OSDMapRef nextmap = service.get_nextmap_reserved();
+
+  // get session connected with this connection
+  // osd sessions are set to con->priv in ms_handle_fast_connect and ms_handle_fast_accept
+  // on mon side, sessions are always check in _ms_dispatch, if no sesssion then create one
+  // currently only OSD implemented ms_handle_fast_connect and ms_handle_fast_accept, 
+  // OSD use this to handle connect to peer OSD or accept peer OSD
   Session *session = static_cast<Session*>(m->get_connection()->get_priv());
+  // if no session exists, then do nothing
   if (session) {
     {
       Mutex::Locker l(session->session_dispatch_lock);
+      // if pg splits on this new map, then old ops may move from parent pg to
+      // child pg (only op of CEPH_MSG_OSD_OP), so we need to update
+      // session->waiting_for_pg and OSD::session_waiting_on_pg
       update_waiting_for_pg(session, nextmap);
+      
+      // append this newly accepted op to list<OpRequestRef>
       session->waiting_on_map.push_back(op);
+
+      // with this new map, call dispatch_op_fast to handle ops on session->waiting_op_map,
+      // if there are still op(s) can not be handled, then register this session on
+      // OSD::session_waiting_for_map (if not already registered)
       dispatch_session_waiting(session, nextmap);
     }
     session->put();
   }
+
+  // release reservation from service.map_reservations 
   service.release_map(nextmap);
 }
 
@@ -5614,6 +5678,10 @@ void OSD::ms_fast_preprocess(Message *m)
       Session *s = static_cast<Session*>(m->get_connection()->get_priv());
       if (s) {
 	s->received_map_lock.Lock();
+        // this field will be used in OSD::dispatch_op_fast to determine if
+        // we need to initiate a osdmap_subscribe, MOSDMap contains
+        // maps and incremental_maps in it, mm->get_last will return the
+        // biggest epoch
 	s->received_map_epoch = mm->get_last();
 	s->received_map_lock.Unlock();
 	s->put();
@@ -5825,13 +5893,18 @@ bool OSD::dispatch_op_fast(OpRequestRef& op, OSDMapRef& osdmap)
   }
 
   epoch_t msg_epoch(op_required_epoch(op));
+
+  // peer has newer osdmap, we need to get a new map before to handle this op
   if (msg_epoch > osdmap->get_epoch()) {
     Session *s = static_cast<Session*>(op->get_req()->
 				       get_connection()->get_priv());
     if (s) {
       s->received_map_lock.Lock();
+      // this field is updated in OSD::ms_fast_preprocess, which represents
+      // the last osdmap epoch the session has ever received
       epoch_t received_epoch = s->received_map_epoch;
       s->received_map_lock.Unlock();
+      // we have not initiated before, so subsribe the new osdmap
       if (received_epoch < msg_epoch) {
 	osdmap_subscribe(msg_epoch, false);
       }
@@ -5840,6 +5913,7 @@ bool OSD::dispatch_op_fast(OpRequestRef& op, OSDMapRef& osdmap)
     return false;
   }
 
+  // ok, we have the same or newer osdmap, do it
   switch(op->get_req()->get_type()) {
   // client ops
   case CEPH_MSG_OSD_OP:
@@ -6545,6 +6619,7 @@ void OSD::handle_osd_map(MOSDMap *m)
     dout(10) << " not yet active; waiting for peering wq to drain" << dendl;
     peering_wq.drain();
   } else {
+    // all map epoch consumed
     activate_map();
   }
 

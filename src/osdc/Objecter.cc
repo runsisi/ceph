@@ -861,6 +861,11 @@ void Objecter::_do_watch_notify(LingerOp *info, MWatchNotify *m)
   _linger_callback_finish();
 }
 
+// for Objecter, only those messages below are fast dispatch allowed:
+/*
+        case CEPH_MSG_OSD_OPREPLY:
+        case CEPH_MSG_WATCH_NOTIFY:
+*/
 bool Objecter::ms_dispatch(Message *m)
 {
   ldout(cct, 10) << __func__ << " " << cct << " " << *m << dendl;

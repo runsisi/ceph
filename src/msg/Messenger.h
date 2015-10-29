@@ -639,6 +639,9 @@ public:
       (*p)->ms_handle_fast_connect(con);
   }
 
+  // currently only OSD implemented ms_handle_fast_connect and ms_handle_fast_accept, 
+  // OSD use this to handle connect to peer OSD or accept peer OSD
+
   /**
    * Notify each Dispatcher of a new incomming Connection. Call
    * this function whenever a new Connection is accepted.

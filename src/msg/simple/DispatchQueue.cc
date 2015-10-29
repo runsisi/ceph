@@ -56,6 +56,8 @@ uint64_t DispatchQueue::pre_dispatch(Message *m)
 
 void DispatchQueue::post_dispatch(Message *m, uint64_t msize)
 {
+  // Pipe::read_message calls msgr->dispatch_throttler.get to reserve space in
+  // the msgr's dispatch_throttler
   msgr->dispatch_throttle_release(msize);
   ldout(cct,20) << "done calling dispatch on " << m << dendl;
 }
@@ -181,8 +183,13 @@ void DispatchQueue::entry()
 	  ldout(cct,10) << " stop flag set, discarding " << m << " " << *m << dendl;
 	  m->put();
 	} else {
+	  // get dispatch_throttle_size for m
 	  uint64_t msize = pre_dispatch(m);
+          
+          // dispatch the message to a dispatcher that can handle it
 	  msgr->ms_deliver_dispatch(m);
+          
+          // release reserved space in the msgr's dispatch_throttler
 	  post_dispatch(m, msize);
 	}
       }

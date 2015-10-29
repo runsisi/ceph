@@ -1662,6 +1662,8 @@ void Pipe::reader()
         }
         delay_thread->queue(release, m);
       } else {
+        // in_q is a pointer point to SimpleMessenger::dispatch_queue, 
+        // so in_q->can_fast_dispatch simply calls into msgr->ms_can_fast_dispatch
         if (in_q->can_fast_dispatch(m)) {
 	  reader_dispatching = true;
           pipe_lock.Unlock();
@@ -1674,6 +1676,8 @@ void Pipe::reader()
 	    cond.Signal();
 	  }
         } else {
+          // if not fast dispatch capable, enqueue to in_q (SimpleMessenger::dispatch_queue), 
+          // and DispatchThread in in_q will dispatch it
           in_q->enqueue(m, m->get_priority(), conn_id);
         }
       }
