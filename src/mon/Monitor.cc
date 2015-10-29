@@ -4163,6 +4163,7 @@ void Monitor::handle_subscribe(MonOpRequestRef op)
 
   // ???
 
+  // g_conf->mon_subscribe_interval default is 300
   if (reply)
     m->get_connection()->send_message(new MMonSubscribeAck(monmap->get_fsid(), (int)g_conf->mon_subscribe_interval));
 

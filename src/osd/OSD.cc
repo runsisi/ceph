@@ -5472,6 +5472,7 @@ bool OSD::ms_dispatch(Message *m)
     return true;
   }
 
+  // OSD::tick may be dispatching
   while (dispatch_running) {
     dout(10) << "ms_dispatch waiting for other dispatch thread to complete" << dendl;
     dispatch_cond.Wait(osd_lock);
@@ -6886,7 +6887,11 @@ void OSD::consume_map()
   // update next_osdmap in service
   service.pre_publish_map(osdmap);
 
-  // wait until no one reserves a map before next_osdmap's epoch
+  // wait until no one reserves a map before next_osdmap's epoch,
+  // OSD::ms_fast_dispatch, OSDService::send_message_osd_cluster,
+  // OSDService::get_con_osd_cluster and OSDService::get_con_osd_hb all call
+  // OSDService::get_nextmap_reserved to reserve service.next_osdmap, but
+  // they all release their reservation every quickly before they return
   service.await_reserved_maps();
 
   // update osdmap in service

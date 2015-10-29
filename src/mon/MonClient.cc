@@ -702,7 +702,8 @@ void MonClient::tick()
   ldout(cct, 10) << "tick" << dendl;
 
   _check_auth_tickets();
-  
+
+  // if after a tick we are still hunting for mon, then try another random mon
   if (hunting) {
     ldout(cct, 1) << "continuing hunt" << dendl;
     _reopen_session();
@@ -713,6 +714,7 @@ void MonClient::tick()
 		   << "; renew after: " << sub_renew_after << ") -- " 
 		   << (now > sub_renew_after ? "yes" : "no") 
 		   << dendl;
+    // time to renew subscribe
     if (now > sub_renew_after)
       _renew_subs();
 
@@ -740,14 +742,17 @@ void MonClient::tick()
 void MonClient::schedule_tick()
 {
   if (hunting)
+    // mon_client_hunt_interval default is 3.0
     timer.add_event_after(cct->_conf->mon_client_hunt_interval
                           * reopen_interval_multiplier, new C_Tick(this));
   else
+    // mon_client_ping_interval default is 10.0
     timer.add_event_after(cct->_conf->mon_client_ping_interval, new C_Tick(this));
 }
 
 // ---------
 
+// MonClient::_reopen_session and MonClient::tick will call this procedure
 void MonClient::_renew_subs()
 {
   assert(monc_lock.is_locked());
@@ -773,10 +778,12 @@ void MonClient::handle_subscribe_ack(MMonSubscribeAck *m)
 {
   if (sub_renew_sent != utime_t()) {
     sub_renew_after = sub_renew_sent;
+    // m->interval is set by mon, default is 300
     sub_renew_after += m->interval / 2.0;
     ldout(cct, 10) << "handle_subscribe_ack sent " << sub_renew_sent << " renew after " << sub_renew_after << dendl;
     sub_renew_sent = utime_t();
   } else {
+    // we have never initiated a subscribe renew request
     ldout(cct, 10) << "handle_subscribe_ack sent " << sub_renew_sent << ", ignoring" << dendl;
   }
 

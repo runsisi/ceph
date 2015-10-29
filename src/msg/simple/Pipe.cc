@@ -579,6 +579,8 @@ int Pipe::accept()
 
       assert(connect.connect_seq > existing->connect_seq);
       assert(connect.global_seq >= existing->peer_global_seq);
+
+      // policy.resetcheck only true for mon->mon, mds->client and fuse->mds
       if (policy.resetcheck &&   // RESETSESSION only used by servers; peers do not reset each other
 	  existing->connect_seq == 0) {
 	ldout(msgr->cct,0) << "accept we reset (peer sent cseq " << connect.connect_seq 
@@ -1376,7 +1378,13 @@ void Pipe::fault(bool onread)
     // disconnect from Connection, and mark it failed.  future messages
     // will be dropped.
     assert(connection_state);
+
+    // change state to STATE_CLOSED, signal others that we stopped,
+    // and shutdown socket
     stop();
+
+    // if the pipe is used by pipeconnection, then clear the pipe, and
+    // mark the pipeconnection has failed
     bool cleared = connection_state->clear_pipe(this);
 
     // crib locks, blech.  note that Pipe is now STATE_CLOSED and the
@@ -1392,6 +1400,8 @@ void Pipe::fault(bool onread)
 
     msgr->lock.Lock();
     pipe_lock.Lock();
+    // unregister this pipe from msgr->rank_pipe or msgr->accepting_pipes,
+    // for pipe its msgr always point to a SimpleMessenger
     unregister_pipe();
     msgr->lock.Unlock();
 
@@ -1399,6 +1409,9 @@ void Pipe::fault(bool onread)
       delay_thread->discard();
     in_q->discard_queue(conn_id);
     discard_out_queue();
+
+    // the pipe of the pipeconnection has been reset, i.e. socket channel has
+    // been broken for this connection
     if (cleared)
       msgr->dispatch_queue.queue_reset(connection_state.get());
     return;
@@ -1411,6 +1424,7 @@ void Pipe::fault(bool onread)
   // requeue sent items
   requeue_sent();
 
+  // policy.standby only true for mon->mon and osd.ms_cluster->osd
   if (policy.standby && !is_queued()) {
     ldout(msgr->cct,0) << "fault with nothing to send, going to standby" << dendl;
     state = STATE_STANDBY;
@@ -1721,6 +1735,7 @@ void Pipe::writer()
 			<< " policy.server=" << policy.server << dendl;
 
     // standby?
+    // new data to send, we need to initiate the connect again
     if (is_queued() && state == STATE_STANDBY && !policy.server)
       state = STATE_CONNECTING;
 
