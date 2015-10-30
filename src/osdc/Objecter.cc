@@ -1121,6 +1121,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
 	  if (!osdmap->is_up(s->osd) ||
 	      (s->con &&
 	       s->con->get_peer_addr() != osdmap->get_inst(s->osd).addr)) {
+	    // markdown s->con and assign ops to homeless_ops
 	    close_session(s);
 	  }
 	}
@@ -1891,6 +1892,7 @@ void Objecter::schedule_tick()
   Mutex::Locker l(timer_lock);
   assert(tick_event == NULL);
   tick_event = new C_Tick(this);
+  // objecter_tick_interval default is 5.0
   timer.add_event_after(cct->_conf->objecter_tick_interval, tick_event);
 }
 
@@ -1957,6 +1959,8 @@ void Objecter::tick()
       toping.insert(s);
   }
   if (num_homeless_ops.read() || !toping.empty()) {
+    // if we have not subscribe osdmap yet, then subscribe it, and let monc to
+    // renew our subscribe
     _maybe_request_map();
   }
 
@@ -4097,10 +4101,14 @@ void Objecter::ms_handle_connect(Connection *con)
 
 bool Objecter::ms_handle_reset(Connection *con)
 {
+  // initialized is set in Objecter::init
   if (!initialized.read())
     return false;
+
+  // MonClient::ms_handle_reset will handle reset with CEPH_ENTITY_TYPE_MON
   if (con->get_peer_type() == CEPH_ENTITY_TYPE_OSD) {
-    //
+    // connection to osd is reset, we need to resend ops, before we resend them,
+    // Objecter::_reopen_session will reopen the connection
     int osd = osdmap->identify_osd(con->get_peer_addr());
     if (osd >= 0) {
       ldout(cct, 1) << "ms_handle_reset on osd." << osd << dendl;
@@ -4114,11 +4122,15 @@ bool Objecter::ms_handle_reset(Connection *con)
 	OSDSession *session = p->second;
         map<uint64_t, LingerOp *> lresend;
         session->lock.get_write();
+        // reconnect to target osd
 	_reopen_session(session);
 	_kick_requests(session, lresend);
         session->lock.unlock();
         _linger_ops_resend(lresend);
         rwlock.unlock();
+        // if the target osd restarted, our _reopen_session will hang in
+        // Pipe::connect (if msgr is SimpleMessenger) cause the osd's address has
+        // been changed, so we request a recent osdmap as soon as possible
 	maybe_request_map();
       } else {
         rwlock.unlock();

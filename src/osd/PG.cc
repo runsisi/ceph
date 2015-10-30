@@ -5228,6 +5228,7 @@ void PG::handle_peering_event(CephPeeringEvtRef evt, RecoveryCtx *rctx)
 {
   dout(10) << "handle_peering_event: " << evt->get_desc() << dendl;
   if (!have_same_or_newer_map(evt->get_epoch_sent())) {
+    // this pg has older osdmap than evt
     dout(10) << "deferring event " << evt->get_desc() << dendl;
     peering_waiters.push_back(evt);
     return;
@@ -5239,12 +5240,17 @@ void PG::handle_peering_event(CephPeeringEvtRef evt, RecoveryCtx *rctx)
 
 void PG::queue_peering_event(CephPeeringEvtRef evt)
 {
+  // last_peering_reset is larger than either evt.epoch_requested 
+  // or evt.epoch_sent, which means this peering event is useless now
   if (old_peering_evt(evt))
     return;
   peering_queue.push_back(evt);
   osd->queue_for_peering(this);
 }
 
+// only called in OSD::add_newly_split_pg, OSD::handle_pg_peering_evt and
+// OSD::consume_map, they all call it with msg_epoch == query_epoch, so
+// CephPeeringEvt always have the members epoch_requested == epoch_sent 
 void PG::queue_null(epoch_t msg_epoch,
 		    epoch_t query_epoch)
 {

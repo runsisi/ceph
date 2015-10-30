@@ -4436,6 +4436,9 @@ bool OSD::ms_handle_reset(Connection *con)
 {
   OSD::Session *session = (OSD::Session *)con->get_priv();
   dout(1) << "ms_handle_reset con " << con << " session " << session << dendl;
+
+  // if no session attached on this connection, no upper layer resource need to cleanup,
+  // and lower layer's resource is release by msgr
   if (!session)
     return false;
   session->wstate.reset();
@@ -5635,10 +5638,12 @@ void OSD::ms_fast_dispatch(Message *m)
   }
   
   // register reservation in service.map_reservations
-  // service.pre_publish_map in consume_map always updates service.next_osdmap,
-  // so service.next_osdmap is guaranted to be initialized before osd transits to 
-  // STATE_ACTIVE (osd can be transit to STATE_ACTIVE only after handled the 
-  // first osdmap)??? need more work here!!!
+  // service.next_osdmap is first initialized in service.pre_publish_map 
+  // in OSD::handle_osd_map (before consume_map), client will not know our
+  // address until we appeared in the osdmap (old clients with our old
+  // address will fail to connect to us until they get the new osdmap),
+  // (osd can be transit to STATE_ACTIVE only after handled the 
+  // first osdmap)
   OSDMapRef nextmap = service.get_nextmap_reserved();
 
   // get session connected with this connection
@@ -6493,7 +6498,8 @@ void OSD::handle_osd_map(MOSDMap *m)
 	note_down_osd(*p);
       }
     }
-    
+
+    // finially, this will be the newest osdmap
     osdmap = newmap;
 
     superblock.current_epoch = cur;
@@ -6611,6 +6617,7 @@ void OSD::handle_osd_map(MOSDMap *m)
   check_osdmap_features(store);
 
   // yay!
+  // we only consume the map of the last epoch
   consume_map();
 
   if (is_active() || is_waiting_for_healthy())
@@ -6632,6 +6639,7 @@ void OSD::handle_osd_map(MOSDMap *m)
     start_boot();  // retry
   }
   else if (do_restart)
+    // monc send MMonGetVersion to get osdmap version info
     start_boot();
 
   osd_lock.Unlock();
@@ -6970,6 +6978,7 @@ void OSD::activate_map()
     }
   }
 
+  // wakeup the eiering agent
   service.activate_map();
 
   // process waiters

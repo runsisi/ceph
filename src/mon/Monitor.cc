@@ -4221,6 +4221,7 @@ bool Monitor::ms_handle_reset(Connection *con)
     return false;
 
   MonSession *s = static_cast<MonSession *>(con->get_priv());
+  // no session, no upper layer resource need to cleanup
   if (!s)
     return false;
 
