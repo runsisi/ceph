@@ -35,13 +35,18 @@
 
 using namespace std;
 
+// keyring: a file can be generated or decoded with ceph-auth-tool
+// key: a base64 encoded string which contains (auid + timestamp + secret)
+// keyfile: a file contains a key
 int KeyRing::from_ceph_context(CephContext *cct)
 {
   const md_config_t *conf = cct->_conf;
   string filename;
 
+  // conf->keyring may be a file path list, get the first file that can be opened
   int ret = ceph_resolve_file_search(conf->keyring, filename);
   if (!ret) {
+    // decode keyring file to get a map<EntityName, EntityAuth> map
     ret = load(cct, filename);
     if (ret < 0)
       lderr(cct) << "failed to load " << filename
@@ -52,7 +57,7 @@ int KeyRing::from_ceph_context(CephContext *cct)
   }
 
   if (!conf->key.empty()) {
-    EntityAuth ea;
+    EntityAuth ea;      // auid + key (type + timestamp + secret) + caps
     try {
       ea.key.decode_base64(conf->key);
       add(conf->name, ea);
@@ -64,6 +69,7 @@ int KeyRing::from_ceph_context(CephContext *cct)
     }
   }
 
+  // keyfile is a file contains a key (type + timestamp + secret) encoded in base64
   if (!conf->keyfile.empty()) {
     bufferlist bl;
     string err;
@@ -102,10 +108,12 @@ int KeyRing::set_modifier(const char *type, const char *val, EntityName& name, m
     CryptoKey key;
     string l(val);
     try {
+      // key is base64 encoded, it is comprised of (type + timestamp + secret)
       key.decode_base64(l);
     } catch (const buffer::error& err) {
       return -EINVAL;
     }
+    // update EntityAuth::key of map<EntityName, EntityAuth> map
     set_key(name, key);
   } else if (strncmp(type, "caps ", 5) == 0) {
     const char *caps_entity = type + 5;
@@ -115,9 +123,11 @@ int KeyRing::set_modifier(const char *type, const char *val, EntityName& name, m
       bufferlist bl;
       ::encode(l, bl);
       caps[caps_entity] = bl;
+      // update EntityAuth::caps of map<EntityName, EntityAuth> map
       set_caps(name, caps);
   } else if (strcmp(type, "auid") == 0) {
     uint64_t auid = strtoull(val, NULL, 0);
+    // update EntityAuth::auid of map<EntityName, EntityAuth> map
     set_uid(name, auid);
   } else
     return -EINVAL;
@@ -176,11 +186,17 @@ void KeyRing::decode_plaintext(bufferlist::iterator& bli)
     throw buffer::malformed_input("cannot parse buffer");
   }
 
+  // iterate every section
   for (ConfFile::const_section_iter_t s = cf.sections_begin();
 	    s != cf.sections_end(); ++s) {
     string name = s->first;
     if (name == "global")
       continue;
+
+    // a ConfSection is like this:
+    // [client.admin]
+    //        key = xxxxxxxxxxxx
+    //        xxx = xxxxx
 
     EntityName ename;
     map<string, bufferlist> caps;
@@ -190,12 +206,15 @@ void KeyRing::decode_plaintext(bufferlist::iterator& bli)
       throw buffer::malformed_input(oss.str().c_str());
     }
 
+    // iterate every "aaa = bbb" line
     for (ConfSection::const_line_iter_t l = s->second.lines.begin();
 	 l != s->second.lines.end(); ++l) {
+      
       if (l->key.empty())
         continue;
       string k(l->key);
       std::replace(k.begin(), k.end(), '_', ' ');
+      // update map<EntityName, EntityAuth> map
       ret = set_modifier(k.c_str(), l->val.c_str(), ename, caps);
       if (ret < 0) {
 	ostringstream oss;
@@ -211,10 +230,12 @@ void KeyRing::decode(bufferlist::iterator& bl) {
   __u8 struct_v;
   bufferlist::iterator start_pos = bl;
   try {
+    // binary encoded
     ::decode(struct_v, bl);
     ::decode(keys, bl);
   } catch (buffer::error& err) {
     keys.clear();
+    // or in plain text
     decode_plaintext(start_pos);
   }
 }
@@ -226,6 +247,7 @@ int KeyRing::load(CephContext *cct, const std::string &filename)
 
   bufferlist bl;
   std::string err;
+  // read file content into bufferlist
   int ret = bl.read_file(filename.c_str(), &err);
   if (ret < 0) {
     lderr(cct) << "error reading file: " << filename << ": " << err << dendl;
@@ -233,6 +255,8 @@ int KeyRing::load(CephContext *cct, const std::string &filename)
   }
 
   try {
+    // decode keyring file which may be binary encoded or in plain text to
+    // get a map<EntityName, EntityAuth> map
     bufferlist::iterator iter = bl.begin();
     decode(iter);
   }

@@ -395,6 +395,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       if (entity_name.get_type() == CEPH_ENTITY_TYPE_MON ||
 	  entity_name.get_type() == CEPH_ENTITY_TYPE_OSD ||
 	  entity_name.get_type() == CEPH_ENTITY_TYPE_MDS) {
+	// require on daemons
 	if (g_conf->cephx_cluster_require_signatures ||
 	    g_conf->cephx_require_signatures) {
 	  dout(1) << m->get_source_inst()
@@ -404,6 +405,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 	  supported.erase(CEPH_AUTH_CEPHX);
 	}
       } else {
+        // require on client
 	if (g_conf->cephx_service_require_signatures ||
 	    g_conf->cephx_require_signatures) {
 	  dout(1) << m->get_source_inst()
@@ -419,8 +421,11 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
     if (entity_name.get_type() == CEPH_ENTITY_TYPE_MON ||
 	entity_name.get_type() == CEPH_ENTITY_TYPE_OSD ||
 	entity_name.get_type() == CEPH_ENTITY_TYPE_MDS)
+      // daemons authenticate with each other
       type = mon->auth_cluster_required.pick(supported);
     else
+      // daemons require clients to authenticate with the cluster in order 
+      // to access ceph services
       type = mon->auth_service_required.pick(supported);
 
     s->auth_handler = get_auth_service_handler(type, g_ceph_context, &mon->key_server);

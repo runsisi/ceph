@@ -368,9 +368,14 @@ int MonClient::init()
     else if (entity_name.get_type() == CEPH_ENTITY_TYPE_OSD ||
              entity_name.get_type() == CEPH_ENTITY_TYPE_MDS ||
              entity_name.get_type() == CEPH_ENTITY_TYPE_MON)
+      // daemons authenticate with each other
       method = cct->_conf->auth_cluster_required;
     else
+      // client requires the cluster to authenticate with the client
       method = cct->_conf->auth_client_required;
+
+  // auth methods we support and require one of them, this field will
+  // be used in MonClient::_reopen_session to construct the MAuth message
   auth_supported = new AuthMethodList(cct, method);
   ldout(cct, 10) << "auth_supported " << auth_supported->get_supported_set() << " method " << method << dendl;
 
@@ -378,8 +383,10 @@ int MonClient::init()
   keyring = new KeyRing; // initializing keyring anyway
 
   if (auth_supported->is_supported_auth(CEPH_AUTH_CEPHX)) {
+    // get my keyring, actually it is a map<EntityName, EntityAuth> map
     r = keyring->from_ceph_context(cct);
     if (r == -ENOENT) {
+      // we remove that we do not support
       auth_supported->remove_supported_auth(CEPH_AUTH_CEPHX);
       if (!auth_supported->get_supported_set().empty()) {
 	r = 0;
@@ -483,6 +490,9 @@ void MonClient::handle_auth(MAuthReply *m)
 {
   Context *cb = NULL;
   bufferlist::iterator p = m->result_bl.begin();
+
+  // state initialized to MC_STATE_NONE in MonClinet's ctor and set 
+  // to MC_STATE_NEGOTIATING in MonClient::_reopen_session
   if (state == MC_STATE_NEGOTIATING) {
     if (!auth || (int)m->protocol != auth->get_protocol()) {
       delete auth;
@@ -500,6 +510,7 @@ void MonClient::handle_auth(MAuthReply *m)
       }
       auth->set_want_keys(want_keys);
       auth->init(entity_name);
+      // at this moment this must be 0, because we initialized it to 0 in MonClient's ctor
       auth->set_global_id(global_id);
     } else {
       auth->reset();
@@ -507,6 +518,8 @@ void MonClient::handle_auth(MAuthReply *m)
     state = MC_STATE_AUTHENTICATING;
   }
   assert(auth);
+
+  // AuthMonitor will call AuthMonitor::assign_global_id to get a global id and send to us
   if (m->global_id && m->global_id != global_id) {
     global_id = m->global_id;
     auth->set_global_id(global_id);
@@ -610,6 +623,7 @@ void MonClient::_reopen_session(int rank, string name)
   }
 
   if (cur_con) {
+    // initiate a remove pipe action (for simple msgr)
     cur_con->mark_down();
   }
   cur_con = messenger->get_connection(monmap.get_inst(cur_mon));
@@ -654,6 +668,7 @@ void MonClient::_reopen_session(int rank, string name)
   m->monmap_epoch = monmap.get_epoch();
   __u8 struct_v = 1;
   ::encode(struct_v, m->auth_payload);
+  // auth_supported is initialized in MonClient::init
   ::encode(auth_supported->get_supported_set(), m->auth_payload);
   ::encode(entity_name, m->auth_payload);
   ::encode(global_id, m->auth_payload);

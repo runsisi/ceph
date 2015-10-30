@@ -628,12 +628,16 @@ void SimpleMessenger::mark_down(const entity_addr_t& addr)
     ldout(cct,1) << "mark_down " << addr << " -- " << p << dendl;
     p->unregister_pipe();
     p->pipe_lock.Lock();
+    // set state to STATE_CLOSED and shutdown socket
     p->stop();
+    
     if (p->connection_state) {
       // generate a reset event for the caller in this case, even
       // though they asked for it, since this is the addr-based (and
       // not Connection* based) interface
       PipeConnectionRef con = p->connection_state;
+      // remove pipe from connection, no socket data will be delivered between
+      // connection and socket via this pipe
       if (con && con->clear_pipe(p))
 	dispatch_queue.queue_reset(con.get());
     }
