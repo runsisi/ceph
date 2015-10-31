@@ -383,12 +383,14 @@ int MonClient::init()
   keyring = new KeyRing; // initializing keyring anyway
 
   if (auth_supported->is_supported_auth(CEPH_AUTH_CEPHX)) {
-    // get my keyring, actually it is a map<EntityName, EntityAuth> map
+    // get my keyring from keyring/key/keyfile, actually it is a 
+    // map<EntityName, EntityAuth> map
     r = keyring->from_ceph_context(cct);
     if (r == -ENOENT) {
-      // we remove that we do not support
+      // we remove the method that we do not support
       auth_supported->remove_supported_auth(CEPH_AUTH_CEPHX);
       if (!auth_supported->get_supported_set().empty()) {
+        // we still have "none" auth method
 	r = 0;
 	no_keyring_disabled_cephx = true;
       } else {
@@ -401,6 +403,17 @@ int MonClient::init()
     return r;
   }
 
+  /*
+        module types are as follows, it is initialized in CephContext's ctor
+        #define CEPH_ENTITY_TYPE_MON    0x01
+        #define CEPH_ENTITY_TYPE_MDS    0x02
+        #define CEPH_ENTITY_TYPE_OSD    0x04
+        #define CEPH_ENTITY_TYPE_CLIENT 0x08
+        #define CEPH_ENTITY_TYPE_AUTH   0x20
+
+        #define CEPH_ENTITY_TYPE_ANY    0xFF
+  */
+  // rotating_secrets->service_id is set to its module type
   rotating_secrets = new RotatingKeyRing(cct, cct->get_module_type(), keyring);
 
   initialized = true;
@@ -496,6 +509,9 @@ void MonClient::handle_auth(MAuthReply *m)
   if (state == MC_STATE_NEGOTIATING) {
     if (!auth || (int)m->protocol != auth->get_protocol()) {
       delete auth;
+
+      // rotating_secrets is initialized in MonClient::init without 
+      // its "secrets" field initialized
       auth = get_auth_client_handler(cct, m->protocol, rotating_secrets);
       if (!auth) {
 	ldout(cct, 10) << "no handler for protocol " << m->protocol << dendl;
@@ -664,6 +680,8 @@ void MonClient::_reopen_session(int rank, string name)
   cur_con->send_keepalive();
 
   MAuth *m = new MAuth;
+  // for the first MAuth, this field is always set to 0, in MonClient::handle_auth
+  // the second MAuth's protocol field will set according to the AuthMonitor's reply
   m->protocol = 0;
   m->monmap_epoch = monmap.get_epoch();
   __u8 struct_v = 1;

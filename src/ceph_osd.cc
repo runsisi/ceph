@@ -453,6 +453,7 @@ int main(int argc, const char **argv)
     new Throttle(g_ceph_context, "osd_client_messages",
 		 g_conf->osd_client_message_cap));
 
+  // supported will always be ored with CEPH_FEATURES_SUPPORTED_DEFAULT in Policy's ctor
   uint64_t supported =
     CEPH_FEATURE_UID | 
     CEPH_FEATURE_NOSRCADDR |
@@ -476,6 +477,8 @@ int main(int argc, const char **argv)
   ms_public->set_policy_throttlers(entity_name_t::TYPE_CLIENT,
 				   client_byte_throttler.get(),
 				   client_msg_throttler.get());
+
+  // osd -> mon require some features
   ms_public->set_policy(entity_name_t::TYPE_MON,
                                Messenger::Policy::lossy_client(supported,
 							       CEPH_FEATURE_UID |
@@ -487,6 +490,7 @@ int main(int argc, const char **argv)
 
   ms_cluster->set_default_policy(Messenger::Policy::stateless_server(0, 0));
   ms_cluster->set_policy(entity_name_t::TYPE_MON, Messenger::Policy::lossy_client(0,0));
+  // ms_cluter -> osd require all features 
   ms_cluster->set_policy(entity_name_t::TYPE_OSD,
 			 Messenger::Policy::lossless_peer(supported,
 							  osd_required));
@@ -500,6 +504,7 @@ int main(int argc, const char **argv)
   ms_hb_front_server->set_policy(entity_name_t::TYPE_OSD,
 				 Messenger::Policy::stateless_server(0, 0));
 
+  // ms_objecter in osd require CEPH_FEATURE_OSDREPLYMUX
   ms_objecter->set_default_policy(Messenger::Policy::lossy_client(0, CEPH_FEATURE_OSDREPLYMUX));
 
   r = ms_public->bind(g_conf->public_addr);

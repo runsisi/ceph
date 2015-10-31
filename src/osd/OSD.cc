@@ -5743,6 +5743,8 @@ bool OSD::ms_verify_authorizer(Connection *con, int peer_type,
   uint64_t global_id;
   uint64_t auid = CEPH_AUTH_UID_DEFAULT;
 
+  // monc->rotating_secrets is initialized in MonClient::init without 
+  // its secrets field initialized
   isvalid = authorize_handler->verify_authorizer(cct, monc->rotating_secrets,
 						 authorizer_data, authorizer_reply, name, global_id, caps_info, session_key, &auid);
 

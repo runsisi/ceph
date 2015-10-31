@@ -35,7 +35,8 @@
 
 using namespace std;
 
-// keyring: a file can be generated or decoded with ceph-auth-tool
+// keyring: a file can be generated or decoded with ceph-authtool, which may contains
+// multiple entities' key and cap info
 // key: a base64 encoded string which contains (auid + timestamp + secret)
 // keyfile: a file contains a key
 int KeyRing::from_ceph_context(CephContext *cct)

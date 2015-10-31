@@ -363,11 +363,15 @@ int Pipe::accept()
     }
 
     // sanitize features
+    // we should never set the 64th bit, if it is set, then this is a bug
+    // introduced when feature bits extended to the 33th bit which results
+    // 64 bit ~0, so when we see the 64th bit is set, it means the lowest 33 bits
+    // are set
     connect.features = ceph_sanitize_features(connect.features);
 
     authorizer.clear();
 
-    // for client -> mon request, this field should be 0
+    // for monc -> mon request, this field should be 0
     // for client -> osd request, this field should be non-zero
     if (connect.authorizer_len) {
       bp = buffer::create(connect.authorizer_len);
@@ -414,6 +418,7 @@ int Pipe::accept()
     }
 
     // require signatures for cephx?
+    // this is determined by AuthAuthorizer of client
     if (connect.authorizer_protocol == CEPH_AUTH_CEPHX) {
       if (peer_type == CEPH_ENTITY_TYPE_OSD ||
 	  peer_type == CEPH_ENTITY_TYPE_MDS) {
@@ -713,6 +718,7 @@ int Pipe::accept()
   if (policy.lossy)
     reply.flags = reply.flags | CEPH_MSG_CONNECT_LOSSY;
 
+  // con->features is a intersection of client's features and server's features
   connection_state->set_features((uint64_t)reply.features & (uint64_t)connect.features);
   ldout(msgr->cct,10) << "accept features " << connection_state->get_features() << dendl;
 
@@ -1008,8 +1014,8 @@ int Pipe::connect()
     delete authorizer;
     // get authorizer build from AuthClientHandler of MonCient
     // for mon -> mon, then construct a tick handler and build an authorizer
-    // for others -> mon, then return NULL
-    // for others -> others(except mon), then call monc->auth->build_authorizer to build an authorizer
+    // for others(except mon) -> mon, then return NULL
+    // for others(except mon) -> others(except mon), then call monc->auth->build_authorizer to build an authorizer
     authorizer = msgr->get_authorizer(peer_type, false);
     bufferlist authorizer_reply;
 
@@ -1023,7 +1029,7 @@ int Pipe::connect()
     connect.global_seq = gseq;
     connect.connect_seq = cseq;
     connect.protocol_version = msgr->get_proto_version(peer_type, true);
-    connect.authorizer_protocol = authorizer ? authorizer->protocol : 0;
+    connect.authorizer_protocol = authorizer ? authorizer->protocol : 0; // as stated above, when connect to mon, this field is set to 0
     connect.authorizer_len = authorizer ? authorizer->bl.length() : 0;
     if (authorizer) 
       ldout(msgr->cct,10) << "connect.authorizer_len=" << connect.authorizer_len
@@ -1198,6 +1204,8 @@ int Pipe::connect()
       connect_seq = cseq + 1;
       assert(connect_seq == reply.connect_seq);
       backoff = utime_t();
+
+      // con->features is a intersection of client's features and server's features
       connection_state->set_features((uint64_t)reply.features & (uint64_t)connect.features);
       ldout(msgr->cct,10) << "connect success " << connect_seq << ", lossy = " << policy.lossy
 	       << ", features " << connection_state->get_features() << dendl;

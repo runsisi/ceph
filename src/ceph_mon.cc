@@ -670,6 +670,7 @@ int main(int argc, const char **argv)
   msgr->set_cluster_protocol(CEPH_MON_PROTOCOL);
   msgr->set_default_send_priority(CEPH_MSG_PRIO_HIGH);
 
+  // supported will always be ored with CEPH_FEATURES_SUPPORTED_DEFAULT in Policy's ctor
   uint64_t supported =
     CEPH_FEATURE_UID |
     CEPH_FEATURE_NOSRCADDR |

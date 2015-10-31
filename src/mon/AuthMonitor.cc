@@ -358,6 +358,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
   MAuth *m = static_cast<MAuth*>(op->get_req());
   dout(10) << "prep_auth() blob_size=" << m->get_auth_payload().length() << dendl;
 
+  // session is allocated and associated with op in Monitor::_ms_dispatch
   MonSession *s = op->get_session();
   if (!s) {
     dout(10) << "no session, dropping" << dendl;
@@ -374,13 +375,14 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
   EntityName entity_name;
 
   // set up handler?
+  // for the first MAuth sent from MonClient, m->protocol is always 0
   if (m->protocol == 0 && !s->auth_handler) {
     set<__u32> supported;
 
     try {
       __u8 struct_v = 1;
       ::decode(struct_v, indata);
-      ::decode(supported, indata);
+      ::decode(supported, indata);      // peer sets what it supports
       ::decode(entity_name, indata);
       ::decode(s->global_id, indata);
     } catch (const buffer::error &e) {
@@ -389,13 +391,21 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       goto reply;
     }
 
+    // cephx_cluster_require_signatures:
+    // require signatures on all message traffic between daemons comprising the cluster
+    // cephx_service_require_signatures:
+    // require signatures on all message traffic between clients and cluster
+    // cephx_require_signatures:
+    // both cephx_cluster_require_signatures and cephx_service_require_signatures
+
     // do we require cephx signatures?
 
     if (!m->get_connection()->has_feature(CEPH_FEATURE_MSG_AUTH)) {
+      // msgr.policy of monc side or peer mon does not support CEPH_FEATURE_MSG_AUTH,
+      // so we need to remove cephx from the supported auth method list
       if (entity_name.get_type() == CEPH_ENTITY_TYPE_MON ||
 	  entity_name.get_type() == CEPH_ENTITY_TYPE_OSD ||
 	  entity_name.get_type() == CEPH_ENTITY_TYPE_MDS) {
-	// require on daemons
 	if (g_conf->cephx_cluster_require_signatures ||
 	    g_conf->cephx_require_signatures) {
 	  dout(1) << m->get_source_inst()
@@ -405,7 +415,6 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 	  supported.erase(CEPH_AUTH_CEPHX);
 	}
       } else {
-        // require on client
 	if (g_conf->cephx_service_require_signatures ||
 	    g_conf->cephx_require_signatures) {
 	  dout(1) << m->get_source_inst()
@@ -417,17 +426,24 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       }
     }
 
+    // in AuthMethodList's ctor if no auth method (CEPH_AUTH_CEPHX or CEPH_AUTH_NONE)
+    // string provided, then CEPH_AUTH_CEPHX will added to the supported auth method list
+
     int type;
     if (entity_name.get_type() == CEPH_ENTITY_TYPE_MON ||
 	entity_name.get_type() == CEPH_ENTITY_TYPE_OSD ||
 	entity_name.get_type() == CEPH_ENTITY_TYPE_MDS)
-      // daemons authenticate with each other
+      // daemons authenticate with each other, if no supported auth method 
+      // found then return CEPH_AUTH_UNKNOWN
       type = mon->auth_cluster_required.pick(supported);
     else
       // daemons require clients to authenticate with the cluster in order 
-      // to access ceph services
+      // to access ceph services, if no supported auth method 
+      // found then return CEPH_AUTH_UNKNOWN
       type = mon->auth_service_required.pick(supported);
 
+    // setup a auth service handler, if type is neither CEPH_AUTH_CEPHX 
+    // nor CEPH_AUTH_NONE then return NULL 
     s->auth_handler = get_auth_service_handler(type, g_ceph_context, &mon->key_server);
     if (!s->auth_handler) {
       dout(1) << "client did not provide supported auth type" << dendl;

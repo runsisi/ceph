@@ -3426,10 +3426,16 @@ void Monitor::_ms_dispatch(Message *m)
       return;
     }
 
+    // if this op is not associated with a seesion, then allocate one
+
     s = session_map.new_session(m->get_source_inst(), m->get_connection().get());
     assert(s);
+
+    // set this session ptr to con->priv
     m->get_connection()->set_priv(s->get());
     dout(10) << __func__ << " new session " << s << " " << *s << dendl;
+
+    // associate the op with the newly created session
     op->set_session(s);
 
     logger->set(l_mon_num_sessions, session_map.get_size());

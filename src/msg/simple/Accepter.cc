@@ -242,7 +242,8 @@ void *Accepter::entry()
     if (sd >= 0) {
       errors = 0;
       ldout(msgr->cct,10) << "accepted incoming on sd " << sd << dendl;
-      
+
+      // allocate a Pipe and insert it into SimpleMessenger::accepting_pipes
       msgr->add_accept_pipe(sd);
     } else {
       ldout(msgr->cct,0) << "accepter no incoming connection?  sd = " << sd
