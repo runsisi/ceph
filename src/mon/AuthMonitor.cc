@@ -339,7 +339,7 @@ uint64_t AuthMonitor::assign_global_id(MonOpRequestRef op, bool should_increase_
 
   // bump the max?
   while (mon->is_leader() &&
-	 (max_global_id < g_conf->mon_globalid_prealloc ||
+	 (max_global_id < g_conf->mon_globalid_prealloc ||      // default is 10000
 	  next_global_id >= max_global_id - g_conf->mon_globalid_prealloc / 2)) {
     increase_max_global_id();
   }
@@ -370,7 +370,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
   MAuthReply *reply;
   bufferlist response_bl;
   bufferlist::iterator indata = m->auth_payload.begin();
-  __u32 proto = m->protocol;
+  __u32 proto = m->protocol;    // for the first MAuth, this is CEPH_AUTH_UNKNOWN
   bool start = false;
   EntityName entity_name;
 
@@ -450,6 +450,8 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       ret = -ENOTSUP;
       goto reply;
     }
+
+    // this is the first MAuth request, we need to start the session
     start = true;
   } else if (!s->auth_handler) {
       dout(10) << "protocol specified but no s->auth_handler" << dendl;
@@ -462,7 +464,9 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
      session */
   if (!s->global_id) {
     s->global_id = assign_global_id(op, paxos_writable);
+    
     if (!s->global_id) {
+      // get global id failed, wait for another try
 
       delete s->auth_handler;
       s->auth_handler = NULL;
@@ -482,12 +486,15 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 	wait_for_finished_proposal(op, new C_RetryMessage(this, op));
 	return true;
       }
-
+      // we are the leader and not allow to write paxos (we are in 
+      // AuthMonitor::preprocess_query), so we will handle this MAuth 
+      // later in AuthMonitor::prepare_update
       assert(!paxos_writable);
       return false;
     }
   }
 
+  // s->auth_handler and s->global_id are both ready
   try {
     uint64_t auid = 0;
     if (start) {
@@ -497,12 +504,21 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       if (m->monmap_epoch < mon->monmap->get_epoch())
 	mon->send_latest_monmap(m->get_connection().get());
 
+      // for new session, if use "cephx" we need to generate server challenge, 
+      // if use "none" we set caps_info.allow_all to true directly
+      // the return result proto will be used to notify peer that we will use
+      // this auth proto to continue the next auth process
       proto = s->auth_handler->start_session(entity_name, indata, response_bl, caps_info);
       ret = 0;
       if (caps_info.allow_all)
 	s->caps.set_allow_all();
     } else {
-      // request
+      // request, ok, this is the second MAuth
+      // for "none", nothing has to be done
+      // for "cephx", we handle CEPHX_GET_AUTH_SESSION_KEY, CEPHX_GET_PRINCIPAL_SESSION_KEY,
+      // and CEPHX_GET_ROTATING_KEY
+      // we never get a "unknown" handler, because get_auth_service_handler in 
+      // first MAuth handling never return us this type of handler
       ret = s->auth_handler->handle_request(indata, response_bl, s->global_id, caps_info, &auid);
     }
     if (ret == -EIO) {
@@ -518,6 +534,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 	derr << "corrupt cap data for " << entity_name << " in auth db" << dendl;
 	str.clear();
       }
+      // set session's caps and auid, only CEPHX_GET_AUTH_SESSION_KEY will set these
       s->caps.parse(str, NULL);
       s->auid = auid;
     }
@@ -527,6 +544,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
   }
 
 reply:
+  // response_bl is CephXResponseHeader + ticket/rotating_key
   reply = new MAuthReply(proto, &response_bl, ret, s->global_id);
   mon->send_reply(op, reply);
 done:

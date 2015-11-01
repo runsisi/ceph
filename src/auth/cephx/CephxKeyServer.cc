@@ -186,11 +186,20 @@ void KeyServer::_dump_rotating_secrets()
   }
 }
 
+// _check_rotating_secrets will call _rotate_secret for every service, which includes:
+/*
+        CEPH_ENTITY_TYPE_AUTH);
+        CEPH_ENTITY_TYPE_MON
+        CEPH_ENTITY_TYPE_OSD
+        CEPH_ENTITY_TYPE_MDS
+*/
 int KeyServer::_rotate_secret(uint32_t service_id)
 {
   RotatingSecrets& r = data.rotating_secrets[service_id];
   int added = 0;
   utime_t now = ceph_clock_now(cct);
+  // auth_mon_ticket_ttl default is 60*60*12
+  // auth_service_ticket_ttl default is 60*60
   double ttl = service_id == CEPH_ENTITY_TYPE_AUTH ? cct->_conf->auth_mon_ticket_ttl : cct->_conf->auth_service_ticket_ttl;
 
   while (r.need_new_secrets(now)) {

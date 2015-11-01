@@ -512,6 +512,8 @@ void MonClient::handle_auth(MAuthReply *m)
 
       // rotating_secrets is initialized in MonClient::init without 
       // its "secrets" field initialized
+      // if m->result == -ENOTSUP then AuthMonitor will reply with m->protocol == 0,
+      // which implies CEPH_AUTH_UNKNOWN
       auth = get_auth_client_handler(cct, m->protocol, rotating_secrets);
       if (!auth) {
 	ldout(cct, 10) << "no handler for protocol " << m->protocol << dendl;
@@ -524,7 +526,10 @@ void MonClient::handle_auth(MAuthReply *m)
 	m->put();
 	return;
       }
-      auth->set_want_keys(want_keys);
+      // MonClient always call MonClient::set_want_keys to set MonClient::want_keys 
+      // before MonClient::init, for client and osd MonClient::want_keys always set to
+      // CEPH_ENTITY_TYPE_MON | CEPH_ENTITY_TYPE_OSD
+      auth->set_want_keys(want_keys);   // ored with CEPH_ENTITY_TYPE_AUTH and validate_tickets
       auth->init(entity_name);
       // at this moment this must be 0, because we initialized it to 0 in MonClient's ctor
       auth->set_global_id(global_id);
@@ -682,7 +687,7 @@ void MonClient::_reopen_session(int rank, string name)
   MAuth *m = new MAuth;
   // for the first MAuth, this field is always set to 0, in MonClient::handle_auth
   // the second MAuth's protocol field will set according to the AuthMonitor's reply
-  m->protocol = 0;
+  m->protocol = 0;      // 0 implies CEPH_AUTH_UNKNOWN
   m->monmap_epoch = monmap.get_epoch();
   __u8 struct_v = 1;
   ::encode(struct_v, m->auth_payload);

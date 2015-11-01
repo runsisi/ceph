@@ -195,10 +195,11 @@ void KeyRing::decode_plaintext(bufferlist::iterator& bli)
       continue;
 
     // a ConfSection is like this:
-    // [client.admin]
-    //        key = xxxxxxxxxxxx
-    //        xxx = xxxxx
-
+    // [client.runsisi]
+    //     key = AQDMxjVWS08VBBAA7JwgAMWquZ6wgePbWNMFFA==
+    //     auid = 33
+    //     caps mon = "allow *"
+    //     caps osd = "allow *"
     EntityName ename;
     map<string, bufferlist> caps;
     if (!ename.from_str(name)) {
