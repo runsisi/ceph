@@ -110,6 +110,7 @@ int KeyRing::set_modifier(const char *type, const char *val, EntityName& name, m
     string l(val);
     try {
       // key is base64 encoded, it is comprised of (type + timestamp + secret)
+      // will set CryptoKeyHandler too
       key.decode_base64(l);
     } catch (const buffer::error& err) {
       return -EINVAL;

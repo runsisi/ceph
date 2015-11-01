@@ -179,6 +179,7 @@ void AuthMonitor::update_from_paxos(bool *need_bootstrap)
           KeyServerData::Incremental auth_inc;
           bufferlist::iterator iter = inc.auth_data.begin();
           ::decode(auth_inc, iter);
+          // update mon->key_server->data
           mon->key_server.apply_data_incremental(auth_inc);
           break;
         }
@@ -513,7 +514,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       if (caps_info.allow_all)
 	s->caps.set_allow_all();
     } else {
-      // request, ok, this is the second MAuth
+      // request, ok, this is the second (or next) MAuth
       // for "none", nothing has to be done
       // for "cephx", we handle CEPHX_GET_AUTH_SESSION_KEY, CEPHX_GET_PRINCIPAL_SESSION_KEY,
       // and CEPHX_GET_ROTATING_KEY

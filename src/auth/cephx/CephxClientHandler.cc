@@ -40,6 +40,7 @@ int CephxClientHandler::build_request(bufferlist& bl) const
     ::encode(header, bl);
 
     CryptoKey secret;
+    // get my key
     const bool got = keyring->get_secret(cct->_conf->name, secret);
     if (!got) {
       ldout(cct, 20) << "no secret found for entity: " << cct->_conf->name << dendl;
@@ -49,6 +50,7 @@ int CephxClientHandler::build_request(bufferlist& bl) const
     CephXAuthenticate req;
     get_random_bytes((char *)&req.client_challenge, sizeof(req.client_challenge));
     std::string error;
+    // use our key to encrypt the challenge and compress to a 64 bit integer
     cephx_calc_client_server_challenge(cct, secret, server_challenge,
 				       req.client_challenge, &req.key, error);
     if (!error.empty()) {
@@ -99,12 +101,14 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
     return ret; // hrm!
 
   if (starting) {
+    // the first MAuthReply, always change to the next auth stage
     CephXServerChallenge ch;
     ::decode(ch, indata);
     server_challenge = ch.server_challenge;
     ldout(cct, 10) << " got initial server challenge " << server_challenge << dendl;
     starting = false;
 
+    // set tickets_map[CEPH_ENTITY_TYPE_AUTH].have_key_flag to 0
     tickets.invalidate_ticket(CEPH_ENTITY_TYPE_AUTH);
     return -EAGAIN;
   }
@@ -117,6 +121,9 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
     {
       ldout(cct, 10) << " get_auth_session_key" << dendl;
       CryptoKey secret;
+      // keyring is set in ctor which comes from CephxClientHandler::rotating_secrets
+      // which has a keyring from MonClient (the keyring origin from command config)
+      // get my key (secret)
       const bool got = keyring->get_secret(cct->_conf->name, secret);
       if (!got) {
 	ldout(cct, 0) << "key not found for " << cct->_conf->name << dendl;
@@ -128,6 +135,7 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
 	return -EPERM;
       }
       ldout(cct, 10) << " want=" << want << " need=" << need << " have=" << have << dendl;
+      // update CephxClientHandler::need and CephxClientHandler::have
       validate_tickets();
       if (need)
 	ret = -EAGAIN;

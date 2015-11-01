@@ -529,31 +529,48 @@ void MonClient::handle_auth(MAuthReply *m)
       // MonClient always call MonClient::set_want_keys to set MonClient::want_keys 
       // before MonClient::init, for client and osd MonClient::want_keys always set to
       // CEPH_ENTITY_TYPE_MON | CEPH_ENTITY_TYPE_OSD
-      auth->set_want_keys(want_keys);   // ored with CEPH_ENTITY_TYPE_AUTH and validate_tickets
+      // AuthClientHandler::want is a service id mask
+      auth->set_want_keys(want_keys);   // always ored with CEPH_ENTITY_TYPE_AUTH and call validate_tickets
+      // set auth->name to myself (initialized to cct->_conf->name in MonClient::init)
       auth->init(entity_name);
       // at this moment this must be 0, because we initialized it to 0 in MonClient's ctor
       auth->set_global_id(global_id);
     } else {
+      // MonClient called _reopen_session again, so our state is still
+      // MC_STATE_NEGOTIATING and with auth handler already setup,
+      // reset starting to true and server_challenge to 0
       auth->reset();
     }
     state = MC_STATE_AUTHENTICATING;
   }
   assert(auth);
 
-  // AuthMonitor will call AuthMonitor::assign_global_id to get a global id and send to us
+  // AuthMonitor call AuthMonitor::assign_global_id to get a global id and send to us,
+  // both auth handler and MonClient has a global_id field, set it here, and if 
+  // we reopened our session, we need to reset it
   if (m->global_id && m->global_id != global_id) {
     global_id = m->global_id;
     auth->set_global_id(global_id);
     ldout(cct, 10) << "my global_id is " << m->global_id << dendl;
   }
 
+  // for the first MAuthReply we note down the server challenge and always return -EAGAIN
+  // for next MAuthReply(s), we handle differently with different request types:
+  // CEPHX_GET_AUTH_SESSION_KEY (may return -EAGAIN if CephxClientHandler::need is not 0), 
+  // CEPHX_GET_PRINCIPAL_SESSION_KEY and CEPHX_GET_ROTATING_KEY
   int ret = auth->handle_response(m->result, p);
   m->put();
 
   if (ret == -EAGAIN) {
+    // ok, we know which auth method to use know, start the second auth phase
     MAuth *ma = new MAuth;
     ma->protocol = auth->get_protocol();
+    // call auth->validate_tickets (to update "need" and "have") and set 
+    // auth->ticket_handler to &tickets.get_handler(CEPH_ENTITY_TYPE_AUTH)
     auth->prepare_build_request();
+
+    // if need & CEPH_ENTITY_TYPE_AUTH (which we have not authed yet) then request
+    // CEPHX_GET_AUTH_SESSION_KEY, else request CEPHX_GET_PRINCIPAL_SESSION_KEY
     ret = auth->build_request(ma->auth_payload);
     _send_mon_message(ma, true);
     return;

@@ -49,7 +49,15 @@ public:
   
   void set_want_keys(__u32 keys) {
     RWLock::WLocker l(lock);
+    // want is a service id mask, it indicates which service's key
+    // we need to check
     want = keys | CEPH_ENTITY_TYPE_AUTH;
+    // for CephxClientHandler, it contains a CephXTicketManager instance (tickets )
+    // to manage its tickets, it call tickets.validate_tickets to update "have" and "need",
+    // so we know for which service we have got its key already and for which 
+    // service we still need to get its key
+    // for AuthNoneClientHandler and AuthUnknownClientHandler they do nothing
+    // in validate_tickets
     validate_tickets();
   }
   void add_want_keys(__u32 keys) {

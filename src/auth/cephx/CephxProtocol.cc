@@ -32,6 +32,7 @@ void cephx_calc_client_server_challenge(CephContext *cct, CryptoKey& secret, uin
   b.client_challenge = client_challenge;
 
   bufferlist enc;
+  // encrypt server + myself's challenge
   if (encode_encrypt(cct, b, secret, enc, error))
     return;
 
@@ -39,6 +40,8 @@ void cephx_calc_client_server_challenge(CephContext *cct, CryptoKey& secret, uin
   const uint64_t *p = (const uint64_t *)enc.c_str();
   for (int pos = 0; pos + sizeof(k) <= enc.length(); pos+=sizeof(k), p++)
     k ^= mswab64(*p);
+
+  // build the crypted challenge into a 64 bits integer
   *key = k;
 }
 
@@ -144,8 +147,10 @@ bool CephXTicketHandler::verify_service_ticket_reply(CryptoKey& secret,
   __u8 service_ticket_v;
   ::decode(service_ticket_v, indata);
 
-  CephXServiceTicket msg_a;
+  CephXServiceTicket msg_a;     // contains session_key and validity time span
   std::string error;
+
+  // use our key to decrypt the reply to get a CephXServiceTicket
   if (decode_decrypt(cct, msg_a, secret, indata, error)) {
     ldout(cct, 0) << "verify_service_ticket_reply: failed decode_decrypt, error is: " << error << dendl;
     return false;
@@ -166,6 +171,8 @@ bool CephXTicketHandler::verify_service_ticket_reply(CryptoKey& secret,
   } else {
     ::decode(service_ticket_bl, indata);
   }
+
+  // get a CephXTicketBlob
   bufferlist::iterator iter = service_ticket_bl.begin();
   ::decode(ticket, iter);
   ldout(cct, 10) << " ticket.secret_id=" <<  ticket.secret_id << dendl;
@@ -174,12 +181,14 @@ bool CephXTicketHandler::verify_service_ticket_reply(CryptoKey& secret,
 	   << " secret_id " << ticket.secret_id
 	   << " session_key " << msg_a.session_key
            << " validity=" << msg_a.validity << dendl;
+
+  // got session key
   session_key = msg_a.session_key;
   if (!msg_a.validity.is_zero()) {
     expires = ceph_clock_now(cct);
     expires += msg_a.validity;
     renew_after = expires;
-    renew_after -= ((double)msg_a.validity.sec() / 4);
+    renew_after -= ((double)msg_a.validity.sec() / 4);  // renew before expiring
     ldout(cct, 10) << "ticket expires=" << expires << " renew_after=" << renew_after << dendl;
   }
   
@@ -271,7 +280,10 @@ bool CephXTicketManager::verify_service_ticket_reply(CryptoKey& secret,
     uint32_t type;
     ::decode(type, indata);
     ldout(cct, 10) << "got key for service_id " << ceph_entity_type_name(type) << dendl;
+    // register a ticket handler in CephXTicketManager::tickets_map
     CephXTicketHandler& handler = get_handler(type);
+
+    // extract session_key, ticket from reply and update expirint time
     if (!handler.verify_service_ticket_reply(secret, indata)) {
       return false;
     }
@@ -355,13 +367,16 @@ bool cephx_decode_ticket(CephContext *cct, KeyStore *keys, uint32_t service_id,
     return false;
   }
 
+  // secret id is rotating key's version
   if (secret_id == (uint64_t)-1) {
+    // get entity key
     if (!keys->get_secret(cct->_conf->name, service_secret)) {
       ldout(cct, 0) << "ceph_decode_ticket could not get general service secret for service_id="
 	      << ceph_entity_type_name(service_id) << " secret_id=" << secret_id << dendl;
       return false;
     }
   } else {
+    // get service key (rotating key)
     if (!keys->get_service_secret(service_id, secret_id, service_secret)) {
       ldout(cct, 0) << "ceph_decode_ticket could not get service secret for service_id=" 
 	      << ceph_entity_type_name(service_id) << " secret_id=" << secret_id << dendl;
@@ -370,6 +385,7 @@ bool cephx_decode_ticket(CephContext *cct, KeyStore *keys, uint32_t service_id,
   }
 
   std::string error;
+  // use service_secret to decrypt ticket_info from ticket_blob.blob
   decode_decrypt_enc_bl(cct, ticket_info, service_secret, ticket_blob.blob, error);
   if (!error.empty()) {
     ldout(cct, 0) << "ceph_decode_ticket could not decrypt ticket info. error:" 

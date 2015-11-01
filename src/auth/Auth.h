@@ -192,7 +192,7 @@ struct RotatingSecrets {
   
   uint64_t add(ExpiringCryptoKey& key) {
     secrets[++max_ver] = key;
-    while (secrets.size() > KEY_ROTATE_NUM)
+    while (secrets.size() > KEY_ROTATE_NUM)     // never greater than 3
       secrets.erase(secrets.begin());
     return max_ver;
   }

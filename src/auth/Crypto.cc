@@ -386,6 +386,7 @@ void CryptoKey::decode(bufferlist::iterator& bl)
   ::decode(len, bl);
   bufferptr tmp;
   bl.copy(len, tmp);
+  // set type, secret and CryptoKeyHandler
   if (_set_secret(type, tmp) < 0)
     throw buffer::malformed_input("malformed secret");
 }
@@ -409,12 +410,15 @@ int CryptoKey::_set_secret(int t, const bufferptr& s)
 
   CryptoHandler *ch = CryptoHandler::create(t);
   if (ch) {
+    // validate this is a legal secret string
     int ret = ch->validate_secret(s);
     if (ret < 0) {
       delete ch;
       return ret;
     }
     string error;
+
+    // allocate a CryptoKeyHandler
     ckh.reset(ch->get_key_handler(s, error));
     delete ch;
     if (error.length()) {

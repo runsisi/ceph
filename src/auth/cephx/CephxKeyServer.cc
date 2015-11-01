@@ -132,10 +132,16 @@ bool KeyServerData::get_caps(CephContext *cct, const EntityName& name,
 #undef dout_prefix
 #define dout_prefix *_dout << "cephx keyserver: "
 
+// KeyServer inherits from KeyStore which only define two interfaces:
+// virtual bool get_secret
+// virtual bool get_service_secret
 
+// extra_secrets is initialized to Monitor::keyring in Monitor's ctor,
+// in Monitor::preinit Monitor::keyring is loaded from $mon_data/keyring,
+// so extra_secrets is key of Monitor
 KeyServer::KeyServer(CephContext *cct_, KeyRing *extra_secrets)
   : cct(cct_),
-    data(extra_secrets),
+    data(extra_secrets),        // data is type of KeyServerData
     lock("KeyServer::lock")
 {
 }

@@ -62,12 +62,14 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       ::decode(req, indata);
 
       CryptoKey secret;
+      // apparently, mon must know peer's key
       if (!key_server->get_secret(entity_name, secret)) {
         ldout(cct, 0) << "couldn't find entity name: " << entity_name << dendl;
 	ret = -EPERM;
 	break;
       }
 
+      // we already generate this in auth_handler->start_session for every session
       if (!server_challenge) {
 	ret = -EPERM;
 	break;
@@ -75,6 +77,7 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
 
       uint64_t expected_key;
       std::string error;
+      // use peer's key to encrypt challenges and compress to a 64 bits integer
       cephx_calc_client_server_challenge(cct, secret, server_challenge,
 					 req.client_challenge, &expected_key, error);
       if (!error.empty()) {
@@ -103,6 +106,8 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       }
       CephXServiceTicketInfo old_ticket_info;
 
+      // peer may attach an old ticket, decrypt old_ticket_info from req.old_ticket.blob
+      // KeyStore is the base class of KeyServer
       if (cephx_decode_ticket(cct, key_server, CEPH_ENTITY_TYPE_AUTH,
 			      req.old_ticket, old_ticket_info)) {
         global_id = old_ticket_info.ticket.global_id;
@@ -118,6 +123,7 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
 
       if (auid) *auid = eauth.auid;
 
+      // generate a new session key
       key_server->generate_secret(session_key);
 
       info.session_key = session_key;
@@ -131,7 +137,10 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       vector<CephXSessionAuthInfo> info_vec;
       info_vec.push_back(info);
 
+      // generate a CephXResponseHeader
       build_cephx_response_header(cephx_header.request_type, 0, result_bl);
+
+      //
       if (!cephx_build_service_ticket_reply(cct, eauth.key, info_vec, should_enc_ticket,
 					    old_ticket_info.session_key, result_bl)) {
 	ret = -EIO;

@@ -669,6 +669,7 @@ int Monitor::preinit()
   init_paxos();
   health_monitor->init();
 
+  // auth_cluster_required or auth_service_required
   if (is_keyring_required()) {
     // we need to bootstrap authentication keys so we can form an
     // initial quorum.
@@ -679,6 +680,7 @@ int Monitor::preinit()
       KeyRing keyring;
       bufferlist::iterator p = bl.begin();
       ::decode(keyring, p);
+      // write mon's keyring to $mon_data/keyring
       extract_save_mon_key(keyring);
     }
 
@@ -694,6 +696,7 @@ int Monitor::preinit()
 	keyring.add(mon_name, mon_key);
 	bufferlist bl;
 	keyring.encode_plaintext(bl);
+        // write to $mon_data/keyring
 	write_default_keyring(bl);
       } else {
 	derr << "unable to load initial keyring " << g_conf->keyring << dendl;
@@ -4923,6 +4926,7 @@ void Monitor::extract_save_mon_key(KeyRing& keyring)
     pkey.add(mon_name, mon_key);
     bufferlist bl;
     pkey.encode_plaintext(bl);
+    // write mon's keyring to $mon_data/keyring
     write_default_keyring(bl);
     keyring.remove(mon_name);
   }
