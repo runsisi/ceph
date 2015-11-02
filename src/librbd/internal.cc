@@ -597,9 +597,9 @@ int invoke_async_request(ImageCtx *ictx, const std::string& request_type,
     }
 
     r = invoke_async_request(ictx, "snap_create", true,
-                             boost::bind(&snap_create_helper, ictx, _1,
+                             boost::bind(&snap_create_helper, ictx, _1,         // local
                                          snap_name),
-                             boost::bind(&ImageWatcher::notify_snap_create,
+                             boost::bind(&ImageWatcher::notify_snap_create,     // remote
                                          ictx->image_watcher, snap_name));
     if (r < 0 && r != -EEXIST) {
       return r;
