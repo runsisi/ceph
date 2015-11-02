@@ -578,12 +578,16 @@ void MonClient::handle_auth(MAuthReply *m)
     return;
   }
 
+  // set hunting to false
   _finish_hunting();
 
   authenticate_err = ret;
   if (ret == 0) {
     if (state != MC_STATE_HAVE_SESSION) {
+      // ok, we have a session with a mon now
       state = MC_STATE_HAVE_SESSION;
+
+      // send any thing that are waiting when we are authenticating with the mon
       while (!waiting_for_session.empty()) {
 	_send_mon_message(waiting_for_session.front());
 	waiting_for_session.pop_front();
@@ -600,7 +604,8 @@ void MonClient::handle_auth(MAuthReply *m)
         session_established_context = NULL;
       }
     }
-  
+
+    // check if we need service keys and get all 3 rotating keys or renew them
     _check_auth_tickets();
   }
   auth_cond.SignalAll();
@@ -851,6 +856,7 @@ int MonClient::_check_auth_tickets()
 {
   assert(monc_lock.is_locked());
   if (state == MC_STATE_HAVE_SESSION && auth) {
+    // call validate_tickets first then check "need"
     if (auth->need_tickets()) {
       ldout(cct, 10) << "_check_auth_tickets getting new tickets!" << dendl;
       MAuth *m = new MAuth;
@@ -860,6 +866,7 @@ int MonClient::_check_auth_tickets()
       _send_mon_message(m);
     }
 
+    // check if we need rotaing keys and should renew them
     _check_auth_rotating();
   }
   return 0;
@@ -870,6 +877,7 @@ int MonClient::_check_auth_rotating()
   assert(monc_lock.is_locked());
   if (!rotating_secrets ||
       !auth_principal_needs_rotating_keys(entity_name)) {
+    // only OSD and MDS need rotating key
     ldout(cct, 20) << "_check_auth_rotating not needed by " << entity_name << dendl;
     return 0;
   }
@@ -881,6 +889,8 @@ int MonClient::_check_auth_rotating()
 
   utime_t cutoff = ceph_clock_now(cct);
   cutoff -= MIN(30.0, cct->_conf->auth_service_ticket_ttl / 4.0);
+  // we need 3 rotating keys, and if the current key is expiring, we need to 
+  // generate new key
   if (!rotating_secrets->need_new_secrets(cutoff)) {
     ldout(cct, 10) << "_check_auth_rotating have uptodate secrets (they expire after " << cutoff << ")" << dendl;
     rotating_secrets->dump_rotating();
@@ -890,6 +900,7 @@ int MonClient::_check_auth_rotating()
   ldout(cct, 10) << "_check_auth_rotating renewing rotating keys (they expired before " << cutoff << ")" << dendl;
   MAuth *m = new MAuth;
   m->protocol = auth->get_protocol();
+  // build a request header with CEPHX_GET_ROTATING_KEY
   if (auth->build_rotating_request(m->auth_payload)) {
     _send_mon_message(m);
   } else {
@@ -912,6 +923,7 @@ int MonClient::wait_auth_rotating(double timeout)
 
   while (auth_principal_needs_rotating_keys(entity_name) &&
 	 rotating_secrets->need_new_secrets()) {
+    // we are OSD or MDS and we need all 3 rotating keys
     utime_t now = ceph_clock_now(cct);
     if (now >= until) {
       ldout(cct, 0) << "wait_auth_rotating timed out after " << timeout << dendl;

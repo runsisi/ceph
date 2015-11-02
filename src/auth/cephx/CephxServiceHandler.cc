@@ -149,7 +149,7 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       // generate a CephXResponseHeader
       build_cephx_response_header(cephx_header.request_type, 0, result_bl);
 
-      // build a service ticket (CephXServiceTicket(encrypted by eauth.key) 
+      // build a vector of (CephXServiceTicket(encrypted by eauth.key) 
       // + CephXTicketBlob(encrypted by service key, if old ticket is carried, then
       // encrypted by old_ticket_info.session_key again))
       if (!cephx_build_service_ticket_reply(cct, eauth.key, info_vec, should_enc_ticket,
@@ -173,6 +173,8 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
         CephXServiceTicketInfo contains:
                 AuthTicket ticket;
                 CryptoKey session_key;
+                
+        AuthTicket is like a certification.
         AuthTicket contains:
                 EntityName name;
                 uint64_t global_id;
@@ -180,11 +182,17 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
                 utime_t created, renew_after, expires;
                 AuthCapsInfo caps;
                 __u32 flags;
+                
+        CephXServiceTicketInfo is encrypted to a CephXTicketBlob
         CephXTicketBlob contains:
                 uint64_t secret_id;
                 bufferlist blob;
       */
       CephXServiceTicketInfo auth_ticket_info;
+      // verify if the peer send us the valid ticket (we can found the service key
+      // the peer specified in the request, and we can use the found service key
+      // to decrypt the encrypted ticket, then with the session key in the ticket,
+      // we can decrypt the CephXAuthorize)
       if (!cephx_verify_authorizer(cct, key_server, indata, auth_ticket_info, tmp_bl)) {
         ret = -EPERM;
 	break;
@@ -192,14 +200,19 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
 
       CephXServiceTicketRequest ticket_req;
       ::decode(ticket_req, indata);
+
+      // ticket_req.keys is set to "need" in CephxClientHandler
       ldout(cct, 10) << " ticket_req.keys = " << ticket_req.keys << dendl;
 
       ret = 0;
       vector<CephXSessionAuthInfo> info_vec;
       for (uint32_t service_id = 1; service_id <= ticket_req.keys; service_id <<= 1) {
         if (ticket_req.keys & service_id) {
+          // we need to get service key of this service
 	  ldout(cct, 10) << " adding key for service " << ceph_entity_type_name(service_id) << dendl;
           CephXSessionAuthInfo info;
+          // construct a CephXSessionAuthInfo instance for use in cephx_build_service_ticket_reply
+          // auth_ticket_info is decrypted from peer's authorizer
           int r = key_server->build_session_auth_info(service_id, auth_ticket_info, info);
           if (r < 0) {
             ret = r;
@@ -211,6 +224,7 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       }
       CryptoKey no_key;
       build_cephx_response_header(cephx_header.request_type, ret, result_bl);
+      // build a vector of (CephXServerTicket + CephXTicketBlob) from info_vec
       cephx_build_service_ticket_reply(cct, auth_ticket_info.session_key, info_vec, false, no_key, result_bl);
     }
     break;

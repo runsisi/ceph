@@ -1959,6 +1959,7 @@ int OSD::init()
     goto monout;
   }
 
+  // get all 3 rotating keys
   while (monc->wait_auth_rotating(30.0) < 0) {
     derr << "unable to obtain rotating service keys; retrying" << dendl;
   }

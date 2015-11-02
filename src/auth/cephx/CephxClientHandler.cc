@@ -81,7 +81,7 @@ int CephxClientHandler::build_request(bufferlist& bl) const
 
     // build a CephXAuthorizer which contains a bufferlist that contains 
     // global_id, service_id, ticket and a CephXAuthorize which encrypted with session key
-    // AuthAuthorizer is defined in auth.h
+    // CephXAuthorizer inherts AuthAuthorizer and AuthAuthorizer is defined in auth.h
     CephXAuthorizer *authorizer = ticket_handler->build_authorizer(global_id);
     if (!authorizer)
       return -EINVAL;
@@ -135,7 +135,7 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
 	return -ENOENT;
       }
 
-      // use our secret key to decrypt service ticket(s)
+      // use our secret key to decrypt service ticket
       if (!tickets.verify_service_ticket_reply(secret, indata)) {
 	ldout(cct, 0) << "could not verify service_ticket reply" << dendl;
 	return -EPERM;
@@ -158,11 +158,15 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
     {
       CephXTicketHandler& ticket_handler = tickets.get_handler(CEPH_ENTITY_TYPE_AUTH);
       ldout(cct, 10) << " get_principal_session_key session_key " << ticket_handler.session_key << dendl;
-  
+
+      // use our secret key to decrypt service ticket(s), register and setup
+      // new CephXTicketHandler into tickets_map
       if (!tickets.verify_service_ticket_reply(ticket_handler.session_key, indata)) {
         ldout(cct, 0) << "could not verify service_ticket reply" << dendl;
         return -EPERM;
       }
+
+      // update "need" and "have"
       validate_tickets();
       if (!need) {
 	ret = 0;

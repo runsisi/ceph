@@ -118,8 +118,10 @@ bool cephx_build_service_ticket_reply(CephContext *cct,
     bufferlist service_ticket_bl;
     CephXTicketBlob blob;
 
-    // set blob.secret_id, setup a CephXServiceTicketInfo and use service 
-    // key to encrypt this constructed CephXServiceTicketInfo into blob.blob
+    // setup a CephXTicketBlob with infos from CephXSessionAuthInfo
+    // set blob.secret_id, setup a CephXServiceTicketInfo with fields 
+    // in CephXSessionAuthInfo, and use service key to encrypt this 
+    // constructed CephXServiceTicketInfo into blob.blob
     if (!cephx_build_service_ticket_blob(cct, info, blob)) {
       return false;
     }
@@ -321,7 +323,7 @@ CephXAuthorizer *CephXTicketHandler::build_authorizer(uint64_t global_id) const
   ::encode(authorizer_v, a->bl);
   ::encode(global_id, a->bl);
   ::encode(service_id, a->bl);
-
+  // ticket is of type CephXTicketBlob
   ::encode(ticket, a->bl);
 
   CephXAuthorize msg;
@@ -437,7 +439,7 @@ bool cephx_verify_authorizer(CephContext *cct, KeyStore *keys,
 	   << ceph_entity_type_name(service_id)
 	   << " secret_id=" << ticket.secret_id << dendl;
 
-  // ticket.secret_id tells us the ticket.blob is encrypted with which secret key
+  // ticket.secret_id tells us which secret key the ticket.blob is encrypted with
   if (ticket.secret_id == (uint64_t)-1) {
     // get entity's secret key
     EntityName name;
@@ -448,7 +450,8 @@ bool cephx_verify_authorizer(CephContext *cct, KeyStore *keys,
       return false;
     }
   } else {
-    // get service's secret key, secret_id (secret key version) is specfied by ticket.secret_id
+    // get service's secret key, secret_id (i.e. secret key version) is specfied 
+    // by ticket.secret_id
     if (!keys->get_service_secret(service_id, ticket.secret_id, service_secret)) {
       ldout(cct, 0) << "verify_authorizer could not get service secret for service "
 	      << ceph_entity_type_name(service_id) << " secret_id=" << ticket.secret_id << dendl;
