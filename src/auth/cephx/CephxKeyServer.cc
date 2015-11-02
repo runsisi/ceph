@@ -249,6 +249,8 @@ bool KeyServer::get_caps(const EntityName& name, const string& type,
   return data.get_caps(cct, name, type, caps_info);
 }
 
+// sepcify service_id (CEPH_ENTITY_TYPE_XXX) to get secret_id 
+// (monotonically increase version number) and expiring key
 bool KeyServer::get_service_secret(uint32_t service_id,
 	      ExpiringCryptoKey& secret, uint64_t& secret_id) const
 {
@@ -257,6 +259,7 @@ bool KeyServer::get_service_secret(uint32_t service_id,
   return data.get_service_secret(cct, service_id, secret, secret_id);
 }
 
+// sepcify service_id to get secret_id and key
 bool KeyServer::get_service_secret(uint32_t service_id,
 		CryptoKey& secret, uint64_t& secret_id) const
 {
@@ -265,6 +268,7 @@ bool KeyServer::get_service_secret(uint32_t service_id,
   return data.get_service_secret(cct, service_id, secret, secret_id);
 }
 
+// specify service_id and secret_id to get a key
 bool KeyServer::get_service_secret(uint32_t service_id,
 		uint64_t secret_id, CryptoKey& secret) const
 {

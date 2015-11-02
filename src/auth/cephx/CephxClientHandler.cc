@@ -40,7 +40,7 @@ int CephxClientHandler::build_request(bufferlist& bl) const
     ::encode(header, bl);
 
     CryptoKey secret;
-    // get my key
+    // get my secret key
     const bool got = keyring->get_secret(cct->_conf->name, secret);
     if (!got) {
       ldout(cct, 20) << "no secret found for entity: " << cct->_conf->name << dendl;
@@ -58,6 +58,7 @@ int CephxClientHandler::build_request(bufferlist& bl) const
       return -EIO;
     }
 
+    // carry with old ticket
     req.old_ticket = ticket_handler->ticket;
 
     if (req.old_ticket.blob.length()) {
@@ -78,6 +79,9 @@ int CephxClientHandler::build_request(bufferlist& bl) const
     header.request_type = CEPHX_GET_PRINCIPAL_SESSION_KEY;
     ::encode(header, bl);
 
+    // build a CephXAuthorizer which contains a bufferlist that contains 
+    // global_id, service_id, ticket and a CephXAuthorize which encrypted with session key
+    // AuthAuthorizer is defined in auth.h
     CephXAuthorizer *authorizer = ticket_handler->build_authorizer(global_id);
     if (!authorizer)
       return -EINVAL;
@@ -85,7 +89,7 @@ int CephxClientHandler::build_request(bufferlist& bl) const
     delete authorizer;
 
     CephXServiceTicketRequest req;
-    req.keys = need;
+    req.keys = need;    // request all service keys that we need
     ::encode(req, bl);
   }
 
@@ -121,22 +125,28 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
     {
       ldout(cct, 10) << " get_auth_session_key" << dendl;
       CryptoKey secret;
-      // keyring is set in ctor which comes from CephxClientHandler::rotating_secrets
-      // which has a keyring from MonClient (the keyring origin from command config)
+      // "keyring" initialized to rsecrets->get_keyring in its ctor
+      // rsecrets origins from MonClient::rotating_secrets which initialized
+      // in MonClient::init
       // get my key (secret)
       const bool got = keyring->get_secret(cct->_conf->name, secret);
       if (!got) {
 	ldout(cct, 0) << "key not found for " << cct->_conf->name << dendl;
 	return -ENOENT;
       }
-	
+
+      // use our secret key to decrypt service ticket(s)
       if (!tickets.verify_service_ticket_reply(secret, indata)) {
 	ldout(cct, 0) << "could not verify service_ticket reply" << dendl;
 	return -EPERM;
       }
       ldout(cct, 10) << " want=" << want << " need=" << need << " have=" << have << dendl;
-      // update CephxClientHandler::need and CephxClientHandler::have
+      // we got new service ticket, so update CephxClientHandler::need and 
+      // CephxClientHandler::have
       validate_tickets();
+
+      // ok, we have got CEPH_ENTITY_TYPE_AUTH service key, we still need 
+      // some other service keys
       if (need)
 	ret = -EAGAIN;
       else

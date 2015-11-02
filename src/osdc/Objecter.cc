@@ -4122,7 +4122,7 @@ bool Objecter::ms_handle_reset(Connection *con)
 	OSDSession *session = p->second;
         map<uint64_t, LingerOp *> lresend;
         session->lock.get_write();
-        // reconnect to target osd
+        // mark down current connection and reconnect to target osd
 	_reopen_session(session);
 	_kick_requests(session, lresend);
         session->lock.unlock();

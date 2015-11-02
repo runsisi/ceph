@@ -32,6 +32,7 @@
 
 int CephxServiceHandler::start_session(EntityName& name, bufferlist::iterator& indata, bufferlist& result_bl, AuthCapsInfo& caps)
 {
+  // note down peer's entity name
   entity_name = name;
 
   get_random_bytes((char *)&server_challenge, sizeof(server_challenge));
@@ -100,13 +101,17 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       bool should_enc_ticket = false;
 
       EntityAuth eauth;
+      // get peer's EntityAuth, key_server will get all auth info from
+      // mon's db in Monitor::preinit -> Monitor::init_paxos 
+      // -> Monitor::refresh_from_paxos -> PaxosService::refresh 
+      // -> AuthMonitor::update_from_paxos
       if (! key_server->get_auth(entity_name, eauth)) {
 	ret = -EPERM;
 	break;
       }
       CephXServiceTicketInfo old_ticket_info;
 
-      // peer may attach an old ticket, decrypt old_ticket_info from req.old_ticket.blob
+      // peer may carry an old ticket, decrypt old_ticket_info from req.old_ticket.blob
       // KeyStore is the base class of KeyServer
       if (cephx_decode_ticket(cct, key_server, CEPH_ENTITY_TYPE_AUTH,
 			      req.old_ticket, old_ticket_info)) {
@@ -115,6 +120,7 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
         should_enc_ticket = true;
       }
 
+      // setup CephXSessionAuthInfo.ticket (type of struct AuthTicket)
       info.ticket.init_timestamps(ceph_clock_now(cct), cct->_conf->auth_mon_ticket_ttl);
       info.ticket.name = entity_name;
       info.ticket.global_id = global_id;
@@ -126,8 +132,11 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       // generate a new session key
       key_server->generate_secret(session_key);
 
-      info.session_key = session_key;
+      info.session_key = session_key;   // this session key will send to peer
       info.service_id = CEPH_ENTITY_TYPE_AUTH;
+      // get service key and its id (actually secret's version) of the service
+      // type CEPH_ENTITY_TYPE_AUTH, KeyServer::_check_rotating_secrets will update
+      // those service keys
       if (!key_server->get_service_secret(CEPH_ENTITY_TYPE_AUTH, info.service_secret, info.secret_id)) {
         ldout(cct, 0) << " could not get service secret for auth subsystem" << dendl;
         ret = -EIO;
@@ -135,12 +144,14 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       }
 
       vector<CephXSessionAuthInfo> info_vec;
-      info_vec.push_back(info);
+      info_vec.push_back(info); // one ticket to generate
 
       // generate a CephXResponseHeader
       build_cephx_response_header(cephx_header.request_type, 0, result_bl);
 
-      //
+      // build a service ticket (CephXServiceTicket(encrypted by eauth.key) 
+      // + CephXTicketBlob(encrypted by service key, if old ticket is carried, then
+      // encrypted by old_ticket_info.session_key again))
       if (!cephx_build_service_ticket_reply(cct, eauth.key, info_vec, should_enc_ticket,
 					    old_ticket_info.session_key, result_bl)) {
 	ret = -EIO;
@@ -157,6 +168,22 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       ldout(cct, 10) << "handle_request get_principal_session_key" << dendl;
 
       bufferlist tmp_bl;
+
+      /* 
+        CephXServiceTicketInfo contains:
+                AuthTicket ticket;
+                CryptoKey session_key;
+        AuthTicket contains:
+                EntityName name;
+                uint64_t global_id;
+                uint64_t auid;
+                utime_t created, renew_after, expires;
+                AuthCapsInfo caps;
+                __u32 flags;
+        CephXTicketBlob contains:
+                uint64_t secret_id;
+                bufferlist blob;
+      */
       CephXServiceTicketInfo auth_ticket_info;
       if (!cephx_verify_authorizer(cct, key_server, indata, auth_ticket_info, tmp_bl)) {
         ret = -EPERM;

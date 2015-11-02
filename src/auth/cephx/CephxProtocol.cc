@@ -98,7 +98,7 @@ bool cephx_build_service_ticket_reply(CephContext *cct,
   for (vector<CephXSessionAuthInfo>::iterator ticket_iter = ticket_info_vec.begin(); 
        ticket_iter != ticket_info_vec.end();
        ++ticket_iter) {
-    CephXSessionAuthInfo& info = *ticket_iter;
+    CephXSessionAuthInfo& info = *ticket_iter;  // used for parameters transfer
     ::encode(info.service_id, reply);
 
     __u8 service_ticket_v = 1;
@@ -108,6 +108,8 @@ bool cephx_build_service_ticket_reply(CephContext *cct,
     msg_a.session_key = info.session_key;
     msg_a.validity = info.validity;
     std::string error;
+
+    // use peer entity's key to encrypt a CephXServiceTicket
     if (encode_encrypt(cct, msg_a, principal_secret, reply, error)) {
       ldout(cct, -1) << "error encoding encrypted: " << error << dendl;
       return false;
@@ -115,6 +117,9 @@ bool cephx_build_service_ticket_reply(CephContext *cct,
 
     bufferlist service_ticket_bl;
     CephXTicketBlob blob;
+
+    // set blob.secret_id, setup a CephXServiceTicketInfo and use service 
+    // key to encrypt this constructed CephXServiceTicketInfo into blob.blob
     if (!cephx_build_service_ticket_blob(cct, info, blob)) {
       return false;
     }
@@ -126,6 +131,8 @@ bool cephx_build_service_ticket_reply(CephContext *cct,
 
     ::encode((__u8)should_encrypt_ticket, reply);
     if (should_encrypt_ticket) {
+      // old ticket carried with the request, use session key to encrypt 
+      // the service_ticket_bl which encoded the CephXTicketBlob
       if (encode_encrypt(cct, service_ticket_bl, ticket_enc_key, reply, error)) {
 	ldout(cct, -1) << "error encoding encrypted ticket: " << error << dendl;
         return false;
@@ -161,8 +168,10 @@ bool CephXTicketHandler::verify_service_ticket_reply(CryptoKey& secret,
 
   bufferlist service_ticket_bl;
   if (ticket_enc) {
+    // the CexphXTicketBlob.blob is encrypted by session key
     ldout(cct, 10) << " got encrypted ticket" << dendl;
     std::string error;
+    // use session_key to decrypt the CephXTicketBlob into service_ticket_bl
     if (decode_decrypt(cct, service_ticket_bl, session_key, indata, error)) {
       ldout(cct, 10) << "verify_service_ticket_reply: decode_decrypt failed "
 	    << "with " << error << dendl;
@@ -172,7 +181,7 @@ bool CephXTicketHandler::verify_service_ticket_reply(CryptoKey& secret,
     ::decode(service_ticket_bl, indata);
   }
 
-  // get a CephXTicketBlob
+  // decode a CephXTicketBlob, it is a member variable of CephXTicketHandler
   bufferlist::iterator iter = service_ticket_bl.begin();
   ::decode(ticket, iter);
   ldout(cct, 10) << " ticket.secret_id=" <<  ticket.secret_id << dendl;
@@ -182,7 +191,7 @@ bool CephXTicketHandler::verify_service_ticket_reply(CryptoKey& secret,
 	   << " session_key " << msg_a.session_key
            << " validity=" << msg_a.validity << dendl;
 
-  // got session key
+  // got session key, note that session_key is a member variable of CephXTicketHandler
   session_key = msg_a.session_key;
   if (!msg_a.validity.is_zero()) {
     expires = ceph_clock_now(cct);
@@ -192,7 +201,7 @@ bool CephXTicketHandler::verify_service_ticket_reply(CryptoKey& secret,
     ldout(cct, 10) << "ticket expires=" << expires << " renew_after=" << renew_after << dendl;
   }
   
-  have_key_flag = true;
+  have_key_flag = true; // next time tickets.validate_tickets will mark that we have secret key of this service
   return true;
 }
 
@@ -280,10 +289,11 @@ bool CephXTicketManager::verify_service_ticket_reply(CryptoKey& secret,
     uint32_t type;
     ::decode(type, indata);
     ldout(cct, 10) << "got key for service_id " << ceph_entity_type_name(type) << dendl;
-    // register a ticket handler in CephXTicketManager::tickets_map
+    // register a ticket handler in CephXTicketManager::tickets_map and return it
     CephXTicketHandler& handler = get_handler(type);
 
-    // extract session_key, ticket from reply and update expirint time
+    // use our secret key to decrypt a CephXServiceTicket which contains a session_key and
+    // decode a CephXTicketBlob (ticket)
     if (!handler.verify_service_ticket_reply(secret, indata)) {
       return false;
     }
@@ -304,7 +314,7 @@ bool CephXTicketManager::verify_service_ticket_reply(CryptoKey& secret,
 CephXAuthorizer *CephXTicketHandler::build_authorizer(uint64_t global_id) const
 {
   CephXAuthorizer *a = new CephXAuthorizer(cct);
-  a->session_key = session_key;
+  a->session_key = session_key; // carry with session key
   a->nonce = ((uint64_t)rand() << 32) + rand();
 
   __u8 authorizer_v = 1;
@@ -318,6 +328,7 @@ CephXAuthorizer *CephXTicketHandler::build_authorizer(uint64_t global_id) const
   msg.nonce = a->nonce;
 
   std::string error;
+  // use session key to encrypt
   if (encode_encrypt(cct, msg, session_key, a->bl, error)) {
     ldout(cct, 0) << "failed to encrypt authorizer: " << error << dendl;
     delete a;
@@ -426,7 +437,9 @@ bool cephx_verify_authorizer(CephContext *cct, KeyStore *keys,
 	   << ceph_entity_type_name(service_id)
 	   << " secret_id=" << ticket.secret_id << dendl;
 
+  // ticket.secret_id tells us the ticket.blob is encrypted with which secret key
   if (ticket.secret_id == (uint64_t)-1) {
+    // get entity's secret key
     EntityName name;
     name.set_type(service_id);
     if (!keys->get_secret(name, service_secret)) {
@@ -435,6 +448,7 @@ bool cephx_verify_authorizer(CephContext *cct, KeyStore *keys,
       return false;
     }
   } else {
+    // get service's secret key, secret_id (secret key version) is specfied by ticket.secret_id
     if (!keys->get_service_secret(service_id, ticket.secret_id, service_secret)) {
       ldout(cct, 0) << "verify_authorizer could not get service secret for service "
 	      << ceph_entity_type_name(service_id) << " secret_id=" << ticket.secret_id << dendl;
@@ -444,6 +458,7 @@ bool cephx_verify_authorizer(CephContext *cct, KeyStore *keys,
     }
   }
   std::string error;
+  // use the found secret key to decrypt ticket.blob into a CephXServiceTicketInfo
   decode_decrypt_enc_bl(cct, ticket_info, service_secret, ticket.blob, error);
   if (!error.empty()) {
     ldout(cct, 0) << "verify_authorizer could not decrypt ticket info: error: "
@@ -461,6 +476,7 @@ bool cephx_verify_authorizer(CephContext *cct, KeyStore *keys,
 
   // CephXAuthorize
   CephXAuthorize auth_msg;
+  // use session key to decrypt CephXAuthorize
   if (decode_decrypt(cct, auth_msg, ticket_info.session_key, indata, error)) {
     ldout(cct, 0) << "verify_authorizercould not decrypt authorize request with error: "
       << error << dendl;

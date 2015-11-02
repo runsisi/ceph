@@ -102,6 +102,8 @@ void AuthMonitor::create_initial()
     bufferlist::iterator p = bl.begin();
     ::decode(keyring, p);
 
+    // create KeyServerData::Incremental(s) from keyring and push to 
+    // pending_auth vector
     import_keyring(keyring);
   }
 
@@ -119,7 +121,7 @@ void AuthMonitor::update_from_paxos(bool *need_bootstrap)
 {
   dout(10) << __func__ << dendl;
   version_t version = get_last_committed();
-  version_t keys_ver = mon->key_server.get_ver();
+  version_t keys_ver = mon->key_server.get_ver();   // mon->key_server.data.version, which initialized to 0 in its ctor
   if (version == keys_ver)
     return;
   assert(version >= keys_ver);
@@ -384,7 +386,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       __u8 struct_v = 1;
       ::decode(struct_v, indata);
       ::decode(supported, indata);      // peer sets what it supports
-      ::decode(entity_name, indata);
+      ::decode(entity_name, indata);    // peer entity's name
       ::decode(s->global_id, indata);
     } catch (const buffer::error &e) {
       dout(10) << "failed to decode initial auth message" << dendl;
@@ -514,7 +516,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       if (caps_info.allow_all)
 	s->caps.set_allow_all();
     } else {
-      // request, ok, this is the second (or next) MAuth
+      // request, ok, this is the second (or next) MAuth that request for service keys
       // for "none", nothing has to be done
       // for "cephx", we handle CEPHX_GET_AUTH_SESSION_KEY, CEPHX_GET_PRINCIPAL_SESSION_KEY,
       // and CEPHX_GET_ROTATING_KEY
@@ -527,6 +529,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       goto done;
     }
     if (caps_info.caps.length()) {
+      // only in handling CEPHX_GET_AUTH_SESSION_KEY will return caps info
       bufferlist::iterator p = caps_info.caps.begin();
       string str;
       try {

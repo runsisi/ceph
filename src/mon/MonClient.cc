@@ -533,7 +533,9 @@ void MonClient::handle_auth(MAuthReply *m)
       auth->set_want_keys(want_keys);   // always ored with CEPH_ENTITY_TYPE_AUTH and call validate_tickets
       // set auth->name to myself (initialized to cct->_conf->name in MonClient::init)
       auth->init(entity_name);
-      // at this moment this must be 0, because we initialized it to 0 in MonClient's ctor
+      // if we did not reopen the session, then this must be 0, because we 
+      // initialized it to 0 in MonClient's ctor, if we reopen a session, then
+      // this globa_id may have already been set by last session
       auth->set_global_id(global_id);
     } else {
       // MonClient called _reopen_session again, so our state is still
@@ -562,7 +564,7 @@ void MonClient::handle_auth(MAuthReply *m)
   m->put();
 
   if (ret == -EAGAIN) {
-    // ok, we know which auth method to use know, start the second auth phase
+    // ok, we know which auth method to use know, start to get service keys
     MAuth *ma = new MAuth;
     ma->protocol = auth->get_protocol();
     // call auth->validate_tickets (to update "need" and "have") and set 
@@ -710,8 +712,8 @@ void MonClient::_reopen_session(int rank, string name)
   ::encode(struct_v, m->auth_payload);
   // auth_supported is initialized in MonClient::init
   ::encode(auth_supported->get_supported_set(), m->auth_payload);
-  ::encode(entity_name, m->auth_payload);
-  ::encode(global_id, m->auth_payload);
+  ::encode(entity_name, m->auth_payload);   // set my entity name, so mon can identify who is authenticating
+  ::encode(global_id, m->auth_payload); // if we have already got a MAuthReply from a mon, global_id may not be 0
   _send_mon_message(m, true);
 
   if (!sub_have.empty())

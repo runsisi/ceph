@@ -273,8 +273,8 @@ public:
     return false;
   }
   
-  KeyRing *keyring;
-  RotatingKeyRing *rotating_secrets;
+  KeyRing *keyring;     // initialized in MonClient::init
+  RotatingKeyRing *rotating_secrets; // initialized in MonClient::init, constructed from "keyring" above
 
  public:
   MonClient(CephContext *cct_);
