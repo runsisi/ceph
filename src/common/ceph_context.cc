@@ -432,12 +432,17 @@ CephContext::CephContext(uint32_t module_type_)
   _lockdep_obs = new LockdepObs(this);
   _conf->add_observer(_lockdep_obs);
 
+  // create a perf counter collection
   _perf_counters_collection = new PerfCountersCollection(this);
- 
+
+  // allocate admin socket
   _admin_socket = new AdminSocket(this);
   _heartbeat_map = new HeartbeatMap(this);
 
+  // hook which mainly used for handling perf counter related and config related command
   _admin_hook = new CephContextHook(this);
+
+  // register common command to all daemons
   _admin_socket->register_command("perfcounters_dump", "perfcounters_dump", _admin_hook, "");
   _admin_socket->register_command("1", "1", _admin_hook, "");
   _admin_socket->register_command("perf dump", "perf dump name=logger,type=CephString,req=false name=counter,type=CephString,req=false", _admin_hook, "dump perfcounters value");
@@ -467,6 +472,8 @@ CephContext::~CephContext()
        it != _associated_objs.end(); ++it)
     delete it->second;
 
+  // _cct_perf only create when CephContext::enable_perf_counter called,
+  // only rgw called this in its main function
   if (_cct_perf) {
     _perf_counters_collection->remove(_cct_perf);
     delete _cct_perf;

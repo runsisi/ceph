@@ -1101,7 +1101,7 @@ private:
   Mutex timer_lock;
   SafeTimer timer;
 
-  PerfCounters *logger;
+  PerfCounters *logger; // initialized in Objecter::init
   
   class C_Tick : public Context {
     Objecter *ob;

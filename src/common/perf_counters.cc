@@ -28,6 +28,7 @@
 
 using std::ostringstream;
 
+// CephContext::CephContext will create a perf counter collection
 PerfCountersCollection::PerfCountersCollection(CephContext *cct)
   : m_cct(cct),
     m_lock("PerfCountersCollection")
@@ -48,7 +49,7 @@ void PerfCountersCollection::add(class PerfCounters *l)
   i = m_loggers.find(l);
   while (i != m_loggers.end()) {
     ostringstream ss;
-    ss << l->get_name() << "-" << (void*)l;
+    ss << l->get_name() << "-" << (void*)l;     // every PerfCounters has a name
     l->set_name(ss.str());
     i = m_loggers.find(l);
   }
@@ -281,7 +282,8 @@ void PerfCounters::dump_formatted(Formatter *f, bool schema,
     const std::string &counter)
 {
   f->open_object_section(m_name.c_str());
-  
+
+  // iterate this data vector
   for (perf_counter_data_vec_t::const_iterator d = m_data.begin();
        d != m_data.end(); ++d) {
     if (!counter.empty() && counter != d->name) {
@@ -352,6 +354,7 @@ PerfCounters::PerfCounters(CephContext *cct, const std::string &name,
     m_lock_name(std::string("PerfCounters::") + name.c_str()),
     m_lock(m_lock_name.c_str())
 {
+  // adjust vector's size
   m_data.resize(upper_bound - lower_bound - 1);
 }
 
@@ -403,9 +406,11 @@ void PerfCountersBuilder::add_impl(int idx, const char *name,
 {
   assert(idx > m_perf_counters->m_lower_bound);
   assert(idx < m_perf_counters->m_upper_bound);
+
+  // perf_counter_data_vec_t is a vector of perf_counter_data_any_d (data item)
   PerfCounters::perf_counter_data_vec_t &vec(m_perf_counters->m_data);
   PerfCounters::perf_counter_data_any_d
-    &data(vec[idx - m_perf_counters->m_lower_bound - 1]);
+    &data(vec[idx - m_perf_counters->m_lower_bound - 1]); // get a slot in this vector
   assert(data.type == PERFCOUNTER_NONE);
   data.name = name;
   data.description = description;
@@ -418,11 +423,12 @@ PerfCounters *PerfCountersBuilder::create_perf_counters()
   PerfCounters::perf_counter_data_vec_t::const_iterator d = m_perf_counters->m_data.begin();
   PerfCounters::perf_counter_data_vec_t::const_iterator d_end = m_perf_counters->m_data.end();
   for (; d != d_end; ++d) {
+    // sanity checks
     if (d->type == PERFCOUNTER_NONE) {
       assert(d->type != PERFCOUNTER_NONE);
     }
   }
   PerfCounters *ret = m_perf_counters;
-  m_perf_counters = NULL;
+  m_perf_counters = NULL;       // this memory is allocated in PerfCountersBuilder's ctor
   return ret;
 }

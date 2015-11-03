@@ -266,7 +266,10 @@ void Objecter::init()
     pcb.add_u64_counter(l_osdc_osdop_omap_rd, "omap_rd", "OSD OMAP read operations");
     pcb.add_u64_counter(l_osdc_osdop_omap_del, "omap_del", "OSD OMAP delete operations");
 
+    // ok, a pointer to hold the perf counter
     logger = pcb.create_perf_counters();
+    
+    // register this perf counter to CephContext::_perfcounters_collection
     cct->get_perfcounters_collection()->add(logger);
   }
 
@@ -430,6 +433,8 @@ void Objecter::_send_linger(LingerOp *info)
 {
   assert(rwlock.is_wlocked());
 
+  // in Objecter::op_submit we get a read lock before submit op before create
+  // a RWLock::Context instance
   RWLock::Context lc(rwlock, RWLock::Context::TakenForWrite);
 
   vector<OSDOp> opv;
@@ -488,16 +493,26 @@ void Objecter::_send_linger(LingerOp *info)
     info->session->lock.get_write();
     if (info->session->ops.count(info->register_tid)) {
       Op *o = info->session->ops[info->register_tid];
+      // if Op is in check_latest_map_ops map, then remove it
       _op_cancel_map_check(o);
+      // this is different from Objecter::_linger_cancel which cancels a linger op
+      // while this cancels an Op
+      // delete op->onack, op->oncommit and op->oncommit_sync, then call 
+      // _finish_op (put budget, cancel timer event and remove op from session)
       _cancel_linger_op(o);
     }
     info->session->lock.unlock();
 
     // info->register_tid is equal to o->tid, and _op_submit returns o->tid,
     // so info->register_tid will not be changed
+    // and this is a resend op, so we do not need to take budget
     info->register_tid = _op_submit(o, lc);
   } else {
     // first send
+    // we need to take budget first, if budget is not available, we wait, if 
+    // everything is ok, we continue, then if we should add timeout callback on
+    // this op, we add a timeout callback and add an timeout event, finally, 
+    // we call _op_submit to submit this op
     info->register_tid = _op_submit_with_budget(o, lc);
   }
 
@@ -610,6 +625,7 @@ void Objecter::_send_linger_ping(LingerOp *info)
   o->oncommit_sync = onack;
   o->target = info->target;
   o->should_resend = false;
+  // update performace counter
   _send_op_account(o);
   MOSDOp *m = _prepare_osd_op(o);
   o->tid = last_tid.inc();
@@ -780,9 +796,11 @@ void Objecter::_linger_submit(LingerOp *info)
   // Populate Op::target
   OSDSession *s = NULL;
 
-  // info->target has already been setup when this linger op allocated and 
-  // registered in objecter->linger_register
+  // some field (oid, oloc (member variable of IoCtxImpl)) of info->target 
+  // has already been setup when this linger op 
+  // allocated and registered in objecter->linger_register, here we
   // calculate other fields for info->target, includes pgid, osd id, etc.
+  // in _op_submit we will calculate this again, but we have no choice
   _calc_target(&info->target, &info->last_force_resend);
 
   // Create LingerOp<->OSDSession relation
@@ -796,6 +814,8 @@ void Objecter::_linger_submit(LingerOp *info)
   s->lock.unlock();
   put_session(s);
 
+  // convert to a Op and submit this Op, in this interface we need to 
+  // handle if this is a retry send or first time send
   _send_linger(info);
 }
 
@@ -2067,7 +2087,8 @@ public:
 
 ceph_tid_t Objecter::op_submit(Op *op, int *ctx_budget)
 {
-  RWLock::RLocker rl(rwlock);
+  RWLock::RLocker rl(rwlock);   // get read lock, it will unlock when RLocker's dctor get called
+  // a lock with states
   RWLock::Context lc(rwlock, RWLock::Context::TakenForRead);
   return _op_submit_with_budget(op, lc, ctx_budget);
 }
@@ -2097,7 +2118,10 @@ ceph_tid_t Objecter::_op_submit_with_budget(Op *op, RWLock::Context& lc, int *ct
   if (osd_timeout > 0) {
     if (op->tid == 0)
       op->tid = last_tid.inc(); // if not assigned, set it here
-    op->ontimeout = new C_CancelOp(op->tid, this);
+    // if timeout, will call objecter->op_cancel to cancel this Op,
+    // we never update this timeout value later, so this moment is the 
+    // start time of the Op, it will never change afterward  
+    op->ontimeout = new C_CancelOp(op->tid, this);      
     Mutex::Locker l(timer_lock);
     timer.add_event_after(osd_timeout, op->ontimeout);
   }
@@ -2193,11 +2217,15 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
   assert(op->session == NULL);
   OSDSession *s = NULL;
 
+  // for linger op, we may have done this in Objecter::_linger_submit
+  // calc pgid, osd and other field of op->target to identify where should
+  // we send this op
   bool const check_for_latest_map = _calc_target(&op->target, &op->last_force_resend) == RECALC_OP_TARGET_POOL_DNE;
 
   // Try to get a session, including a retry if we need to take write lock
   int r = _get_session(op->target.osd, &s, lc);
   if (r == -EAGAIN) {
+    // maybe the Objecter is write locked by others
     assert(s == NULL);
     lc.promote();
     r = _get_session(op->target.osd, &s, lc);
@@ -2210,6 +2238,7 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
     lc.promote();
   }
 
+  // update performance counter
   _send_op_account(op);
 
   // send?
@@ -2850,6 +2879,8 @@ void Objecter::_cancel_linger_op(Op *op)
     num_uncommitted.dec();
   }
 
+  // put budget and cancel timer event if it exists, then remove op from
+  // session
   _finish_op(op, 0);
 }
 

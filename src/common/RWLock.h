@@ -42,6 +42,7 @@ public:
     if (g_lockdep) id = lockdep_register(name.c_str());
   }
 
+  // pthread_rwlock_t has no state, so we must add some counter to enhance this
   bool is_locked() const {
     assert(track);
     return (nrlock.read() > 0) || (nwlock.read() > 0);
@@ -62,8 +63,12 @@ public:
     }
   }
 
+  // if we want to get read lock we must release write lock first, vice versa
+  // but for read lock, we can get it multiple times, if so, we need to release it
+  // multiple times accordingly
   void unlock(bool lockdep=true) const {
     if (track) {
+      // either write lock or read lock
       if (nwlock.read() > 0) {
         nwlock.dec();
       } else {
@@ -72,7 +77,7 @@ public:
       }
     }
     if (lockdep && g_lockdep) id = lockdep_will_unlock(name.c_str(), id);
-    int r = pthread_rwlock_unlock(&L);
+    int r = pthread_rwlock_unlock(&L);  // one unlock interface, two lock interfaces
     assert(r == 0);
   }
 
@@ -121,6 +126,7 @@ public:
     unlock();
   }
 
+  // simple wrapper for get_write and get_read
   void get(bool for_write) {
     if (for_write) {
       get_write();
@@ -130,6 +136,7 @@ public:
   }
 
 public:
+  // lock in ctor and unlock in dctor, and you can unlock manually
   class RLocker {
     const RWLock &m_lock;
 
@@ -152,6 +159,7 @@ public:
     }
   };
 
+  // lock in ctor and unlock in dctor, and you can unlock manually
   class WLocker {
     RWLock &m_lock;
 
@@ -174,6 +182,7 @@ public:
     }
   };
 
+  // RWLock wrapper with states
   class Context {
     RWLock& lock;
 
@@ -198,6 +207,8 @@ public:
       state = TakenForWrite;
     }
 
+    // ok, with Context we can only get read lock once, never try to get 
+    // read lock on one rwlock multiple times
     void get_read() {
       assert(state == Untaken);
 
@@ -213,8 +224,8 @@ public:
 
     void promote() {
       assert(state == TakenForRead);
-      unlock();
-      get_write();
+      unlock();         // first, we need to release read lock
+      get_write();      // then, get write lock
     }
 
     LockState get_state() { return state; }
