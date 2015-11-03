@@ -148,6 +148,7 @@ int64_t Throttle::take(int64_t c)
   ldout(cct, 10) << "take " << c << dendl;
   {
     Mutex::Locker l(lock);
+    // increase counter
     count.add(c);
   }
   if (logger) {

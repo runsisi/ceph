@@ -79,6 +79,10 @@ int ImageWatcher::register_watch() {
 
   RWLock::WLocker l(m_watch_lock);
   assert(m_watch_state == WATCH_STATE_UNREGISTERED);
+
+  // call librados::IoCtx::watch2 to register a watch on the image header object
+  // IoCtx.watch2 will set m_watch_handle to memory address of the linger op 
+  // that encapsulates this watch operation
   int r = m_image_ctx.md_ctx.watch2(m_image_ctx.header_oid,
 				    &m_watch_handle,
 				    &m_watch_ctx);

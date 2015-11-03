@@ -1867,10 +1867,15 @@ private:
   void _throttle_op(Op *op, int op_size=0);
   int _take_op_budget(Op *op) {
     assert(rwlock.is_locked());
+    // calc how much io bytes will take
     int op_budget = calc_op_budget(op);
     if (keep_balanced_budget) {
+      // for client, they will always call objecter->set_balanced_budget 
+      // in librados::RadosClient::connect to set this field to true
+      // may sleep while waiting for budget
       _throttle_op(op, op_budget);
     } else {
+      // only increase counter, will not sleep
       op_throttle_bytes.take(op_budget);
       op_throttle_ops.take(1);
     }

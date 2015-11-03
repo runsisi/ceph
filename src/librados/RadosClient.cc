@@ -219,8 +219,8 @@ int librados::RadosClient::connect()
   err = -ENOMEM;
   objecter = new (std::nothrow) Objecter(cct, messenger, &monclient,
 			  &finisher,
-			  cct->_conf->rados_mon_op_timeout,
-			  cct->_conf->rados_osd_op_timeout);
+			  cct->_conf->rados_mon_op_timeout,  // how many seconds to wait for a response from the monitor before returning an error from a rados operation. 0 means on limit.
+			  cct->_conf->rados_osd_op_timeout); // how many seconds to wait for a response from osds before returning an error from a rados operation. 0 means no limit.
   if (!objecter)
     goto out;
   objecter->set_balanced_budget();

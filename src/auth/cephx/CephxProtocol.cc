@@ -159,7 +159,7 @@ bool CephXTicketHandler::verify_service_ticket_reply(CryptoKey& secret,
   CephXServiceTicket msg_a;     // contains session_key and validity time span
   std::string error;
 
-  // use our key to decrypt the reply to get a CephXServiceTicket
+  // use our key to decrypt the reply to get a CephXServiceTicket (msg_a)
   if (decode_decrypt(cct, msg_a, secret, indata, error)) {
     ldout(cct, 0) << "verify_service_ticket_reply: failed decode_decrypt, error is: " << error << dendl;
     return false;

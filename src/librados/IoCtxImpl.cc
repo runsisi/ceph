@@ -1101,14 +1101,23 @@ int librados::IoCtxImpl::watch(const object_t& oid,
   version_t objver;
   C_SaferCond onfinish;
 
+  // allocate an LingerOp, setup linger_op->target field and register it
+  // in objecter->linger_ops and objecter->linger_ops_set
   Objecter::LingerOp *linger_op = objecter->linger_register(oid, oloc, 0);
-  *handle = linger_op->get_cookie();
+
+  // cookie is memory address of linger_op
+  *handle = linger_op->get_cookie(); 
+
+  // allocate a watch context
   linger_op->watch_context = new WatchInfo(this,
 					   oid, ctx, ctx2);
 
   prepare_assert_ops(&wr);
+  // build an OSDOp of type CEPH_OSD_OP_WATCH
   wr.watch(*handle, CEPH_OSD_WATCH_OP_WATCH);
+  
   bufferlist bl;
+  // setup other fields of this linger op and submit it
   objecter->linger_watch(linger_op, wr,
 			 snapc, ceph_clock_now(NULL), bl,
 			 &onfinish,
@@ -1119,6 +1128,7 @@ int librados::IoCtxImpl::watch(const object_t& oid,
   set_sync_op_version(objver);
 
   if (r < 0) {
+    // remove this linger op locally (from OSDSession and Objecter)
     objecter->linger_cancel(linger_op);
   }
 

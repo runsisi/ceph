@@ -59,7 +59,7 @@ public:
       perfcounter(NULL),
       snap_id(CEPH_NOSNAP),
       snap_exists(true),
-      read_only(ro),
+      read_only(ro),    // for rbd_open this will be false, for rbd_open_read_only this will be true
       flush_encountered(false),
       exclusive_locked(false),
       name(image_name),
@@ -743,6 +743,7 @@ public:
   int ImageCtx::register_watch() {
     assert(image_watcher == NULL);
     image_watcher = new ImageWatcher(*this);
+    // register a watch on the image header object
     return image_watcher->register_watch();
   }
 

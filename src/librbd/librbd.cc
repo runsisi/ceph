@@ -1272,7 +1272,7 @@ extern "C" int rbd_open(rados_ioctx_t p, const char *name, rbd_image_t *image,
   librados::IoCtx::from_rados_ioctx_t(p, io_ctx);
   TracepointProvider::initialize<tracepoint_traits>(get_cct(io_ctx));
   librbd::ImageCtx *ictx = new librbd::ImageCtx(name, "", snap_name, io_ctx,
-						false);
+						false); // read_only always set to false
   tracepoint(librbd, open_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str(), ictx->snap_name.c_str(), ictx->read_only);
   int r = librbd::open_image(ictx);
   if (r >= 0)
@@ -1288,7 +1288,7 @@ extern "C" int rbd_open_read_only(rados_ioctx_t p, const char *name,
   librados::IoCtx::from_rados_ioctx_t(p, io_ctx);
   TracepointProvider::initialize<tracepoint_traits>(get_cct(io_ctx));
   librbd::ImageCtx *ictx = new librbd::ImageCtx(name, "", snap_name, io_ctx,
-						true);
+						true);  // read_only always set to true
   tracepoint(librbd, open_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str(), ictx->snap_name.c_str(), ictx->read_only);
   int r = librbd::open_image(ictx);
   if (r >= 0)

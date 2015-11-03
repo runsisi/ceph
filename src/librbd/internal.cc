@@ -2681,6 +2681,8 @@ reprotect_and_return_err:
       goto err_close;
 
     if (!ictx->read_only) {
+      // we open this image with interface rbd_open and not rbd_open_read_only
+      // allocate an ImageWatcher and register a watch on the image header object
       r = ictx->register_watch();
       if (r < 0) {
 	lderr(ictx->cct) << "error registering a watch: " << cpp_strerror(r)
