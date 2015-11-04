@@ -358,6 +358,7 @@ int librados::IoCtxImpl::nlist(Objecter::NListContext *context, int max_entries)
   context->max_entries = max_entries;
   context->nspace = oloc.nspace;
 
+  // 
   objecter->list_nobjects(context, new C_SafeCond(&mylock, &cond, &done, &r));
 
   mylock.Lock();

@@ -525,11 +525,11 @@ librados::WatchCtx2::
 
 
 struct librados::ObjListCtx {
-  bool new_request;
+  bool new_request;     // if true then use Objecter::NListContext
   librados::IoCtxImpl dupctx;
   librados::IoCtxImpl *ctx;
   Objecter::ListContext *lc;
-  Objecter::NListContext *nlc;
+  Objecter::NListContext *nlc; // will hold context of this list operation
 
   ObjListCtx(IoCtxImpl *c, Objecter::ListContext *l) : new_request(false), lc(l), nlc(NULL) {
     // Get our own private IoCtxImpl so that namespace setting isn't changed by caller
@@ -658,12 +658,15 @@ void librados::NObjectIteratorImpl::get_next()
 {
   const char *entry, *key, *nspace;
   if (ctx->new_request) {
+    // we are using new interface (Objecter::NListContext)
     if (ctx->nlc->at_end())
       return;
   } else {
     if (ctx->lc->at_end())
       return;
   }
+
+  // do a list operation and return the first object's oid, locator and nspace
   int ret = rados_nobjects_list_next(ctx.get(), &entry, &key, &nspace);
   if (ret == -ENOENT) {
     return;
@@ -674,6 +677,7 @@ void librados::NObjectIteratorImpl::get_next()
     throw std::runtime_error(oss.str());
   }
 
+  // update current object's info
   if (cur_obj.impl == NULL)
     cur_obj.impl = new ListObjectImpl();
   cur_obj.impl->nspace = nspace;
@@ -692,6 +696,8 @@ uint32_t librados::NObjectIteratorImpl::get_pg_hash_position() const
 ///////////////////////////// NObjectIterator /////////////////////////////
 librados::NObjectIterator::NObjectIterator(ObjListCtx *ctx_)
 {
+  // NObjectIteratorImpl has a shared pointer ceph::shared_ptr < ObjListCtx > hold
+  // this ObjListCtx instance
   impl = new NObjectIteratorImpl(ctx_);
 }
 
@@ -775,6 +781,8 @@ void librados::NObjectIterator::set_filter(const bufferlist &bl)
 void librados::NObjectIterator::get_next()
 {
   assert(impl);
+  // call rados_nobjects_list_next to get next object's namespace, oid and locator,
+  // and update current object (impl->cur_obj)
   impl->get_next();
 }
 
@@ -1581,12 +1589,24 @@ librados::NObjectIterator librados::IoCtx::nobjects_begin()
 librados::NObjectIterator librados::IoCtx::nobjects_begin(
     const bufferlist &filter)
 {
+  // rados_list_ctx_t is a typedef of void * 
   rados_list_ctx_t listh;
+  // before call librados::IoCtx::nobjects_begin someone may have already call
+  // io_ctx->set_namespace(all_nspaces), i.e. PoolDump::dump
+  // allocate a librados::ObjListCtx (listh) which encapsulates an instance
+  // of Objecter::NListContext
   rados_nobjects_list_open(io_ctx_impl, &listh);
+
+  // construct an iterator from a librados::ObjListCtx which has a 
+  // Objecter::NListContext instance as its list context
   NObjectIterator iter((ObjListCtx*)listh);
   if (filter.length() > 0) {
     iter.set_filter(filter);
   }
+
+  // call rados_nobjects_list_next to get nspace, oid and locator, and
+  // if NObjectIteratorImpl::cur_obj.impl is NULL then allocate one, and set
+  // nspace, oid and locator fields of cur_obj.impl
   iter.get_next();
   return iter;
 }
@@ -3524,11 +3544,12 @@ extern "C" int rados_nobjects_list_open(rados_ioctx_t io, rados_list_ctx_t *list
 
   tracepoint(librados, rados_nobjects_list_open_enter, io);
 
+  // ok, someone has called IoCtx::set_namespace(all_nspaces) 
   Objecter::NListContext *h = new Objecter::NListContext;
   h->pool_id = ctx->poolid;
   h->pool_snap_seq = ctx->snap_seq;
   h->nspace = ctx->oloc.nspace;	// After dropping compatibility need nspace
-  *listh = (void *)new librados::ObjListCtx(ctx, h);
+  *listh = (void *)new librados::ObjListCtx(ctx, h); // convert to librados::ObjListCtx
   tracepoint(librados, rados_nobjects_list_open_exit, 0, *listh);
   return 0;
 }
@@ -3626,14 +3647,21 @@ extern "C" int rados_nobjects_list_next(rados_list_ctx_t listctx, const char **e
       *nspace = lh->ctx->oloc.nspace.c_str();
     return retval;
   }
+
+  // ok, we are using the new interface (Objecter::NListContext)
   Objecter::NListContext *h = lh->nlc;
+
+  // librados::ObjListCtx:
+  //     librados::IoCtxImpl *ctx;      // communicating with the cluster
+  //     Objecter::NListContext *nlc;   // holding the current state of the list operation
 
   // if the list is non-empty, this method has been called before
   if (!h->list.empty())
     // so let's kill the previously-returned object
-    h->list.pop_front();
+    h->list.pop_front(); // this object has been return in last operation
 
   if (h->list.empty()) {
+    // call objecter->list_nobjects to list objects
     int ret = lh->ctx->nlist(lh->nlc, RADOS_LIST_MAX_ENTRIES);
     if (ret < 0) {
       tracepoint(librados, rados_nobjects_list_next_exit, ret, NULL, NULL, NULL);
@@ -3645,6 +3673,7 @@ extern "C" int rados_nobjects_list_next(rados_list_ctx_t listctx, const char **e
     }
   }
 
+  // return oid, locator and namespace of the first object in this list operation
   *entry = h->list.front().oid.c_str();
 
   if (key) {

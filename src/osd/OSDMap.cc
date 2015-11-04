@@ -1467,13 +1467,17 @@ int OSDMap::object_locator_to_pg(
     return -ENOENT;
   ps_t ps;
   if (loc.hash >= 0) {
-    ps = loc.hash;
+    ps = loc.hash;      // predefined hash value
   } else {
+    // we need to get the hash value from oid or others
     if (!loc.key.empty())
       ps = pool->hash_key(loc.key, loc.nspace);
     else
+      // do simple string hash and return an unsgined integer
       ps = pool->hash_key(oid.name, loc.nspace);
   }
+
+  // construct a pg id (hash + pool id)
   pg = pg_t(ps, loc.get_pool(), -1);
   return 0;
 }

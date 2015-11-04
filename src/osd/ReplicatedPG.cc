@@ -920,6 +920,7 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
         dout(10) << " pgnls pg=" << m->get_pg() << " != " << info.pgid << dendl;
 	result = 0; // hmm?
       } else {
+        // cct->_conf->osd_max_pgls default to 1024
 	unsigned list_size = MIN(cct->_conf->osd_max_pgls, p->op.pgls.count);
 
         dout(10) << " pgnls pg=" << m->get_pg() << " count " << list_size << dendl;
@@ -936,8 +937,11 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 	}
 
 	hobject_t next;
+        // to get the first object to start
 	hobject_t current = response.handle;
 	osr->flush();
+
+        // get a vector of objects
 	int r = pgbackend->objects_list_partial(
 	  current,
 	  list_size,
@@ -1047,6 +1051,8 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 	    ls_iter == sentries.end()) {
 	  result = 1;
 	}
+
+        // note down which object to start the next time
 	response.handle = next;
 	::encode(response, osd_op.outdata);
 	if (filter)

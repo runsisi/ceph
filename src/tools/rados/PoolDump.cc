@@ -27,6 +27,7 @@ using namespace librados;
  *
  * @returns 0 on success, else error code
  */
+ // used for "rados export" command
 int PoolDump::dump(IoCtx *io_ctx)
 {
   assert(io_ctx != NULL);

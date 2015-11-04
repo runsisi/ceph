@@ -789,7 +789,14 @@ int HashIndex::complete_split(const vector<string> &path, subdir_info_s info) {
 void HashIndex::get_path_components(const ghobject_t &oid,
 				    vector<string> *path) {
   char buf[MAX_HASH_LEVEL + 1];
+  // .* 
+  // The precision is not specified in the format string, but as an additional 
+  // integer value argument preceding the argument that has to be formatted.
+  // For integer specifiers (d, i, o, u, x, X): precision specifies the 
+  // minimum number of digits to be written.
   snprintf(buf, sizeof(buf), "%.*X", MAX_HASH_LEVEL, (uint32_t)oid.hobj.get_nibblewise_key());
+  // X
+  // Unsigned hexadecimal integer (uppercase)
 
   // Path components are the hex characters of oid.hobj.hash, least
   // significant first

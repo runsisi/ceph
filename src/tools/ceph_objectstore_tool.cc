@@ -956,7 +956,10 @@ int ObjectStoreTool::get_object(ObjectStore *store, coll_t coll,
   if (ob.hoid.hobj.nspace != g_ceph_context->_conf->osd_hit_set_namespace) {
     object_t oid = ob.hoid.hobj.oid;
     object_locator_t loc(ob.hoid.hobj);
+
+    // get mapping of oid -> pg id (hash + pool id)
     pg_t raw_pgid = curmap.object_locator_to_pg(oid, loc);
+    // modulo hash into a 0 ~ pg_num - 1 digit
     pg_t pgid = curmap.raw_pg_to_pg(raw_pgid);
   
     spg_t coll_pgid;

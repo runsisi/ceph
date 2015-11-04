@@ -3311,6 +3311,7 @@ uint32_t Objecter::list_nobjects_seek(NListContext *list_context,
 				     uint32_t pos)
 {
   RWLock::RLocker rl(rwlock);
+  // find the pool the pg is in and then call pg_pool_t::raw_pg_to_pg
   pg_t actual = osdmap->raw_pg_to_pg(pg_t(pos, list_context->pool_id));
   ldout(cct, 10) << "list_objects_seek " << list_context
 		 << " pos " << pos << " -> " << actual << dendl;
@@ -3334,12 +3335,13 @@ void Objecter::list_nobjects(NListContext *list_context, Context *onfinish)
 	   << " list_context->cookie " << list_context->cookie << dendl;
 
   if (list_context->at_end_of_pg) {
+    // we have reached the last object of this pg
     list_context->at_end_of_pg = false;
-    ++list_context->current_pg;
+    ++list_context->current_pg; // update to the next pg
     list_context->current_pg_epoch = 0;
     list_context->cookie = collection_list_handle_t();
     if (list_context->current_pg >= list_context->starting_pg_num) {
-      list_context->at_end_of_pool = true;
+      list_context->at_end_of_pool = true; // reached the last pg of this pool
       ldout(cct, 20) << " no more pgs; reached end of pool" << dendl;
     } else {
       ldout(cct, 20) << " move to next pg " << list_context->current_pg << dendl;
@@ -3355,6 +3357,7 @@ void Objecter::list_nobjects(NListContext *list_context, Context *onfinish)
   }
 
   rwlock.get_read();
+  // list_context->pool_id and list_context->nspace has been set in rados_nobjects_list_open
   const pg_pool_t *pool = osdmap->get_pg_pool(list_context->pool_id);
   int pg_num = pool->get_pg_num();
   rwlock.unlock();
@@ -3373,19 +3376,22 @@ void Objecter::list_nobjects(NListContext *list_context, Context *onfinish)
     // start reading from the beginning; the pgs have changed
     ldout(cct, 10) << " pg_num changed; restarting with " << pg_num << dendl;
     list_context->current_pg = 0;
-    list_context->cookie = collection_list_handle_t();
+    list_context->cookie = collection_list_handle_t(); // a typedef of hobject_t
     list_context->current_pg_epoch = 0;
     list_context->starting_pg_num = pg_num;
   }
   assert(list_context->current_pg <= pg_num);
 
   ObjectOperation op;
+  // construct a CEPH_OSD_OP_PGNLS or CEPH_OSD_OP_PGNLS_FILTER op
   op.pg_nls(list_context->max_entries, list_context->filter, list_context->cookie,
 	     list_context->current_pg_epoch);
   list_context->bl.clear();
   C_NList *onack = new C_NList(list_context, onfinish, this);
   object_locator_t oloc(list_context->pool_id, list_context->nspace);
 
+  // construct an Objecter::Op and call op_submit with specified pg to 
+  // send it to the cluster
   pg_read(list_context->current_pg, oloc, op,
 	  &list_context->bl, 0, onack, &onack->epoch, &list_context->ctx_budget);
 }
@@ -3415,6 +3421,7 @@ void Objecter::_nlist_reply(NListContext *list_context, int r,
 		 << ", response.entries " << response.entries << dendl;
   list_context->extra_info.append(extra_info);
   if (response_size) {
+    // new objects, merge into list<librados::ListObjectImpl>
     list_context->list.merge(response.entries);
   }
 
