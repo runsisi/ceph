@@ -1726,9 +1726,11 @@ void OSDMap::_pg_to_up_acting_osds(const pg_t& pg, vector<int> *up, int *up_prim
     *acting_primary = _acting_primary;
 }
 
+// nrep has a default argument 0
 int OSDMap::calc_pg_rank(int osd, const vector<int>& acting, int nrep)
 {
   if (!nrep)
+    // if not specify, we get it from acting set size
     nrep = acting.size();
   for (int i=0; i<nrep; i++) 
     if (acting[i] == osd)
@@ -1736,13 +1738,16 @@ int OSDMap::calc_pg_rank(int osd, const vector<int>& acting, int nrep)
   return -1;
 }
 
+// nrep has a default argument 0
 int OSDMap::calc_pg_role(int osd, const vector<int>& acting, int nrep)
 {
   if (!nrep)
     nrep = acting.size();
+  // the index in the vector
   return calc_pg_rank(osd, acting, nrep);
 }
 
+// to check if the primary osd of the acting set has been changed, 
 bool OSDMap::primary_changed(
   int oldprimary,
   const vector<int> &oldacting,
@@ -1755,6 +1760,8 @@ bool OSDMap::primary_changed(
     return true;     // was empty, now not, or vice versa
   if (oldprimary != newprimary)
     return true;     // primary changed
+  // rank is a vector index which indicates the location of the osd in the vector,
+  // if osd is not in the vector, rank is set to -1
   if (calc_pg_rank(oldprimary, oldacting) !=
       calc_pg_rank(newprimary, newacting))
     return true;

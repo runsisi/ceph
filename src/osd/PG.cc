@@ -204,7 +204,7 @@ PG::PG(OSDService *o, OSDMapRef curmap,
   role(0),
   state(0),
   send_notify(false),
-  pg_whoami(osd->whoami, p.shard),
+  pg_whoami(osd->whoami, p.shard), // we are on which osd, and we are which shard of this pg, for replica pg, the shard should be NO_SHARD
   need_up_thru(false),
   last_peering_reset(0),
   heartbeat_peer_lock("PG::heartbeat_peer_lock"),

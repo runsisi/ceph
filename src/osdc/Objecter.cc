@@ -982,7 +982,7 @@ void Objecter::_scan_requests(OSDSession *s,
     ++lp;   // check_linger_pool_dne() may touch linger_ops; prevent iterator invalidation
     ldout(cct, 10) << " checking linger op " << op->linger_id << dendl;
     bool unregister, force_resend_writes = cluster_full;
-    int r = _recalc_linger_op_target(op, lc);
+    int r = _recalc_linger_op_target(op, lc); // will call _calc_target with the third parameter set to true
     if (pool_full_map)
       force_resend_writes = force_resend_writes || (*pool_full_map)[op->target.base_oloc.pool];
     switch (r) {
@@ -1216,6 +1216,8 @@ void Objecter::handle_osd_map(MOSDMap *m)
     OSDSession *s = op->session;
     bool mapped_session = false;
     if (!s) {
+      // there is no session associated with the op, so the op was never sent out, 
+      // calc the target of the osd and get a session with the target osd 
       int r = _map_session(&op->target, &s, lc);
       assert(r == 0);
       mapped_session = true;
@@ -2219,7 +2221,9 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
 
   // for linger op, we may have done this in Objecter::_linger_submit
   // calc pgid, osd and other field of op->target to identify where should
-  // we send this op
+  // we send this op to
+  // only Objecter::_recalc_linger_op_target will call _calc_target with
+  // third parameter set to true
   bool const check_for_latest_map = _calc_target(&op->target, &op->last_force_resend) == RECALC_OP_TARGET_POOL_DNE;
 
   // Try to get a session, including a retry if we need to take write lock
@@ -2460,6 +2464,8 @@ bool Objecter::is_pg_changed(
 	newprimary,
 	newacting))
     return true;
+
+  // if we need to check any changes, also check any acting set changes
   if (any_change && oldacting != newacting)
     return true;
   return false;      // same primary (tho replicas may have changed)
@@ -2564,6 +2570,10 @@ int64_t Objecter::get_object_pg_hash_position(int64_t pool, const string& key,
   return p->raw_hash_to_pg(p->hash_key(key, ns));
 }
 
+// only Objecter::_recalc_linger_op_target will call this interface with the
+// third parameter set to true
+// if we set or remove cache pool, all op need to resend forcibly, so every
+// op has a field to note the epoch that we last been force resent
 int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any_change)
 {
   assert(rwlock.is_locked());
@@ -2581,13 +2591,24 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
   bool need_check_tiering = false;
   if (osdmap->get_epoch() == pi->last_force_op_resend) {
     if (last_force_resend && *last_force_resend < pi->last_force_op_resend) {
+      // pi->last_force_op_resend is set in OSDMonitor::prepare_command_impl 
+      // when we call "ceph osd tier set-overlay"or "ceph osd tier remove-overlay", 
+      // and distribute with osdmap, which will force us to resend the op
       *last_force_resend = pi->last_force_op_resend;
       force_resend = true;
     } else if (last_force_resend == 0)
       force_resend = true;
   }
+
+  // when op_target_t is constructed, the t->base_id, t->base_oloc and other 
+  // fields has been setup, and without t->target_oid and t->target_oloc 
+  // been setup, so this can be use to differenciate the first calculation and
+  // a second calculation of this target
   if (t->target_oid.name.empty() || force_resend) {
     t->target_oid = t->base_oid;
+
+    // if we are doing the calc the first time, or if cache pool settings 
+    // has been changed, we have to check cache tiering
     need_check_tiering = true;
   }
   if (t->target_oloc.empty() || force_resend) {
@@ -2598,13 +2619,15 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
   if (need_check_tiering &&
       (t->flags & CEPH_OSD_FLAG_IGNORE_OVERLAY) == 0) {
     if (is_read && pi->has_read_tier())
-      t->target_oloc.pool = pi->read_tier;
+      t->target_oloc.pool = pi->read_tier;      // redirect to cache pool to read
     if (is_write && pi->has_write_tier())
-      t->target_oloc.pool = pi->write_tier;
+      t->target_oloc.pool = pi->write_tier;     // redirect to cache pool to read
   }
 
   pg_t pgid;
   if (t->precalc_pgid) {
+    // only Objecter::pg_read will set t->precalc_pgid to true, which
+    // meanings we are doing something with the specified pg (e.g. rados -p xxx ls)
     assert(t->base_oid.name.empty()); // make sure this is a listing op
     ldout(cct, 10) << __func__ << " have " << t->base_pgid << " pool "
 		   << osdmap->have_pg_pool(t->base_pgid.pool()) << dendl;
@@ -2631,6 +2654,8 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
 			       &acting, &acting_primary);
   bool sort_bitwise = osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE);
   unsigned prev_seed = ceph_stable_mod(pgid.ps(), t->pg_num, t->pg_num_mask);
+  
+  // if we are re-calculating t->acting_primary and other fields are valid
   if (any_change && pg_interval_t::is_new_interval(
           t->acting_primary,
 	  acting_primary,
@@ -2661,9 +2686,9 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
   }
 
   if (t->pgid != pgid ||
-      is_pg_changed(
+      is_pg_changed( // check if the primary has changed, and if we need to check any changes then also check if acting set has also been changed
 	t->acting_primary, t->acting, acting_primary, acting,
-	t->used_replica || any_change) ||
+	t->used_replica || any_change) || // only if we are re-calculating that t->used_replica may be true
       force_resend) {
     t->pgid = pgid;
     t->acting = acting;
@@ -2677,7 +2702,7 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
     t->sort_bitwise = sort_bitwise;
     ldout(cct, 10) << __func__ << " "
 		   << " pgid " << pgid << " acting " << acting << dendl;
-    t->used_replica = false;
+    t->used_replica = false; // only set to true in this interface, so if this field is true, we are definitely re-calculating
     if (acting_primary == -1) {
       t->osd = -1;
     } else {
@@ -2729,6 +2754,8 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
 int Objecter::_map_session(op_target_t *target, OSDSession **s,
 			   RWLock::Context& lc)
 {
+  // only here will call _calc_target with the second argument set to default(NULL),
+  // because the op has never been sent out, thus no last force resend epoch available
   int r = _calc_target(target);
   if (r < 0) {
     return r;

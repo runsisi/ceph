@@ -479,8 +479,10 @@ public:
 
   // primary state
  public:
-  pg_shard_t primary;
-  pg_shard_t pg_whoami;
+  pg_shard_t primary;   // the primary shard is changed in PG::init_primary_up_acting, which 
+                        // may be called by OSD::load_pgs, PG::split_into, PG::init, PG::start_peering_interval
+  pg_shard_t pg_whoami; // which osd we are on, and which shard of this pg is, this 
+                        // is initialized in pg's ctor and will not be changed afterward
   pg_shard_t up_primary;
   vector<int> up, acting, want_acting;
   set<pg_shard_t> actingbackfill, actingset;

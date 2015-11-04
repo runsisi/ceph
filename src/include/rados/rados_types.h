@@ -21,6 +21,6 @@ struct obj_watch_t {
  * before calling rados_nobjects_list_open() to return
  * all objects in all namespaces.
  */
-#define	LIBRADOS_ALL_NSPACES "\001"
+#define	LIBRADOS_ALL_NSPACES "\001"     // this is escape sequence, which is an ascii code with octal value of 001
 
 #endif

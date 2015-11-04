@@ -1575,6 +1575,7 @@ static int rados_tool_common(const std::map < std::string, std::string > &opts,
     }
 
     if (wildcard)
+      // only wildcard if --all specified and --default NOT specified
       io_ctx.set_namespace(all_nspaces);
     bool stdout = (nargs.size() < 2) || (strcmp(nargs[1], "-") == 0);
     ostream *outstream;
