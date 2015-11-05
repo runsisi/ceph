@@ -175,6 +175,7 @@ public:
 	   pool == INT64_MIN;
   }
 
+  // reverse every bit
   static uint32_t _reverse_bits(uint32_t v) {
     // reverse bits
     // swap odd and even bits
@@ -189,6 +190,8 @@ public:
     v = ( v >> 16             ) | ( v               << 16);
     return v;
   }
+
+  // reverse every 4 bits
   static uint32_t _reverse_nibbles(uint32_t retval) {
     // reverse nibbles
     retval = ((retval & 0x0f0f0f0f) << 4) | ((retval & 0xf0f0f0f0) >> 4);

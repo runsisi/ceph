@@ -144,7 +144,7 @@ struct crush_bucket {
 };
 
 struct crush_bucket_uniform {
-	struct crush_bucket h;
+	struct crush_bucket h; // like a header to store common fields for all bucket types
 	__u32 item_weight;  /* 16-bit fixed point; all items equally weighted */
 };
 

@@ -33,7 +33,7 @@ struct crush_map *crush_create()
 
 	// by default, use legacy types, and also exclude tree,
 	// since it was buggy.
-	m->allowed_bucket_algs = CRUSH_LEGACY_ALLOWED_BUCKET_ALGS;
+	m->allowed_bucket_algs = CRUSH_LEGACY_ALLOWED_BUCKET_ALGS; // uniform | list | straw
 	return m;
 }
 
@@ -143,7 +143,7 @@ int crush_add_bucket(struct crush_map *map,
 	/* find a bucket id */
 	if (id == 0)
 		id = crush_get_next_bucket_id(map);
-	pos = -1 - id;
+	pos = -1 - id;  // id is a negative integer
 
 	while (pos >= map->max_buckets) {
 		/* expand array */
@@ -197,16 +197,17 @@ crush_make_uniform_bucket(int hash, int type, int size,
         if (!bucket)
                 return NULL;
 	memset(bucket, 0, sizeof(*bucket));
-	bucket->h.alg = CRUSH_BUCKET_UNIFORM;
-	bucket->h.hash = hash;
-	bucket->h.type = type;
-	bucket->h.size = size;
+	bucket->h.alg = CRUSH_BUCKET_UNIFORM; // the algorithm which is used to choose items within the bucket
+	bucket->h.hash = hash;  // hash function type
+	bucket->h.type = type;  // bucket type id
+	bucket->h.size = size;  // items within this bucket
 
 	if (crush_multiplication_is_unsafe(size, item_weight))
+                // item_weight is zero or item_weight * size is too big (> (__u32)(-1))
                 goto err;
 
-	bucket->h.weight = size * item_weight;
-	bucket->item_weight = item_weight;
+	bucket->h.weight = size * item_weight; // total weight of this bucket
+	bucket->item_weight = item_weight; // all items equally weighted 
 	bucket->h.items = malloc(sizeof(__s32)*size);
 
         if (!bucket->h.items)
@@ -217,7 +218,7 @@ crush_make_uniform_bucket(int hash, int type, int size,
         if (!bucket->h.perm)
                 goto err;
 	for (i=0; i<size; i++)
-		bucket->h.items[i] = items[i];
+		bucket->h.items[i] = items[i]; // set id of every item within the bucket
 
 	return bucket;
 err:
@@ -666,9 +667,12 @@ crush_make_bucket(struct crush_map *map,
 	switch (alg) {
 	case CRUSH_BUCKET_UNIFORM:
 		if (size && weights)
-			item_weight = weights[0];
+			item_weight = weights[0]; // every item within this bucket has the same weight
 		else
-			item_weight = 0;
+			item_weight = 0; // then this will result crush_make_uniform_bucket to return NULL
+			
+                // allocate an uniform bucket, set bucket properties and insert 
+                // id of every item within this bucket
 		return (struct crush_bucket *)crush_make_uniform_bucket(hash, type, size, items, item_weight);
 
 	case CRUSH_BUCKET_LIST:

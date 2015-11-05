@@ -59,8 +59,10 @@ public:
 private:
   struct crush_map *crush;
   /* reverse maps */
-  mutable bool have_rmaps;
+  mutable bool have_rmaps; // only build_rmaps will set this to true, when rule added or removed will invalidate this field
   mutable std::map<string, int> type_rmap, name_rmap, rule_name_rmap;
+  // get_type_id, name_exists, get_item_id, rule_exists and get_rule_id those
+  // methods that need get id from name will build/rebuild these reverse maps
   void build_rmaps() const {
     if (have_rmaps) return;
     build_rmap(type_map, type_rmap);
@@ -93,11 +95,11 @@ public:
   void create() {
     if (crush)
       crush_destroy(crush);
-    crush = crush_create();
+    crush = crush_create(); // allocate an instance of struct crush_map, and initialize it to legacy values
     assert(crush);
-    have_rmaps = false;
+    have_rmaps = false; // when we want to get the id with a given name, we will call build_rmaps first
 
-    set_tunables_default();
+    set_tunables_default(); // reset tunables intialized in crush_create
   }
 
   // tunables
@@ -332,7 +334,7 @@ public:
     return 0;
   }
   int set_item_name(int i, const string& name) {
-    if (!is_valid_crush_name(name))
+    if (!is_valid_crush_name(name)) // -_0-9A-Za-z
       return -EINVAL;
     name_map[i] = name;
     if (have_rmaps)
@@ -951,10 +953,13 @@ public:
   int add_bucket(int bucketno, int alg, int hash, int type, int size,
 		 int *items, int *weights, int *idout) {
     if (alg == 0) {
+      // choose the better algorithm from allowed algorithms
       alg = get_default_bucket_alg();
       if (alg == 0)
 	return -EINVAL;
     }
+
+    // allocate an crush_bucket and initialize it
     crush_bucket *b = crush_make_bucket(crush, alg, hash, type, size, items, weights);
     assert(b);
     return crush_add_bucket(crush, bucketno, b, idout);
@@ -1026,7 +1031,11 @@ public:
   void do_rule(int rule, int x, vector<int>& out, int maxout,
 	       const vector<__u32>& weight) const {
     Mutex::Locker l(mapper_lock);
-    int rawout[maxout];
+    // variable-sized array is defined in C99 standard and also a g++ extension, 
+    // not a C++ standard (VC++ 2015 do not support this extension)
+    // do not try to initialize it like: rawout[maxout] = {0}, g++ / gcc will
+    // warning like this: error: variable-sized object may not be initialized
+    int rawout[maxout]; 
     int scratch[maxout * 3];
     int numrep = crush_do_rule(crush, rule, x, rawout, maxout, &weight[0], weight.size(), scratch);
     if (numrep < 0)

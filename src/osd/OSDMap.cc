@@ -2766,7 +2766,9 @@ int OSDMap::get_erasure_code_profile_default(CephContext *cct,
 
 int OSDMap::_build_crush_types(CrushWrapper& crush)
 {
-  crush.set_type_name(0, "osd");
+  // insert a <type id, type name> pair into CrushWrapper::type_map, 
+  // may need to update reverse map
+  crush.set_type_name(0, "osd"); 
   crush.set_type_name(1, "host");
   crush.set_type_name(2, "chassis");
   crush.set_type_name(3, "rack");
@@ -2817,18 +2819,24 @@ int OSDMap::build_simple_crush_map_from_conf(CephContext *cct,
 {
   const md_config_t *conf = cct->_conf;
 
+  // allocate an instance of struct crush_map, and initialize its tunables
+  // to default (bobtail)
   crush.create();
 
   set<string> hosts, racks;
 
   // root
+  // insert <type id, type name> pairs into CrushWrapper::type_map, 
+  // may need to update reverse map, and return the id of the root type
   int root_type = _build_crush_types(crush);
   int rootid;
+
+  // 
   int r = crush.add_bucket(0, 0,
 			   CRUSH_HASH_DEFAULT,
 			   root_type, 0, NULL, NULL, &rootid);
   assert(r == 0);
-  crush.set_item_name(rootid, "default");
+  crush.set_item_name(rootid, "default"); // set root item's name to "default"
 
   // add osds
   vector<string> sections;
@@ -2837,6 +2845,7 @@ int OSDMap::build_simple_crush_map_from_conf(CephContext *cct,
     if (i->find("osd.") != 0)
       continue;
 
+    // ok, this is an osd.xxx section
     const char *begin = i->c_str() + 4;
     char *end = (char*)begin;
     int o = strtol(begin, &end, 10);

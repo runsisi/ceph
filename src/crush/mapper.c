@@ -787,6 +787,8 @@ int crush_do_rule(const struct crush_map *map,
 		  const __u32 *weight, int weight_max,
 		  int *scratch)
 {
+        // scratch is an array with size of 3 * result_max, no other info is
+        // provided, i.e. used only for a memory area to store temporary data
 	int result_len;
 	int *a = scratch;
 	int *b = scratch + result_max;
@@ -806,7 +808,7 @@ int crush_do_rule(const struct crush_map *map,
 	 * the original choose_total_tries value was off by one (it
 	 * counted "retries" and not "tries").  add one.
 	 */
-	int choose_tries = map->choose_total_tries + 1;
+	int choose_tries = map->choose_total_tries + 1; // default to 50 start from version bobtail
 	int choose_leaf_tries = 0;
 	/*
 	 * the local tries values were counted as "retries", though,
@@ -822,7 +824,7 @@ int crush_do_rule(const struct crush_map *map,
 		return 0;
 	}
 
-	rule = map->rules[ruleno];
+	rule = map->rules[ruleno]; // get the specified rule
 	result_len = 0;
 	w = a;
 	o = b;
