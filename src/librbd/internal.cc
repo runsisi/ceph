@@ -2676,6 +2676,9 @@ reprotect_and_return_err:
 			 << "' id = '" << ictx->id
 			 << "' snap_name = '"
 			 << ictx->snap_name << "'" << dendl;
+    // get image id by image name, format, and other immutable metadatas (like
+    // object_prefix, order etc.), and if rbd cache is enabled, allocate an
+    // instance of ObjectCacher
     int r = ictx->init();
     if (r < 0)
       goto err_close;

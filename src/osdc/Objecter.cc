@@ -2231,7 +2231,7 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
   if (r == -EAGAIN) {
     // maybe the Objecter is write locked by others
     assert(s == NULL);
-    lc.promote();
+    lc.promote();       // release read lock and get write lock
     r = _get_session(op->target.osd, &s, lc);
   }
   assert(r == 0);
@@ -2294,6 +2294,7 @@ ceph_tid_t Objecter::_op_submit(Op *op, RWLock::Context& lc)
   _session_op_assign(s, op);
 
   if (need_send) {
+    // we can send it to transport channel now
     _send_op(op, m);
   }
 
@@ -2479,6 +2480,8 @@ bool Objecter::target_should_be_paused(op_target_t *t)
                  _osdmap_full_flag() ||
                  _osdmap_pool_full(*pi);
 
+  // epoch_barrier can only be set in Objecter::set_epoch_barrier,
+  // and this interface is only be called by mds' client
   return (t->flags & CEPH_OSD_FLAG_READ && pauserd) ||
          (t->flags & CEPH_OSD_FLAG_WRITE && pausewr) ||
          (osdmap->get_epoch() < epoch_barrier);
@@ -2572,6 +2575,8 @@ int64_t Objecter::get_object_pg_hash_position(int64_t pool, const string& key,
 
 // only Objecter::_recalc_linger_op_target will call this interface with the
 // third parameter set to true
+// and only Objecter::_map_session will call this interface with the second
+// parameter set to NULL, which means our op never sent out before
 // if we set or remove cache pool, all op need to resend forcibly, so every
 // op has a field to note the epoch that we last been force resent
 int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any_change)
@@ -2627,7 +2632,7 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
   pg_t pgid;
   if (t->precalc_pgid) {
     // only Objecter::pg_read will set t->precalc_pgid to true, which
-    // meanings we are doing something with the specified pg (e.g. rados -p xxx ls)
+    // meanings we are accessing the specified pg (e.g. rados -p xxx ls)
     assert(t->base_oid.name.empty()); // make sure this is a listing op
     ldout(cct, 10) << __func__ << " have " << t->base_pgid << " pool "
 		   << osdmap->have_pg_pool(t->base_pgid.pool()) << dendl;
@@ -2635,8 +2640,12 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
       t->osd = -1;
       return RECALC_OP_TARGET_POOL_DNE;
     }
+
+    // ceph_stable_mod raw hash value (hash_func(oid)) of a pg to a pg index (0 ~ pg_num - 1)
     pgid = osdmap->raw_pg_to_pg(t->base_pgid);
   } else {
+    // calc a raw hash value of the oid, and use this raw hash value to 
+    // construct a raw pg id
     int ret = osdmap->object_locator_to_pg(t->target_oid, t->target_oloc,
 					   pgid);
     if (ret == -ENOENT) {
@@ -2650,12 +2659,16 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
   unsigned pg_num = pi->get_pg_num();
   int up_primary, acting_primary;
   vector<int> up, acting;
+
+  // map pgid (may be raw pg) to osd(s)
   osdmap->pg_to_up_acting_osds(pgid, &up, &up_primary,
 			       &acting, &acting_primary);
+
   bool sort_bitwise = osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE);
   unsigned prev_seed = ceph_stable_mod(pgid.ps(), t->pg_num, t->pg_num_mask);
   
-  // if we are re-calculating t->acting_primary and other fields are valid
+  // if we are re-calculating, t->acting_primary and other fields may be valid,
+  // only Objecter::_recalc_linger_op_target will set any_change to true
   if (any_change && pg_interval_t::is_new_interval(
           t->acting_primary,
 	  acting_primary,
@@ -2679,14 +2692,23 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
 
   bool need_resend = false;
 
+  // CEPH_OSDMAP_PAUSERD or CEPH_OSDMAP_PAUSEWR has been set ("ceph osd pause"),
+  // or if we have set Objecter::epoch_barrier and currently our epoch is less
+  // than the barrier, then we should pause our op
   bool paused = target_should_be_paused(t);
   if (!paused && paused != t->paused) {
+    // this time we should not pause the op and the last time we calc 
+    // we found that we have to pause (we did not send out the op the last time), so 
+    // this time we need to resend it
+    // t->paused can only be set in Objecter::_op_submit and only here or
+    // Objecter::_prepare_osd_op will clear it
     t->paused = false;
     need_resend = true;
   }
 
   if (t->pgid != pgid ||
-      is_pg_changed( // check if the primary has changed, and if we need to check any changes then also check if acting set has also been changed
+      // pgid -> target osd has changed
+      is_pg_changed( // check if the primary has changed, and if we need to check any changes then we also check if acting set has also been changed
 	t->acting_primary, t->acting, acting_primary, acting,
 	t->used_replica || any_change) || // only if we are re-calculating that t->used_replica may be true
       force_resend) {
@@ -2704,11 +2726,15 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
 		   << " pgid " << pgid << " acting " << acting << dendl;
     t->used_replica = false; // only set to true in this interface, so if this field is true, we are definitely re-calculating
     if (acting_primary == -1) {
+      // no acting primary osd to send
       t->osd = -1;
     } else {
       int osd;
       bool read = is_read && !is_write;
+
+      // for read op, first to check if we can send the op to replica osd
       if (read && (t->flags & CEPH_OSD_FLAG_BALANCE_READS)) {
+        // choose a random osd to send this read op
 	int p = rand() % acting.size();
 	if (p)
 	  t->used_replica = true;
@@ -2739,6 +2765,7 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
 	assert(best >= 0);
 	osd = acting[best];
       } else {
+        // we can only send to acting primary osd
 	osd = acting_primary;
       }
       t->osd = osd;

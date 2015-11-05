@@ -227,7 +227,13 @@ public:
     return max ? 0x100000000ull : hash_reverse_bits;
   }
 
+  // when hobject is constructed or "hash" value of this hobject has been
+  // changed build_hash_cache will be called to update cache of the hash
+  // value (nibblewise_key_cache, hash_reverse_bits)
   void build_hash_cache() {
+    // hash is a memeber variable of hobject and can be changed by
+    // member method like: set_hash, set_nibblewise_key_u32, 
+    // set_bitwise_key_u32
     nibblewise_key_cache = _reverse_nibbles(hash);
     hash_reverse_bits = _reverse_bits(hash);
   }

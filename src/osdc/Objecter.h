@@ -2133,6 +2133,12 @@ public:
       o->features = features;
     return op_submit(o);
   }
+
+  // this interface may only be called by:
+  //    librados::IoCtxImpl::hit_set_list,
+  //    librados::IoCtxImpl::hit_set_get,
+  //    Objecter::list_nobjects,
+  //    Objecter::list_objects
   ceph_tid_t pg_read(uint32_t hash, object_locator_t oloc,
 		ObjectOperation& op,
 		bufferlist *pbl, int flags,
@@ -2142,6 +2148,9 @@ public:
     Op *o = new Op(object_t(), oloc,
 		   op.ops, flags | global_op_flags.read() | CEPH_OSD_FLAG_READ,
 		   onack, NULL, NULL);
+    // only pg_read will set target.precalc_pgid to true, which means 
+    // we are access the specified pg, then in _calc_target target.base_pgid will
+    // be used while target.base_oid won't
     o->target.precalc_pgid = true;
     o->target.base_pgid = pg_t(hash, oloc.pool);
     o->priority = op.priority;

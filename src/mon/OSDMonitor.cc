@@ -1986,6 +1986,7 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
     if ((g_conf->mon_osd_auto_mark_auto_out_in && (oldstate & CEPH_OSD_AUTOOUT)) ||
 	(g_conf->mon_osd_auto_mark_new_in && (oldstate & CEPH_OSD_NEW)) ||
 	(g_conf->mon_osd_auto_mark_in)) {
+      // test if CEPH_OSDMAP_NOIN flag of current osdmap has been set
       if (can_mark_in(from)) {
 	if (osdmap.osd_xinfo[from].old_weight > 0)
 	  pending_inc.new_weight[from] = osdmap.osd_xinfo[from].old_weight;
@@ -6052,6 +6053,8 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	ss << "osd." << osd << " does not exist. ";
 	continue;
       }
+
+      // osd to down/out/in/rm exists
       if (prefix == "osd down") {
 	if (osdmap.is_down(osd)) {
 	  ss << "osd." << osd << " is already down. ";
@@ -6083,6 +6086,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
           ss << "osd." << osd << " is still up; must be down before removal. ";
 	  err = -EBUSY;
 	} else {
+	  // osd to remove is down
 	  pending_inc.new_state[osd] = osdmap.get_state(osd);
           pending_inc.new_uuid[osd] = uuid_d();
 	  pending_metadata_rm.insert(osd);
@@ -6320,8 +6324,11 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	goto reply;
       }
       dout(10) << " osd create got uuid " << uuid << dendl;
+
+      // to check if the uuid has been used by any osd
       i = osdmap.identify_osd(uuid);
-      if (i >= 0) {
+      
+      if (i >= 0) { // ok, the uuid has been used by osd i
 	// osd already exists
 	if (id >= 0 && i != id) {
 	  ss << "uuid " << uuidstr << " already in use for different id " << i;
@@ -6340,26 +6347,39 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	}
 	goto reply;
       }
-      // i < 0
+      
+      // i < 0, the user specifed uuid has not been used by any osd
       if (id >= 0) {
+        // user wants to create a osd with a specified id
 	if (osdmap.exists(id)) {
 	  ss << "id " << id << " already in use and does not match uuid "
 	     << uuid;
 	  err = -EINVAL;
 	  goto reply;
 	}
+
+        // ok, the id is being used so far, but it may be about to show up
+
+        // pending_inc.new_state is a map of <int32_t, uint8_t>, and the 
+        // state is XORed onto previous state
 	if (pending_inc.new_state.count(id)) {
 	  // osd is about to exist
 	  wait_for_finished_proposal(op, new C_RetryMessage(this, op));
 	  return true;
 	}
+
+        // ok, no osd is using this id, and no osd is about to use it
 	i = id;
       }
+
+      // the user specified uuid is about to be used by a newly created osd
       if (pending_inc.identify_osd(uuid) >= 0) {
 	// osd is about to exist
 	wait_for_finished_proposal(op, new C_RetryMessage(this, op));
 	return true;
       }
+
+      // uuid and id are both specified, and we can use them
       if (i >= 0) {
 	// raise max_osd
 	if (osdmap.get_max_osd() <= i && pending_inc.new_max_osd <= i)
@@ -6370,6 +6390,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 
     // allocate a new id
     for (i=0; i < osdmap.get_max_osd(); i++) {
+      // an previously used id can be reused if it has been removed
       if (!osdmap.exists(i) &&
 	  pending_inc.new_up_client.count(i) == 0 &&
 	  (pending_inc.new_state.count(i) == 0 ||

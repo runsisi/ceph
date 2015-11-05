@@ -1498,6 +1498,7 @@ void OSDMap::_remove_nonexistent_osds(const pg_pool_t& pool,
 				      vector<int>& osds) const
 {
   if (pool.can_shift_osds()) {
+    // this is a replicated pool
     unsigned removed = 0;
     for (unsigned i = 0; i < osds.size(); i++) {
       if (!exists(osds[i])) {
@@ -1505,14 +1506,17 @@ void OSDMap::_remove_nonexistent_osds(const pg_pool_t& pool,
 	continue;
       }
       if (removed) {
+        // for replicated pool, we remove the non-existent osd(s) directly
 	osds[i - removed] = osds[i];
       }
     }
     if (removed)
       osds.resize(osds.size() - removed);
   } else {
+    // this is an ec pool
     for (vector<int>::iterator p = osds.begin(); p != osds.end(); ++p) {
       if (!exists(*p))
+        // for ec pool, we the osd to a special value
 	*p = CRUSH_ITEM_NONE;
     }
   }
@@ -1523,12 +1527,16 @@ int OSDMap::_pg_to_osds(const pg_pool_t& pool, pg_t pg,
 			ps_t *ppps) const
 {
   // map to osds[]
+  // get a pg seed from raw pg id (may be normal pg id, i.e. if t->precalc_pgid 
+  // is true in _calc_target, then it will call osdmap->pg_to_up_acting_osds with
+  // normal pg id) 
   ps_t pps = pool.raw_pg_to_pps(pg);  // placement ps
-  unsigned size = pool.get_size();
+  unsigned size = pool.get_size();    // for replicated pool replicated size, for ec pool this is m (coding chunks)
 
   // what crush rule?
   int ruleno = crush->find_rule(pool.get_crush_ruleset(), pool.get_type(), size);
   if (ruleno >= 0)
+    // osd_weight is an array of map<int,double>
     crush->do_rule(ruleno, pps, *osds, size, osd_weight);
 
   _remove_nonexistent_osds(pool, *osds);
@@ -1536,6 +1544,7 @@ int OSDMap::_pg_to_osds(const pg_pool_t& pool, pg_t pg,
   *primary = -1;
   for (unsigned i = 0; i < osds->size(); ++i) {
     if ((*osds)[i] != CRUSH_ITEM_NONE) {
+      // choose the first that is not CRUSH_ITEM_NONE as primary
       *primary = (*osds)[i];
       break;
     }
@@ -1551,22 +1560,29 @@ void OSDMap::_raw_to_up_osds(const pg_pool_t& pool, const vector<int>& raw,
                              vector<int> *up, int *primary) const
 {
   if (pool.can_shift_osds()) {
+    // replicated pool
     // shift left
     up->clear();
     for (unsigned i=0; i<raw.size(); i++) {
       if (!exists(raw[i]) || is_down(raw[i]))
 	continue;
+
+      // only store the up osd(s)
       up->push_back(raw[i]);
     }
+
+    // update primary osd
     *primary = (up->empty() ? -1 : up->front());
   } else {
+    // ec pool
     // set down/dne devices to NONE
     *primary = -1;
     up->resize(raw.size());
     for (int i = raw.size() - 1; i >= 0; --i) {
       if (!exists(raw[i]) || is_down(raw[i])) {
-	(*up)[i] = CRUSH_ITEM_NONE;
+	(*up)[i] = CRUSH_ITEM_NONE; // do not remove it but set the osd id to a special value instead
       } else {
+        // primary changed to the last up osd
 	*primary = (*up)[i] = raw[i];
       }
     }
@@ -1694,6 +1710,7 @@ void OSDMap::_pg_to_up_acting_osds(const pg_t& pg, vector<int> *up, int *up_prim
 {
   const pg_pool_t *pool = get_pg_pool(pg.pool());
   if (!pool) {
+    // if no pool exists, then everything should be set to invalid data
     if (up)
       up->clear();
     if (up_primary)
@@ -1710,8 +1727,16 @@ void OSDMap::_pg_to_up_acting_osds(const pg_t& pg, vector<int> *up, int *up_prim
   int _up_primary;
   int _acting_primary;
   ps_t pps;
+
+  // map pg id to a vector of osd(s) (may be down), _up_primary is set, but will
+  // soon be updated below in _raw_to_up_osds
   _pg_to_osds(*pool, pg, &raw, &_up_primary, &pps);
+
+  // for replicated pg, remove down osd(s), and for ec pool, set its 
+  // osd id to CRUSH_ITEM_NONE
   _raw_to_up_osds(*pool, raw, &_up, &_up_primary);
+
+  // 
   _apply_primary_affinity(pps, *pool, &_up, &_up_primary);
   _get_temp_osds(*pool, pg, &_acting, &_acting_primary);
   if (_acting.empty()) {
