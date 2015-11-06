@@ -130,7 +130,7 @@ struct crush_bucket {
 	__u16 type;      /* non-zero; type=0 is reserved for devices */
 	__u8 alg;        /* one of CRUSH_BUCKET_* */
 	__u8 hash;       /* which hash function to use, CRUSH_HASH_* */
-	__u32 weight;    /* 16-bit fixed point */
+	__u32 weight;    /* 16-bit fixed point */ // total weight of this bucket
 	__u32 size;      /* num items */
 	__s32 *items;
 

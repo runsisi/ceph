@@ -5083,6 +5083,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
   string name;
   bool osdid_present = cmd_getval(g_ceph_context, cmdmap, "id", osdid);
   if (osdid_present) {
+    // user specified osd id
     ostringstream oss;
     oss << "osd." << osdid;
     name = oss.str();
@@ -5146,6 +5147,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     // If the crushtool consistently takes longer than 'mon_lease' seconds,
     // then we would consistently trigger an election before the command
     // finishes, having a flapping monitor unable to hold quorum.
+    // use crushtool to verify the content of the crush map
     int r = tester.test_with_crushtool(g_conf->crushtool.c_str(),
 				       osdmap.get_max_osd(),
 				       g_conf->mon_lease);

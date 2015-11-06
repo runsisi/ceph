@@ -1527,10 +1527,10 @@ int OSDMap::_pg_to_osds(const pg_pool_t& pool, pg_t pg,
 			ps_t *ppps) const
 {
   // map to osds[]
-  // get a pg seed from raw pg id (may be normal pg id, i.e. if t->precalc_pgid 
-  // is true in _calc_target, then it will call osdmap->pg_to_up_acting_osds with
-  // normal pg id) 
-  ps_t pps = pool.raw_pg_to_pps(pg);  // placement ps
+  // get a pg seed (hash(pg id, pool))from raw pg id (may be normal pg id, i.e. 
+  // if t->precalc_pgid is true in _calc_target, then it will call 
+  // osdmap->pg_to_up_acting_osds with normal pg id) 
+  ps_t pps = pool.raw_pg_to_pps(pg);  // placement ps, use pgp_num and pgp_num_mask to do the hash
   unsigned size = pool.get_size();    // for replicated pool replicated size, for ec pool this is m (coding chunks)
 
   // what crush rule?
@@ -1539,6 +1539,9 @@ int OSDMap::_pg_to_osds(const pg_pool_t& pool, pg_t pg,
     // osd_weight is an array of map<int,double>
     crush->do_rule(ruleno, pps, *osds, size, osd_weight);
 
+  // if previously exists osd added to the crush map, and then we removed the
+  // osd, the osd will still exist in crush map, so we need to exclude those
+  // non-existent osd(s)
   _remove_nonexistent_osds(pool, *osds);
 
   *primary = -1;
@@ -1728,8 +1731,8 @@ void OSDMap::_pg_to_up_acting_osds(const pg_t& pg, vector<int> *up, int *up_prim
   int _acting_primary;
   ps_t pps;
 
-  // map pg id to a vector of osd(s) (may be down), _up_primary is set, but will
-  // soon be updated below in _raw_to_up_osds
+  // map pg id to a vector of osd(s) (may be down, but must exists in osdmap), 
+  // _up_primary is set, but will soon be updated below in _raw_to_up_osds
   _pg_to_osds(*pool, pg, &raw, &_up_primary, &pps);
 
   // for replicated pg, remove down osd(s), and for ec pool, set its 

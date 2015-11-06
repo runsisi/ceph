@@ -788,7 +788,7 @@ int crush_do_rule(const struct crush_map *map,
 		  int *scratch)
 {
         // scratch is an array with size of 3 * result_max, no other info is
-        // provided, i.e. used only for a memory area to store temporary data
+        // available, i.e. used only for a memory area to store temporary data
 	int result_len;
 	int *a = scratch;
 	int *b = scratch + result_max;

@@ -203,7 +203,7 @@ crush_make_uniform_bucket(int hash, int type, int size,
 	bucket->h.size = size;  // items within this bucket
 
 	if (crush_multiplication_is_unsafe(size, item_weight))
-                // item_weight is zero or item_weight * size is too big (> (__u32)(-1))
+                // item_weight is zero or weight for this bucket is too big (> (__u32)(-1))
                 goto err;
 
 	bucket->h.weight = size * item_weight; // total weight of this bucket
@@ -269,15 +269,16 @@ crush_make_list_bucket(int hash, int type, int size,
 		bucket->item_weights[i] = weights[i];
 
 		if (crush_addition_is_unsafe(w, weights[i]))
+                        // weight for this bucket is too big (> (__u32)(-1))
                         goto err;
 
 		w += weights[i];
-		bucket->sum_weights[i] = w;
+		bucket->sum_weights[i] = w; // sum weight of items within the bucket up to the current item
 		/*dprintk("pos %d item %d weight %d sum %d\n",
 		  i, items[i], weights[i], bucket->sum_weights[i]);*/
 	}
 
-	bucket->h.weight = w;
+	bucket->h.weight = w; // total weight of this bucket
 
 	return bucket;
 err:
@@ -337,11 +338,11 @@ crush_make_tree_bucket(int hash, int type, int size,
 	int node;
 	int i, j;
 
-	bucket = malloc(sizeof(*bucket));
+	bucket = malloc(sizeof(*bucket)); // ok, first we need to allocate memory for the bucket
         if (!bucket)
                 return NULL;
 	memset(bucket, 0, sizeof(*bucket));
-	bucket->h.alg = CRUSH_BUCKET_TREE;
+	bucket->h.alg = CRUSH_BUCKET_TREE; // initialize some trivial fields
 	bucket->h.hash = hash;
 	bucket->h.type = type;
 	bucket->h.size = size;
@@ -364,8 +365,8 @@ crush_make_tree_bucket(int hash, int type, int size,
                 goto err;
 
 	/* calc tree depth */
-	depth = calc_depth(size);
-	bucket->num_nodes = 1 << depth;
+	depth = calc_depth(size); // depth of the tree which has a leaf size of "size"
+	bucket->num_nodes = 1 << depth; // total leaf nodes if this is a full binary tree which has a depth of "depth"
 	dprintk("size %d depth %d nodes %d\n", size, depth, bucket->num_nodes);
 
         bucket->node_weights = malloc(sizeof(__u32)*bucket->num_nodes);
@@ -376,21 +377,33 @@ crush_make_tree_bucket(int hash, int type, int size,
 	memset(bucket->node_weights, 0, sizeof(__u32)*bucket->num_nodes);
 
 	for (i=0; i<size; i++) {
-		bucket->h.items[i] = items[i];
+		bucket->h.items[i] = items[i]; // set item id
+
+                // node = 2 * i + 1
 		node = crush_calc_tree_node(i);
+                
 		dprintk("item %d node %d weight %d\n", i, node, weights[i]);
+
+                // set weight for this node
 		bucket->node_weights[node] = weights[i];
 
 		if (crush_addition_is_unsafe(bucket->h.weight, weights[i]))
+                        // weight for this bucket is too big (> (__u32)(-1))
                         goto err;
 
-		bucket->h.weight += weights[i];
+                // it's safe to add this weight
+		bucket->h.weight += weights[i]; // update total weight for this bucket
+		
 		for (j=1; j<depth; j++) {
-			node = parent(node);
+                        // ok, all we are about to do is update parent node's weight
+                        
+			node = parent(node); // get parent node index
 
                         if (crush_addition_is_unsafe(bucket->node_weights[node], weights[i]))
+                                // weight for this bucket is too big (> (__u32)(-1))
                                 goto err;
 
+                        // update the parent node's weight
 			bucket->node_weights[node] += weights[i];
 			dprintk(" node %d weight %d\n", node, bucket->node_weights[node]);
 		}

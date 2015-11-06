@@ -1673,6 +1673,9 @@ void ReplicatedPG::do_op(OpRequestRef& op)
       dout(3) << __func__ << " dup " << m->get_reqid()
 	      << " was " << replay_version << dendl;
       if (already_complete(replay_version)) {
+        // the request has completed
+        // this can handle the situation that the reply message has been 
+        // lost due to the broken of network layer
 	osd->reply_op_error(op, 0, replay_version, user_version);
       } else {
 	if (m->wants_ack()) {
