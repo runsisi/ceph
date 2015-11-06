@@ -953,7 +953,8 @@ public:
   int add_bucket(int bucketno, int alg, int hash, int type, int size,
 		 int *items, int *weights, int *idout) {
     if (alg == 0) {
-      // choose the better algorithm from allowed algorithms
+      // choose the better algorithm from allowed algorithms, from
+      // STRAW2 -> STRAW -> TREE -> LIST -> UNIFORM
       alg = get_default_bucket_alg();
       if (alg == 0)
 	return -EINVAL;
@@ -962,6 +963,8 @@ public:
     // allocate an crush_bucket and initialize it
     crush_bucket *b = crush_make_bucket(crush, alg, hash, type, size, items, weights);
     assert(b);
+
+    //
     return crush_add_bucket(crush, bucketno, b, idout);
   }
   

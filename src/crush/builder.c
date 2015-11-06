@@ -292,24 +292,51 @@ err:
 
 
 /* tree bucket */
+// the leftmost leaf in the tree is always labeled "1"
+/*
+ *                      1000
+ *                    /      \
+ *                  /          \
+ *                /              \
+ *            100                  1100
+ *          /     \               /      
+ *        10       110          1010
+ *       /  \     /   \        /    \
+ *      1   11  101   111    1001   1011
+ */
 
+
+// n is a node label in tree bucket algorithm
+// height of the leaf node is 0, from leaf to root
+// depth of the root node is 1, from root to leaf
 static int height(int n) {
 	int h = 0;
+        // when the tree need to be expanded, the old root becomes the new
+        // root's left child, and the new root node is labeled with the old
+        // root's label shifted one bit to the left (1, 10, 100, 1000, etc.)
 	while ((n & 1) == 0) {
 		h++;
 		n = n >> 1;
 	}
 	return h;
 }
+
+// check if the node with the specified label is a right child of its parent
 static int on_right(int n, int h) {
+        // the labels for the right side of the tree mirror those on the
+        // left side except with a "1" prepended to each value
 	return n & (1 << (h+1));
 }
+
+// get parent label
 static int parent(int n)
 {
-	int h = height(n);
+	int h = height(n); // height of this label
 	if (on_right(n, h))
+                // right child
 		return n - (1<<h);
 	else
+                // left child
 		return n + (1<<h);
 }
 
@@ -345,7 +372,7 @@ crush_make_tree_bucket(int hash, int type, int size,
 	bucket->h.alg = CRUSH_BUCKET_TREE; // initialize some trivial fields
 	bucket->h.hash = hash;
 	bucket->h.type = type;
-	bucket->h.size = size;
+	bucket->h.size = size; // size is not number of actual items
 
 	if (size == 0) {
 		bucket->h.items = NULL;
@@ -364,9 +391,13 @@ crush_make_tree_bucket(int hash, int type, int size,
         if (!bucket->h.perm)
                 goto err;
 
-	/* calc tree depth */
-	depth = calc_depth(size); // depth of the tree which has a leaf size of "size"
-	bucket->num_nodes = 1 << depth; // total leaf nodes if this is a full binary tree which has a depth of "depth"
+	/* calc tree depth */ // root node's depth is 1
+	depth = calc_depth(size); // depth of the full binary tree which has a leaf size of "size"
+
+        // total leaf nodes for a full binary tree which has a depth of "depth" will
+        // has a total nodes of (1 << depth -1), but our tree label start from "1",
+        // so we need to allocate an extra node
+	bucket->num_nodes = 1 << depth; 
 	dprintk("size %d depth %d nodes %d\n", size, depth, bucket->num_nodes);
 
         bucket->node_weights = malloc(sizeof(__u32)*bucket->num_nodes);
@@ -379,7 +410,7 @@ crush_make_tree_bucket(int hash, int type, int size,
 	for (i=0; i<size; i++) {
 		bucket->h.items[i] = items[i]; // set item id
 
-                // node = 2 * i + 1
+                // calc node label for item i
 		node = crush_calc_tree_node(i);
                 
 		dprintk("item %d node %d weight %d\n", i, node, weights[i]);
@@ -393,11 +424,10 @@ crush_make_tree_bucket(int hash, int type, int size,
 
                 // it's safe to add this weight
 		bucket->h.weight += weights[i]; // update total weight for this bucket
-		
+
+                // update parent node's weight from leaf to root
 		for (j=1; j<depth; j++) {
-                        // ok, all we are about to do is update parent node's weight
-                        
-			node = parent(node); // get parent node index
+			node = parent(node); // get parent node's label
 
                         if (crush_addition_is_unsafe(bucket->node_weights[node], weights[i]))
                                 // weight for this bucket is too big (> (__u32)(-1))
@@ -408,6 +438,7 @@ crush_make_tree_bucket(int hash, int type, int size,
 			dprintk(" node %d weight %d\n", node, bucket->node_weights[node]);
 		}
 	}
+        // root's weight must be the sum of all its children's weight
 	BUG_ON(bucket->node_weights[bucket->num_nodes/2] != bucket->h.weight);
 
 	return bucket;
@@ -608,6 +639,7 @@ crush_make_straw_bucket(struct crush_map *map,
 		bucket->item_weights[i] = weights[i];
 	}
 
+        // update bucket->item_weights and bucket->straws
         if (crush_calc_straw(map, bucket) < 0)
                 goto err;
 
@@ -653,8 +685,8 @@ crush_make_straw2_bucket(struct crush_map *map,
 
         bucket->h.weight = 0;
 	for (i=0; i<size; i++) {
-		bucket->h.items[i] = items[i];
-		bucket->h.weight += weights[i];
+		bucket->h.items[i] = items[i]; // each item's weight
+		bucket->h.weight += weights[i]; // total weight
 		bucket->item_weights[i] = weights[i];
 	}
 
@@ -668,7 +700,12 @@ err:
 }
 
 
-
+// alg: STRAW2, STRAW, TREE, LIST, UNIFORM
+// hash: hash method id
+// type: bucket type id, e.g. root, datacenter, rack, host, osd
+// size: number of items within this bucket
+// items: array of item id(s)
+// weights: array of item weight(w)
 struct crush_bucket*
 crush_make_bucket(struct crush_map *map,
 		  int alg, int hash, int type, int size,

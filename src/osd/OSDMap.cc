@@ -2834,7 +2834,7 @@ int OSDMap::build_simple_crush_map_from_conf(CephContext *cct,
   int root_type = _build_crush_types(crush);
   int rootid;
 
-  // 
+  // create a bucket and add this bucket to crush
   int r = crush.add_bucket(0, 0,
 			   CRUSH_HASH_DEFAULT,
 			   root_type, 0, NULL, NULL, &rootid);
