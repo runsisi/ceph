@@ -488,13 +488,20 @@ int crush_calc_straw(struct crush_map *map, struct crush_bucket_straw *bucket)
 	double straw, wbelow, lastw, wnext, pbelow;
 	int numleft;
 	int size = bucket->h.size;
-	__u32 *weights = bucket->item_weights;
+	__u32 *weights = bucket->item_weights; // read-only usage
 
 	/* reverse sort by weight (simple insertion sort) */
-	reverse = malloc(sizeof(int) * size);
+	reverse = malloc(sizeof(int) * size); // an array of index, which makes weights[reverse[i]] < weights[reverse[i+1]]
         if (!reverse)
                 return -ENOMEM;
-	if (size)
+
+        // we do not change the weights array, but note down the
+        // indice that make the weights sort from min to max,
+        // i.e. weights[reverse[0]] is the min
+        // weights[0-3]: 9.3 2.2 7.4 4.3 4.3 ==>
+        // weights[1] < weights[4] = weights[3] < weights[2] < weights[0] ==>
+        // reverse[0-3]: 1 4 3 2 0
+        if (size)
 		reverse[0] = 0;
 	for (i=1; i<size; i++) {
 		for (j=0; j<i; j++) {
@@ -510,14 +517,36 @@ int crush_calc_straw(struct crush_map *map, struct crush_bucket_straw *bucket)
 			reverse[i] = i;
 	}
 
-	numleft = size;
-	straw = 1.0;
-	wbelow = 0;
-	lastw = 0;
+	numleft = size; // number delta weight to multiply by (x)
+	straw = 1.0; // straw length for the current item
+	wbelow = 0; // total weight below weights[reverse[i]]
+	lastw = 0; // weights[reverse[i-2]]
 
 	i=0;
 	while (i < size) {
+                // iterate every item in this bucket, i is not an index of
+                // "weights", but an index of "reverse", so we are iterating
+                // items from the min weight to max weight
+                
 		if (map->straw_calc_version == 0) {
+                        // this version is buggy, obviously!!!
+/*
+ *   ----*-------------------------------------- i = 4, wbelow = 2.2 * 5 + (4.3 - 2.2) * 3 + (7.4 - 4.3) * 2, numleft -> 1, wnext = 1 * (9.3 - 7.4)
+ *       |       
+ *       |       
+ *   --------------------*---------------------- i = 3, wbelow = 2.2 * 5 + (4.3 - 2.2) * 3, numleft -> 2, wnext = 2 * (7.4 - 4.3)
+ *       |               |        
+ *       |               |         ------------- i = 2, continue
+ *       |               |        /
+ *   ----------------------------*-------*------ i = 1, wbelow = 2.2 * 5, numleft -> 3, wnext = 3 * (4.3 - 2.2)
+ *       |               |       |       |
+ *       |               |       |       |
+ *   ------------*------------------------------ i = 0, wbelow = 0, numleft -> 5
+ *       |       |       |       |       |
+ *       |       |       |       |       |
+ *   ---9.3-----2.2-----7.4-----4.3-----4.3----- 
+ *      i=4     i=0     i=3     i=2     i=1
+ */
 			/* zero weight items get 0 length straws! */
 			if (weights[reverse[i]] == 0) {
 				bucket->straws[reverse[i]] = 0;
@@ -525,17 +554,19 @@ int crush_calc_straw(struct crush_map *map, struct crush_bucket_straw *bucket)
 				continue;
 			}
 
-			/* set this item's straw */
+			/* set this item's straw */ // for i == 0, set to 1.0 directly
 			bucket->straws[reverse[i]] = straw * 0x10000;
 			dprintk("item %d at %d weight %d straw %d (%lf)\n",
 				bucket->h.items[reverse[i]],
 				reverse[i], weights[reverse[i]],
 				bucket->straws[reverse[i]], straw);
-			i++;
+
+                        // calc straw length for the current item, now "i" point to the current item
+                        i++;
 			if (i == size)
 				break;
 
-			/* same weight as previous? */
+			/* same weight as previous? */ // no need to update straw length
 			if (weights[reverse[i]] == weights[reverse[i-1]]) {
 				dprintk("same as previous\n");
 				continue;
@@ -544,23 +575,49 @@ int crush_calc_straw(struct crush_map *map, struct crush_bucket_straw *bucket)
 			/* adjust straw for next guy */
 			wbelow += ((double)weights[reverse[i-1]] - lastw) *
 				numleft;
+
 			for (j=i; j<size; j++)
 				if (weights[reverse[j]] == weights[reverse[i]])
 					numleft--;
 				else
 					break;
+
+                        // weights[reverse[i]] != weights[reverse[i-1]]
 			wnext = numleft * (weights[reverse[i]] -
 					   weights[reverse[i-1]]);
+
+                        // thus, 1 / pbelow = (wbelow + wnext) / wbelow = (1 + wnext / wbelow)
 			pbelow = wbelow / (wbelow + wnext);
 			dprintk("wbelow %lf  wnext %lf  pbelow %lf  numleft %d\n",
 				wbelow, wnext, pbelow, numleft);
 
+                        // (double)1.0 / pbelow = (double)1.0 * (1 + wnext / wbelow) = 1.0 + wnext / wbelow
+                        // ==>
+                        // straw *= (1.0 + wnext / wbelow) ** (1.0 / numleft)
 			straw *= pow((double)1.0 / pbelow, (double)1.0 /
 				     (double)numleft);
 
 			lastw = weights[reverse[i-1]];
 		} else if (map->straw_calc_version >= 1) {
-			/* zero weight items get 0 length straws! */
+/*
+ *   ----*-------------------------------------- i = 4, wbelow = 2.2 * 5 + (4.3 - 2.2) * 3 + (4.3 - 4.3) * 2 + (7.4 - 4.3) * 2, numleft -> 1, wnext = 1 * (9.3 - 7.4)
+ *       |       
+ *       |       
+ *   --------------------*---------------------- i = 3, wbelow = 2.2 * 5 + (4.3 - 2.2) * 4 + (4.3 - 4.3) * 3, numleft -> 2, wnext = 2 * (7.4 - 4.3)
+ *       |               |        
+ *       |               |         ------------- i = 2, wbelow = 2.2 * 5 + (4.3 - 2.2) * 4, numleft -> 3, wnext = 3 * (4.3 - 4.3)
+ *       |               |        /
+ *   ----------------------------*-------*------ i = 1, wbelow = 2.2 * 5, numleft -> 4, wnext = 4 * (4.3 - 2.2)
+ *       |               |       |       |
+ *       |               |       |       |
+ *   ------------*------------------------------ i = 0, wbelow = 0, numleft -> 5
+ *       |       |       |       |       |
+ *       |       |       |       |       |
+ *   ---9.3-----2.2-----7.4-----4.3-----4.3----- 
+ *      i=4     i=0     i=3     i=2     i=1
+ */
+
+                        /* zero weight items get 0 length straws! */
 			if (weights[reverse[i]] == 0) {
 				bucket->straws[reverse[i]] = 0;
 				i++;
@@ -574,20 +631,39 @@ int crush_calc_straw(struct crush_map *map, struct crush_bucket_straw *bucket)
 				bucket->h.items[reverse[i]],
 				reverse[i], weights[reverse[i]],
 				bucket->straws[reverse[i]], straw);
+
+                        // prepare to calc for the next item
 			i++;
 			if (i == size)
 				break;
 
+                        // now "i" point to the current item
+
 			/* adjust straw for next guy */
+                        // calc total weight that (w <= weights[reverse[i-1]])
 			wbelow += ((double)weights[reverse[i-1]] - lastw) *
 				numleft;
 			numleft--;
+
+                        // if weights[reverse[i]] equals to weights[reverse[i-1]], then
+                        // wnext will be 0, which will result(see the formula below 
+                        // which updates the straw):
+                        // straw *= (1.0 + wnext / wbelow) ** (1.0 / numleft) = straw,
+                        // which means equal weights will result equal straw lengths
+                        // calc total weight that (weights[reverse[i-1] <= w <= weights[reverse[i])
 			wnext = numleft * (weights[reverse[i]] -
 					   weights[reverse[i-1]]);
+
+                        // thus, 1 / pbelow = (wbelow + wnext) / wbelow = (1 + wnext / wbelow)
+                        // pbelow means probability for weight that (w <= weights[reverse[i-1]]) in
+                        // total weight that (w <= weights[reverse[i]])
 			pbelow = wbelow / (wbelow + wnext);
 			dprintk("wbelow %lf  wnext %lf  pbelow %lf  numleft %d\n",
 				wbelow, wnext, pbelow, numleft);
 
+                        // (double)1.0 / pbelow = (double)1.0 * (1 + wnext / wbelow) = 1.0 + wnext / wbelow
+                        // ==>
+                        // straw *= (1.0 + wnext / wbelow) ** (1.0 / numleft)
 			straw *= pow((double)1.0 / pbelow, (double)1.0 /
 				     (double)numleft);
 
@@ -634,12 +710,12 @@ crush_make_straw_bucket(struct crush_map *map,
 
         bucket->h.weight = 0;
 	for (i=0; i<size; i++) {
-		bucket->h.items[i] = items[i];
-		bucket->h.weight += weights[i];
-		bucket->item_weights[i] = weights[i];
+		bucket->h.items[i] = items[i];  // each item id
+		bucket->h.weight += weights[i]; // total bucket weight
+		bucket->item_weights[i] = weights[i]; // each item weight within this bucket
 	}
 
-        // update bucket->item_weights and bucket->straws
+        // calc bucket->straws
         if (crush_calc_straw(map, bucket) < 0)
                 goto err;
 
@@ -687,7 +763,7 @@ crush_make_straw2_bucket(struct crush_map *map,
 	for (i=0; i<size; i++) {
 		bucket->h.items[i] = items[i]; // each item's weight
 		bucket->h.weight += weights[i]; // total weight
-		bucket->item_weights[i] = weights[i];
+		bucket->item_weights[i] = weights[i]; // oh, so simple?
 	}
 
 	return bucket;
@@ -1175,6 +1251,7 @@ int crush_remove_straw_bucket_item(struct crush_map *map,
 		bucket->straws = _realloc;
 	}
 
+        // update bucket->straws
 	return crush_calc_straw(map, bucket);
 }
 
@@ -1186,6 +1263,7 @@ int crush_remove_straw2_bucket_item(struct crush_map *map,
 
 	for (i = 0; i < bucket->h.size; i++) {
 		if (bucket->h.items[i] == item) {
+                        // found the item to remove by the item id
 			bucket->h.size--;
 			if (bucket->item_weights[i] < bucket->h.weight)
 				bucket->h.weight -= bucket->item_weights[i];
