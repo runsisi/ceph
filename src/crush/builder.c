@@ -142,16 +142,18 @@ int crush_add_bucket(struct crush_map *map,
 
 	/* find a bucket id */
 	if (id == 0)
+                // iterate map->buckets[] to find an bucket position(index) that has
+                // not been used, and return (-1 - pos)
 		id = crush_get_next_bucket_id(map);
-	pos = -1 - id;  // id is a negative integer
+	pos = -1 - id;  // id is a negative integer, change it to positive index
 
 	while (pos >= map->max_buckets) {
 		/* expand array */
 		int oldsize = map->max_buckets;
 		if (map->max_buckets)
-			map->max_buckets *= 2;
+			map->max_buckets *= 2; // expand
 		else
-			map->max_buckets = 8;
+			map->max_buckets = 8; // this map has no bucket yet
 		void *_realloc = NULL;
 		if ((_realloc = realloc(map->buckets, map->max_buckets * sizeof(map->buckets[0]))) == NULL) {
 			return -ENOMEM; 
@@ -165,7 +167,7 @@ int crush_add_bucket(struct crush_map *map,
 		return -EEXIST;
 	}
 
-        /* add it */
+        /* add it */ // id = -1 - pos, pos = -1 - id
 	bucket->id = id;
 	map->buckets[pos] = bucket;
 
@@ -303,6 +305,9 @@ err:
  *        10       110          1010
  *       /  \     /   \        /    \
  *      1   11  101   111    1001   1011
+ *
+ * parent's label are calculated from children, an inorder tree walk construct
+ * a perfectly integer seqence start from 1
  */
 
 
@@ -410,7 +415,7 @@ crush_make_tree_bucket(int hash, int type, int size,
 	for (i=0; i<size; i++) {
 		bucket->h.items[i] = items[i]; // set item id
 
-                // calc node label for item i
+                // calc node label for item i, all item(s) within this bucket are leaves
 		node = crush_calc_tree_node(i);
                 
 		dprintk("item %d node %d weight %d\n", i, node, weights[i]);
@@ -820,7 +825,7 @@ crush_make_bucket(struct crush_map *map,
 
 int crush_add_uniform_bucket_item(struct crush_bucket_uniform *bucket, int item, int weight)
 {
-        int newsize = bucket->h.size + 1;
+        int newsize = bucket->h.size + 1; // add a new item, increase size
 	void *_realloc = NULL;
 	
 	if ((_realloc = realloc(bucket->h.items, sizeof(__s32)*newsize)) == NULL) {
@@ -837,6 +842,7 @@ int crush_add_uniform_bucket_item(struct crush_bucket_uniform *bucket, int item,
 	bucket->h.items[newsize-1] = item;
 
         if (crush_addition_is_unsafe(bucket->h.weight, weight))
+                // total weight is too big
                 return -ERANGE;
 
         bucket->h.weight += weight;
@@ -878,6 +884,8 @@ int crush_add_list_bucket_item(struct crush_bucket_list *bucket, int item, int w
                 if (crush_addition_is_unsafe(bucket->sum_weights[newsize-2], weight))
                         return -ERANGE;
 
+                // sum weight of items within the bucket up to the current item, 
+                // like fibonacci sequence
                 bucket->sum_weights[newsize-1] = bucket->sum_weights[newsize-2] + weight;
 	}
 
@@ -898,7 +906,7 @@ int crush_add_tree_bucket_item(struct crush_bucket_tree *bucket, int item, int w
 	int j;
 	void *_realloc = NULL;
 
-	bucket->num_nodes = 1 << depth;
+	bucket->num_nodes = 1 << depth; // a full binary tree size plus 1
 
 	if ((_realloc = realloc(bucket->h.items, sizeof(__s32)*newsize)) == NULL) {
 		return -ENOMEM;
@@ -916,7 +924,7 @@ int crush_add_tree_bucket_item(struct crush_bucket_tree *bucket, int item, int w
 		bucket->node_weights = _realloc;
 	}
 	
-	node = crush_calc_tree_node(newsize-1);
+	node = crush_calc_tree_node(newsize-1); // calc node label for the new item
 	bucket->node_weights[node] = weight;
 
 	/* if the depth increase, we need to initialize the new root node's weight before add bucket item */
@@ -925,16 +933,20 @@ int crush_add_tree_bucket_item(struct crush_bucket_tree *bucket, int item, int w
 		/* if the new item is the first node in right sub tree, so
 		* the root node initial weight is left sub tree's weight
 		*/
+		// bucket->node_weights[root] will be updated shortly below cause
+		// we update weight of every node that all the way path from the 
+		// new leaf node to root
 		bucket->node_weights[root] = bucket->node_weights[root/2];
 	}
 
 	for (j=1; j<depth; j++) {
-		node = parent(node);
+                // we are iterating from leaves in the tree to the upper level
+		node = parent(node); // calc parent node label
 
                 if (crush_addition_is_unsafe(bucket->node_weights[node], weight))
                         return -ERANGE;
 
-		bucket->node_weights[node] += weight;
+		bucket->node_weights[node] += weight; // sum of children's weight
                 dprintk(" node %d weight %d\n", node, bucket->node_weights[node]);
 	}
 
@@ -986,7 +998,8 @@ int crush_add_straw_bucket_item(struct crush_map *map,
 
 	bucket->h.weight += weight;
 	bucket->h.size++;
-	
+
+        // new item inserted, we need to recalc bucket->straws
 	return crush_calc_straw(map, bucket);
 }
 
@@ -1020,6 +1033,7 @@ int crush_add_straw2_bucket_item(struct crush_map *map,
 	if (crush_addition_is_unsafe(bucket->h.weight, weight))
                 return -ERANGE;
 
+        // ok, so simple
 	bucket->h.weight += weight;
 	bucket->h.size++;
 

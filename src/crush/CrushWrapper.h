@@ -960,11 +960,18 @@ public:
 	return -EINVAL;
     }
 
+    // alg: STRAW2, STRAW, TREE, LIST, UNIFORM
+    // hash: hash method id
+    // type: bucket type id, e.g. root, datacenter, rack, host, osd
+    // size: number of items within this bucket
+    // items: array of item id(s)
+    // weights: array of item weight(w)
+
     // allocate an crush_bucket and initialize it
     crush_bucket *b = crush_make_bucket(crush, alg, hash, type, size, items, weights);
     assert(b);
 
-    //
+    // if bucketno is 0, then allocate a bucket id
     return crush_add_bucket(crush, bucketno, b, idout);
   }
   

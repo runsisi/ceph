@@ -2834,24 +2834,29 @@ int OSDMap::build_simple_crush_map_from_conf(CephContext *cct,
   int root_type = _build_crush_types(crush);
   int rootid;
 
-  // create a bucket and add this bucket to crush
+  // create a bucket and add this bucket to crush, for root bucket, the 
+  // bucket id is -1 (id = -1 - pos) 
   int r = crush.add_bucket(0, 0,
 			   CRUSH_HASH_DEFAULT,
 			   root_type, 0, NULL, NULL, &rootid);
   assert(r == 0);
-  crush.set_item_name(rootid, "default"); // set root item's name to "default"
+  // set bucket's name
+  crush.set_item_name(rootid, "default"); // set root item's name to "default", the name 
+                                          // maps are stored in CrushWrapper, do not
+                                          // use the same name for different bucket types
 
   // add osds
   vector<string> sections;
   conf->get_all_sections(sections);
   for (vector<string>::iterator i = sections.begin(); i != sections.end(); ++i) {
     if (i->find("osd.") != 0)
+      // not begin with "osd."
       continue;
 
     // ok, this is an osd.xxx section
     const char *begin = i->c_str() + 4;
     char *end = (char*)begin;
-    int o = strtol(begin, &end, 10);
+    int o = strtol(begin, &end, 10); // osd id
     if (*end != '\0')
       continue;
 
@@ -2859,6 +2864,8 @@ int OSDMap::build_simple_crush_map_from_conf(CephContext *cct,
     vector<string> sections;
     sections.push_back("osd");
     sections.push_back(*i);
+
+    // get host = hhh, rack = rrr, etc. from [osd] or [osd.xxx] section
     conf->get_val_from_conf_file(sections, "host", host, false);
     conf->get_val_from_conf_file(sections, "rack", rack, false);
     conf->get_val_from_conf_file(sections, "row", row, false);
@@ -2886,6 +2893,8 @@ int OSDMap::build_simple_crush_map_from_conf(CephContext *cct,
     loc["root"] = "default";
 
     ldout(cct, 5) << " adding osd." << o << " at " << loc << dendl;
+
+    // inset osd.xxx into crush map
     crush.insert_item(cct, o, 1.0, *i, loc);
   }
 
@@ -2902,8 +2911,13 @@ int OSDMap::build_simple_crush_rulesets(CephContext *cct,
 					const string& root,
 					ostream *ss)
 {
+  // get a default ruleset for replicated pool
   int crush_ruleset =
       crush._get_osd_pool_default_crush_replicated_ruleset(cct, true);
+
+  // osd_crush_chooseleaf_type default is 1, which means bucket type of host,
+  // if we set this to 0, which means bucket type of osd, then the failure domain
+  // is osd
   string failure_domain =
     crush.get_type_name(cct->_conf->osd_crush_chooseleaf_type);
 

@@ -547,7 +547,8 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
   ldout(cct, 5) << "insert_item item " << item << " weight " << weight
 		<< " name " << name << " loc " << loc << dendl;
 
-  if (!is_valid_crush_name(name))
+  // -_0-9A-Za-z
+  if (!is_valid_crush_name(name)) // item name, e.g. osd.1
     return -EINVAL;
 
   if (!is_valid_crush_loc(cct, loc))
@@ -560,44 +561,61 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
       return -EEXIST;
     }
   } else {
-    set_item_name(item, name);
+    set_item_name(item, name); // insert into CrushWrapper::name_map and CrushWrapper::name_rmap
   }
 
-  int cur = item;
+  int cur = item; // osd id
 
   // create locations if locations don't exist and add child in location with 0 weight
   // the more detail in the insert_item method declaration in CrushWrapper.h
-  for (map<int,string>::iterator p = type_map.begin(); p != type_map.end(); ++p) {
+  for (map<int,string>::iterator p = type_map.begin(); p != type_map.end(); ++p) { // <bucket type id, bucket type name>
     // ignore device type
-    if (p->first == 0)
+    if (p->first == 0) // bucket type id of 0 is osd
       continue;
 
+    // iterate every bucket type, in increasing order, i.e. from host -> root
+
+    // loc, e.g.
+    // host: ceph0
+    // rack: rack0
+    // root: default
+
     // skip types that are unspecified
-    map<string,string>::const_iterator q = loc.find(p->second);
+    map<string,string>::const_iterator q = loc.find(p->second); // <bucket type name, bucket name>
     if (q == loc.end()) {
+      // this is totally normal, e.g. we add osd(s) with only bucket type of host specified
       ldout(cct, 2) << "warning: did not specify location for '" << p->second << "' level (levels are "
 		    << type_map << ")" << dendl;
       continue;
     }
 
-    if (!name_exists(q->second)) {
+    if (!name_exists(q->second)) { // the specified bucket name does not exist
       ldout(cct, 5) << "insert_item creating bucket " << q->second << dendl;
       int empty = 0, newid;
+      // create a bucket of type id p->first, and insert the item into the bucket
+      // with 0 weight
       int r = add_bucket(0, 0,
 			 CRUSH_HASH_DEFAULT, p->first, 1, &cur, &empty, &newid);
       if (r < 0) {
         ldout(cct, 1) << "add_bucket failure error: " << cpp_strerror(r) << dendl;
         return r;
       }
-      set_item_name(newid, q->second);
+
+      // insert the new bucket into CrushWrapper::name_map and CrushWrapper::name_rmap
+      set_item_name(newid, q->second); 
       
-      cur = newid;
+      cur = newid; // bucket id, a negative integer
       continue;
     }
 
+    // ok, a bucket with the specified name exists
+
     // add to an existing bucket
-    int id = get_item_id(q->second);
+    int id = get_item_id(q->second); // from bucket name to get bucket id, this info is stored in CrushWrapper
     if (!bucket_exists(id)) {
+      // the specified bucket id does not exist in crush map, but the CrushWrapper
+      // tells us the bucket with the specified name does exist, this must be
+      // a bug
       ldout(cct, 1) << "insert_item doesn't have bucket " << id << dendl;
       return -EINVAL;
     }
@@ -611,7 +629,7 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
     crush_bucket *b = get_bucket(id);
     assert(b);
 
-    if (p->first != b->type) {
+    if (p->first != b->type) { // do not name buckets with the same name and different bucket type
       ldout(cct, 1) << "insert_item existing bucket has type "
 	<< "'" << type_map[b->type] << "' != "
 	<< "'" << type_map[p->first] << "'" << dendl;
@@ -627,6 +645,8 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
 
     ldout(cct, 5) << "insert_item adding " << cur << " weight " << weight
 		  << " to bucket " << id << dendl;
+
+    // insert the item into bucket with 0 weight
     int r = crush_bucket_add_item(crush, b, cur, 0);
     assert (!r);
     break;
@@ -939,6 +959,7 @@ int CrushWrapper::add_simple_ruleset_at(string name, string root_name,
                                         int rno, ostream *err)
 {
   if (rule_exists(name)) {
+    // exists in CrushWrapper::rule_name_rmap
     if (err)
       *err << "rule " << name << " exists";
     return -EEXIST;
@@ -1699,8 +1720,11 @@ void CrushWrapper::generate_test_instances(list<CrushWrapper*>& o)
 int CrushWrapper::_get_osd_pool_default_crush_replicated_ruleset(CephContext *cct,
                                                                  bool quiet)
 {
+  // osd_pool_default_crush_rule is deprecated, default is -1
   int crush_ruleset = cct->_conf->osd_pool_default_crush_rule;
   if (crush_ruleset == -1) {
+    // osd_pool_default_crush_replicated_ruleset default is 
+    // CEPH_DEFAULT_CRUSH_REPLICATED_RULESET
     crush_ruleset = cct->_conf->osd_pool_default_crush_replicated_ruleset;
   } else if (!quiet) {
     ldout(cct, 0) << "osd_pool_default_crush_rule is deprecated "

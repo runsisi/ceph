@@ -23,6 +23,7 @@ static inline long PTR_ERR(const void *ptr)
 
 static inline long IS_ERR(const void *ptr)
 {
+  // pointer will never point to address lager than ((unsigned long)-4095)
   return IS_ERR_VALUE((unsigned long)ptr);
 }
 
