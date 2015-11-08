@@ -48,10 +48,13 @@ void crush_finalize(struct crush_map *map)
 	/* calc max_devices */
 	map->max_devices = 0;
 	for (b=0; b<map->max_buckets; b++) {
+                // iterate every bucket in this map
 		if (map->buckets[b] == 0)
 			continue;
 		for (i=0; i<map->buckets[b]->size; i++)
+                        // iterate every item in this bucket
 			if (map->buckets[b]->items[i] >= map->max_devices)
+                                // find the max item id
 				map->max_devices = map->buckets[b]->items[i] + 1;
 	}
 }

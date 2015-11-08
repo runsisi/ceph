@@ -66,8 +66,8 @@ enum {
  * for specifying choose num (arg1) relative to the max parameter
  * passed to do_rule
  */
-#define CRUSH_CHOOSE_N            0
-#define CRUSH_CHOOSE_N_MINUS(x)   (-(x))
+#define CRUSH_CHOOSE_N            0      // choose (pool-num-replicas) buckets (all available)
+#define CRUSH_CHOOSE_N_MINUS(x)   (-(x)) // choose (pool-num-replicas - |{num}|) buckets
 
 /*
  * The rule mask is used to describe what the rule is intended for.
@@ -184,7 +184,7 @@ struct crush_map {
 
 	__s32 max_buckets;
 	__u32 max_rules;
-	__s32 max_devices;
+	__s32 max_devices; // max item id + 1, see crush_finalize
 
 	/* choose local retries before re-descent */
 	__u32 choose_local_tries;

@@ -852,6 +852,7 @@ int main(int argc, const char **argv)
 
   // output ---
   if (modified) {
+    // update CrushWrapper::crush->max_devices
     crush.finalize();
 
     if (outfn.empty()) {

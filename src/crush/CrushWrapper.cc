@@ -589,11 +589,12 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
       continue;
     }
 
-    if (!name_exists(q->second)) { // the specified bucket name does not exist
+    if (!name_exists(q->second)) { // the specified parent bucket name does not exist
       ldout(cct, 5) << "insert_item creating bucket " << q->second << dendl;
       int empty = 0, newid;
-      // create a bucket of type id p->first, and insert the item into the bucket
-      // with 0 weight
+      // create a bucket of type id p->first, insert the item(child bucket or osd) 
+      // into the bucket with 0 weight, and insert the newly created bucket into 
+      // crush->buckets[]
       int r = add_bucket(0, 0,
 			 CRUSH_HASH_DEFAULT, p->first, 1, &cur, &empty, &newid);
       if (r < 0) {
@@ -610,7 +611,7 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
 
     // ok, a bucket with the specified name exists
 
-    // add to an existing bucket
+    // add to an existing parent bucket
     int id = get_item_id(q->second); // from bucket name to get bucket id, this info is stored in CrushWrapper
     if (!bucket_exists(id)) {
       // the specified bucket id does not exist in crush map, but the CrushWrapper
@@ -646,7 +647,7 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
     ldout(cct, 5) << "insert_item adding " << cur << " weight " << weight
 		  << " to bucket " << id << dendl;
 
-    // insert the item into bucket with 0 weight
+    // insert the item(child bucket or osd) into parent bucket with 0 weight
     int r = crush_bucket_add_item(crush, b, cur, 0);
     assert (!r);
     break;
@@ -655,6 +656,7 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
   // adjust the item's weight in location
   if(adjust_item_weightf_in_loc(cct, item, weight, loc) > 0) {
     if (item >= crush->max_devices) {
+      // item (osd) inserted, increase the total item count
       crush->max_devices = item + 1;
       ldout(cct, 5) << "insert_item max_devices now " << crush->max_devices << dendl;
     }
@@ -980,7 +982,7 @@ int CrushWrapper::add_simple_ruleset_at(string name, string root_name,
       return -EEXIST;
     }
   } else {
-    // to find a ruleno that has not been used
+    // to find a rule id that has not been used
     for (rno = 0; rno < get_max_rules(); rno++) {
       if (!rule_exists(rno) && !ruleset_exists(rno))
         break;

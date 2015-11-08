@@ -1538,7 +1538,8 @@ int OSDMap::_pg_to_osds(const pg_pool_t& pool, pg_t pg,
   // map->rules[i]->mask.min_size <= size && map->rules[i]->mask.max_size >= size
   int ruleno = crush->find_rule(pool.get_crush_ruleset(), pool.get_type(), size);
   if (ruleno >= 0)
-    // osd_weight is an array of map<int,double>
+    // osd_weight is an array: vector<__u32>, its value will be initialized 
+    // to 0 in set_max_osd and set in set_weight
     crush->do_rule(ruleno, pps, *osds, size, osd_weight);
 
   // if previously exists osd added to the crush map, and then we removed the
@@ -2820,6 +2821,7 @@ int OSDMap::build_simple_crush_map(CephContext *cct, CrushWrapper& crush,
   // create a simple crush rule and insert into crush_map::rules[]
   build_simple_crush_rulesets(cct, crush, "default", ss);
 
+  // update CrushWrapper::crush->max_devices
   crush.finalize();
 
   return 0;
@@ -2911,6 +2913,7 @@ int OSDMap::build_simple_crush_map_from_conf(CephContext *cct,
   // create a simple crush rule and insert into crush_map::rules[]
   build_simple_crush_rulesets(cct, crush, "default", ss);
 
+  // update CrushWrapper::crush->max_devices
   crush.finalize();
 
   return 0;

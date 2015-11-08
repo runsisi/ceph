@@ -104,6 +104,7 @@ static int bucket_perm_choose(struct crush_bucket *bucket,
 	/* calculate permutation up to pr */
 	for (i = 0; i < bucket->perm_n; i++)
 		dprintk(" perm_choose have %d: %d\n", i, bucket->perm[i]);
+        
 	while (bucket->perm_n <= pr) {
 		unsigned int p = bucket->perm_n;
 		/* no point in swapping the final entry */
@@ -119,6 +120,7 @@ static int bucket_perm_choose(struct crush_bucket *bucket,
 		}
 		bucket->perm_n++;
 	}
+        
 	for (i = 0; i < bucket->size; i++)
 		dprintk(" perm_choose  %d: %d\n", i, bucket->perm[i]);
 
@@ -333,6 +335,7 @@ static int bucket_straw2_choose(struct crush_bucket_straw2 *bucket,
 		}
 
 		if (i == 0 || draw > high_draw) {
+                        // find the item that has the max straw length
 			high = i;
 			high_draw = draw;
 		}
@@ -439,6 +442,7 @@ static int crush_choose_firstn(const struct crush_map *map,
 		tries, recurse_tries, local_retries, local_fallback_retries,
 		parent_r);
 
+        // try to get (numrep - outpos) items within this bucket
 	for (rep = outpos; rep < numrep && count > 0 ; rep++) {
 		/* keep trying until we get a non-out, non-colliding item */
 		ftotal = 0;
@@ -570,12 +574,14 @@ reject:
 			continue;
 		}
 
+                // got an item, note it down
 		dprintk("CHOOSE got %d\n", item);
 		out[outpos] = item;
 		outpos++;
 		count--;
 #ifndef __KERNEL__
 		if (map->choose_tries && ftotal <= map->choose_total_tries)
+                        // CrushTester will use this to output choose tries
 			map->choose_tries[ftotal]++;
 #endif
 	}
@@ -824,28 +830,46 @@ int crush_do_rule(const struct crush_map *map,
 		return 0;
 	}
 
+        // get crush_rule with the specified rule id
 	rule = map->rules[ruleno]; // get the specified rule
 	result_len = 0;
-	w = a;
-	o = b;
+	w = a; // itermediate parent buckets array, for a chooseleaf op w[] will contain all chosen osds
+	o = b; // output array that contains child items(bucket/osd) for all its parent buckets(w[]) during a choose/chooseleaf op
 
+        // rule->len is size of rule->steps[] array, the rule is allocated and 
+        // constructed in crush_make_rule
 	for (step = 0; step < rule->len; step++) {
+                // iterate every steps
+                
 		int firstn = 0;
+                // current step
 		struct crush_rule_step *curstep = &rule->steps[step];
 
 		switch (curstep->op) {
 		case CRUSH_RULE_TAKE:
+                        // iterating down the tree from the specified bucket
+                        // item id >= 0 means it is a device (osd) item
+                        // item id < 0 means it is a bucket item
 			if ((curstep->arg1 >= 0 &&
 			     curstep->arg1 < map->max_devices) ||
 			    (-1-curstep->arg1 < map->max_buckets &&
 			     map->buckets[-1-curstep->arg1])) {
-				w[0] = curstep->arg1;
+				w[0] = curstep->arg1; // note down the root parent bucket to start with
 				wsize = 1;
 			} else {
 				dprintk(" bad take value %d\n", curstep->arg1);
 			}
 			break;
 
+                // CrushWrapper::set_rule_step_set_choose_xxx will set those
+                // CRUSH_RULE_SET_CHOOSE_XXX below
+                // CrushWrapper::set_rule_step_choose_xxx will set those
+                // CRUSH_RULE_CHOOSE_XXX below
+
+                // e.g. in CrushWrapper::add_simple_ruleset_at when mode is 
+                // "indep", there will be two additional steps includes:
+                // CRUSH_RULE_SET_CHOOSE_TRIES and CRUSH_RULE_SET_CHOOSELEAF_TRIES
+                
 		case CRUSH_RULE_SET_CHOOSE_TRIES:
 			if (curstep->arg1 > 0)
 				choose_tries = curstep->arg1;
@@ -878,8 +902,11 @@ int crush_do_rule(const struct crush_map *map,
 		case CRUSH_RULE_CHOOSELEAF_INDEP:
 		case CRUSH_RULE_CHOOSE_INDEP:
 			if (wsize == 0)
+                                // no root parent bucket to start with, which means 
+                                // we have not processed a "step take xxx" directive, skip
 				break;
 
+                        // choose leaf instead of choose
 			recurse_to_leaf =
 				curstep->op ==
 				 CRUSH_RULE_CHOOSELEAF_FIRSTN ||
@@ -887,22 +914,35 @@ int crush_do_rule(const struct crush_map *map,
 				CRUSH_RULE_CHOOSELEAF_INDEP;
 
 			/* reset output */
-			osize = 0;
+			osize = 0; // different parent bucket will output to the same output array(o[])
 
 			for (i = 0; i < wsize; i++) {
+                                // iterate every parent bucket in w[] array
+                                
 				/*
 				 * see CRUSH_N, CRUSH_N_MINUS macros.
 				 * basically, numrep <= 0 means relative to
 				 * the provided result_max
 				 */
+				// numrep > 0, choose numrep buckets
+				// numrep == 0, choose (pool-num-replicas) buckets (all available)
+				// numrep < 0, choose (pool-num-replicas - |{num}|) buckets
+
+                                // we need to get numrep items(child bucket or osd device)
+                                // from this parent bucket(w[i])
 				numrep = curstep->arg1;
 				if (numrep <= 0) {
+                                        // choose (pool-num-replicas - |{num}|) buckets
 					numrep += result_max;
 					if (numrep <= 0)
 						continue;
 				}
-				j = 0;
+
+                                // choose replica(s) from one of the parent buckets(w[i])
+                                
+				j = 0;  // reset j for each parent bucket
 				if (firstn) {
+                                        // mode = "firstn", for replicated pool
 					int recurse_tries;
 					if (choose_leaf_tries)
 						recurse_tries =
@@ -911,38 +951,48 @@ int crush_do_rule(const struct crush_map *map,
 						recurse_tries = 1;
 					else
 						recurse_tries = choose_tries;
+
+                                        // total replica number in theory is: 
+                                        // multiply replica number for every parent bucket by 
+                                        // parent bucket array size (numrep * wsize)
+                                        // but eventually we only need result_max osds, so
+                                        // we use (result_max - osize) to restrict the output size
+
+                                        // if this is a choose op, child buckets are outputted to o[],
+                                        // if this is a chooseleaf op(recurse_to_leaf is true), osds are outputted to c[]
 					osize += crush_choose_firstn(
-						map,
-						map->buckets[-1-w[i]],
-						weight, weight_max,
-						x, numrep,
-						curstep->arg2,
-						o+osize, j,
-						result_max-osize,
-						choose_tries,
-						recurse_tries,
-						choose_local_retries,
-						choose_local_fallback_retries,
-						recurse_to_leaf,
-						vary_r,
-						c+osize,
-						0);
+						map,                    // const struct crush_map *map
+						map->buckets[-1-w[i]],  // struct crush_bucket *bucket
+						weight, weight_max,     // const __u32 *weight, int weight_max
+						x, numrep,              // int x, int numrep
+						curstep->arg2,          // int type
+						o+osize, j,             // int *out, int outpos, o is an array of size result_max
+						result_max-osize,       // int out_size
+						choose_tries,           // unsigned int tries
+						recurse_tries,          // unsigned int recurse_tries
+						choose_local_retries,   // unsigned int local_tries
+						choose_local_fallback_retries,  // unsigned int local_fallback_retries
+						recurse_to_leaf,                // int recurse_to_leaf
+						vary_r,                 // unsigned int vary_r
+						c+osize,                // int *out2, only used when recurse_to_leaf is true
+						0);                     // int parent_r
 				} else {
+				        // mode = "indep", for ec pool
 					out_size = ((numrep < (result_max-osize)) ?
 						    numrep : (result_max-osize));
 					crush_choose_indep(
-						map,
-						map->buckets[-1-w[i]],
-						weight, weight_max,
-						x, out_size, numrep,
-						curstep->arg2,
-						o+osize, j,
-						choose_tries,
+						map,                    // const struct crush_map *map
+						map->buckets[-1-w[i]],  // struct crush_bucket *bucket
+						weight, weight_max,     // const __u32 *weight, int weight_max
+						x, out_size, numrep,    // int x, int left, int numrep,
+						curstep->arg2,          // int type
+						o+osize, j,             // int *out, int outpos
+						choose_tries,           // unsigned int tries
 						choose_leaf_tries ?
-						   choose_leaf_tries : 1,
-						recurse_to_leaf,
-						c+osize,
-						0);
+						   choose_leaf_tries : 1,      // unsigned int recurse_tries 
+						recurse_to_leaf,        // int recurse_to_leaf
+						c+osize,                // int *out2, only used when recurse_to_leaf is true
+						0);                     // int parent_r
 					osize += out_size;
 				}
 			}
@@ -951,20 +1001,27 @@ int crush_do_rule(const struct crush_map *map,
 				/* copy final _leaf_ values to output set */
 				memcpy(o, c, osize*sizeof(*o));
 
+                        // if curstep->op is CRUSH_RULE_CHOOSELEAF_XXX, then recurse_to_leaf
+                        // is set to true, thus c will contain final leaf nodes (osds)
+                        // if curstep->op is CRUSH_RULE_CHOOSE_XXX, then recurse_to_leaf
+                        // is set to false, thus c is not used
+                        
+                        
 			/* swap o and w arrays */
 			tmp = o;
 			o = w;
-			w = tmp;
-			wsize = osize;
+			w = tmp; // note down the result array
+			wsize = osize; // note down the result array size
 			break;
 
 
 		case CRUSH_RULE_EMIT:
 			for (i = 0; i < wsize && result_len < result_max; i++) {
+                                // set result
 				result[result_len] = w[i];
 				result_len++;
 			}
-			wsize = 0;
+			wsize = 0; // we may start another "step take xxx", so reset it
 			break;
 
 		default:

@@ -971,7 +971,8 @@ public:
     crush_bucket *b = crush_make_bucket(crush, alg, hash, type, size, items, weights);
     assert(b);
 
-    // if bucketno is 0, then allocate a bucket id
+    // if bucketno is 0, then allocate a bucket id, and insert the bucket 
+    // into crush->buckets[]
     return crush_add_bucket(crush, bucketno, b, idout);
   }
   
@@ -1050,6 +1051,8 @@ public:
     int numrep = crush_do_rule(crush, rule, x, rawout, maxout, &weight[0], weight.size(), scratch);
     if (numrep < 0)
       numrep = 0;
+
+    // set output osd(s)
     out.resize(numrep);
     for (int i=0; i<numrep; i++)
       out[i] = rawout[i];
