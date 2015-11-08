@@ -1534,6 +1534,8 @@ int OSDMap::_pg_to_osds(const pg_pool_t& pool, pg_t pg,
   unsigned size = pool.get_size();    // for replicated pool replicated size, for ec pool this is m (coding chunks)
 
   // what crush rule?
+  // find crush rule id with the specified crush ruleset id and ruleset type, and
+  // map->rules[i]->mask.min_size <= size && map->rules[i]->mask.max_size >= size
   int ruleno = crush->find_rule(pool.get_crush_ruleset(), pool.get_type(), size);
   if (ruleno >= 0)
     // osd_weight is an array of map<int,double>
@@ -2710,11 +2712,13 @@ int OSDMap::build_simple(CephContext *cct, epoch_t e, uuid_d &fsid,
   if (nosd >= 0)
     r = build_simple_crush_map(cct, *crush, nosd, &ss);
   else
+    // build a simple crush map
     r = build_simple_crush_map_from_conf(cct, *crush, &ss);
   assert(r == 0);
 
   int poolbase = get_max_osd() ? get_max_osd() : 1;
 
+  // build_simple_crush_map_xxx has built a rule of default_replicated_ruleset
   int const default_replicated_ruleset = crush->get_osd_pool_default_crush_replicated_ruleset(cct);
   assert(default_replicated_ruleset >= 0);
 
@@ -2796,6 +2800,7 @@ int OSDMap::build_simple_crush_map(CephContext *cct, CrushWrapper& crush,
   int r = crush.add_bucket(0, 0, CRUSH_HASH_DEFAULT,
 			   root_type, 0, NULL, NULL, &rootid);
   assert(r == 0);
+  // set root bucket's name
   crush.set_item_name(rootid, "default");
 
   for (int o=0; o<nosd; o++) {
@@ -2806,9 +2811,13 @@ int OSDMap::build_simple_crush_map(CephContext *cct, CrushWrapper& crush,
     ldout(cct, 10) << " adding osd." << o << " at " << loc << dendl;
     char name[8];
     sprintf(name, "osd.%d", o);
+
+    // inset osd.xxx into bucket, if the parent bucket does not exist, then 
+    // create it first
     crush.insert_item(cct, o, 1.0, name, loc);
   }
-
+  
+  // create a simple crush rule and insert into crush_map::rules[]
   build_simple_crush_rulesets(cct, crush, "default", ss);
 
   crush.finalize();
@@ -2840,7 +2849,7 @@ int OSDMap::build_simple_crush_map_from_conf(CephContext *cct,
 			   CRUSH_HASH_DEFAULT,
 			   root_type, 0, NULL, NULL, &rootid);
   assert(r == 0);
-  // set bucket's name
+  // set root bucket's name
   crush.set_item_name(rootid, "default"); // set root item's name to "default", the name 
                                           // maps are stored in CrushWrapper, do not
                                           // use the same name for different bucket types
@@ -2894,10 +2903,12 @@ int OSDMap::build_simple_crush_map_from_conf(CephContext *cct,
 
     ldout(cct, 5) << " adding osd." << o << " at " << loc << dendl;
 
-    // inset osd.xxx into crush map
+    // inset osd.xxx into bucket, if the parent bucket does not exist, then 
+    // create it first
     crush.insert_item(cct, o, 1.0, *i, loc);
   }
 
+  // create a simple crush rule and insert into crush_map::rules[]
   build_simple_crush_rulesets(cct, crush, "default", ss);
 
   crush.finalize();
@@ -2925,6 +2936,8 @@ int OSDMap::build_simple_crush_rulesets(CephContext *cct,
     crush_ruleset = -1; // create ruleset 0 by default
 
   int r;
+
+  // create a simple rule with rule id == ruleset id, and insert into crush_map::rules[]
   r = crush.add_simple_ruleset_at("replicated_ruleset", root, failure_domain,
                                   "firstn", pg_pool_t::TYPE_REPLICATED,
                                   crush_ruleset, ss);

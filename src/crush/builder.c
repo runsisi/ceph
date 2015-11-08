@@ -66,6 +66,8 @@ int crush_add_rule(struct crush_map *map, struct crush_rule *rule, int ruleno)
 {
 	__u32 r;
 
+        // find a rule id that has not been used
+
 	if (ruleno < 0) {
 		for (r=0; r < map->max_rules; r++)
 			if (map->rules[r] == 0)

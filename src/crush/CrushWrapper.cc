@@ -959,23 +959,28 @@ int CrushWrapper::add_simple_ruleset_at(string name, string root_name,
                                         int rno, ostream *err)
 {
   if (rule_exists(name)) {
-    // exists in CrushWrapper::rule_name_rmap
+    // rule name exists in CrushWrapper::rule_name_rmap
     if (err)
       *err << "rule " << name << " exists";
     return -EEXIST;
   }
+
+  // we are creating a simple rule which has its rule id == ruleset id
   if (rno >= 0) {
     if (rule_exists(rno)) {
+      // CrushWrapper::crush->rules[rno] is not NULL
       if (err)
         *err << "rule with ruleno " << rno << " exists";
       return -EEXIST;
     }
     if (ruleset_exists(rno)) {
+      // there is a rule with ruleset id set to rno
       if (err)
         *err << "ruleset " << rno << " exists";
       return -EEXIST;
     }
   } else {
+    // to find a ruleno that has not been used
     for (rno = 0; rno < get_max_rules(); rno++) {
       if (!rule_exists(rno) && !ruleset_exists(rno))
         break;
@@ -986,9 +991,13 @@ int CrushWrapper::add_simple_ruleset_at(string name, string root_name,
       *err << "root item " << root_name << " does not exist";
     return -ENOENT;
   }
+
+  // begins iterating down the tree from the specified bucket
   int root = get_item_id(root_name);
+  
   int type = 0;
   if (failure_domain_name.length()) {
+    // get bucket type id of failure domain
     type = get_type_id(failure_domain_name);
     if (type < 0) {
       if (err)
@@ -1007,15 +1016,39 @@ int CrushWrapper::add_simple_ruleset_at(string name, string root_name,
     steps = 5;
   int min_rep = mode == "firstn" ? 1 : 3;
   int max_rep = mode == "firstn" ? 10 : 20;
+  
   //set the ruleset the same as rule_id(rno)
+  // create an instance of crush_rule and initialized it, we are creating a simple 
+  // rule that rule id == ruleset id, in CrushWrapper::add_rule we will see that
+  // rule id != ruleset id
   crush_rule *rule = crush_make_rule(steps, rno, rule_type, min_rep, max_rep);
   assert(rule);
+
+  // setup rule->steps[step]
+
   int step = 0;
   if (mode == "indep") {
     crush_rule_set_step(rule, step++, CRUSH_RULE_SET_CHOOSELEAF_TRIES, 5, 0);
     crush_rule_set_step(rule, step++, CRUSH_RULE_SET_CHOOSE_TRIES, 100, 0);
   }
+
+  // step take
   crush_rule_set_step(rule, step++, CRUSH_RULE_TAKE, root, 0);
+
+  // step choose firstn {num} type {bucket-type}
+  // selects a set of buckets of {bucket-type}.
+  //    If {num} == 0, choose pool-num-replicas buckets (all available).
+  //    If {num} > 0 && < pool-num-replicas, choose that many buckets.
+  //    If {num} < 0, it means pool-num-replicas - |{num}|.
+
+  // step chooseleaf firstn {num} type {bucket-type}
+  // selects a set of buckets of {bucket-type} and chooses a leaf node from the 
+  // subtree of each bucket in the set of buckets.
+  //    If {num} == 0, choose pool-num-replicas buckets (all available).
+  //    If {num} > 0 && < pool-num-replicas, choose that many buckets.
+  //    If {num} < 0, it means pool-num-replicas - |{num}|.
+
+  // step choose firstn {num} type {bucket-type} / step chooseleaf firstn {num} type {bucket-type}
   if (type)
     crush_rule_set_step(rule, step++,
 			mode == "firstn" ? CRUSH_RULE_CHOOSELEAF_FIRSTN :
@@ -1028,13 +1061,18 @@ int CrushWrapper::add_simple_ruleset_at(string name, string root_name,
 			CRUSH_RULE_CHOOSE_INDEP,
 			CRUSH_CHOOSE_N,
 			0);
+
+  // step emit
   crush_rule_set_step(rule, step++, CRUSH_RULE_EMIT, 0, 0);
 
+  // insert this rule into crush->rules[]
   int ret = crush_add_rule(crush, rule, rno);
   if(ret < 0) {
     *err << "failed to add rule " << rno << " because " << cpp_strerror(ret);
     return ret;
   }
+
+  // note down the <rule id, rule name> map
   set_rule_name(rno, name);
   have_rmaps = false;
   return rno;

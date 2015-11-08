@@ -59,8 +59,8 @@ int main(int argc, const char **argv)
   bool createsimple = false;
   bool create_from_conf = false;
   int num_osd = 0;
-  int pg_bits = g_conf->osd_pg_bits;
-  int pgp_bits = g_conf->osd_pgp_bits;
+  int pg_bits = g_conf->osd_pg_bits; // default is 6
+  int pgp_bits = g_conf->osd_pgp_bits; // default is 6
   bool clobber = false;
   bool modified = false;
   std::string export_crush, import_crush, test_map_pg, test_map_object;
