@@ -434,7 +434,8 @@ static int crush_choose_firstn(const struct crush_map *map,
 	int item = 0;
 	int itemtype;
 	int collide, reject;
-	int count = out_size; // the numrepo is also restricted by output array
+	int count = out_size; // ensures that at most numrep osds are selected even 
+	                      // if more number of osds are allowed by the rule
 
 	dprintk("CHOOSE%s bucket %d x %d outpos %d numrep %d tries %d recurse_tries %d local_retries %d local_fallback_retries %d parent_r %d\n",
 		recurse_to_leaf ? "_LEAF" : "",
@@ -456,7 +457,7 @@ static int crush_choose_firstn(const struct crush_map *map,
 			/* choose through intervening buckets */
 			flocal = 0;
 			do { // while (retry_bucket)
-			        // retry from the initial bucket or its child buckets
+			        // retry from the initial bucket or its child bucket
 				collide = 0;
 				retry_bucket = 0;
 				r = rep + parent_r;
@@ -480,8 +481,8 @@ static int crush_choose_firstn(const struct crush_map *map,
 					break;
 				}
 
-                                // got an item, and we need to check if this is 
-                                // what we want, or if this item is a duplication
+                                // got an item, we need to check if this is 
+                                // what we want, or if this item has been chosen
 
 				/* desired type? */
 				if (item < 0)
@@ -515,18 +516,22 @@ static int crush_choose_firstn(const struct crush_map *map,
 
 				reject = 0;
 				if (!collide && recurse_to_leaf) {
+                                        // we need to get a leaf from the bucket/child bucket
 					if (item < 0) {
 						int sub_r;
-						if (vary_r)
+						if (vary_r) // pass r to recursive calls
 							sub_r = r >> (vary_r-1);
 						else
 							sub_r = 0;
+
+                                                // try to choose a leaf from the bucket/child bucket
 						if (crush_choose_firstn(map,
 							 map->buckets[-1-item],
 							 weight, weight_max,
-							 x, outpos+1, 0,
+							 x, outpos+1, 0, // rep from outpos to outpos + 1, we only need one leaf
 							 out2, outpos, count,
-							 recurse_tries, 0,
+							 recurse_tries, // tries
+							 0,             // recurse_tries
 							 local_retries,
 							 local_fallback_retries,
 							 0,
@@ -955,9 +960,12 @@ int crush_do_rule(const struct crush_map *map,
                                         // mode = "firstn", for replicated pool
 					int recurse_tries;
 					if (choose_leaf_tries)
+                                                // for ec rulesets, they always reset 
+                                                // CRUSH_RULE_SET_CHOOSELEAF_TRIES and CRUSH_RULE_SET_CHOOSE_TRIES
 						recurse_tries =
 							choose_leaf_tries;
 					else if (map->chooseleaf_descend_once)
+                                                // see commit: 88f21818
 						recurse_tries = 1;
 					else
 						recurse_tries = choose_tries;
