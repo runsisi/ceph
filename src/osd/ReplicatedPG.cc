@@ -9653,6 +9653,8 @@ void ReplicatedPG::on_change(ObjectStore::Transaction *t)
   apply_and_flush_repops(is_primary());
 
   pgbackend->on_change_cleanup(t);
+
+  // clear all in progress ops and pushing/pulling maps
   pgbackend->on_change();
 
   // clear snap_trimmer state

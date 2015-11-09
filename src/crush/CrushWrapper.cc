@@ -539,7 +539,9 @@ int CrushWrapper::get_children(int id, list<int> *children)
   return b->size;
 }
 
-
+// insert item(child bucket or osd) into crush map, may need to create parent buckets
+// as "loc" specified to form a bucket tree, and finally update the weights of
+// the effected buckets
 int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string name,
 			      const map<string,string>& loc)  // typename -> bucketname
 {
@@ -548,10 +550,10 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
 		<< " name " << name << " loc " << loc << dendl;
 
   // -_0-9A-Za-z
-  if (!is_valid_crush_name(name)) // item name, e.g. osd.1
+  if (!is_valid_crush_name(name)) // item name, e.g. osd.1, this may also be a bucket
     return -EINVAL;
 
-  if (!is_valid_crush_loc(cct, loc))
+  if (!is_valid_crush_loc(cct, loc)) // validate bucket type names and bucket names in loc
     return -EINVAL;
 
   if (name_exists(name)) {
@@ -575,7 +577,8 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
 
     // iterate every bucket type, in increasing order, i.e. from host -> root
 
-    // loc, e.g.
+    // loc is a location map, i.e. it is a <bucket type name, bucket name> map, 
+    // osd device is not included, e.g.
     // host: ceph0
     // rack: rack0
     // root: default
@@ -589,7 +592,11 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
       continue;
     }
 
-    if (!name_exists(q->second)) { // the specified parent bucket name does not exist
+    // loc has the specified bucket type name, e.g. host, rack, etc.
+
+    if (!name_exists(q->second)) { // the specified bucket name does not exist
+      // create all non-existent buckets and forms a bucket chain
+    
       ldout(cct, 5) << "insert_item creating bucket " << q->second << dendl;
       int empty = 0, newid;
       // create a bucket of type id p->first, insert the item(child bucket or osd) 
@@ -604,14 +611,15 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
 
       // insert the new bucket into CrushWrapper::name_map and CrushWrapper::name_rmap
       set_item_name(newid, q->second); 
-      
+
+      // new parent bucket created, it may still be some other bucket's child
       cur = newid; // bucket id, a negative integer
       continue;
     }
 
-    // ok, a bucket with the specified name exists
+    // ok, parent bucket(q->second) exists or newly created
 
-    // add to an existing parent bucket
+    // add to an existing or newly created parent bucket
     int id = get_item_id(q->second); // from bucket name to get bucket id, this info is stored in CrushWrapper
     if (!bucket_exists(id)) {
       // the specified bucket id does not exist in crush map, but the CrushWrapper
@@ -627,6 +635,7 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
       return -EINVAL;
     }
 
+    // get parent bucket
     crush_bucket *b = get_bucket(id);
     assert(b);
 
@@ -650,13 +659,17 @@ int CrushWrapper::insert_item(CephContext *cct, int item, float weight, string n
     // insert the item(child bucket or osd) into parent bucket with 0 weight
     int r = crush_bucket_add_item(crush, b, cur, 0);
     assert (!r);
+
+    // item inserted, exit
     break;
   }
+
+  // the specified item inserted (parent bucket chain may have also created)
 
   // adjust the item's weight in location
   if(adjust_item_weightf_in_loc(cct, item, weight, loc) > 0) {
     if (item >= crush->max_devices) {
-      // item (osd) inserted, increase the total item count
+      // if this is an osd insertion, increase the max item id field
       crush->max_devices = item + 1;
       ldout(cct, 5) << "insert_item max_devices now " << crush->max_devices << dendl;
     }
@@ -808,14 +821,24 @@ int CrushWrapper::adjust_item_weight(CephContext *cct, int id, int weight)
 {
   ldout(cct, 5) << "adjust_item_weight " << id << " weight " << weight << dendl;
   int changed = 0;
+
+  // to find a bucket which contains the specified item(id)
+  
   for (int bidx = 0; bidx < crush->max_buckets; bidx++) {
+    // iterate every bucket within the map
     crush_bucket *b = crush->buckets[bidx];
     if (b == 0)
       continue;
+
+    // found the bucket
     for (unsigned i = 0; i < b->size; i++) {
-      if (b->items[i] == id) {
+      if (b->items[i] == id) { // found the bucket whose weight has changed
+        // update the id specified item's weight and the containing bucket b's
+        // internal properties
 	int diff = crush_bucket_adjust_item_weight(crush, b, id, weight);
 	ldout(cct, 5) << "adjust_item_weight " << id << " diff " << diff << " in bucket " << bidx << dendl;
+
+        // bucket b's id is (-1 - bidx), i.e. bucket id = (-1 - bucket index)
 	adjust_item_weight(cct, -1 - bidx, b->weight);
 	changed++;
       }
@@ -831,22 +854,44 @@ int CrushWrapper::adjust_item_weight_in_loc(CephContext *cct, int id, int weight
   ldout(cct, 5) << "adjust_item_weight_in_loc " << id << " weight " << weight << " in " << loc << dendl;
   int changed = 0;
 
+  // loc is a location map, i.e. it is a <bucket type name, bucket name> map, 
+  // osd device is not included, e.g.
+  // host: ceph0
+  // rack: rack0
+  // root: default
+
   for (map<string,string>::const_iterator l = loc.begin(); l != loc.end(); ++l) {
-    int bid = get_item_id(l->second);
+    // iterate the bucket chain, to find a bucket that contains 
+    // the specified item(id) 
+    
+    int bid = get_item_id(l->second); // get bucket id with bucket name
     if (!bucket_exists(bid))
       continue;
     crush_bucket *b = get_bucket(bid);
     if ( b == NULL)
       continue;
+
+    // to find if this bucket contains the item we are going to update
+    
     for (unsigned int i = 0; i < b->size; i++) {
-      if (b->items[i] == id) {
+      // iterate items within this bucket
+      if (b->items[i] == id) { // found the item within the bucket
+        // update the id specified item's weight and the containing bucket b's
+        // internal properties, then return the weight difference of the bucket
 	int diff = crush_bucket_adjust_item_weight(crush, b, id, weight);
 	ldout(cct, 5) << "adjust_item_weight_in_loc " << id << " diff " << diff << " in bucket " << bid << dendl;
+
+        // update parent bucket's weight and recursively up to all its ancestors,
+        // without loc specified, it performs a brutal search to find the bucket 
+        // that contains the bid specified item, and then update the item's weight
+        // and internal properties of the containing bucket, and finally do this
+        // recursively up to parent's parent, etc.
 	adjust_item_weight(cct, bid, b->weight);
 	changed++;
       }
     }
   }
+
   if (!changed)
     return -ENOENT;
   return changed;

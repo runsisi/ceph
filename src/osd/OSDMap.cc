@@ -2905,8 +2905,8 @@ int OSDMap::build_simple_crush_map_from_conf(CephContext *cct,
 
     ldout(cct, 5) << " adding osd." << o << " at " << loc << dendl;
 
-    // inset osd.xxx into bucket, if the parent bucket does not exist, then 
-    // create it first
+    // inset osd.xxx into bucket, if the parent(s) bucket does not exist, then 
+    // create it/them first, and update the weight of all the effected buckets
     crush.insert_item(cct, o, 1.0, *i, loc);
   }
 

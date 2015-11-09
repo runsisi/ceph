@@ -816,7 +816,7 @@ private:
       return (crush_bucket *)(-EINVAL);
     unsigned int pos = (unsigned int)(-1 - id);
     unsigned int max_buckets = crush->max_buckets;
-    if (pos >= max_buckets)
+    if (pos >= max_buckets) // if id identifies an osd, pos will be a large integer
       return (crush_bucket *)(-ENOENT);
     crush_bucket *ret = crush->buckets[pos];
     if (ret == NULL)

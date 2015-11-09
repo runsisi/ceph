@@ -434,7 +434,7 @@ static int crush_choose_firstn(const struct crush_map *map,
 	int item = 0;
 	int itemtype;
 	int collide, reject;
-	int count = out_size;
+	int count = out_size; // the numrepo is also restricted by output array
 
 	dprintk("CHOOSE%s bucket %d x %d outpos %d numrep %d tries %d recurse_tries %d local_retries %d local_fallback_retries %d parent_r %d\n",
 		recurse_to_leaf ? "_LEAF" : "",
@@ -442,18 +442,21 @@ static int crush_choose_firstn(const struct crush_map *map,
 		tries, recurse_tries, local_retries, local_fallback_retries,
 		parent_r);
 
-        // try to get (numrep - outpos) items within this bucket
+        // try to get min(out_size, (numrep - outpos)) items within the specified bucket
+        
 	for (rep = outpos; rep < numrep && count > 0 ; rep++) {
 		/* keep trying until we get a non-out, non-colliding item */
-		ftotal = 0;
-		skip_rep = 0;
-		do {
+		ftotal = 0; // for replica "rep", the total times we have failed
+		skip_rep = 0; // we have to skip to choose an item for this replica
+		do { // while (retry_descent)
+		        // restart retry from the initial bucket
 			retry_descent = 0;
 			in = bucket;               /* initial bucket */
 
 			/* choose through intervening buckets */
 			flocal = 0;
-			do {
+			do { // while (retry_bucket)
+			        // retry from the initial bucket or its child buckets
 				collide = 0;
 				retry_bucket = 0;
 				r = rep + parent_r;
@@ -461,7 +464,7 @@ static int crush_choose_firstn(const struct crush_map *map,
 				r += ftotal;
 
 				/* bucket choose */
-				if (in->size == 0) {
+				if (in->size == 0) { // bucket has no child item
 					reject = 1;
 					goto reject;
 				}
@@ -477,6 +480,9 @@ static int crush_choose_firstn(const struct crush_map *map,
 					break;
 				}
 
+                                // got an item, and we need to check if this is 
+                                // what we want, or if this item is a duplication
+
 				/* desired type? */
 				if (item < 0)
 					itemtype = map->buckets[-1-item]->type;
@@ -485,13 +491,15 @@ static int crush_choose_firstn(const struct crush_map *map,
 				dprintk("  item %d type %d\n", item, itemtype);
 
 				/* keep going? */
-				if (itemtype != type) {
+				if (itemtype != type) { // not the type we want, we need to try its child bucket
 					if (item >= 0 ||
-					    (-1-item) >= map->max_buckets) {
+					    (-1-item) >= map->max_buckets) { // no child bucket to try
 						dprintk("   bad item type %d\n", type);
 						skip_rep = 1;
 						break;
 					}
+
+                                        // retry its child bucket, this is not a failure
 					in = map->buckets[-1-item];
 					retry_bucket = 1;
 					continue;
@@ -939,6 +947,8 @@ int crush_do_rule(const struct crush_map *map,
 				}
 
                                 // choose replica(s) from one of the parent buckets(w[i])
+
+                                // select(n,t) from sage's thesis 
                                 
 				j = 0;  // reset j for each parent bucket
 				if (firstn) {
@@ -1001,17 +1011,21 @@ int crush_do_rule(const struct crush_map *map,
 				/* copy final _leaf_ values to output set */
 				memcpy(o, c, osize*sizeof(*o));
 
-                        // if curstep->op is CRUSH_RULE_CHOOSELEAF_XXX, then recurse_to_leaf
-                        // is set to true, thus c will contain final leaf nodes (osds)
-                        // if curstep->op is CRUSH_RULE_CHOOSE_XXX, then recurse_to_leaf
-                        // is set to false, thus c is not used
-                        
+                        // if curstep->op is CRUSH_RULE_CHOOSELEAF_XXX, recurse_to_leaf
+                        // is set to true, then c will contain final leaf nodes (osds)
+                        // if curstep->op is CRUSH_RULE_CHOOSE_XXX, recurse_to_leaf
+                        // is set to false, then c is not used
+
+                        // the resulting numrep * wsize distinct items are placed
+                        // back into the input w[] and either form the input for a 
+                        // subsequent select(n,t) or are moved into the result vector
+                        // with an emit operation
                         
 			/* swap o and w arrays */
 			tmp = o;
 			o = w;
-			w = tmp; // note down the result array
-			wsize = osize; // note down the result array size
+			w = tmp;
+			wsize = osize;
 			break;
 
 

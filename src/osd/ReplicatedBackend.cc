@@ -238,6 +238,7 @@ void ReplicatedBackend::on_change()
 {
   dout(10) << __func__ << dendl;
   for (map<ceph_tid_t, InProgressOp>::iterator i = in_progress_ops.begin();
+       // remove all in progress ops
        i != in_progress_ops.end();
        in_progress_ops.erase(i++)) {
     if (i->second.on_commit)
@@ -245,6 +246,8 @@ void ReplicatedBackend::on_change()
     if (i->second.on_applied)
       delete i->second.on_applied;
   }
+
+  // clear pushing/pulling maps
   clear_recovery_state();
 }
 

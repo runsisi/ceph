@@ -1345,10 +1345,11 @@ int crush_bucket_remove_item(struct crush_map *map, struct crush_bucket *b, int 
 
 int crush_adjust_uniform_bucket_item_weight(struct crush_bucket_uniform *bucket, int item, int weight)
 {
+        // one item's weight change means all items changed
 	int diff = (weight - bucket->item_weight) * bucket->h.size;
 
-	bucket->item_weight = weight;
-	bucket->h.weight = bucket->item_weight * bucket->h.size;
+	bucket->item_weight = weight; // every item within the bucket has the same weight
+	bucket->h.weight = bucket->item_weight * bucket->h.size; // update total weight, all items inc/dec diff
 
 	return diff;
 }
@@ -1365,12 +1366,12 @@ int crush_adjust_list_bucket_item_weight(struct crush_bucket_list *bucket, int i
 	if (i == bucket->h.size)
 		return 0;
 
-	diff = weight - bucket->item_weights[i];
-	bucket->item_weights[i] = weight;
-	bucket->h.weight += diff;
+	diff = weight - bucket->item_weights[i]; // the specified item's weight changed
+	bucket->item_weights[i] = weight; // update the spcified item's weight
+	bucket->h.weight += diff; // update total weight
 
 	for (j = i; j < bucket->h.size; j++)
-		bucket->sum_weights[j] += diff;
+		bucket->sum_weights[j] += diff; // all sum weight after the item need to be changed 
 
 	return diff;
 }
@@ -1389,13 +1390,13 @@ int crush_adjust_tree_bucket_item_weight(struct crush_bucket_tree *bucket, int i
 	if (i == bucket->h.size)
 		return 0;
 	
-	node = crush_calc_tree_node(i);
-	diff = weight - bucket->node_weights[node];
-	bucket->node_weights[node] = weight;
-	bucket->h.weight += diff;
+	node = crush_calc_tree_node(i); // get node label in the tree, node label is a index in bucket->node_weights[]
+	diff = weight - bucket->node_weights[node]; // the specified item's weight changed
+	bucket->node_weights[node] = weight; // update the spcified item's weight
+	bucket->h.weight += diff; // update total weight
 
 	for (j=1; j<depth; j++) {
-		node = parent(node);
+		node = parent(node); // all the way up to ancestor nodes
 		bucket->node_weights[node] += diff;
 	}
 
@@ -1416,11 +1417,11 @@ int crush_adjust_straw_bucket_item_weight(struct crush_map *map,
 	if (idx == bucket->h.size)
 		return 0;
 
-	diff = weight - bucket->item_weights[idx];
-	bucket->item_weights[idx] = weight;
-	bucket->h.weight += diff;
+	diff = weight - bucket->item_weights[idx]; // the specified item's weight changed
+	bucket->item_weights[idx] = weight; // update the spcified item's weight
+	bucket->h.weight += diff; // update total weight
 
-	r = crush_calc_straw(map, bucket);
+	r = crush_calc_straw(map, bucket); // recalc all straw length within this bucket
         if (r < 0)
                 return r;
 
@@ -1440,9 +1441,9 @@ int crush_adjust_straw2_bucket_item_weight(struct crush_map *map,
 	if (idx == bucket->h.size)
 		return 0;
 
-	diff = weight - bucket->item_weights[idx];
-	bucket->item_weights[idx] = weight;
-	bucket->h.weight += diff;
+	diff = weight - bucket->item_weights[idx]; // the specified item's weight changed
+	bucket->item_weights[idx] = weight; // update the spcified item's weight
+	bucket->h.weight += diff; // update total weight
 
 	return diff;
 }
