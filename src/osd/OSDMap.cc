@@ -1539,7 +1539,10 @@ int OSDMap::_pg_to_osds(const pg_pool_t& pool, pg_t pg,
   int ruleno = crush->find_rule(pool.get_crush_ruleset(), pool.get_type(), size);
   if (ruleno >= 0)
     // osd_weight is an array: vector<__u32>, its value will be initialized 
-    // to 0 in set_max_osd and set in set_weight
+    // to 0 in set_max_osd and set in set_weight, this weight is used in
+    // mapper.c:is_out() to check if this osd is out/in and if we have to reject it,
+    // in output of "ceph osd tree", this weight is displayed as "REWEIGHT" and
+    // the "WEIGHT" is set when create crush item
     crush->do_rule(ruleno, pps, *osds, size, osd_weight);
 
   // if previously exists osd added to the crush map, and then we removed the
@@ -1550,6 +1553,7 @@ int OSDMap::_pg_to_osds(const pg_pool_t& pool, pg_t pg,
   *primary = -1;
   for (unsigned i = 0; i < osds->size(); ++i) {
     if ((*osds)[i] != CRUSH_ITEM_NONE) {
+      // this only occurs when the pool is an ec pool
       // choose the first that is not CRUSH_ITEM_NONE as primary
       *primary = (*osds)[i];
       break;
@@ -1734,16 +1738,21 @@ void OSDMap::_pg_to_up_acting_osds(const pg_t& pg, vector<int> *up, int *up_prim
   int _acting_primary;
   ps_t pps;
 
-  // map pg id to a vector of osd(s) (may be down, but must exists in osdmap), 
+  // map pg id to a vector of osd(s) (may be down, but must in state of exist and in), 
   // _up_primary is set, but will soon be updated below in _raw_to_up_osds
   _pg_to_osds(*pool, pg, &raw, &_up_primary, &pps);
 
-  // for replicated pg, remove down osd(s), and for ec pool, set its 
-  // osd id to CRUSH_ITEM_NONE
+  // got an array of osd(s) that exist (maybe down)
+
+  // for replicated pg, remove down osd(s), and for ec pool, set its down
+  // osd's id to CRUSH_ITEM_NONE
   _raw_to_up_osds(*pool, raw, &_up, &_up_primary);
 
-  // 
+  // got an array of osd(s) that exist and up
+
+  // change the primary if the primary affinity is set
   _apply_primary_affinity(pps, *pool, &_up, &_up_primary);
+  
   _get_temp_osds(*pool, pg, &_acting, &_acting_primary);
   if (_acting.empty()) {
     _acting = _up;

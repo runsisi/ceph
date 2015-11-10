@@ -104,14 +104,18 @@ static int bucket_perm_choose(struct crush_bucket *bucket,
 	/* calculate permutation up to pr */
 	for (i = 0; i < bucket->perm_n; i++)
 		dprintk(" perm_choose have %d: %d\n", i, bucket->perm[i]);
-        
+
+        // bucket->perm[] is an index array, its value is a index in bucket->items[], 
+        // like reverse[] in crush_calc_straw
 	while (bucket->perm_n <= pr) {
-		unsigned int p = bucket->perm_n;
+		unsigned int p = bucket->perm_n; // current index in bucket->perm[]
 		/* no point in swapping the final entry */
 		if (p < bucket->size - 1) {
+                        // get pseudo-random integer in between [0, bucket->size - p)
 			i = crush_hash32_3(bucket->hash, x, bucket->id, p) %
 				(bucket->size - p);
 			if (i) {
+                                // swap bucket->perm[p] and bucket->perm[p+i]
 				unsigned int t = bucket->perm[p + i];
 				bucket->perm[p + i] = bucket->perm[p];
 				bucket->perm[p] = t;
@@ -120,11 +124,13 @@ static int bucket_perm_choose(struct crush_bucket *bucket,
 		}
 		bucket->perm_n++;
 	}
+
+        // now, we got a pseudo-random permutation of index of bucket->items[]
         
 	for (i = 0; i < bucket->size; i++)
 		dprintk(" perm_choose  %d: %d\n", i, bucket->perm[i]);
 
-	s = bucket->perm[pr];
+	s = bucket->perm[pr]; // get the index in bucket->items[]
 out:
 	dprintk(" perm_choose %d sz=%d x=%d r=%d (%d) s=%d\n", bucket->id,
 		bucket->size, x, r, pr, s);
@@ -307,6 +313,7 @@ static int bucket_straw2_choose(struct crush_bucket_straw2 *bucket,
 	for (i = 0; i < bucket->h.size; i++) {
 		w = bucket->item_weights[i];
 		if (w) {
+                        // get an pseudo-random integer
 			u = crush_hash32_3(bucket->h.hash, x,
 					   bucket->h.items[i], r);
 			u &= 0xffff;
@@ -335,7 +342,6 @@ static int bucket_straw2_choose(struct crush_bucket_straw2 *bucket,
 		}
 
 		if (i == 0 || draw > high_draw) {
-                        // find the item that has the max straw length
 			high = i;
 			high_draw = draw;
 		}
@@ -443,14 +449,19 @@ static int crush_choose_firstn(const struct crush_map *map,
 		tries, recurse_tries, local_retries, local_fallback_retries,
 		parent_r);
 
-        // try to get min(out_size, (numrep - outpos)) items within the specified bucket
-        
+        // if this is not a recursive call, for every parent bucket, outpos is 
+        // reset to 0, out_size is set to (result_max - osize), and out is a 
+        // sub-array of upper level output array o[], i.e. &o[osize]
+        // so, for non-recursive call we want sub items of parent bucket in 
+        // interval [0, min(numrep,out_size))
+        // for recursive call, the parameter outpos did not reset to 0, see below
+      
 	for (rep = outpos; rep < numrep && count > 0 ; rep++) {
 		/* keep trying until we get a non-out, non-colliding item */
 		ftotal = 0; // for replica "rep", the total times we have failed
 		skip_rep = 0; // we have to skip to choose an item for this replica
 		do { // while (retry_descent)
-		        // restart retry from the initial bucket
+		        // outer descent down
 			retry_descent = 0;
 			in = bucket;               /* initial bucket */
 
@@ -472,9 +483,22 @@ static int crush_choose_firstn(const struct crush_map *map,
 				if (local_fallback_retries > 0 &&
 				    flocal >= (in->size>>1) &&
 				    flocal > local_fallback_retries)
+				        /*
+				            commit: 904b299
+				            fall back to exhaustive bucket search for any bucket type
+    
+                                            If we don't get a bucket-specific choice in 5 tries, do an
+                                            exhaustive search (based on a random permutation).  Only then give
+                                            up on the bucket and retry descent.
+                                            
+                                            Note that the search-based fallback does not honor weighting at
+                                            all.
+				         */
 					item = bucket_perm_choose(in, x, r);
 				else
 					item = crush_bucket_choose(in, x, r);
+
+                                // sanity checks ?
 				if (item >= map->max_devices) {
 					dprintk("   bad item %d\n", item);
 					skip_rep = 1;
@@ -506,6 +530,18 @@ static int crush_choose_firstn(const struct crush_map *map,
 					continue;
 				}
 
+                                // got an item, either a bucket or an osd
+
+                                // step chooseleaf firstn 0 type host
+                                // => note down host bucket in out[], and osd in out2[]
+                                // step chooseleaf firstn 0 type osd
+                                // => note down osd in out[], and also in out2[]
+
+                                // step choose firstn 0 type host
+                                // => note down host bucket in out[] is NULL
+                                // step choose firstn 0 type osd
+                                // => note down osd in out[], out2[] is NULL
+
 				/* collision? */
 				for (i = 0; i < outpos; i++) {
 					if (out[i] == item) {
@@ -514,17 +550,29 @@ static int crush_choose_firstn(const struct crush_map *map,
 					}
 				}
 
+                                // the item has not been insert into out[], then check
+                                // if we need to choose an osd (recurse_to_leaf)
+
 				reject = 0;
 				if (!collide && recurse_to_leaf) {
-                                        // we need to get a leaf from the bucket/child bucket
+                                        // CRUSH_RULE_CHOOSELEAF_FIRSTN or CRUSH_RULE_CHOOSELEAF_INDEP,
+                                        // we need to get a leaf during every for(rep;;) loop
+                                        
 					if (item < 0) {
+                                                // this occurs when we have a step like this:
+					        // step chooseleaf firstn 0 type host
+					        
+                                                // we need to get a leaf from this child bucket
 						int sub_r;
 						if (vary_r) // pass r to recursive calls
 							sub_r = r >> (vary_r-1);
 						else
 							sub_r = 0;
 
-                                                // try to choose a leaf from the bucket/child bucket
+                                                // inner descent down
+                                                // recursive call, try to choose a leaf from the bucket/child bucket,
+                                                // note that the output array out2 is a sub-array of c[], i.e. &c[osize],
+                                                // in upper layer, so the outpos is direct to c[]
 						if (crush_choose_firstn(map,
 							 map->buckets[-1-item],
 							 weight, weight_max,
@@ -534,21 +582,29 @@ static int crush_choose_firstn(const struct crush_map *map,
 							 0,             // recurse_tries
 							 local_retries,
 							 local_fallback_retries,
-							 0,
+							 0,             // recurse_to_leaf, so only one recursive call allowed
 							 vary_r,
 							 NULL,
 							 sub_r) <= outpos)
 							/* didn't get leaf */
 							reject = 1;
 					} else {
+					        // this occurs when we have a step like this:
+					        // step chooseleaf firstn 0 type osd
+					        
 						/* we already have a leaf! */
-						out2[outpos] = item;
+						out2[outpos] = item;    // out[] will also be inserted an item of this,
+						                        // so in collision check, we only have to check out[]
 					}
 				}
 
 				if (!reject) {
 					/* out? */
 					if (itemtype == 0)
+                                                // if the osd is out, then the weight 
+                                                // is 0
+                                                // note: osd out will not update the weight
+                                                // in the crush map
 						reject = is_out(map, weight,
 								weight_max,
 								item, x);
@@ -570,7 +626,7 @@ reject:
 						retry_bucket = 1;
 					else if (ftotal < tries)
 						/* then retry descent */
-						retry_descent = 1;
+						retry_descent = 1; // restart outer descent down
 					else
 						/* else give up */
 						skip_rep = 1;
@@ -919,7 +975,8 @@ int crush_do_rule(const struct crush_map *map,
                                 // we have not processed a "step take xxx" directive, skip
 				break;
 
-                        // choose leaf instead of choose
+                        // choose leaf instead of choose a child bucket, the next step
+                        // must be a step of CRUSH_RULE_EMIT
 			recurse_to_leaf =
 				curstep->op ==
 				 CRUSH_RULE_CHOOSELEAF_FIRSTN ||
@@ -927,10 +984,17 @@ int crush_do_rule(const struct crush_map *map,
 				CRUSH_RULE_CHOOSELEAF_INDEP;
 
 			/* reset output */
-			osize = 0; // different parent bucket will output to the same output array(o[])
+			osize = 0; // different parent bucket will output its child 
+			           // items(child bucket or osd) into the same 
+			           // output array(o[]), so while iterating the wsize
+			           // parent buckets, we will get min((wsize * numrep), result_max) 
+			           // child bucket(s)/osd(s)
 
 			for (i = 0; i < wsize; i++) {
-                                // iterate every parent bucket in w[] array
+                                // iterate every parent bucket in w[] array and get
+                                // min((wsize * numrep), result_max) child bucket(s)/osd(s),
+                                // this restriction is put on by the output array(o[]),
+                                // which only has a size of result_max items
                                 
 				/*
 				 * see CRUSH_N, CRUSH_N_MINUS macros.
@@ -951,11 +1015,23 @@ int crush_do_rule(const struct crush_map *map,
 						continue;
 				}
 
+                                /*
+                                    For a chooseleaf CRUSH rule, the tree descent has two steps: call them the
+                                    inner and outer descents.
+                                    
+                                    If the tree descent down to <node_type> is the outer descent, and the descent
+                                    from <node_type> down to a leaf is the inner descent.
+                                 */
+
                                 // choose replica(s) from one of the parent buckets(w[i])
 
                                 // select(n,t) from sage's thesis 
-                                
-				j = 0;  // reset j for each parent bucket
+
+                                // reset outpos(j) to 0 for each parent bucket, and because
+                                // all child bucket(s)/osd(s) are put in o[] for each parent
+                                // bucket in w[], so we set the output array to sub-array &o[osize] and
+                                // outpos to 0, and the output array size is set to the size of sub-array &o[osize]
+				j = 0;
 				if (firstn) {
                                         // mode = "firstn", for replicated pool
 					int recurse_tries;
@@ -984,8 +1060,9 @@ int crush_do_rule(const struct crush_map *map,
 						weight, weight_max,     // const __u32 *weight, int weight_max
 						x, numrep,              // int x, int numrep
 						curstep->arg2,          // int type
-						o+osize, j,             // int *out, int outpos, o is an array of size result_max
-						result_max-osize,       // int out_size
+						o+osize, j,             // int *out, int outpos, o is an array of size result_max,
+						                        // set the output array to sub-array &o[osize] and outpos to 0 
+						result_max-osize,       // int out_size, output array size is the size of sub-array &o[osize]
 						choose_tries,           // unsigned int tries
 						recurse_tries,          // unsigned int recurse_tries
 						choose_local_retries,   // unsigned int local_tries
