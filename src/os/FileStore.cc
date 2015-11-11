@@ -2356,11 +2356,11 @@ unsigned FileStore::_do_transaction(
   Transaction::iterator i = t.begin();
   
   SequencerPosition spos(op_seq, trans_num, 0);
-  while (i.have_op()) {
+  while (i.have_op()) { // check "ops" counter
     if (handle)
       handle->reset_tp_timeout();
 
-    Transaction::Op *op = i.decode_op();
+    Transaction::Op *op = i.decode_op(); // get an Op and decrease "ops" counter
     int r = 0;
 
     _inject_failure();

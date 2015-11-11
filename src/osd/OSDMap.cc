@@ -996,8 +996,11 @@ void OSDMap::adjust_osd_weights(const map<int,double>& weights, Incremental& inc
       max = p->second;
   }
 
+  // got the max weight of all osds
+
   for (map<int,double>::const_iterator p = weights.begin();
        p != weights.end(); ++p) {
+    // osd weight is always <= 1.0
     inc.new_weight[p->first] = (unsigned)((p->second / max) * CEPH_OSD_IN);
   }
 }

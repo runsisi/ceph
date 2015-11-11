@@ -391,6 +391,13 @@ static int is_out(const struct crush_map *map,
 		return 0;
 	if (weight[item] == 0)
 		return 1;
+        
+        // get a psuedo-random integer and we assume it is fully random
+        // and evenly distributed, we want to get a probability of
+        // weight[item]/0x10000 to select this item, so if the integer
+        // is less than weight[item], we accept it, else we reject it,
+        // with this approach, we are statistically correct (all the
+        // bucket_xxx_choose methods above use this idea)
 	if ((crush_hash32_2(CRUSH_HASH_RJENKINS1, x, item) & 0xffff)
 	    < weight[item])
 		return 0;

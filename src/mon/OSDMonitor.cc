@@ -493,7 +493,7 @@ int OSDMonitor::reweight_by_utilization(int oload, std::string& out_str,
   // Avoid putting a small number (or 0) in the denominator when calculating
   // average_util
   double average_util;
-  if (by_pg) {
+  if (by_pg) { // "ceph osd reweight-by-pg"
     // by pg mapping
     double weight_sum = 0.0;      // sum up the crush weights
     unsigned num_pg_copies = 0;
@@ -527,11 +527,11 @@ int OSDMonitor::reweight_by_utilization(int oload, std::string& out_str,
     }
 
     average_util = (double)num_pg_copies / weight_sum;
-  } else {
+  } else { // "ceph osd reweight-by-utilization"
     // by osd utilization
     int num_osd = MIN(1, pgm.osd_stat.size());
     if ((uint64_t)pgm.osd_sum.kb * 1024 / num_osd
-	< g_conf->mon_reweight_min_bytes_per_osd) {
+	< g_conf->mon_reweight_min_bytes_per_osd) { // mon_reweight_min_bytes_per_osd default is 100*1024*1024
       ostringstream oss;
       oss << "Refusing to reweight: we only have " << pgm.osd_sum.kb
 	  << " kb across all osds!\n";
@@ -564,22 +564,62 @@ int OSDMonitor::reweight_by_utilization(int oload, std::string& out_str,
   std::string sep;
   oss << "reweighted: ";
   bool changed = false;
+
+  // PGMap:
+  //    ceph::unordered_map<pg_t,pg_stat_t> pg_stat;
+  //    ceph::unordered_map<int32_t,osd_stat_t> osd_stat;
+  //    ceph::unordered_map<int32_t,epoch_t> osd_epochs;
+  //    set<int32_t> full_osds;
+  //    set<int32_t> nearfull_osds;
+
+  // osd_stat_t:
+  //    int64_t kb, kb_used, kb_avail;
+  //    vector<int> hb_in, hb_out;
+  //    int32_t snap_trim_queue_len, num_snap_trimming;
+  //    pow2_hist_t op_queue_age_hist;
+  //    objectstore_perf_stat_t fs_perf_stat;
+
+  // pg_stat_t:
+  //    eversion_t version;
+  //    version_t reported_seq;  // sequence number
+  //    epoch_t reported_epoch;  // epoch of this report
+  //    utime_t last_xxx;
+  //    eversion_t log_start;         // (log_start,version]
+  //    eversion_t ondisk_log_start;  // there may be more on disk
+  //    int64_t log_size;
+  //    int64_t ondisk_log_size;    // >= active_log_size
+  //    epoch_t created;
+  //    epoch_t last_epoch_clean;
+  //    eversion_t last_scrub;
+  //    eversion_t last_deep_scrub;
+  //    pg_t parent;
+  //    __u32 parent_split_bits;
+  //    vector<int32_t> up, acting;
+  //    int32_t up_primary;
+  //    int32_t acting_primary;
+  //    epoch_t mapping_epoch;
+  //    vector<int32_t> blocked_by;  ///< osds on which the pg is blocked
+  //    object_stat_collection_t stats;
+  
   for (ceph::unordered_map<int,osd_stat_t>::const_iterator p =
 	 pgm.osd_stat.begin();
        p != pgm.osd_stat.end();
        ++p) {
-    float util;
+    // iterating every osd in the cluster and adjusting weight according 
+    // their current utilization
+    float util; // current utilization
     if (by_pg) {
       util = pgs_by_osd[p->first] / osdmap.crush->get_item_weightf(p->first);
     } else {
       util = (double)p->second.kb_used / (double)p->second.kb;
     }
-    if (util >= overload_util) {
+    if (util >= overload_util) { // current utilization is overloaded
       sep = ", ";
       // Assign a lower weight to overloaded OSDs. The current weight
       // is a factor to take into account the original weights,
       // to represent e.g. differing storage capacities
-      unsigned weight = osdmap.get_weight(p->first);
+      unsigned weight = osdmap.get_weight(p->first); // current weight
+      // decrease new weight
       unsigned new_weight = (unsigned)((average_util / util) * (float)weight);
       pending_inc.new_weight[p->first] = new_weight;
       char buf[128];
@@ -589,12 +629,13 @@ int OSDMonitor::reweight_by_utilization(int oload, std::string& out_str,
       oss << buf << sep;
       changed = true;
     }
-    if (util <= underload_util) {
+    if (util <= underload_util) { // current utilization is underloaded
       // assign a higher weight.. if we can.
-      unsigned weight = osdmap.get_weight(p->first);
+      unsigned weight = osdmap.get_weight(p->first); // current weight
+      // increase new weight
       unsigned new_weight = (unsigned)((average_util / util) * (float)weight);
       if (new_weight > 0x10000)
-	new_weight = 0x10000;
+	new_weight = 0x10000; // max weight is 1.0
       if (new_weight > weight) {
 	sep = ", ";
 	pending_inc.new_weight[p->first] = new_weight;
@@ -1987,7 +2028,7 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
 	(g_conf->mon_osd_auto_mark_new_in && (oldstate & CEPH_OSD_NEW)) ||
 	(g_conf->mon_osd_auto_mark_in)) {
       // test if CEPH_OSDMAP_NOIN flag of current osdmap has been set
-      if (can_mark_in(from)) {
+      if (can_mark_in(from)) { // did not set CEPH_OSDMAP_NOIN
 	if (osdmap.osd_xinfo[from].old_weight > 0)
 	  pending_inc.new_weight[from] = osdmap.osd_xinfo[from].old_weight;
 	else
