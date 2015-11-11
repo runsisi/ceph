@@ -153,7 +153,11 @@ ostream& operator<<(ostream& out, const FileStore::OpSequencer& s)
 
 int FileStore::get_cdir(coll_t cid, char *s, int len) 
 {
-  const string &cid_str(cid.to_str());
+  // TYPE_META: meta
+  // TYPE_PG: 1.6e_head
+  // TYPE_PG_TEMP: 1.6e_TEMP
+  // TYPE_PG_REMOVAL: FORREMOVAL_33_1.6e
+  const string &cid_str(cid.to_str()); // get coll name
   return snprintf(s, len, "%s/current/%s", basedir.c_str(), cid_str.c_str());
 }
 
@@ -2137,7 +2141,7 @@ int FileStore::_check_global_replay_guard(coll_t cid,
     return 1;
 
   char fn[PATH_MAX];
-  get_cdir(cid, fn, sizeof(fn));
+  get_cdir(cid, fn, sizeof(fn)); // get coll's full path name
   int fd = ::open(fn, O_RDONLY);
   if (fd < 0) {
     dout(10) << __func__ << ": " << cid << " dne" << dendl;
@@ -2145,6 +2149,7 @@ int FileStore::_check_global_replay_guard(coll_t cid,
   }
 
   char buf[100];
+  // get coll's attr of "user.cephos.gseq"
   int r = chain_fgetxattr(fd, GLOBAL_REPLAY_GUARD_XATTR, buf, sizeof(buf));
   if (r < 0) {
     dout(20) << __func__ << " no xattr" << dendl;
@@ -2269,6 +2274,7 @@ int FileStore::_check_replay_guard(coll_t cid, ghobject_t oid, const SequencerPo
   if (!replaying || backend->can_checkpoint())
     return 1;
 
+  // compare spos with "user.cephos.gseq", check if this is a new op
   int r = _check_global_replay_guard(cid, spos);
   if (r < 0)
     return r;
@@ -2307,6 +2313,7 @@ int FileStore::_check_replay_guard(int fd, const SequencerPosition& spos)
     return 1;
 
   char buf[100];
+  // get attr of "user.cephos.seq"
   int r = chain_fgetxattr(fd, REPLAY_GUARD_XATTR, buf, sizeof(buf));
   if (r < 0) {
     dout(20) << "_check_replay_guard no xattr" << dendl;

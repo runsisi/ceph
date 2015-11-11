@@ -514,7 +514,11 @@ class coll_t {
 
   string _str;  // cached string
 
-  void calc_str();
+  // TYPE_META: meta
+  // TYPE_PG: 1.6e_head
+  // TYPE_PG_TEMP: 1.6e_TEMP
+  // TYPE_PG_REMOVAL: FORREMOVAL_33_1.6e
+  void calc_str(); // see coll_t::parse
 
   coll_t(type_t t, spg_t p, uint64_t r)
     : type(t), pgid(p), removal_seq(r) {

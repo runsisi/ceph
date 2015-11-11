@@ -155,7 +155,7 @@ int chain_getxattr(const char *fn, const char *name, void *val, size_t size)
 
     i++;
   } while (size && (r == CHAIN_XATTR_MAX_BLOCK_LEN ||
-		    r == CHAIN_XATTR_SHORT_BLOCK_LEN));
+		    r == CHAIN_XATTR_SHORT_BLOCK_LEN)); // inlined attr (for xfs)
 
   if (r >= 0) {
     ret = pos;
@@ -180,6 +180,7 @@ static int chain_fgetxattr_len(int fd, const char *name)
   int r;
 
   do {
+    // "runsisi@hust.edu.cn" => "runsisi@@hust.edu.cn@i"
     get_raw_xattr_name(name, i, raw_name, sizeof(raw_name));
     r = sys_fgetxattr(fd, raw_name, 0, 0);
     if (!i && r < 0)
@@ -203,14 +204,16 @@ int chain_fgetxattr(int fd, const char *name, void *val, size_t size)
   size_t chunk_size;
 
   if (!size)
+    // get length of the attr and let the caller allocate an buffer then call us again
     return chain_fgetxattr_len(fd, name);
 
   do {
     chunk_size = (size < CHAIN_XATTR_MAX_BLOCK_LEN ? size : CHAIN_XATTR_MAX_BLOCK_LEN);
+    // escape the attr name, and may add a suffix
     get_raw_xattr_name(name, i, raw_name, sizeof(raw_name));
 
     r = sys_fgetxattr(fd, raw_name, (char *)val + pos, chunk_size);
-    if (i && r == -ENODATA) {
+    if (i && r == -ENODATA) { // no second chunk
       ret = pos;
       break;
     }

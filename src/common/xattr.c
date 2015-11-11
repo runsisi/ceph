@@ -83,7 +83,7 @@ void *value, size_t size)
 		    size);
 	} else {
 		error = extattr_get_file(path, EXTATTR_NAMESPACE_USER, name, NULL,
-		    0);
+		    0); // get attr length
 		if (error > 0) {
 			if (error > size) {
 				errno = ERANGE;

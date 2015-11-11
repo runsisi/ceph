@@ -585,7 +585,7 @@ void coll_t::calc_str()
 
 bool coll_t::parse(const std::string& s)
 {
-  if (s == "meta") {
+  if (s == "meta") { // meta
     type = TYPE_META;
     pgid = spg_t();
     removal_seq = 0;
@@ -594,7 +594,7 @@ bool coll_t::parse(const std::string& s)
     return true;
   }
   if (s.find("_head") == s.length() - 5 &&
-      pgid.parse(s.substr(0, s.length() - 5))) {
+      pgid.parse(s.substr(0, s.length() - 5))) { // 1.6e_head
     type = TYPE_PG;
     removal_seq = 0;
     calc_str();
@@ -602,14 +602,14 @@ bool coll_t::parse(const std::string& s)
     return true;
   }
   if (s.find("_TEMP") == s.length() - 5 &&
-      pgid.parse(s.substr(0, s.length() - 5))) {
+      pgid.parse(s.substr(0, s.length() - 5))) { // 1.6e_TEMP
     type = TYPE_PG_TEMP;
     removal_seq = 0;
     calc_str();
     assert(s == _str);
     return true;
   }
-  if (s.find("FORREMOVAL_") == 0) {
+  if (s.find("FORREMOVAL_") == 0) { // FORREMOVAL_33_1.6e
     type = TYPE_PG_REMOVAL;
     stringstream ss(s.substr(11));
     ss >> removal_seq;
