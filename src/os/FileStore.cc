@@ -1966,10 +1966,13 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     // build an instance of FileStore::Op
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
     
-    // sleep until we can get a budget for this op from FileStore
+    // wait until we can get a budget for this op from FileStore, if we can we
+    // get a budget
     op_queue_reserve_throttle(o, handle);
     
-    // sleep until we can get a budget for this op from FileJournal
+    // wait until we can get a budget for this op from FileJournal, we do not
+    // get a budget really, it's like a test, but do real sleep when budget
+    // can not be fulfilled
     journal->throttle();
     
     //prepare and encode transactions data out of lock

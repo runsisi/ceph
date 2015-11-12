@@ -94,8 +94,9 @@ bool Throttle::_wait(int64_t c)
   utime_t start;
   bool waited = false;
   if (_should_wait(c) || !cond.empty()) { // always wait behind other waiters.
+    // the budget is not allowed or someone is waiting before us
     Cond *cv = new Cond;
-    cond.push_back(cv);
+    cond.push_back(cv); // we are always put behind
     do {
       if (!waited) {
 	ldout(cct, 2) << "_wait waiting..." << dendl;
@@ -104,9 +105,17 @@ bool Throttle::_wait(int64_t c)
       }
       waited = true;
       cv->Wait(lock);
-    } while (_should_wait(c) || cv != cond.front());
 
-    if (waited) {
+      // we may be wrongly waken up:
+      // Unwanted wakeups from pthread_cond_wait() may occur (since another 
+      // thread could have obtained the mutex, changed the state and released 
+      // the mutex, prior to this thread obtaining the mutex); the reevaluation 
+      // of the predicate ensures consistency. 
+    } while (_should_wait(c) || cv != cond.front()); // wait until we are signalled and we are the first in the queue
+
+    // ok, someone release its budget, we can continue now
+
+    if (waited) { // we have been waited for a while
       ldout(cct, 3) << "_wait finished waiting" << dendl;
       if (logger) {
 	utime_t dur = ceph_clock_now(cct) - start;
@@ -117,25 +126,28 @@ bool Throttle::_wait(int64_t c)
     delete cv;
     cond.pop_front();
 
-    // wake up the next guy
+    // wake up the next guy, so it can check if it could try again, note that we are
+    // still holding the lock, only after we release the lock then it could 
     if (!cond.empty())
       cond.front()->SignalOne();
   }
   return waited;
 }
 
-bool Throttle::wait(int64_t m)
+bool Throttle::wait(int64_t m) // m is a default parameter: m = 0
 {
-  if (0 == max.read() && 0 == m) {
+  if (0 == max.read() && 0 == m) { // no limit, never need to wait
     return false;
   }
 
   Mutex::Locker l(lock);
-  if (m) {
+  if (m) { // we are told to reset the Throttle::max
     assert(m > 0);
     _reset_max(m); // reset Throttle::max to m
   }
   ldout(cct, 10) << "wait" << dendl;
+
+  // wait until nobody waiting before us and we can get enough budget
   return _wait(0);
 }
 
@@ -159,9 +171,10 @@ int64_t Throttle::take(int64_t c)
   return count.read();
 }
 
+// both are default parameters: c = 1, m = 0
 bool Throttle::get(int64_t c, int64_t m)
 {
-  if (0 == max.read() && 0 == m) {
+  if (0 == max.read() && 0 == m) { // no limit, never need to wait
     return false;
   }
 
@@ -170,12 +183,14 @@ bool Throttle::get(int64_t c, int64_t m)
   bool waited = false;
   {
     Mutex::Locker l(lock);
-    if (m) {
+    if (m) { // we are told to reset the Throttle::max
       assert(m > 0);
-      _reset_max(m);
+      _reset_max(m); // reset Throttle::max
     }
+
+    // wait until we can get a budget of c
     waited = _wait(c);
-    count.add(c);
+    count.add(c); // update used count
   }
   if (logger) {
     logger->inc(l_throttle_get);
@@ -226,9 +241,9 @@ int64_t Throttle::put(int64_t c)
   Mutex::Locker l(lock);
   if (c) {
     if (!cond.empty())
-      cond.front()->SignalOne();
+      cond.front()->SignalOne(); // notify somebody to try again
     assert(((int64_t)count.read()) >= c); //if count goes negative, we failed somewhere!
-    count.sub(c);
+    count.sub(c); // decrease used count
     if (logger) {
       logger->inc(l_throttle_put);
       logger->inc(l_throttle_put_sum, c);

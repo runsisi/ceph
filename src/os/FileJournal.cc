@@ -1967,9 +1967,12 @@ FileJournal::read_entry_result FileJournal::do_read_entry(
 
 void FileJournal::throttle()
 {
-  if (throttle_ops.wait(g_conf->journal_queue_max_ops)) // default is 300
+  // default is 300, reset throttle_ops.max to a new value in case someone changed the config
+  if (throttle_ops.wait(g_conf->journal_queue_max_ops))
     dout(2) << "throttle: waited for ops" << dendl;
-  if (throttle_bytes.wait(g_conf->journal_queue_max_bytes)) // default is 32 << 20, i.e. 32M
+  
+  // default is 32 << 20, i.e. 32M, reset throttle_bytes.max to a new value in case someone changed the config
+  if (throttle_bytes.wait(g_conf->journal_queue_max_bytes))
     dout(2) << "throttle: waited for bytes" << dendl;
 }
 

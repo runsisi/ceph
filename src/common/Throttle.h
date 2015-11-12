@@ -40,6 +40,11 @@ private:
   bool _should_wait(int64_t c) const {
     int64_t m = max.read();
     int64_t cur = count.read();
+
+    // Normally we stay under max, but for large items, take it as long as we're
+    // currently below max. This avoids deadlock.
+    // we only allow a large item at a time, only if the last large item has been 
+    // released its budget then the next large item can continue
     return
       m &&
       ((c <= m && cur + c > m) || // normally stay under max
