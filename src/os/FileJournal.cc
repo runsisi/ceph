@@ -1781,6 +1781,7 @@ int FileJournal::make_writeable()
   read_pos = 0;
 
   must_write_header = true;
+  // start write thread, and if use libaio, then also start aio finisher thread
   start_writer();
   return 0;
 }
@@ -1966,9 +1967,9 @@ FileJournal::read_entry_result FileJournal::do_read_entry(
 
 void FileJournal::throttle()
 {
-  if (throttle_ops.wait(g_conf->journal_queue_max_ops))
+  if (throttle_ops.wait(g_conf->journal_queue_max_ops)) // default is 300
     dout(2) << "throttle: waited for ops" << dendl;
-  if (throttle_bytes.wait(g_conf->journal_queue_max_bytes))
+  if (throttle_bytes.wait(g_conf->journal_queue_max_bytes)) // default is 32 << 20, i.e. 32M
     dout(2) << "throttle: waited for bytes" << dendl;
 }
 

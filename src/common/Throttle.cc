@@ -82,11 +82,11 @@ void Throttle::_reset_max(int64_t m)
   assert(lock.is_locked());
   if ((int64_t)max.read() == m)
     return;
-  if (!cond.empty())
+  if (!cond.empty()) // cond is a list of Cond*
     cond.front()->SignalOne();
   if (logger)
     logger->set(l_throttle_max, m);
-  max.set((size_t)m);
+  max.set((size_t)m); // "max" is a limit, "count" is used for get/put operation
 }
 
 bool Throttle::_wait(int64_t c)
@@ -133,7 +133,7 @@ bool Throttle::wait(int64_t m)
   Mutex::Locker l(lock);
   if (m) {
     assert(m > 0);
-    _reset_max(m);
+    _reset_max(m); // reset Throttle::max to m
   }
   ldout(cct, 10) << "wait" << dendl;
   return _wait(0);

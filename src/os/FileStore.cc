@@ -537,30 +537,30 @@ FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbit
   throttle_ops(g_ceph_context, "filestore_ops",g_conf->filestore_queue_max_ops),
   throttle_bytes(g_ceph_context, "filestore_bytes",g_conf->filestore_queue_max_bytes),
   op_finisher(g_ceph_context),
-  op_tp(g_ceph_context, "FileStore::op_tp", g_conf->filestore_op_threads, "filestore_op_threads"),
-  op_wq(this, g_conf->filestore_op_thread_timeout,
-	g_conf->filestore_op_thread_suicide_timeout, &op_tp),
+  op_tp(g_ceph_context, "FileStore::op_tp", g_conf->filestore_op_threads, "filestore_op_threads"), // default is 2
+  op_wq(this, g_conf->filestore_op_thread_timeout, // default is 60
+	g_conf->filestore_op_thread_suicide_timeout, &op_tp), // default is 180
   logger(NULL),
   read_error_lock("FileStore::read_error_lock"),
-  m_filestore_commit_timeout(g_conf->filestore_commit_timeout),
-  m_filestore_journal_parallel(g_conf->filestore_journal_parallel ),
-  m_filestore_journal_trailing(g_conf->filestore_journal_trailing),
-  m_filestore_journal_writeahead(g_conf->filestore_journal_writeahead),
-  m_filestore_fiemap_threshold(g_conf->filestore_fiemap_threshold),
-  m_filestore_max_sync_interval(g_conf->filestore_max_sync_interval),
-  m_filestore_min_sync_interval(g_conf->filestore_min_sync_interval),
-  m_filestore_fail_eio(g_conf->filestore_fail_eio),
-  m_filestore_fadvise(g_conf->filestore_fadvise),
+  m_filestore_commit_timeout(g_conf->filestore_commit_timeout), // default is 600
+  m_filestore_journal_parallel(g_conf->filestore_journal_parallel ), // default is false, will be changed in FileStore::mount
+  m_filestore_journal_trailing(g_conf->filestore_journal_trailing), // default is false, will be changed in FileStore::mount
+  m_filestore_journal_writeahead(g_conf->filestore_journal_writeahead), // default is false, will be changed in FileStore::mount
+  m_filestore_fiemap_threshold(g_conf->filestore_fiemap_threshold), // default is 4096
+  m_filestore_max_sync_interval(g_conf->filestore_max_sync_interval), // default is 5 second
+  m_filestore_min_sync_interval(g_conf->filestore_min_sync_interval), // default is 0.1 second
+  m_filestore_fail_eio(g_conf->filestore_fail_eio), // default is true
+  m_filestore_fadvise(g_conf->filestore_fadvise), // default is true
   do_update(do_update),
   m_journal_dio(g_conf->journal_dio),
   m_journal_aio(g_conf->journal_aio),
   m_journal_force_aio(g_conf->journal_force_aio),
   m_osd_rollback_to_cluster_snap(g_conf->osd_rollback_to_cluster_snap),
   m_osd_use_stale_snap(g_conf->osd_use_stale_snap),
-  m_filestore_queue_max_ops(g_conf->filestore_queue_max_ops),
-  m_filestore_queue_max_bytes(g_conf->filestore_queue_max_bytes),
-  m_filestore_queue_committing_max_ops(g_conf->filestore_queue_committing_max_ops),
-  m_filestore_queue_committing_max_bytes(g_conf->filestore_queue_committing_max_bytes),
+  m_filestore_queue_max_ops(g_conf->filestore_queue_max_ops), // default is 50
+  m_filestore_queue_max_bytes(g_conf->filestore_queue_max_bytes), // default is 100 << 20, i.e. 100M
+  m_filestore_queue_committing_max_ops(g_conf->filestore_queue_committing_max_ops), // default is 500
+  m_filestore_queue_committing_max_bytes(g_conf->filestore_queue_committing_max_bytes), // default is 100 << 20, i.e. 100M
   m_filestore_do_dump(false),
   m_filestore_dump_fmt(true),
   m_filestore_sloppy_crc(g_conf->filestore_sloppy_crc),
@@ -1778,9 +1778,10 @@ FileStore::Op *FileStore::build_op(list<Transaction*>& tls,
        p != tls.end();
        ++p) {
     bytes += (*p)->get_num_bytes();
-    ops += (*p)->get_num_ops();
+    ops += (*p)->get_num_ops(); // total number ops contained in this Transaction list
   }
 
+  // create an instance of FileStore::Op
   Op *o = new Op;
   o->start = ceph_clock_now(g_ceph_context);
   o->tls.swap(tls);
@@ -1788,7 +1789,7 @@ FileStore::Op *FileStore::build_op(list<Transaction*>& tls,
   o->onreadable_sync = onreadable_sync;
   o->ops = ops;
   o->bytes = bytes;
-  o->osd_op = osd_op;
+  o->osd_op = osd_op; // original osd op
   return o;
 }
 
@@ -1816,12 +1817,12 @@ void FileStore::queue_op(OpSequencer *osr, Op *o)
 void FileStore::op_queue_reserve_throttle(Op *o, ThreadPool::TPHandle *handle)
 {
   // Do not call while holding the journal lock!
-  uint64_t max_ops = m_filestore_queue_max_ops;
-  uint64_t max_bytes = m_filestore_queue_max_bytes;
+  uint64_t max_ops = m_filestore_queue_max_ops; // default is 50
+  uint64_t max_bytes = m_filestore_queue_max_bytes; // default is 100 << 20, i.e. 100M
 
   if (backend->can_checkpoint() && is_committing()) {
-    max_ops += m_filestore_queue_committing_max_ops;
-    max_bytes += m_filestore_queue_committing_max_bytes;
+    max_ops += m_filestore_queue_committing_max_ops; // default is 500
+    max_bytes += m_filestore_queue_committing_max_bytes; // default is 100 << 20, i.e. 100M 
   }
 
   logger->set(l_os_oq_max_ops, max_ops);
@@ -1829,6 +1830,7 @@ void FileStore::op_queue_reserve_throttle(Op *o, ThreadPool::TPHandle *handle)
 
   utime_t start = ceph_clock_now(g_ceph_context);
   if (handle)
+    // suspend tp timeout handler
     handle->suspend_tp_timeout();
   if (throttle_ops.should_wait(1) || 
     (throttle_bytes.get_current()      // let single large ops through!
@@ -1836,9 +1838,12 @@ void FileStore::op_queue_reserve_throttle(Op *o, ThreadPool::TPHandle *handle)
     dout(2) << "waiting " << throttle_ops.get_current() + 1 << " > " << max_ops << " ops || "
       << throttle_bytes.get_current() + o->bytes << " > " << max_bytes << dendl;
   }
+
+  // sleep until we get a budget, the tp timeout handler has been suspended above
   throttle_ops.get();
   throttle_bytes.get(o->bytes);
   if (handle)
+    // restart tp timeout handler
     handle->reset_tp_timeout();
 
   utime_t end = ceph_clock_now(g_ceph_context);
@@ -1957,29 +1962,40 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     (*i)->set_osr(osr);
   }
 
-  if (journal && journal->is_writeable() && !m_filestore_journal_trailing) {
+  if (journal && journal->is_writeable() && !m_filestore_journal_trailing) { // parallel or write ahead journal mode
+    // build an instance of FileStore::Op
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
+    
+    // sleep until we can get a budget for this op from FileStore
     op_queue_reserve_throttle(o, handle);
+    
+    // sleep until we can get a budget for this op from FileJournal
     journal->throttle();
+    
     //prepare and encode transactions data out of lock
     bufferlist tbl;
+    // encode all Transaction(s) of this Transaction list into tbl bufferlist
     int data_align = _op_journal_transactions_prepare(o->tls, tbl);
+
+    // generating an op_seq, it is increased monotonically
     uint64_t op_num = submit_manager.op_submit_start();
     o->op = op_num;
 
     if (m_filestore_do_dump)
       dump_transactions(o->tls, o->op, osr);
 
-    if (m_filestore_journal_parallel) {
+    if (m_filestore_journal_parallel) { // parallel journal mode
       dout(5) << "queue_transactions (parallel) " << o->op << " " << o->tls << dendl;
-      
+
+      // 
       _op_journal_transactions(tbl, data_align, o->op, ondisk, osd_op);
       
       // queue inside submit_manager op submission lock
       queue_op(osr, o);
-    } else if (m_filestore_journal_writeahead) {
+    } else if (m_filestore_journal_writeahead) { // write ahead journal mode
       dout(5) << "queue_transactions (writeahead) " << o->op << " " << o->tls << dendl;
-      
+
+      // queue this op seq into OpSequencer::jq
       osr->queue_journal(o->op);
 
       _op_journal_transactions(tbl, data_align, o->op,
@@ -1988,11 +2004,12 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     } else {
       assert(0);
     }
+    
     submit_manager.op_submit_finish(op_num);
     return 0;
   }
 
-  if (!journal) {
+  if (!journal) { // no journal mode
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
     dout(5) << __func__ << " (no journal) " << o << " " << tls << dendl;
 
@@ -2012,6 +2029,7 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     return 0;
   }
 
+  // ok, trailing journal mode
 
   //prepare and encode transactions data out of lock
   bufferlist tbl;
@@ -2280,11 +2298,13 @@ int FileStore::_check_replay_guard(coll_t cid, ghobject_t oid, const SequencerPo
     return r;
 
   FDRef fd;
-  r = lfn_open(cid, oid, false, &fd);
+  r = lfn_open(cid, oid, false, &fd); // open object
   if (r < 0) {
     dout(10) << "_check_replay_guard " << cid << " " << oid << " dne" << dendl;
     return 1;  // if file does not exist, there is no guard, and we can replay.
   }
+
+  // compare spos with "user.cephos.seq", check if this is a new op
   int ret = _check_replay_guard(**fd, spos);
   lfn_close(fd);
   return ret;
@@ -2296,7 +2316,7 @@ int FileStore::_check_replay_guard(coll_t cid, const SequencerPosition& spos)
     return 1;
 
   char fn[PATH_MAX];
-  get_cdir(cid, fn, sizeof(fn));
+  get_cdir(cid, fn, sizeof(fn)); // get coll full path name
   int fd = ::open(fn, O_RDONLY);
   if (fd < 0) {
     dout(10) << "_check_replay_guard " << cid << " dne" << dendl;
@@ -2381,7 +2401,10 @@ unsigned FileStore::_do_transaction(
         ghobject_t oid = i.get_oid(op->oid);
 	_kludge_temp_object_collection(cid, oid);
         tracepoint(objectstore, touch_enter, osr_name);
+        // compare spos with "user.cephos.gseq" and "user.cephos.seq", if this
+        // is an already applied op, do nothing, else we apply it
         if (_check_replay_guard(cid, oid, spos) > 0)
+          // ok, do the real thing on local filesystem
           r = _touch(cid, oid);
         tracepoint(objectstore, touch_exit, r);
       }

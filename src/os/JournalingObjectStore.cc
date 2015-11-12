@@ -103,10 +103,11 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
 
   replaying = false;
 
+  // set SubmitManager::op_submitted = SubmitManager::op_seq = op_seq
   submit_manager.set_op_seq(op_seq);
 
   // done reading, make writeable.
-  err = journal->make_writeable();
+  err = journal->make_writeable(); // set write_pos, and reset read_pos to 0, then start write thread
   if (err < 0)
     return err;
 
@@ -263,6 +264,7 @@ void JournalingObjectStore::_op_journal_transactions(
   if (journal && journal->is_writeable()) {
     journal->submit_entry(op, tbl, data_align, onjournal, osd_op);
   } else if (onjournal) {
+    // add this context(onjournal) to JournalingObjectStore::ApplyManager::commit_waiters map
     apply_manager.add_waiter(op, onjournal);
   }
 }
@@ -277,7 +279,7 @@ int JournalingObjectStore::_op_journal_transactions_prepare(
       p != tls.end(); ++p) {
     ObjectStore::Transaction *t = *p;
     if (t->get_data_length() > data_len &&
-     (int)t->get_data_length() >= g_conf->journal_align_min_size) {
+     (int)t->get_data_length() >= g_conf->journal_align_min_size) { // default is 64 << 10, i.e. 64K
      data_len = t->get_data_length();
      data_align = (t->get_data_alignment() - tbl.length()) & ~CEPH_PAGE_MASK;
     }

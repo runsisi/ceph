@@ -52,6 +52,8 @@ public:
 
   virtual int dump(ostream& out) { return -EOPNOTSUPP; }
 
+  // if FileStore::m_filestore_journal_writeahead is true, FileStore::mount
+  // will call this
   void set_wait_on_full(bool b) { wait_on_full = b; }
 
   // writes

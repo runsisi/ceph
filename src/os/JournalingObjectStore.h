@@ -34,6 +34,7 @@ protected:
       lock("JOS::SubmitManager::lock", false, true, false, g_ceph_context),
       op_seq(0), op_submitted(0)
     {}
+    // generae an op seq increased monotonically
     uint64_t op_submit_start();
     void op_submit_finish(uint64_t op);
     void set_op_seq(uint64_t seq) {
