@@ -140,9 +140,11 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
 uint64_t JournalingObjectStore::ApplyManager::op_apply_start(uint64_t op)
 {
   Mutex::Locker l(apply_lock);
-  while (blocked) {
+  while (blocked) { // set in ApplyManager::commit_start and reset in ApplyManager::commit_started
     // note: this only happens during journal replay
     dout(10) << "op_apply_start blocked, waiting" << dendl;
+
+    // signalled in ApplyManager::op_apply_finish or ApplyManager::commit_started
     blocked_cond.Wait(apply_lock);
   }
   dout(10) << "op_apply_start " << op << " open_ops " << open_ops << " -> " << (open_ops+1) << dendl;
@@ -163,7 +165,7 @@ void JournalingObjectStore::ApplyManager::op_apply_finish(uint64_t op)
   assert(open_ops >= 0);
 
   // signal a blocked commit_start (only needed during journal replay)
-  if (blocked) {
+  if (blocked) { // set in ApplyManager::commit_start and reset in ApplyManager::commit_started
     blocked_cond.Signal();
   }
 
@@ -214,9 +216,14 @@ bool JournalingObjectStore::ApplyManager::commit_start()
     dout(10) << "commit_start max_applied_seq " << max_applied_seq
 	     << ", open_ops " << open_ops
 	     << dendl;
-    blocked = true;
-    while (open_ops > 0) {
+    blocked = true; // reset in ApplyManager::commit_started
+
+    // open_ops is increased in ApplyManager::op_apply_start and decreased in 
+    // ApplyManager::op_apply_finish 
+    while (open_ops > 0) { // wait all currently applying FileStore::Op(s) finished
       dout(10) << "commit_start waiting for " << open_ops << " open ops to drain" << dendl;
+
+      // signalled in ApplyManager::op_apply_finish or ApplyManager::commit_started
       blocked_cond.Wait(apply_lock);
     }
     assert(open_ops == 0);
@@ -240,6 +247,7 @@ bool JournalingObjectStore::ApplyManager::commit_start()
 
  out:
   if (journal)
+    // update FileStore::full_state
     journal->commit_start(_committing_seq);  // tell the journal too
   return ret;
 }
@@ -249,7 +257,7 @@ void JournalingObjectStore::ApplyManager::commit_started()
   Mutex::Locker l(apply_lock);
   // allow new ops. (underlying fs should now be committing all prior ops)
   dout(10) << "commit_started committing " << committing_seq << ", unblocking" << dendl;
-  blocked = false;
+  blocked = false; // set in ApplyManager::commit_start
   blocked_cond.Signal();
 }
 
@@ -261,7 +269,7 @@ void JournalingObjectStore::ApplyManager::commit_finish()
   if (journal)
     journal->committed_thru(committing_seq);
 
-  committed_seq = committing_seq;
+  committed_seq = committing_seq; // update committed seq
   
   map<version_t, vector<Context*> >::iterator p = commit_waiters.begin();
   while (p != commit_waiters.end() &&
@@ -285,7 +293,7 @@ void JournalingObjectStore::_op_journal_transactions(
     // journal should never be NULL, because non-journal mode will not 
     // call _op_journal_transactions
 
-    // construct an item of write_item and insert into FileJournal::writeq,
+    // take budget and construct an item of write_item and insert into FileJournal::writeq,
     // and construct an item of completion_item and insert into FileJournal::completions
     journal->submit_entry(op, tbl, data_align, onjournal, osd_op);
   } else if (onjournal) { // journal is full

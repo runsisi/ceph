@@ -3696,11 +3696,13 @@ void FileStore::sync_entry()
 
     list<Context*> fin;
   again:
+    // sync_waiters is set in FileStore::start_sync used for notifying waiter 
+    // that the sync has finished
     fin.swap(sync_waiters);
     lock.Unlock();
     
     op_tp.pause();
-    if (apply_manager.commit_start()) {
+    if (apply_manager.commit_start()) { // we need to commit
       utime_t start = ceph_clock_now(g_ceph_context);
       uint64_t cp = apply_manager.get_committing_seq();
 
@@ -3818,7 +3820,7 @@ void FileStore::sync_entry()
       dout(10) << "sync_entry more waiters, committing again" << dendl;
       goto again;
     }
-    if (!stop && journal && journal->should_commit_now()) {
+    if (!stop && journal && journal->should_commit_now()) { // journal state is not FULL_NOTFULL
       dout(10) << "sync_entry journal says we should commit again (probably is/was full)" << dendl;
       goto again;
     }
@@ -3861,7 +3863,10 @@ void FileStore::sync()
   bool done;
   C_SafeCond *fin = new C_SafeCond(&l, &c, &done);
 
+  // set force_sync to true and signal FileStore::SyncThread to sync
   start_sync(fin);
+
+  // wait until sync finished
 
   l.Lock();
   while (!done) {
