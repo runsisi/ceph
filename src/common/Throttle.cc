@@ -89,6 +89,9 @@ void Throttle::_reset_max(int64_t m)
   max.set((size_t)m); // "max" is a limit, "count" is used for get/put operation
 }
 
+// wait until nobody waiting before us and we can get enough budget,
+// but we do not get the budget here, we only wait until we are able to
+// get the budget
 bool Throttle::_wait(int64_t c)
 {
   utime_t start;
@@ -126,14 +129,16 @@ bool Throttle::_wait(int64_t c)
     delete cv;
     cond.pop_front();
 
-    // wake up the next guy, so it can check if it could try again, note that we are
-    // still holding the lock, only after we release the lock then it could 
+    // wake up the next guy, so it can check if it could try again
     if (!cond.empty())
       cond.front()->SignalOne();
   }
   return waited;
 }
 
+// set the new max number, and wait until the number of taken slots drains
+// and drops below this limit, we do not take real slots here, Throttle::get
+// will suit for this
 bool Throttle::wait(int64_t m) // m is a default parameter: m = 0
 {
   if (0 == max.read() && 0 == m) { // no limit, never need to wait
@@ -147,7 +152,8 @@ bool Throttle::wait(int64_t m) // m is a default parameter: m = 0
   }
   ldout(cct, 10) << "wait" << dendl;
 
-  // wait until nobody waiting before us and we can get enough budget
+  // wait until nobody waiting before us and the number of taken slots drains
+  // and drops below limit
   return _wait(0);
 }
 

@@ -119,10 +119,10 @@ public:
 private:
   string internal_name;         ///< internal name, used to name the perfcounter instance
   string basedir, journalpath;
-  osflagbits_t generic_flags;
-  std::string current_fn;
-  std::string current_op_seq_fn;
-  std::string omap_dir;
+  osflagbits_t generic_flags; // ObjectStore::create will set this flags
+  std::string current_fn; // "/var/lib/ceph/osd/$cluster-$id/current"
+  std::string current_op_seq_fn; // "/var/lib/ceph/osd/$cluster-$id/current/current/commit_op_seq"
+  std::string omap_dir; // "/var/lib/ceph/osd/$cluster-$id/current/current/omap"
   uuid_d fsid;
   
   size_t blk_size;            ///< fs block size

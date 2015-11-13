@@ -38,7 +38,7 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
 {
   dout(10) << "journal_replay fs op_seq " << fs_op_seq << dendl;
 
-  if (g_conf->journal_replay_from) {
+  if (g_conf->journal_replay_from) { // default is 0
     dout(0) << "journal_replay forcing replay from " << g_conf->journal_replay_from
 	    << " instead of " << fs_op_seq << dendl;
     // the previous op is the last one committed
@@ -46,12 +46,17 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
   }
 
   uint64_t op_seq = fs_op_seq;
+  // initialize ApplyManager::committed_seq, committing_seq, max_applied_seq 
+  // to fs_op_seq
   apply_manager.init_seq(fs_op_seq);
 
-  if (!journal) {
+  if (!journal) { // no journal configured
+    // initialize SubmitManager::op_submitted, op_seq to op_seq
     submit_manager.set_op_seq(op_seq);
     return 0;
   }
+
+  // ok, we are configured to use journal
 
   int err = journal->open(op_seq);
   if (err < 0) {
@@ -62,13 +67,17 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
     return err;
   }
 
+  // ok, we are about to replay the journal
+
   replaying = true;
 
   int count = 0;
   while (1) {
     bufferlist bl;
     uint64_t seq = op_seq + 1;
-    if (!journal->read_entry(bl, seq)) {
+
+    // read seq specified journal entry and set the next read seq
+    if (!journal->read_entry(bl, seq)) { 
       dout(3) << "journal_replay: end of journal, done." << dendl;
       break;
     }
@@ -78,6 +87,8 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
       continue;
     }
     assert(op_seq == seq-1);
+
+    // construct a transaction list from the journal entry
     
     dout(3) << "journal_replay: applying op seq " << seq << dendl;
     bufferlist::iterator p = bl.begin();
@@ -87,8 +98,15 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
       tls.push_back(t);
     }
 
+    // redo the transaction list
+
+    // increase apply_manager.open_ops by one, may wait
     apply_manager.op_apply_start(seq);
+
+    // applied the transaction list to local filesystem
     int r = do_transactions(tls, seq);
+
+    // decrease apply_manager.open_ops by one, may update apply_manager.max_applied_seq
     apply_manager.op_apply_finish(seq);
 
     op_seq = seq;
@@ -101,9 +119,11 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
     dout(3) << "journal_replay: r = " << r << ", op_seq now " << op_seq << dendl;
   }
 
+  // ok, we have done the journal replay
+
   replaying = false;
 
-  // set SubmitManager::op_submitted = SubmitManager::op_seq = op_seq
+  // initialize SubmitManager::op_submitted, op_seq to op_seq
   submit_manager.set_op_seq(op_seq);
 
   // done reading, make writeable.
@@ -261,10 +281,15 @@ void JournalingObjectStore::_op_journal_transactions(
   else
     dout(10) << "op_journal_transactions " << op  << dendl;
 
-  if (journal && journal->is_writeable()) {
+  if (journal && journal->is_writeable()) { // journal is not full
+    // journal should never be NULL, because non-journal mode will not 
+    // call _op_journal_transactions
+
+    // construct an item of write_item and insert into FileJournal::writeq,
+    // and construct an item of completion_item and insert into FileJournal::completions
     journal->submit_entry(op, tbl, data_align, onjournal, osd_op);
-  } else if (onjournal) {
-    // add this context(onjournal) to JournalingObjectStore::ApplyManager::commit_waiters map
+  } else if (onjournal) { // journal is full
+    // add this context(onjournal) to ApplyManager::commit_waiters map
     apply_manager.add_waiter(op, onjournal);
   }
 }

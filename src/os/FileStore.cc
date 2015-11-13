@@ -516,11 +516,12 @@ int FileStore::lfn_unlink(coll_t cid, const ghobject_t& o,
   return 0;
 }
 
+// ObjectStore::create will create an instance of this
 FileStore::FileStore(const std::string &base, const std::string &jdev, osflagbits_t flags, const char *name, bool do_update) :
   JournalingObjectStore(base),
   internal_name(name),
   basedir(base), journalpath(jdev),
-  generic_flags(flags),
+  generic_flags(flags), // ObjectStore::create in ceph_osd.cc will pass this a default value of 0
   blk_size(0),
   fsid_fd(-1), op_fd(-1),
   basedir_fd(-1), current_fd(-1),
@@ -691,6 +692,8 @@ int FileStore::statfs(struct statfs *buf)
 void FileStore::new_journal()
 {
   if (journalpath.length()) {
+    // finisher is a member variable of JournalingObjectStore, note that it
+    // is not the same as FileStore::ondisk_finisher and FileStore::op_finisher
     dout(10) << "open_journal at " << journalpath << dendl;
     journal = new FileJournal(fsid, &finisher, &sync_cond, journalpath.c_str(),
 			      m_journal_dio, m_journal_aio, m_journal_force_aio);
@@ -854,8 +857,10 @@ int FileStore::mkfs()
     goto close_fsid_fd;
   }
 
+  // allocate an instance of FileStoreBackend(e.g. btrfs, xfs, zfs, generic)
   create_backend(basefs.f_type);
 
+  // create "current/" directory
   ret = backend->create_current();
   if (ret < 0) {
     derr << "mkfs: failed to create current/ " << cpp_strerror(ret) << dendl;
@@ -865,14 +870,16 @@ int FileStore::mkfs()
   // write initial op_seq
   {
     uint64_t initial_seq = 0;
+    // read from "/var/lib/ceph/osd/$cluster-$id/current/current/commit_op_seq", 
+    // opened with O_CREAT|O_RDWR, so if the file does not exist, then create it
     int fd = read_op_seq(&initial_seq);
     if (fd < 0) {
       derr << "mkfs: failed to create " << current_op_seq_fn << ": "
 	   << cpp_strerror(fd) << dendl;
       goto close_fsid_fd;
     }
-    if (initial_seq == 0) {
-      int err = write_op_seq(fd, 1);
+    if (initial_seq == 0) { // newly created "commit_op_seq" file
+      int err = write_op_seq(fd, 1); // initialize "commit_op_seq" to 1
       if (err < 0) {
 	VOID_TEMP_FAILURE_RETRY(::close(fd));
 	derr << "mkfs: failed to write to " << current_op_seq_fn << ": "
@@ -1210,6 +1217,9 @@ int FileStore::upgrade()
 {
   dout(1) << "upgrade" << dendl;
   uint32_t version;
+  // get store version from "/var/lib/ceph/osd/$cluster-$id/store_version",
+  // if the version on the disk is the same as the target_version, then
+  // return 1, else return 0
   int r = version_stamp_is_valid(&version);
   if (r < 0)
     return r;
@@ -1220,12 +1230,15 @@ int FileStore::upgrade()
 
   // nothing necessary in FileStore for v3 -> v4 upgrade; we just need to
   // open up DBObjectMap with the do_upgrade flag, which we already did.
+  // write "/var/lib/ceph/osd/$cluster-$id/store_version" with target_version
   update_version_stamp();
   return 0;
 }
 
 int FileStore::read_op_seq(uint64_t *seq)
 {
+  // open "/var/lib/ceph/osd/$cluster-$id/current/current/commit_op_seq", if not
+  // exist, then create it (O_CREAT)
   int op_fd = ::open(current_op_seq_fn.c_str(), O_CREAT|O_RDWR, 0644);
   if (op_fd < 0) {
     int r = -errno;
@@ -1234,6 +1247,7 @@ int FileStore::read_op_seq(uint64_t *seq)
   }
   char s[40];
   memset(s, 0, sizeof(s));
+  // if no content, safe_read returns 0
   int ret = safe_read(op_fd, s, sizeof(s) - 1);
   if (ret < 0) {
     derr << "error reading " << current_op_seq_fn << ": " << cpp_strerror(ret) << dendl;
@@ -1457,6 +1471,7 @@ int FileStore::mount()
   }
   initial_op_seq = 0;
 
+  // open "current/" directory
   current_fd = ::open(current_fn.c_str(), O_RDONLY);
   if (current_fd < 0) {
     ret = -errno;
@@ -1466,6 +1481,7 @@ int FileStore::mount()
 
   assert(current_fd >= 0);
 
+  // open "current/commit_op_seq" and read the seq out to initial_op_seq
   op_fd = read_op_seq(&initial_op_seq);
   if (op_fd < 0) {
     derr << "FileStore::mount: read_op_seq failed" << dendl;
@@ -1474,6 +1490,11 @@ int FileStore::mount()
 
   dout(5) << "mount op_seq is " << initial_op_seq << dendl;
   if (initial_op_seq == 0) {
+    // FileStore::mkfs will write 1 to "current/commit_op_seq", and
+    // in FileStore::journal_replay below, seq(s) in SubmitManager and ApplyManager
+    // will be initialized to this seq, and they increase their seq(s)
+    // monotonically then write back to "current/commit_op_seq", so 
+    // initial_op_seq should never be 0
     derr << "mount initial op seq is 0; something is wrong" << dendl;
     ret = -EINVAL;
     goto close_current_fd;
@@ -1482,7 +1503,7 @@ int FileStore::mount()
   if (!backend->can_checkpoint()) {
     // mark current/ as non-snapshotted so that we don't rollback away
     // from it.
-    int r = ::creat(nosnapfn, 0644);
+    int r = ::creat(nosnapfn, 0644); // create "current/nosnap"
     if (r < 0) {
       derr << "FileStore::mount: failed to create current/nosnap" << dendl;
       goto close_current_fd;
@@ -1493,6 +1514,8 @@ int FileStore::mount()
     ::unlink(nosnapfn);
   }
 
+  // only ObjectStore::create in ceph_objectstore_tool.cc will set the flags,
+  // ObjectStore::create in ceph_osd.cc will set the flags to default value of 0
   if (!(generic_flags & SKIP_MOUNT_OMAP)) {
     KeyValueDB * omap_store = KeyValueDB::create(g_ceph_context,
 						 superblock.omap_backend,
@@ -1537,10 +1560,12 @@ int FileStore::mount()
   }
 
   // journal
+  // if journalpath is configured then we are configured to use journal so
+  // allocate an instance of FileJournal
   new_journal();
 
   // select journal mode?
-  if (journal) {
+  if (journal) { // we are configured to use journal
     if (!m_filestore_journal_writeahead &&
 	!m_filestore_journal_parallel &&
 	!m_filestore_journal_trailing) {
@@ -1559,7 +1584,8 @@ int FileStore::mount()
       if (m_filestore_journal_trailing)
 	dout(0) << "mount: TRAILING journal mode explicitly enabled in conf" << dendl;
     }
-    if (m_filestore_journal_writeahead)
+    
+    if (m_filestore_journal_writeahead) // write ahead journal mode
       journal->set_wait_on_full(true);
   } else {
     dout(0) << "mount: no journal" << dendl;
@@ -1600,7 +1626,9 @@ int FileStore::mount()
   wbthrottle.start();
   sync_thread.create();
 
-  if (!(generic_flags & SKIP_JOURNAL_REPLAY)) {
+  if (!(generic_flags & SKIP_JOURNAL_REPLAY)) { // only ceph_objectstore_tool.cc will set the skip flags
+    // set seq(s) of SubmitManager and ApplyManager with seq from 
+    // "current/commit_op_seq", 
     ret = journal_replay(initial_op_seq);
     if (ret < 0) {
       derr << "mount failed to open journal " << journalpath << ": " << cpp_strerror(ret) << dendl;
@@ -1633,16 +1661,21 @@ int FileStore::mount()
 
   init_temp_collections();
 
-  journal_start();
+  journal_start(); // start JournalObjectStore::finisher
 
   op_tp.start();
-  op_finisher.start();
-  ondisk_finisher.start();
+  op_finisher.start(); // start FileStore::op_finisher
+  ondisk_finisher.start(); // start FileStore::ondisk_finisher
 
   timer.init();
 
   // upgrade?
+  // filestore_update_to default to 1000, so always upgrade the filestore
   if (g_conf->filestore_update_to >= (int)get_target_version()) {
+    // get store version from "/var/lib/ceph/osd/$cluster-$id/store_version",
+    // if the store version is not the same as target_version then upgrade
+    // the store, and finally write the new store version to 
+    // "/var/lib/ceph/osd/$cluster-$id/store_version"
     int err = upgrade();
     if (err < 0) {
       derr << "error converting store" << dendl;
@@ -1943,6 +1976,8 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     return 0;
   }
 
+  // Sequencer contains a reference to an instance of Sequencer_impl(OpSequencer)
+
   // set up the sequencer
   OpSequencer *osr;
   assert(posr);
@@ -1971,8 +2006,8 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     op_queue_reserve_throttle(o, handle);
     
     // wait until we can get a budget for this op from FileJournal, we do not
-    // get a budget really, it's like a test, but do real sleep when budget
-    // can not be fulfilled
+    // get a budget really, it wait until the taken budget drains and drops below
+    // the limit
     journal->throttle();
     
     //prepare and encode transactions data out of lock
@@ -1990,8 +2025,14 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
     if (m_filestore_journal_parallel) { // parallel journal mode
       dout(5) << "queue_transactions (parallel) " << o->op << " " << o->tls << dendl;
 
-      // 
+      // if journal is full, then insert into ApplyManager::commit_waiters,
+      // else inform the FileJournal::Writer to journal the transaction
       _op_journal_transactions(tbl, data_align, o->op, ondisk, osd_op);
+
+      // parallel journal mode, queue op the same time
+
+      // enqueue the Op into OpSequencer and then enqueue the OpSequencer
+      // into FileStore::op_wq
       
       // queue inside submit_manager op submission lock
       queue_op(osr, o);
@@ -2001,33 +2042,42 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
       // queue this op seq into OpSequencer::jq
       osr->queue_journal(o->op);
 
+      // if journal is full, then insert into ApplyManager::commit_waiters,
+      // else inform the FileJournal::Writer to journal the transaction,
+      // and after the Writer journaled on the disk, queue_op in the callback
       _op_journal_transactions(tbl, data_align, o->op,
 			       new C_JournaledAhead(this, osr, o, ondisk),
 			       osd_op);
     } else {
       assert(0);
     }
-    
+
+    // update SubmitManager::op_submitted to op_num
     submit_manager.op_submit_finish(op_num);
     return 0;
   }
 
-  if (!journal) { // no journal mode
+  if (!journal) { // non-journal mode
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
     dout(5) << __func__ << " (no journal) " << o << " " << tls << dendl;
 
     op_queue_reserve_throttle(o, handle);
 
+    // generating an op_seq, it is increased monotonically
     uint64_t op_num = submit_manager.op_submit_start();
     o->op = op_num;
 
     if (m_filestore_do_dump)
       dump_transactions(o->tls, o->op, osr);
 
+    // enqueue the Op into OpSequencer and then enqueue the OpSequencer
+    // into FileStore::op_wq
     queue_op(osr, o);
 
     if (ondisk)
       apply_manager.add_waiter(op_num, ondisk);
+
+    // update SubmitManager::op_submitted to op_num
     submit_manager.op_submit_finish(op_num);
     return 0;
   }
@@ -2037,13 +2087,17 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
   //prepare and encode transactions data out of lock
   bufferlist tbl;
   int data_align = _op_journal_transactions_prepare(tls, tbl);
+
+  // generating an op_seq, it is increased monotonically
   uint64_t op = submit_manager.op_submit_start();
   dout(5) << "queue_transactions (trailing journal) " << op << " " << tls << dendl;
 
   if (m_filestore_do_dump)
     dump_transactions(tls, op, osr);
 
+  // increase apply_manager.open_ops by one, may wait
   apply_manager.op_apply_start(op);
+  
   int r = do_transactions(tls, op);
     
   if (r >= 0) {
@@ -2059,7 +2113,11 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
   }
   op_finisher.queue(onreadable, r);
 
+  // update SubmitManager::op_submitted to op_num
   submit_manager.op_submit_finish(op);
+
+  // decrease apply_manager.open_ops by one, may update max_applied_seq to 
+  // the currently applied max op seq
   apply_manager.op_apply_finish(op);
 
   return r;

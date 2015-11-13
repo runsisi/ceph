@@ -218,9 +218,9 @@ int main(int argc, const char **argv)
 
   // the store
   ObjectStore *store = ObjectStore::create(g_ceph_context,
-					   g_conf->osd_objectstore,
-					   g_conf->osd_data,
-					   g_conf->osd_journal);
+					   g_conf->osd_objectstore, // ObjectStore backend type, default is "filestore"
+					   g_conf->osd_data, // default is "/var/lib/ceph/osd/$cluster-$id"
+					   g_conf->osd_journal); // default is "/var/lib/ceph/osd/$cluster-$id/journal"
   if (!store) {
     derr << "unable to create object store" << dendl;
     return -ENODEV;

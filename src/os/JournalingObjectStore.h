@@ -22,7 +22,7 @@
 class JournalingObjectStore : public ObjectStore {
 protected:
   Journal *journal;
-  Finisher finisher;
+  Finisher finisher; // this finisher is used for journaling
 
 
   class SubmitManager {
@@ -54,7 +54,7 @@ protected:
     bool blocked;
     Cond blocked_cond;
     int open_ops;
-    uint64_t max_applied_seq;
+    uint64_t max_applied_seq; // currently seen applied max seq
 
     Mutex com_lock;
     map<version_t, vector<Context*> > commit_waiters;
@@ -134,7 +134,7 @@ public:
   JournalingObjectStore(const std::string& path)
     : ObjectStore(path),
       journal(NULL),
-      finisher(g_ceph_context),
+      finisher(g_ceph_context), // finisher for journaling
       apply_manager(journal, finisher),
       replaying(false) {}
   

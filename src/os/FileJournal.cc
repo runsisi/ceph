@@ -1080,7 +1080,9 @@ void FileJournal::do_write(bufferlist& bl)
     return;
 
   buffer::ptr hbp;
-  if (g_conf->journal_write_header_frequency &&
+
+  // if configured, we write header every journal_write_header_frequency writes
+  if (g_conf->journal_write_header_frequency && // default is 0
       (((++journaled_since_start) %
 	g_conf->journal_write_header_frequency) == 0)) {
     must_write_header = true;
@@ -1240,7 +1242,7 @@ void FileJournal::flush()
   dout(10) << "flush done" << dendl;
 }
 
-
+// journal the bufferlist of a transaction list
 void FileJournal::write_thread_entry()
 {
   dout(10) << "write_thread_entry start" << dendl;
@@ -1248,6 +1250,7 @@ void FileJournal::write_thread_entry()
     {
       Mutex::Locker locker(writeq_lock);
       if (writeq.empty() && !must_write_header) {
+        // 
 	if (write_stop)
 	  break;
 	dout(20) << "write_thread_entry going to sleep" << dendl;

@@ -2156,6 +2156,7 @@ int main(int argc, char **argv)
     myexit(1);
   }
 
+  // create an instance of ObjectStore backend
   ObjectStore *fs = ObjectStore::create(g_ceph_context, type, dpath, jpath, flags);
   if (fs == NULL) {
     cerr << "Must provide --type (filestore, memstore, keyvaluestore)" << std::endl;
