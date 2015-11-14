@@ -137,6 +137,7 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
 
 // ------------------------------------
 
+// mainly used in FileStore::_do_op, journal replay will call this too
 uint64_t JournalingObjectStore::ApplyManager::op_apply_start(uint64_t op)
 {
   Mutex::Locker l(apply_lock);
@@ -206,6 +207,7 @@ void JournalingObjectStore::ApplyManager::add_waiter(uint64_t op, Context *c)
   commit_waiters[op].push_back(c);
 }
 
+// used in FileStore::sync_entry
 bool JournalingObjectStore::ApplyManager::commit_start()
 {
   bool ret = false;
@@ -216,6 +218,8 @@ bool JournalingObjectStore::ApplyManager::commit_start()
     dout(10) << "commit_start max_applied_seq " << max_applied_seq
 	     << ", open_ops " << open_ops
 	     << dendl;
+    
+    // we are committing, so block any new op apply
     blocked = true; // reset in ApplyManager::commit_started
 
     // open_ops is increased in ApplyManager::op_apply_start and decreased in 
@@ -226,7 +230,7 @@ bool JournalingObjectStore::ApplyManager::commit_start()
       // signalled in ApplyManager::op_apply_finish or ApplyManager::commit_started
       blocked_cond.Wait(apply_lock);
     }
-    assert(open_ops == 0);
+    assert(open_ops == 0); // no previous applying ops have finished
     dout(10) << "commit_start blocked, all open_ops have completed" << dendl;
     {
       Mutex::Locker l(com_lock);
@@ -237,7 +241,7 @@ bool JournalingObjectStore::ApplyManager::commit_start()
 	goto out;
       }
 
-      _committing_seq = committing_seq = max_applied_seq;
+      _committing_seq = committing_seq = max_applied_seq; // update currently committing seq
 
       dout(10) << "commit_start committing " << committing_seq
 	       << ", still blocked" << dendl;

@@ -2123,6 +2123,8 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
   return r;
 }
 
+// ok, we have journaled the encoded transaction list, now we can notify
+// the FileStore::op_tp to apply the transaction(s)
 void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
 {
   dout(5) << "_journaled_ahead " << o << " seq " << o->op << " " << *osr << " " << o->tls << dendl;
@@ -3702,9 +3704,16 @@ void FileStore::sync_entry()
     lock.Unlock();
     
     op_tp.pause();
+
+    // commit and apply must be mutual exclusive
+    
+    // wait until all open ops applied, and block new ops to apply
     if (apply_manager.commit_start()) { // we need to commit
       utime_t start = ceph_clock_now(g_ceph_context);
-      uint64_t cp = apply_manager.get_committing_seq();
+
+      // ApplyManager::committing_seq is set to ApplyManager::max_applied_seq in 
+      // apply_manager.commit_start()
+      uint64_t cp = apply_manager.get_committing_seq(); // get ApplyManager::committing_seq
 
       sync_entry_timeo_lock.Lock();
       SyncEntryTimeout *sync_entry_timeo =
@@ -3739,6 +3748,9 @@ void FileStore::sync_entry()
 	}
 
 	snaps.push_back(cp);
+
+        // set ApplyManager::blocked to false and signal ApplyManager::blocked_cond,
+        // signal others that they can start to apply new ops
 	apply_manager.commit_started();
 	op_tp.unpause();
 
@@ -3753,21 +3765,28 @@ void FileStore::sync_entry()
 	}
       } else
       {
+        // set ApplyManager::blocked to false and signal ApplyManager::blocked_cond,
+        // signal others that they can start to apply new ops
 	apply_manager.commit_started();
 	op_tp.unpause();
 
 	object_map->sync();
+
+        // sync "current/"
 	int err = backend->syncfs();
 	if (err < 0) {
 	  derr << "syncfs got " << cpp_strerror(err) << dendl;
 	  assert(0 == "syncfs returned error");
 	}
 
+        // write ApplyManager::committing_seq to "current/commit_op_seq"
 	err = write_op_seq(op_fd, cp);
 	if (err < 0) {
 	  derr << "Error during write_op_seq: " << cpp_strerror(err) << dendl;
 	  assert(0 == "error during write_op_seq");
 	}
+
+        // sync "current/commit_op_seq"
 	err = ::fsync(op_fd);
 	if (err < 0) {
 	  derr << "Error during fsync of op_seq: " << cpp_strerror(err) << dendl;
@@ -3784,6 +3803,8 @@ void FileStore::sync_entry()
       logger->tinc(l_os_commit_lat, lat);
       logger->tinc(l_os_commit_len, dur);
 
+      // call journal->commit_thru, set committed_seq to committing_seq, then
+      // queue onjournal callback on finisher
       apply_manager.commit_finish();
       wbthrottle.clear();
 

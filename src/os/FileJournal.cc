@@ -1243,7 +1243,9 @@ void FileJournal::do_write(bufferlist& bl)
       } else {
 	dout(20) << "do_write queueing finishers through seq " << journaled_seq << dendl;
         // pop finished completion_item(s) from FileJournal::completions and 
-        // queue the callback on JournalingObjectStore::finisher
+        // queue the callback on JournalingObjectStore::finisher, which means
+        // we have journaled the encoded transaction list, please do the real
+        // data modification now
 	queue_completions_thru(journaled_seq);
       }
     }

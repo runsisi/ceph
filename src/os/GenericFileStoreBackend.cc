@@ -60,7 +60,7 @@ GenericFileStoreBackend::GenericFileStoreBackend(FileStore *fs):
   seek_data_hole(false),
   m_filestore_fiemap(g_conf->filestore_fiemap),
   m_filestore_seek_data_hole(g_conf->filestore_seek_data_hole),
-  m_filestore_fsync_flushes_journal_data(g_conf->filestore_fsync_flushes_journal_data),
+  m_filestore_fsync_flushes_journal_data(g_conf->filestore_fsync_flushes_journal_data), // default is false
   m_filestore_splice(false) {}
 
 int GenericFileStoreBackend::detect_features()
@@ -246,16 +246,16 @@ int GenericFileStoreBackend::create_current()
 int GenericFileStoreBackend::syncfs()
 {
   int ret;
-  if (m_filestore_fsync_flushes_journal_data) {
+  if (m_filestore_fsync_flushes_journal_data) { // default is false
     dout(15) << "syncfs: doing fsync on " << get_op_fd() << dendl;
     // make the file system's journal commit.
     //  this works with ext3, but NOT ext4
-    ret = ::fsync(get_op_fd());
+    ret = ::fsync(get_op_fd()); // fd of "current/commit_op_seq"
     if (ret < 0)
       ret = -errno;
   } else {
     dout(15) << "syncfs: doing a full sync (syncfs(2) if possible)" << dendl;
-    ret = sync_filesystem(get_current_fd());
+    ret = sync_filesystem(get_current_fd()); // fd of "current/"
   }
   return ret;
 }
