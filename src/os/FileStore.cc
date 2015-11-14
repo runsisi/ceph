@@ -1834,7 +1834,7 @@ void FileStore::queue_op(OpSequencer *osr, Op *o)
   // so that regardless of which order the threads pick up the
   // sequencer, the op order will be preserved.
 
-  osr->queue(o);
+  osr->queue(o); // push back of a Op list
 
   logger->inc(l_os_ops);
   logger->inc(l_os_bytes, o->bytes);
@@ -1844,7 +1844,7 @@ void FileStore::queue_op(OpSequencer *osr, Op *o)
 	  << " " << o->bytes << " bytes"
 	  << "   (queue has " << throttle_ops.get_current() << " ops and " << throttle_bytes.get_current() << " bytes)"
 	  << dendl;
-  op_wq.queue(osr);
+  op_wq.queue(osr); // queue this osr to be processed by FileStore::op_tp
 }
 
 void FileStore::op_queue_reserve_throttle(Op *o, ThreadPool::TPHandle *handle)
@@ -1909,9 +1909,15 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
 
   osr->apply_lock.Lock();
   Op *o = osr->peek_queue();
+
+  // 
   apply_manager.op_apply_start(o->op);
   dout(5) << "_do_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " start" << dendl;
+
+  // 
   int r = _do_transactions(o->tls, o->op, &handle);
+
+  // 
   apply_manager.op_apply_finish(o->op);
   dout(10) << "_do_op " << o << " seq " << o->op << " r = " << r
 	   << ", finisher " << o->onreadable << " " << o->onreadable_sync << dendl;
@@ -1963,8 +1969,8 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
 				  TrackedOpRef osd_op,
 				  ThreadPool::TPHandle *handle)
 {
-  Context *onreadable;
-  Context *ondisk;
+  Context *onreadable; // means on data disk
+  Context *ondisk; // means on journal disk
   Context *onreadable_sync;
   ObjectStore::Transaction::collect_contexts(
     tls, &onreadable, &ondisk, &onreadable_sync);
@@ -1980,6 +1986,9 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
 
   // set up the sequencer
   OpSequencer *osr;
+
+  // every pg has a shared ptr to an instance of ObjectStore::Sequencer, posr is 
+  // a raw pointer of this shared ptr
   assert(posr);
   if (posr->p) {
     osr = static_cast<OpSequencer *>(posr->p.get());
@@ -2129,20 +2138,26 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
 {
   dout(5) << "_journaled_ahead " << o << " seq " << o->op << " " << *osr << " " << o->tls << dendl;
 
+  // osr is associated with an pg, every pg has its own osr instance
+
   // this should queue in order because the journal does it's completions in order.
-  queue_op(osr, o);
+  // queue this FileStore::Op on osr, and queue this osr on FileStore::op_wq,
+  // op is ordered in osr, and every pg has only one osr
+  queue_op(osr, o); // we have journaled the op(encoded transaction list), now notify other thread to do this op
 
   list<Context*> to_queue;
+  // dequeue the op seq from OpSequencer::jq which queued in queue_transactions,
+  // and get a list of flush commit callbacks
   osr->dequeue_journal(&to_queue);
 
   // do ondisk completions async, to prevent any onreadable_sync completions
   // getting blocked behind an ondisk completion.
   if (ondisk) {
     dout(10) << " queueing ondisk " << ondisk << dendl;
-    ondisk_finisher.queue(ondisk);
+    ondisk_finisher.queue(ondisk); // queue original callback
   }
   if (!to_queue.empty()) {
-    ondisk_finisher.queue(to_queue);
+    ondisk_finisher.queue(to_queue); // flush commit callbacks
   }
 }
 
@@ -3702,7 +3717,8 @@ void FileStore::sync_entry()
     // that the sync has finished
     fin.swap(sync_waiters);
     lock.Unlock();
-    
+
+    // tell the thread pool to pause, and the wait the current processing items to finish
     op_tp.pause();
 
     // commit and apply must be mutual exclusive

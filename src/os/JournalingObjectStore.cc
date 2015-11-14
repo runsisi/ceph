@@ -142,7 +142,10 @@ uint64_t JournalingObjectStore::ApplyManager::op_apply_start(uint64_t op)
 {
   Mutex::Locker l(apply_lock);
   while (blocked) { // set in ApplyManager::commit_start and reset in ApplyManager::commit_started
-    // note: this only happens during journal replay
+    // note: this only happens during journal replay, because ApplyManager always
+    // pauses op_tp before calling commit_start, so when we are committing, applying
+    // is impossible, but during journal replay, the main thread of the process 
+    // is doing the applying, so only in this circumstance they are concurrently processing
     dout(10) << "op_apply_start blocked, waiting" << dendl;
 
     // signalled in ApplyManager::op_apply_finish or ApplyManager::commit_started
@@ -230,7 +233,7 @@ bool JournalingObjectStore::ApplyManager::commit_start()
       // signalled in ApplyManager::op_apply_finish or ApplyManager::commit_started
       blocked_cond.Wait(apply_lock);
     }
-    assert(open_ops == 0); // no previous applying ops have finished
+    assert(open_ops == 0); // all previous applying ops have finished
     dout(10) << "commit_start blocked, all open_ops have completed" << dendl;
     {
       Mutex::Locker l(com_lock);

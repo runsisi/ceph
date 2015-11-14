@@ -204,7 +204,8 @@ PG::PG(OSDService *o, OSDMapRef curmap,
   role(0),
   state(0),
   send_notify(false),
-  pg_whoami(osd->whoami, p.shard), // we are on which osd, and we are which shard of this pg, for replica pg, the shard should be NO_SHARD
+  pg_whoami(osd->whoami, p.shard), // identify which osd we are on, and which shard of 
+                                   // this pg that we are, for replica pg, the shard should be NO_SHARD
   need_up_thru(false),
   last_peering_reset(0),
   heartbeat_peer_lock("PG::heartbeat_peer_lock"),
@@ -213,7 +214,7 @@ PG::PG(OSDService *o, OSDMapRef curmap,
   flushes_in_progress(0),
   pg_stats_publish_lock("PG::pg_stats_publish_lock"),
   pg_stats_publish_valid(false),
-  osr(osd->osr_registry.lookup_or_create(p, (stringify(p)))),
+  osr(osd->osr_registry.lookup_or_create(p, (stringify(p)))), // every pg associates with an instance of ObjectStore::Sequencer
   finish_sync_event(NULL),
   scrub_after_recovery(false),
   active_pushes(0),
@@ -4625,7 +4626,8 @@ void PG::reset_interval_flush()
 {
   dout(10) << "Clearing blocked outgoing recovery messages" << dendl;
   recovery_state.clear_blocked_outgoing();
-  
+
+  // the callback will queue a peering event(IntervalFlush)
   Context *c = new QueuePeeringEvt<IntervalFlush>(
     this, get_osdmap()->get_epoch(), IntervalFlush());
   if (!osr->flush_commit(c)) {
@@ -5245,6 +5247,8 @@ void PG::queue_peering_event(CephPeeringEvtRef evt)
   if (old_peering_evt(evt))
     return;
   peering_queue.push_back(evt);
+
+  // queue pg on OSD::peering_wq
   osd->queue_for_peering(this);
 }
 

@@ -800,7 +800,7 @@ protected:
   pg_stat_t pg_stats_publish;
 
   // for ordering writes
-  ceph::shared_ptr<ObjectStore::Sequencer> osr;
+  ceph::shared_ptr<ObjectStore::Sequencer> osr; // ObjectStore::Sequencer instance(s) is stored in OSDService::osr_registry
 
   void _update_calc_stats();
   void _update_blocked_by();
@@ -1295,6 +1295,7 @@ public:
       pg(pg), epoch(epoch), evt(evt) {}
     void finish(int r) {
       pg->lock();
+      // queue the event on PG::peering_queue and then queue this pg on OSD::peering_wq
       pg->queue_peering_event(PG::CephPeeringEvtRef(
 				new PG::CephPeeringEvt(
 				  epoch,

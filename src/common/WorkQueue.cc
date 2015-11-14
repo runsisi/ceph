@@ -112,14 +112,14 @@ void ThreadPool::worker(WorkThread *wt)
       WorkQueue_* wq;
       int tries = work_queues.size();
       bool did = false;
-      while (tries--) {
+      while (tries--) { // iterate every queue
 	last_work_queue++;
 	last_work_queue %= work_queues.size();
-	wq = work_queues[last_work_queue];
+	wq = work_queues[last_work_queue]; // multiple queue(s)
 	
 	void *item = wq->_void_dequeue();
 	if (item) {
-	  processing++;
+	  processing++; // flag that we are processing an item
 	  ldout(cct,12) << "worker wq " << wq->name << " start processing " << item
 			<< " (" << processing << " active)" << dendl;
 	  TPHandle tp_handle(cct, hb, wq->timeout_interval, wq->suicide_interval);
@@ -132,14 +132,16 @@ void ThreadPool::worker(WorkThread *wt)
 	  ldout(cct,15) << "worker wq " << wq->name << " done processing " << item
 			<< " (" << processing << " active)" << dendl;
 	  if (_pause || _draining)
-	    _wait_cond.Signal();
+	    _wait_cond.Signal(); // signal those that want to pause us or waiting for us to drain
 	  did = true;
-	  break;
+	  break; // processed an item, without starving other queue(s), we jump out, and try to process next queue
 	}
       }
-      if (did)
+      if (did) // processed an item from last queue, now try next queue
 	continue;
     }
+
+    // iterated all queue(s), processed nothing, waiting
 
     ldout(cct,20) << "worker waiting" << dendl;
     cct->get_heartbeat_map()->reset_timeout(
@@ -148,7 +150,7 @@ void ThreadPool::worker(WorkThread *wt)
       0);
     _cond.WaitInterval(cct, _lock,
       utime_t(
-	cct->_conf->threadpool_empty_queue_max_wait, 0));
+	cct->_conf->threadpool_empty_queue_max_wait, 0)); // default is 2
   }
   ldout(cct,1) << "worker finish" << dendl;
 
@@ -232,7 +234,7 @@ void ThreadPool::pause()
 {
   ldout(cct,10) << "pause" << dendl;
   _lock.Lock();
-  _pause++;
+  _pause++; // ThreadPool::worker will check this flag and exit current processing loop
   while (processing)
     _wait_cond.Wait(_lock);
   _lock.Unlock();

@@ -239,28 +239,34 @@ private:
     } /// @returns true if both queues are empty
 
     void _wake_flush_waiters(list<Context*> *to_queue) {
-      uint64_t seq;
-      if (_get_min_uncompleted(&seq))
-	seq = -1;
+      uint64_t seq; // FileStore::Op seq
+      if (_get_min_uncompleted(&seq)) // ops finished and transactions journaled
+	seq = -1; // set a max value
 
       for (list<pair<uint64_t, Context*> >::iterator i =
 	     flush_commit_waiters.begin();
-	   i != flush_commit_waiters.end() && i->first < seq;
+	   i != flush_commit_waiters.end() && i->first < seq; // filter those has completed
 	   flush_commit_waiters.erase(i++)) {
 	to_queue->push_back(i->second);
       }
     }
 
+    // queue FileStore::Op seq
     void queue_journal(uint64_t s) {
       Mutex::Locker l(qlock);
       jq.push_back(s);
     }
+
+    // dequeue FileStore::Op seq, FileStore::_journaled_ahead will call this
     void dequeue_journal(list<Context*> *to_queue) {
       Mutex::Locker l(qlock);
-      jq.pop_front();
+      jq.pop_front(); // queued by queue_journal in queue_transactions
       cond.Signal();
+      // filter those callback(s) whose transactions has been journaled
       _wake_flush_waiters(to_queue);
     }
+
+    // queue FileStore::Op
     void queue(Op *o) {
       Mutex::Locker l(qlock);
       q.push_back(o);
@@ -271,6 +277,7 @@ private:
       return q.front();
     }
 
+    // dequeue FileStore::Op, FileStore::_finish_op will call this
     Op *dequeue(list<Context*> *to_queue) {
       assert(to_queue);
       assert(apply_lock.is_locked());
@@ -279,6 +286,7 @@ private:
       q.pop_front();
       cond.Signal();
 
+     // filter those callback(s) whose ops has been finished
       _wake_flush_waiters(to_queue);
       return o;
     }
@@ -304,12 +312,18 @@ private:
 	  cond.Wait(qlock);
       }
     }
+
+    // PG::reset_interval_flush will call this through Sequencer::flush_commit
     bool flush_commit(Context *c) {
       Mutex::Locker l(qlock);
       uint64_t seq = 0;
       if (_get_max_uncompleted(&seq)) {
+        // there is no FileStore::Op(s) has not finished or transaction list(s) 
+        // has not been journaled 
 	return true;
       } else {
+        // filestore is not idle, either op(s) has not finished or transaction 
+        // list(s) has not been journaled, we queue a callback here
 	flush_commit_waiters.push_back(make_pair(seq, c));
 	return false;
       }
