@@ -2185,6 +2185,8 @@ int FileStore::_do_transactions(
   return r;
 }
 
+// only called when we are doing Transaction::OP_SPLIT_COLLECTION2, which is
+// a non-idempotent operation
 void FileStore::_set_global_replay_guard(coll_t cid,
 					 const SequencerPosition &spos)
 {
@@ -2486,8 +2488,9 @@ unsigned FileStore::_do_transaction(
         ghobject_t oid = i.get_oid(op->oid);
 	_kludge_temp_object_collection(cid, oid);
         tracepoint(objectstore, touch_enter, osr_name);
-        // compare spos with "user.cephos.gseq" and "user.cephos.seq", if this
-        // is an already applied op, do nothing, else we apply it
+        // compare spos with "user.cephos.gseq" and "user.cephos.seq", if we
+        // are applied before a non-idempotent op, then we should skip all ops
+        // before the non-idempotent op
         if (_check_replay_guard(cid, oid, spos) > 0)
           // ok, do the real thing on local filesystem
           r = _touch(cid, oid);
@@ -3375,6 +3378,7 @@ int FileStore::_clone(coll_t cid, const ghobject_t& oldoid, const ghobject_t& ne
 {
   dout(15) << "clone " << cid << "/" << oldoid << " -> " << cid << "/" << newoid << dendl;
 
+  // check if we are applied before a non-idempotent op
   if (_check_replay_guard(cid, newoid, spos) < 0)
     return 0;
 
@@ -5275,6 +5279,9 @@ int FileStore::_split_collection(coll_t cid,
     if (srccmp < 0)
       return 0;
 
+    // coll split can not be replayed(redo), so set a replay guard in case 
+    // we do the journal replay, then all Transaction::Op(s) before this
+    // is skipped during journal replay
     _set_global_replay_guard(cid, spos);
     _set_replay_guard(cid, spos, true);
     _set_replay_guard(dest, spos, true);

@@ -1298,7 +1298,7 @@ void ReplicatedPG::calc_trim_to()
 		 PG_STATE_BACKFILL |
 		 PG_STATE_BACKFILL_WAIT |
 		 PG_STATE_BACKFILL_TOOFULL)) {
-    target = cct->_conf->osd_max_pg_log_entries;
+    target = cct->_conf->osd_max_pg_log_entries; // default is 10000
   }
 
   if (min_last_complete_ondisk != eversion_t() &&

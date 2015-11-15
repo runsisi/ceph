@@ -659,7 +659,7 @@ bool OSDService::too_full_for_backfill(double *_ratio, double *_max_ratio)
 {
   Mutex::Locker l(full_status_lock);
   double max_ratio;
-  max_ratio = cct->_conf->osd_backfill_full_ratio;
+  max_ratio = cct->_conf->osd_backfill_full_ratio; // default is 0.85
   if (_ratio)
     *_ratio = cur_ratio;
   if (_max_ratio)
