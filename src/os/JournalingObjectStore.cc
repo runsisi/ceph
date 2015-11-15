@@ -69,7 +69,7 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
 
   // ok, we are about to replay the journal
 
-  replaying = true;
+  replaying = true; // will be tested in FileStore::_do_transaction
 
   int count = 0;
   while (1) {
@@ -100,13 +100,19 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
 
     // redo the transaction list
 
-    // increase apply_manager.open_ops by one, may wait
+    // increase apply_manager.open_ops by one, it may race with filestore's sync thread(s),
+    // if we block them, the open_ops must be great than 0, then in op_apply_finish
+    // we will decrease the open_ops to 0, which will release the block
+    // if we are blocked by them, then the open_ops is not increased yet, so when they
+    // are updating their committing_seq, they can not be blocked by us, then in
+    // apply_manager.commit_started they will release the block
     apply_manager.op_apply_start(seq);
 
     // applied the transaction list to local filesystem
     int r = do_transactions(tls, seq);
 
-    // decrease apply_manager.open_ops by one, may update apply_manager.max_applied_seq
+    // decrease apply_manager.open_ops by one, may update apply_manager.max_applied_seq,
+    // if we are replaying open_ops always decreased to 0, so the raced commit_start can continue
     apply_manager.op_apply_finish(seq);
 
     op_seq = seq;
