@@ -230,7 +230,7 @@ public:
   public:
     WorkQueueVal(string n, time_t ti, time_t sti, ThreadPool *p)
       : WorkQueue_(n, ti, sti), _lock("WorkQueueVal::lock"), pool(p) {
-      pool->add_work_queue(this);
+      pool->add_work_queue(this); // will add this queue to thread pool's queue list
     }
     ~WorkQueueVal() {
       pool->remove_work_queue(this);
@@ -350,7 +350,7 @@ public:
   };
 
 private:
-  vector<WorkQueue_*> work_queues;
+  vector<WorkQueue_*> work_queues; // a vector of queue(s)
   int last_work_queue;
  
 

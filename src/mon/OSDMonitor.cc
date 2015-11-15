@@ -2148,15 +2148,17 @@ bool OSDMonitor::preprocess_alive(MonOpRequestRef op)
   }
 
   if (!osdmap.is_up(from) ||
-      osdmap.get_inst(from) != m->get_orig_source_inst()) {
+      osdmap.get_inst(from) != m->get_orig_source_inst()) { // the osd must be up recorded in current map
     dout(7) << "preprocess_alive ignoring alive message from down " << m->get_orig_source_inst() << dendl;
     goto ignore;
   }
 
   if (osdmap.get_up_thru(from) >= m->want) {
+    // the map has recorded that the peer is up beyond the epoch it wants, the 
+    // peer must be holding an older map
     // yup.
     dout(7) << "preprocess_alive want up_thru " << m->want << " dup from " << m->get_orig_source_inst() << dendl;
-    _reply_map(op, m->version);
+    _reply_map(op, m->version); // send the latest map to the peer
     return true;
   }
 

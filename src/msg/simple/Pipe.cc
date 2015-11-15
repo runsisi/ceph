@@ -1686,7 +1686,7 @@ void Pipe::reader()
       } else {
         // in_q is a pointer point to SimpleMessenger::dispatch_queue, 
         // so in_q->can_fast_dispatch simply calls into msgr->ms_can_fast_dispatch
-        if (in_q->can_fast_dispatch(m)) {
+        if (in_q->can_fast_dispatch(m)) { // this message can be fast dispatched
 	  reader_dispatching = true;
           pipe_lock.Unlock();
           in_q->fast_dispatch(m);

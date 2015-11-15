@@ -613,6 +613,7 @@ struct PG_RecoveryQueueAsync : public Context {
     PGBackend::Listener *pg,
     GenContext<ThreadPool::TPHandle&> *c) : pg(pg), c(c) {}
   void finish(int) {
+    // queue the callback on OSDService::recovery_gen_wq
     pg->schedule_recovery_work(c);
   }
 };

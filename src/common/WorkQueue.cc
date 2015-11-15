@@ -124,6 +124,8 @@ void ThreadPool::worker(WorkThread *wt)
 			<< " (" << processing << " active)" << dendl;
 	  TPHandle tp_handle(cct, hb, wq->timeout_interval, wq->suicide_interval);
 	  tp_handle.reset_tp_timeout();
+          // we release the lock of thread pool, other thread(s) of the pool can
+          // dequeue an item and process
 	  _lock.Unlock();
 	  wq->_void_process(item, tp_handle);
 	  _lock.Lock();

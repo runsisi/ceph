@@ -196,6 +196,15 @@ CompatSet OSD::get_osd_compat_set() {
   return compat;
 }
 
+/*
+ * ShardedThreadPool::ShardedWQ<pair<PGRef, PGQueueable> > &op_wq; => osd->op_shardedwq
+ * ThreadPool::BatchWorkQueue<PG> &peering_wq;                     => osd->peering_wq
+ * ThreadPool::WorkQueue<PG> &recovery_wq;                         => osd->recovery_wq
+ *
+ * GenContextWQ recovery_gen_wq;                                   => osd->recovery_tp
+ * GenContextWQ op_gen_wq;                                         => osd->osd_tp
+ */
+
 OSDService::OSDService(OSD *osd) :
   osd(osd),
   cct(osd->cct),
@@ -211,9 +220,9 @@ OSDService::OSDService(OSD *osd) :
   op_wq(osd->op_shardedwq),
   peering_wq(osd->peering_wq),
   recovery_wq(osd->recovery_wq),
-  recovery_gen_wq("recovery_gen_wq", cct->_conf->osd_recovery_thread_timeout,
+  recovery_gen_wq("recovery_gen_wq", cct->_conf->osd_recovery_thread_timeout, // default is 30
 		  &osd->recovery_tp),
-  op_gen_wq("op_gen_wq", cct->_conf->osd_recovery_thread_timeout, &osd->osd_tp),
+  op_gen_wq("op_gen_wq", cct->_conf->osd_recovery_thread_timeout, &osd->osd_tp), // default is 30
   class_handler(osd->class_handler),
   pg_epoch_lock("OSDService::pg_epoch_lock"),
   publish_lock("OSDService::publish_lock"),
@@ -1493,6 +1502,25 @@ int OSD::peek_meta(ObjectStore *store, std::string& magic,
 
 // cons/des
 
+// OSD
+/*
+ * ThreadPool        osd_tp;      => PeeringWQ  : ThreadPool::BatchWorkQueue<PG> peering_wq;
+ * ShardedThreadPool osd_op_tp;   => ShardedOpWQ: ShardedThreadPool::ShardedWQ<pair<PGRef, PGQueueable> > op_shardedwq;
+ * ThreadPool        recovery_tp; => RecoveryWQ : ThreadPool::WorkQueue<PG> recovery_wq;
+ * ThreadPool        disk_tp;     => RemoveWQ   : ThreadPool::WorkQueueVal<pair<PGRef, DeletingStateRef> > remove_wq;
+ * ThreadPool        command_tp;  => CommandWQ  : ThreadPool::WorkQueue<Command> command_wq;
+ */
+
+// OSDService
+/*
+ * ShardedThreadPool::ShardedWQ<pair<PGRef, PGQueueable> > &op_wq; => osd->op_shardedwq
+ * ThreadPool::BatchWorkQueue<PG> &peering_wq;                     => osd->peering_wq
+ * ThreadPool::WorkQueue<PG> &recovery_wq;                         => osd->recovery_wq
+ *
+ * GenContextWQ recovery_gen_wq;                                   => osd->recovery_tp
+ * GenContextWQ op_gen_wq;                                         => osd->osd_tp
+ */
+
 OSD::OSD(CephContext *cct_, ObjectStore *store_,
 	 int id,
 	 Messenger *internal_messenger,
@@ -1531,11 +1559,11 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
   asok_hook(NULL),
   osd_compat(get_osd_compat_set()),
   state(STATE_INITIALIZING),
-  osd_tp(cct, "OSD::osd_tp", cct->_conf->osd_op_threads, "osd_op_threads"),
+  osd_tp(cct, "OSD::osd_tp", cct->_conf->osd_op_threads, "osd_op_threads"), // default is 2
   osd_op_tp(cct, "OSD::osd_op_tp", 
-    cct->_conf->osd_op_num_threads_per_shard * cct->_conf->osd_op_num_shards),
-  recovery_tp(cct, "OSD::recovery_tp", cct->_conf->osd_recovery_threads, "osd_recovery_threads"),
-  disk_tp(cct, "OSD::disk_tp", cct->_conf->osd_disk_threads, "osd_disk_threads"),
+    cct->_conf->osd_op_num_threads_per_shard /* default is 2 */ * cct->_conf->osd_op_num_shards), // default is 5
+  recovery_tp(cct, "OSD::recovery_tp", cct->_conf->osd_recovery_threads, "osd_recovery_threads"), // default is 1
+  disk_tp(cct, "OSD::disk_tp", cct->_conf->osd_disk_threads, "osd_disk_threads"), // default is 1
   command_tp(cct, "OSD::command_tp", 1),
   paused_recovery(false),
   session_waiting_lock("OSD::session_waiting_lock"),
@@ -1554,13 +1582,13 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
   op_shardedwq(
     cct->_conf->osd_op_num_shards,
     this,
-    cct->_conf->osd_op_thread_timeout,
-    cct->_conf->osd_op_thread_suicide_timeout,
+    cct->_conf->osd_op_thread_timeout, // default is 15
+    cct->_conf->osd_op_thread_suicide_timeout, // default is 150
     &osd_op_tp),
   peering_wq(
     this,
-    cct->_conf->osd_op_thread_timeout,
-    cct->_conf->osd_op_thread_suicide_timeout,
+    cct->_conf->osd_op_thread_timeout, // default is 15
+    cct->_conf->osd_op_thread_suicide_timeout, // default is 150
     &osd_tp),
   map_lock("OSD::map_lock"),
   pg_map_lock("OSD::pg_map_lock"),
@@ -1577,28 +1605,28 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
   pg_stat_tid(0), pg_stat_tid_flushed(0),
   command_wq(
     this,
-    cct->_conf->osd_command_thread_timeout,
-    cct->_conf->osd_command_thread_suicide_timeout,
+    cct->_conf->osd_command_thread_timeout, // default is 10*60
+    cct->_conf->osd_command_thread_suicide_timeout, // default is 15*60
     &command_tp),
   recovery_ops_active(0),
   recovery_wq(
     this,
-    cct->_conf->osd_recovery_thread_timeout,
-    cct->_conf->osd_recovery_thread_suicide_timeout,
+    cct->_conf->osd_recovery_thread_timeout, // default is 30
+    cct->_conf->osd_recovery_thread_suicide_timeout, // default is 300
     &recovery_tp),
   replay_queue_lock("OSD::replay_queue_lock"),
   remove_wq(
     store,
-    cct->_conf->osd_remove_thread_timeout,
-    cct->_conf->osd_remove_thread_suicide_timeout,
+    cct->_conf->osd_remove_thread_timeout, // default 60*60
+    cct->_conf->osd_remove_thread_suicide_timeout, // default is 10*60*60
     &disk_tp),
   service(this)
 {
   monc->set_messenger(client_messenger);
   op_tracker.set_complaint_and_threshold(cct->_conf->osd_op_complaint_time,     // default 30s
                                          cct->_conf->osd_op_log_threshold);     // default 5, max # slow op info to log
-  op_tracker.set_history_size_and_duration(cct->_conf->osd_op_history_size,
-                                           cct->_conf->osd_op_history_duration);
+  op_tracker.set_history_size_and_duration(cct->_conf->osd_op_history_size, // default is 20
+                                           cct->_conf->osd_op_history_duration); // default is 600
 }
 
 OSD::~OSD()
@@ -4637,10 +4665,13 @@ void OSD::queue_want_up_thru(epoch_t want)
     dout(10) << "queue_want_up_thru now " << want << " (was " << up_thru_wanted << ")" 
 	     << ", currently " << cur
 	     << dendl;
-    up_thru_wanted = want;
+    up_thru_wanted = want; // update currently queued max up_thru epoch
 
     // expedite, a bit.  WARNING this will somewhat delay other mon queries.
     last_mon_report = ceph_clock_now(cct);
+
+    // send a MOSDAlive message to mon, let it updates the osdmap that record
+    // my aliveness through epoch "up_thru_wanted"
     send_alive();
   } else {
     dout(10) << "queue_want_up_thru want " << want << " <= queued " << up_thru_wanted 
@@ -4657,8 +4688,13 @@ void OSD::send_alive()
   epoch_t up_thru = osdmap->get_up_thru(whoami);
   dout(10) << "send_alive up_thru currently " << up_thru << " want " << up_thru_wanted << dendl;
   if (up_thru_wanted > up_thru) {
-    up_thru_pending = up_thru_wanted;
+    // osdmap has a record that we are alive up_from through up_thru, now we
+    // want to update the upper bound
+    up_thru_pending = up_thru_wanted; // useless
     dout(10) << "send_alive want " << up_thru_wanted << dendl;
+
+    // send a MOSDAlive message to mon, let it updates the osdmap that record
+    // my aliveness through epoch "up_thru_wanted"
     monc->send_mon_message(new MOSDAlive(osdmap->get_epoch(), up_thru_wanted));
   }
 }
@@ -5855,6 +5891,18 @@ epoch_t op_required_epoch(OpRequestRef op)
   }
 }
 
+/*
+ * case MSG_OSD_PG_CREATE:
+ * case MSG_OSD_PG_NOTIFY:
+ * case MSG_OSD_PG_QUERY:
+ * case MSG_OSD_PG_LOG:
+ * case MSG_OSD_PG_REMOVE:
+ * case MSG_OSD_PG_INFO:
+ * case MSG_OSD_PG_TRIM:
+ * case MSG_OSD_PG_MISSING:
+ * case MSG_OSD_BACKFILL_RESERVE:
+ * case MSG_OSD_RECOVERY_RESERVE:
+ */
 void OSD::dispatch_op(OpRequestRef op)
 {
   switch (op->get_req()->get_type()) {
@@ -5894,6 +5942,23 @@ void OSD::dispatch_op(OpRequestRef op)
   }
 }
 
+/*
+ * case CEPH_MSG_OSD_OP:
+ * case MSG_OSD_SUBOP:
+ * case MSG_OSD_REPOP:
+ * case MSG_OSD_SUBOPREPLY:
+ * case MSG_OSD_REPOPREPLY:
+ * case MSG_OSD_PG_PUSH:
+ * case MSG_OSD_PG_PULL:
+ * case MSG_OSD_PG_PUSH_REPLY:
+ * case MSG_OSD_PG_SCAN:
+ * case MSG_OSD_PG_BACKFILL:
+ * case MSG_OSD_EC_WRITE:
+ * case MSG_OSD_EC_WRITE_REPLY:
+ * case MSG_OSD_EC_READ:
+ * case MSG_OSD_EC_READ_REPLY:
+ * case MSG_OSD_REP_SCRUB:
+ */
 bool OSD::dispatch_op_fast(OpRequestRef& op, OSDMapRef& osdmap)
 {
   if (is_stopping()) {
@@ -6729,7 +6794,7 @@ bool OSD::advance_pg(
   epoch_t min_epoch = service.get_min_pg_epoch();
   epoch_t max;
   if (min_epoch) {
-    max = min_epoch + g_conf->osd_map_max_advance;
+    max = min_epoch + g_conf->osd_map_max_advance; // default is 150
   } else {
     max = next_epoch + g_conf->osd_map_max_advance;
   }
@@ -7349,7 +7414,7 @@ PG::RecoveryCtx OSD::create_context()
   map<int,vector<pair<pg_notify_t, pg_interval_map_t> > > *notify_list =
     new map<int, vector<pair<pg_notify_t, pg_interval_map_t> > >;
   map<int,vector<pair<pg_notify_t, pg_interval_map_t> > > *info_map =
-    new map<int,vector<pair<pg_notify_t, pg_interval_map_t> > >;
+    new map<int, vector<pair<pg_notify_t, pg_interval_map_t> > >;
   PG::RecoveryCtx rctx(query_map, info_map, notify_list,
 		       on_applied, on_safe, t);
   return rctx;
@@ -8299,9 +8364,12 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 
   PG *pg = get_pg_or_queue_for_pg(pgid, op);
   if (pg) {
+    // when the op is dequeued in OSD::dequeue_op, we send the map directly, while
+    // not queue a C_SendMap callback on osd->service.op_gen_wq
     op->send_map_update = share_map.should_send;
     op->sent_epoch = m->get_map_epoch();
     enqueue_op(pg, op);
+    // we do not queue the send map callback right now, see above
     share_map.should_send = false;
   }
 }
@@ -8527,7 +8595,7 @@ void OSD::dequeue_op(
 	   << " pg " << *pg << dendl;
 
   // share our map with sender, if they're old
-  if (op->send_map_update) {
+  if (op->send_map_update) { // set in OSD::handle_op
     Message *m = op->get_req();
     Session *session = static_cast<Session *>(m->get_connection()->get_priv());
     if (session) {
@@ -8598,44 +8666,65 @@ void OSD::process_peering_events(
   bool need_up_thru = false;
   epoch_t same_interval_since = 0;
   OSDMapRef curmap = service.get_osdmap();
+
+  // allocate an instance of ObjectStore::Transaction, an on_applied callback list, 
+  // an on_safe callback list, a query_map, a notify_list and a info_map, then 
+  // construct a RecoveryCtx with these elements
   PG::RecoveryCtx rctx = create_context();
   rctx.handle = &handle;
   for (list<PG*>::const_iterator i = pgs.begin();
        i != pgs.end();
-       ++i) {
+       ++i) { // iterate each pg dequeued from peering_wq
     set<boost::intrusive_ptr<PG> > split_pgs;
     PG *pg = *i;
-    pg->lock_suspend_timeout(handle);
+    pg->lock_suspend_timeout(handle); // suspend tp heartbeat check
     curmap = service.get_osdmap();
     if (pg->deleting) {
       pg->unlock();
       continue;
     }
+
+    // 
     if (!advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs)) {
       // we need to requeue the PG explicitly since we didn't actually
       // handle an event
-      peering_wq.queue(pg);
+      peering_wq.queue(pg); // requeue this pg on back of peering queue
     } else {
       assert(!pg->peering_queue.empty());
       PG::CephPeeringEvtRef evt = pg->peering_queue.front();
       pg->peering_queue.pop_front();
+
+      // ok, do the real thing, handle the peering event
       pg->handle_peering_event(evt, &rctx);
     }
+
+    // update info that needed for updating osd_info_t::up_thru
     need_up_thru = pg->need_up_thru || need_up_thru;
     same_interval_since = MAX(pg->info.history.same_interval_since,
 			      same_interval_since);
+
+    // if we need to modify the pg, record those modifications in pg log, then 
+    // prepare a transaction to update the pg log
     pg->write_if_dirty(*rctx.transaction);
-    if (!split_pgs.empty()) {
+    
+    if (!split_pgs.empty()) { // new pg(s) splitted
       // when finished, the newly splitted pg will be added to osd.pg_map
       rctx.on_applied->add(new C_CompleteSplits(this, split_pgs));
       split_pgs.clear();
     }
+
+    // 
     dispatch_context_transaction(rctx, pg, &handle);
     pg->unlock();
-    handle.reset_tp_timeout();
+    
+    handle.reset_tp_timeout(); // restart tp heartbeat check
   }
+
   if (need_up_thru)
+    // tell mon that i am still alive through same_interval_since
     queue_want_up_thru(same_interval_since);
+
+  // 
   dispatch_context(rctx, 0, curmap, &handle);
 
   service.send_pg_temp();

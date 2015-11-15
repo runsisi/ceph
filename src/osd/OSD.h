@@ -407,7 +407,7 @@ public:
   ThreadPool::BatchWorkQueue<PG> &peering_wq;
   ThreadPool::WorkQueue<PG> &recovery_wq;
   GenContextWQ recovery_gen_wq;
-  GenContextWQ op_gen_wq;
+  GenContextWQ op_gen_wq; // only used for queuing C_SendMap, see OSD::handle_op and OSD::handle_replica_op
   ClassHandler  *&class_handler;
 
   void dequeue_pg(PG *pg, list<OpRequestRef> *dequeued);
@@ -1771,6 +1771,9 @@ private:
     void _process(
       const list<PG *> &pgs,
       ThreadPool::TPHandle &handle) {
+      // this is a queue of type ThreadPool::BatchWorkQueue<PG>, we dequeued
+      // a list of pg(s)
+      // iterate each pg to do the peering process
       osd->process_peering_events(pgs, handle);
       for (list<PG *>::const_iterator i = pgs.begin();
 	   i != pgs.end();
@@ -2282,7 +2285,11 @@ protected:
   } remove_wq;
 
  private:
+  // we can fast dispatch some messages, when add dispatcher to msgr's dispatchers
+  // list, also add add the dispatcher to msgr's fast_dispatchers list
   bool ms_can_fast_dispatch_any() const { return true; }
+
+  // we can fast dispatch those messages
   bool ms_can_fast_dispatch(Message *m) const {
     switch (m->get_type()) {
     case CEPH_MSG_OSD_OP:

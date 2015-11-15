@@ -297,6 +297,7 @@ void ReplicatedBackend::objects_read_async(
 			 i->first.get<1>(), *(i->second.first),
 			 i->first.get<2>());
     if (i->second.second) {
+      // queue the callback on OSDService::recovery_gen_wq
       get_parent()->schedule_recovery_work(
 	get_parent()->bless_gencontext(
 	  new AsyncReadCallback(_r, i->second.second)));
@@ -304,6 +305,8 @@ void ReplicatedBackend::objects_read_async(
     if (_r < 0)
       r = _r;
   }
+       
+  // queue the callback on OSDService::recovery_gen_wq
   get_parent()->schedule_recovery_work(
     get_parent()->bless_gencontext(
       new AsyncReadCallback(r, on_complete)));
