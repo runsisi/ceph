@@ -227,9 +227,10 @@ private:
       assert(qlock.is_locked());
       assert(seq);
       *seq = 0;
-      if (q.empty() && jq.empty())
+      if (q.empty() && jq.empty()) // all ops finished and no journaled ops
 	return true;
 
+      // get the min seq that is in progress(journaling, applying, committing)
       if (!q.empty())
 	*seq = q.front()->op;
       if (!jq.empty() && jq.front() < *seq)
@@ -240,7 +241,7 @@ private:
 
     void _wake_flush_waiters(list<Context*> *to_queue) {
       uint64_t seq; // FileStore::Op seq
-      if (_get_min_uncompleted(&seq)) // ops finished and transactions journaled
+      if (_get_min_uncompleted(&seq)) // all ops finished and no journaled ops
 	seq = -1; // set a max value
 
       for (list<pair<uint64_t, Context*> >::iterator i =
@@ -318,12 +319,14 @@ private:
       Mutex::Locker l(qlock);
       uint64_t seq = 0;
       if (_get_max_uncompleted(&seq)) {
-        // there is no FileStore::Op(s) has not finished or transaction list(s) 
-        // has not been journaled 
+        // all FileStore::Op(s) has finished and all transaction list(s) 
+        // has been journaled 
 	return true;
       } else {
-        // filestore is not idle, either op(s) has not finished or transaction 
-        // list(s) has not been journaled, we queue a callback here
+        // filestore is not idle, i.e. there are inprogress(journaling, applying, 
+        // committing) ops, so we queue a callback here, when all ops 
+        // finished(committed) before current min inprogress seq, the callback
+        // will be queued on FileStore::ondisk_finisher or FileStore::op_finisher
 	flush_commit_waiters.push_back(make_pair(seq, c));
 	return false;
       }
@@ -377,6 +380,19 @@ private:
     void _process(OpSequencer *osr, ThreadPool::TPHandle &handle) {
       store->_do_op(osr, handle);
     }
+    
+    /*
+     * refer to: http://en.cppreference.com/w/cpp/language/using_declaration
+     *
+     * Using-declaration introduces a member of a base class into the derived 
+     * class definition, such as to expose a protected member of base as public 
+     * member of derived. 
+     * If the name is the name of an overloaded member function of the base 
+     * class, all base class member functions with that name are introduced. 
+     * If the derived class already has a member with the same name, parameter 
+     * list, and qualifications, the derived class member hides or overrides 
+     * (doesn't conflict with) the member that is introduced from the base class. 
+     */
     using ThreadPool::WorkQueue<OpSequencer>::_process;
     void _process_finish(OpSequencer *osr) {
       store->_finish_op(osr);

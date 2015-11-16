@@ -1005,18 +1005,26 @@ unsigned pg_pool_t::get_pg_num_divisor(pg_t pgid) const
  * we have two snap modes:
  *  - pool global snaps
  *    - snap existence/non-existence defined by snaps[] and snap_seq
- *  - user managed snaps
+ *  - user managed snaps (selfmanaged, unmanaged)
  *    - removal governed by removed_snaps
  *
  * we know which mode we're using based on whether removed_snaps is empty.
  */
+
+// pool snap mode and selfmanaged(user managed, unmanaged) snap mode are exclusive,
+// if a pool has created a pool snap, then it can not create another selfmanaged
+// snap, and vice versa
 bool pg_pool_t::is_pool_snaps_mode() const
 {
+  // we have not create selfmanaged(user managed, unmanaged) snapshot yet, 
+  // we can create pool snap
   return removed_snaps.empty() && get_snap_seq() > 0;
 }
 
 bool pg_pool_t::is_unmanaged_snaps_mode() const
 {
+  // we have created selfmanaged(user managed, unmanaged) snapshot(s), 
+  // we can not create pool snap
   return removed_snaps.size() && get_snap_seq() > 0;
 }
 
@@ -1037,10 +1045,10 @@ void pg_pool_t::build_removed_snaps(interval_set<snapid_t>& rs) const
   if (is_pool_snaps_mode()) {
     rs.clear();
     for (snapid_t s = 1; s <= get_snap_seq(); s = s + 1)
-      if (snaps.count(s) == 0)
+      if (snaps.count(s) == 0) // the specified snap has been removed
 	rs.insert(s);
   } else {
-    rs = removed_snaps;
+    rs = removed_snaps; // used by selfmanaged snap
   }
 }
 
@@ -1064,14 +1072,18 @@ void pg_pool_t::add_snap(const char *n, utime_t stamp)
   snaps[s].stamp = stamp;
 }
 
+// unmanaged, also known as user managed, selfmanaged
 void pg_pool_t::add_unmanaged_snap(uint64_t& snapid)
 {
   if (removed_snaps.empty()) {
     assert(!is_pool_snaps_mode());
+    // for selfmanaged snap, always insert a seq of 1, the seq 1 is used 
+    // as a placeholder to flag that the pool is in selfmanaged snap mode, 
+    // the real snap seq start from 2
     removed_snaps.insert(snapid_t(1));
     snap_seq = 1;
   }
-  snapid = snap_seq = snap_seq + 1;
+  snapid = snap_seq = snap_seq + 1; // used to allocate snap seq to client
 }
 
 void pg_pool_t::remove_snap(snapid_t s)

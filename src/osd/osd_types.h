@@ -1193,6 +1193,8 @@ public:
   }
   epoch_t get_last_change() const { return last_change; }
   epoch_t get_last_force_op_resend() const { return last_force_op_resend; }
+  // whenever we create/delete a snap(pool snap or selfmanaged snap), we set the 
+  // snap_epoch to the osdmap epoch of that time
   epoch_t get_snap_epoch() const { return snap_epoch; }
   snapid_t get_snap_seq() const { return snap_seq; }
   uint64_t get_auid() const { return auid; }

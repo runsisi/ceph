@@ -2025,10 +2025,15 @@ public:
       machine.initiate();
     }
 
+    // public interfaces
+    
     void handle_event(const boost::statechart::event_base &evt,
 		      RecoveryCtx *rctx) {
+      // 
       start_handle(rctx);
+      
       machine.process_event(evt);
+
       end_handle();
     }
 

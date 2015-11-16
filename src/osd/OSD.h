@@ -414,7 +414,7 @@ public:
 
   // -- map epoch lower bound --
   Mutex pg_epoch_lock;
-  multiset<epoch_t> pg_epochs;
+  multiset<epoch_t> pg_epochs; // store all epoch(s) of the pg(s) on this osd, used to get the min pg epoch conveniently
   map<spg_t,epoch_t> pg_epoch;
 
   void pg_add_epoch(spg_t pgid, epoch_t epoch) {
@@ -428,9 +428,9 @@ public:
     Mutex::Locker l(pg_epoch_lock);
     map<spg_t,epoch_t>::iterator t = pg_epoch.find(pgid);
     assert(t != pg_epoch.end());
-    pg_epochs.erase(pg_epochs.find(t->second));
-    t->second = epoch;
-    pg_epochs.insert(epoch);
+    pg_epochs.erase(pg_epochs.find(t->second)); // remove previous epoch of the pg from set
+    t->second = epoch; // update epoch of the pg
+    pg_epochs.insert(epoch); // insert current epoch of the pg into set
   }
   void pg_remove_epoch(spg_t pgid) {
     Mutex::Locker l(pg_epoch_lock);

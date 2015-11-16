@@ -524,8 +524,8 @@ int main(int argc, const char **argv)
   entity_addr_t hb_back_addr = g_conf->osd_heartbeat_addr;
   if (hb_back_addr.is_blank_ip()) {
     hb_back_addr = g_conf->cluster_addr;
-    if (hb_back_addr.is_ip())
-      hb_back_addr.set_port(0);
+    if (hb_back_addr.is_ip()) // AF_INET/AF_INET6 family
+      hb_back_addr.set_port(0); // port is not set, only bind ip address
   }
   r = ms_hb_back_server->bind(hb_back_addr);
   if (r < 0)
@@ -533,8 +533,8 @@ int main(int argc, const char **argv)
 
   // hb front should bind to same ip as public_addr
   entity_addr_t hb_front_addr = g_conf->public_addr;
-  if (hb_front_addr.is_ip())
-    hb_front_addr.set_port(0);
+  if (hb_front_addr.is_ip()) // AF_INET/AF_INET6 family
+    hb_front_addr.set_port(0); // port is not set, only bind ip address
   r = ms_hb_front_server->bind(hb_front_addr);
   if (r < 0)
     exit(1);

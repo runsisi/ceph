@@ -138,7 +138,7 @@ int invoke_async_request(ImageCtx *ictx, const std::string& request_type,
                          const boost::function<int(Context*)>& local_request,
                          const boost::function<int()>& remote_request) {
   int r;
-  do {
+  do { // loop for error ERESTART
     C_SaferCond ctx;
     {
       RWLock::RLocker l(ictx->owner_lock);
@@ -165,6 +165,8 @@ int invoke_async_request(ImageCtx *ictx, const std::string& request_type,
         ldout(ictx->cct, 5) << request_type << " timed out notifying lock owner"
                             << dendl;
       }
+
+      // ok, now we are lock owner
 
       r = local_request(&ctx);
       if (r < 0) {

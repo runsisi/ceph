@@ -7559,6 +7559,9 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
   case POOL_OP_CREATE_UNMANAGED_SNAP:
     {
       uint64_t snapid;
+      // get a snap seq, this seq is increased monotonically per pool, the seq 
+      // starts from 2, the seq 1 is used as a placeholder to flag that the pool
+      // is in selfmanaged snap mode, 
       pp.add_unmanaged_snap(snapid);
       ::encode(snapid, reply_data);
       changed = true;
@@ -7585,7 +7588,7 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
   }
 
   if (changed) {
-    pp.set_snap_epoch(pending_inc.epoch);
+    pp.set_snap_epoch(pending_inc.epoch); // set snap_epoch to current epoch
     pending_inc.new_pools[m->pool] = pp;
   }
 

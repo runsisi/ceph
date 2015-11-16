@@ -1662,13 +1662,13 @@ void OSDMap::_get_temp_osds(const pg_pool_t& pool, pg_t pg,
 {
   pg = pool.raw_pg_to_pg(pg);
   map<pg_t,vector<int32_t> >::const_iterator p = pg_temp->find(pg);
-  temp_pg->clear();
-  if (p != pg_temp->end()) {
+  temp_pg->clear(); // acting set
+  if (p != pg_temp->end()) { // we have set the temp osd(s) explicitly
     for (unsigned i=0; i<p->second.size(); i++) {
       if (!exists(p->second[i]) || is_down(p->second[i])) {
-	if (pool.can_shift_osds()) {
+	if (pool.can_shift_osds()) { // replicated pool
 	  continue;
-	} else {
+	} else { // ec pool
 	  temp_pg->push_back(CRUSH_ITEM_NONE);
 	}
       } else {
@@ -1677,8 +1677,8 @@ void OSDMap::_get_temp_osds(const pg_pool_t& pool, pg_t pg,
     }
   }
   map<pg_t,int32_t>::const_iterator pp = primary_temp->find(pg);
-  *temp_primary = -1;
-  if (pp != primary_temp->end()) {
+  *temp_primary = -1; // acting primary
+  if (pp != primary_temp->end()) { // we have set the temp primary osd explicitly
     *temp_primary = pp->second;
   } else if (!temp_pg->empty()) { // apply pg_temp's primary
     for (unsigned i = 0; i < temp_pg->size(); ++i) {
@@ -1755,14 +1755,18 @@ void OSDMap::_pg_to_up_acting_osds(const pg_t& pg, vector<int> *up, int *up_prim
 
   // change the primary if the primary affinity is set
   _apply_primary_affinity(pps, *pool, &_up, &_up_primary);
-  
+
+  // get acting set and acting primary
   _get_temp_osds(*pool, pg, &_acting, &_acting_primary);
-  if (_acting.empty()) {
+  if (_acting.empty()) { // temp osd(s) not set
     _acting = _up;
-    if (_acting_primary == -1) {
+    if (_acting_primary == -1) { // temp primary osd not set
+      // use _acting_primary unless acting.empty() && acting_primary == -1
       _acting_primary = _up_primary;
     }
   }
+
+  // set out parameters
   if (up)
     up->swap(_up);
   if (up_primary)

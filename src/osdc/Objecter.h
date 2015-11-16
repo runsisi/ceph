@@ -1908,7 +1908,7 @@ private:
     last_tid(0), client_inc(-1), max_linger_id(0),
     num_unacked(0), num_uncommitted(0),
     global_op_flags(0),
-    keep_balanced_budget(false), honor_osdmap_full(true),
+    keep_balanced_budget(false), honor_osdmap_full(true), // honor_osdmap_full: only unset by MDSDaemon
     last_seen_osdmap_version(0),
     last_seen_pgmap_version(0),
     rwlock("Objecter::rwlock"),
@@ -1951,7 +1951,7 @@ private:
   void unset_balanced_budget() { keep_balanced_budget = false; }
 
   void set_honor_osdmap_full() { honor_osdmap_full = true; }
-  void unset_honor_osdmap_full() { honor_osdmap_full = false; }
+  void unset_honor_osdmap_full() { honor_osdmap_full = false; } // only unset by MDSDaemon
 
   void _scan_requests(OSDSession *s,
                      bool force_resend,

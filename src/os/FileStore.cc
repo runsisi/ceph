@@ -1925,9 +1925,12 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
 	   << ", finisher " << o->onreadable << " " << o->onreadable_sync << dendl;
 }
 
+// FileStore::OpWQ::_process_finish will call this
 void FileStore::_finish_op(OpSequencer *osr)
 {
   list<Context*> to_queue;
+
+  // get a list of flush commit waiters' callback
   Op *o = osr->dequeue(&to_queue);
   
   utime_t lat = ceph_clock_now(g_ceph_context);
@@ -1947,6 +1950,8 @@ void FileStore::_finish_op(OpSequencer *osr)
   if (o->onreadable) {
     op_finisher.queue(o->onreadable);
   }
+
+  // queue flush commit waiters' callback
   if (!to_queue.empty()) {
     op_finisher.queue(to_queue);
   }
@@ -2158,6 +2163,8 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
     dout(10) << " queueing ondisk " << ondisk << dendl;
     ondisk_finisher.queue(ondisk); // queue original callback
   }
+
+  // queue flush commit waiters' callback
   if (!to_queue.empty()) {
     ondisk_finisher.queue(to_queue); // flush commit callbacks
   }

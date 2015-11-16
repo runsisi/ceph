@@ -255,9 +255,9 @@ OSDService::OSDService(OSD *osd) :
 		  cct->_conf->osd_min_recovery_priority),
   pg_temp_lock("OSDService::pg_temp_lock"),
   map_cache_lock("OSDService::map_lock"),
-  map_cache(cct, cct->_conf->osd_map_cache_size),
-  map_bl_cache(cct->_conf->osd_map_cache_size),
-  map_bl_inc_cache(cct->_conf->osd_map_cache_size),
+  map_cache(cct, cct->_conf->osd_map_cache_size), // default is 200
+  map_bl_cache(cct->_conf->osd_map_cache_size), // default is 200
+  map_bl_inc_cache(cct->_conf->osd_map_cache_size), // default is 200
   in_progress_split_lock("OSDService::in_progress_split_lock"),
   stat_lock("OSD::stat_lock"),
   full_status_lock("OSDService::full_status_lock"),
@@ -6784,15 +6784,17 @@ bool OSD::advance_pg(
   set<boost::intrusive_ptr<PG> > *new_pgs)
 {
   assert(pg->is_locked());
-  epoch_t next_epoch = pg->get_osdmap()->get_epoch() + 1;
+  epoch_t next_epoch = pg->get_osdmap()->get_epoch() + 1; // next osdmap epoch we are to consume
   OSDMapRef lastmap = pg->get_osdmap();
 
   if (lastmap->get_epoch() == osd_epoch)
     return true;
   assert(lastmap->get_epoch() < osd_epoch);
 
-  epoch_t min_epoch = service.get_min_pg_epoch();
+  epoch_t min_epoch = service.get_min_pg_epoch(); // get the slowest pg epoch
   epoch_t max;
+  // limit the max osdmap epoch we are to consume, to bound the range of PG 
+  // epochs between the slowest and fastest pg (epoch-wise)
   if (min_epoch) {
     max = min_epoch + g_conf->osd_map_max_advance; // default is 150
   } else {
@@ -6801,7 +6803,7 @@ bool OSD::advance_pg(
 
   for (;
        next_epoch <= osd_epoch && next_epoch <= max;
-       ++next_epoch) {
+       ++next_epoch) { // iterate each epoch
     OSDMapRef nextmap = service.try_get_map(next_epoch);
     if (!nextmap) {
       dout(20) << __func__ << " missing map " << next_epoch << dendl;
@@ -6813,10 +6815,13 @@ bool OSD::advance_pg(
 
     vector<int> newup, newacting;
     int up_primary, acting_primary;
+    // get up, up_primary, acting, acting primary of next map
     nextmap->pg_to_up_acting_osds(
       pg->info.pgid.pgid,
       &newup, &up_primary,
       &newacting, &acting_primary);
+
+    // 
     pg->handle_advance_map(
       nextmap, lastmap, newup, up_primary,
       newacting, acting_primary, rctx);
@@ -6841,14 +6846,23 @@ bool OSD::advance_pg(
     lastmap = nextmap;
     handle.reset_tp_timeout();
   }
+
+  // update the epoch of the pg, and update the epoch set (OSDService::pg_epochs)
   service.pg_update_epoch(pg->info.pgid, lastmap->get_epoch());
+
+  // 
   pg->handle_activate_map(rctx);
+
   if (next_epoch <= osd_epoch) {
+    // not all map consumed yet, wait the slow pg catchs up, the caller will
+    // requeue the pg
     dout(10) << __func__ << " advanced to max " << max
 	     << " past min epoch " << min_epoch
 	     << " ... will requeue " << *pg << dendl;
-    return false;
+    return false; 
   }
+
+  // ok, consumed all map
   return true;
 }
 
@@ -8684,8 +8698,11 @@ void OSD::process_peering_events(
       continue;
     }
 
-    // 
+    // iterate each epoch of the osdmap and construct an AvdMap event for
+    // each epoch to drive the pg state machine
     if (!advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs)) {
+      // there are still maps we have not consumed yet, requeue the pg to 
+      // consume the remaining maps later
       // we need to requeue the PG explicitly since we didn't actually
       // handle an event
       peering_wq.queue(pg); // requeue this pg on back of peering queue
@@ -8780,9 +8797,9 @@ void OSD::handle_conf_change(const struct md_config_t *conf,
     set_disk_tp_priority();
   }
   if (changed.count("osd_map_cache_size")) {
-    service.map_cache.set_size(cct->_conf->osd_map_cache_size);
-    service.map_bl_cache.set_size(cct->_conf->osd_map_cache_size);
-    service.map_bl_inc_cache.set_size(cct->_conf->osd_map_cache_size);
+    service.map_cache.set_size(cct->_conf->osd_map_cache_size); // default is 200
+    service.map_bl_cache.set_size(cct->_conf->osd_map_cache_size); // default is 200
+    service.map_bl_inc_cache.set_size(cct->_conf->osd_map_cache_size); // default is 200
   }
   if (changed.count("clog_to_monitors") ||
       changed.count("clog_to_syslog") ||
@@ -8809,6 +8826,11 @@ void OSD::update_log_config()
 
 void OSD::check_config()
 {
+  // osd_map_cache_size: default is 200
+  // osd_map_max_advance: default is 150
+  // osd_pg_epoch_persisted_max_stale: default is 150
+  // the last two must < cache_size
+
   // some sanity checks
   if (g_conf->osd_map_cache_size <= g_conf->osd_map_max_advance + 2) {
     clog->warn() << "osd_map_cache_size (" << g_conf->osd_map_cache_size << ")"

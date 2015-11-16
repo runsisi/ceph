@@ -155,10 +155,12 @@ void PGPool::update(OSDMapRef map)
   auid = pi->auid;
   name = map->get_pool_name(id);
   if (pi->get_snap_epoch() == map->get_epoch()) {
+    // snap(either pool snap or selfmanaged snap) created/deleted in this epoch,
+    // we note down the newly deleted snap(s) here
     pi->build_removed_snaps(newly_removed_snaps);
     newly_removed_snaps.subtract(cached_removed_snaps);
     cached_removed_snaps.union_of(newly_removed_snaps);
-    snapc = pi->get_snap_context();
+    snapc = pi->get_snap_context(); // get default pool snap context
   } else {
     newly_removed_snaps.clear();
   }
@@ -4625,13 +4627,17 @@ void PG::start_flush(ObjectStore::Transaction *t,
 void PG::reset_interval_flush()
 {
   dout(10) << "Clearing blocked outgoing recovery messages" << dendl;
+
+  // invalidate RecoveryState::messages_pending_flush
   recovery_state.clear_blocked_outgoing();
 
-  // the callback will queue a peering event(IntervalFlush)
+  // when called, the callback queues a peering event(IntervalFlush) for this pg
   Context *c = new QueuePeeringEvt<IntervalFlush>(
     this, get_osdmap()->get_epoch(), IntervalFlush());
   if (!osr->flush_commit(c)) {
+    // filestore is not idle, i.e. there are inprogress ops, queue the callback
     dout(10) << "Beginning to block outgoing recovery messages" << dendl;
+
     recovery_state.begin_block_outgoing();
   } else {
     dout(10) << "Not blocking outgoing recovery messages" << dendl;
@@ -5294,11 +5300,23 @@ void PG::handle_advance_map(
 	   << newup << "/" << newacting
 	   << " -- " << up_primary << "/" << acting_primary
 	   << dendl;
+
+  // update PG::osdmap_ref to next map, so above assertions are always assured
   update_osdmap_ref(osdmap);
+
+  // note down the newly removed snap(s)
   pool.update(osdmap);
+
+  // handle_event is encapsulated as follows: 
+  // start_handle(rctx);
+  // machine.process_event(evt);
+  // end_handle();
+  
   AdvMap evt(
     osdmap, lastmap, newup, up_primary,
     newacting, acting_primary);
+
+  // handle the AdvMap event
   recovery_state.handle_event(evt, rctx);
   if (pool.info.last_change == osdmap_ref->get_epoch())
     on_pool_change();
@@ -5308,9 +5326,12 @@ void PG::handle_activate_map(RecoveryCtx *rctx)
 {
   dout(10) << "handle_activate_map " << dendl;
   ActMap evt;
+
   recovery_state.handle_event(evt, rctx);
+
+  // check if we should persist the current epoch and info of the pg
   if (osdmap_ref->get_epoch() - last_persisted_osdmap_ref->get_epoch() >
-    cct->_conf->osd_pg_epoch_persisted_max_stale) {
+    cct->_conf->osd_pg_epoch_persisted_max_stale) { // default is 150
     dout(20) << __func__ << ": Dirtying info: last_persisted is "
 	     << last_persisted_osdmap_ref->get_epoch()
 	     << " while current is " << osdmap_ref->get_epoch() << dendl;
@@ -5532,7 +5553,7 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
 	advmap.newup,
 	advmap.newacting,
 	advmap.lastmap,
-	advmap.osdmap)) {
+	advmap.osdmap)) { // we should restart peering
     dout(10) << "should restart peering, calling start_peering_interval again"
 	     << dendl;
     pg->start_peering_interval(
@@ -7693,11 +7714,15 @@ bool PG::PriorSet::affected_by_map(const OSDMapRef osdmap, const PG *debug_pg) c
 }
 
 void PG::RecoveryState::start_handle(RecoveryCtx *new_ctx) {
+  // RecoveryState::end_handle will always invalidates these two variables
   assert(!rctx);
   assert(!orig_ctx);
-  orig_ctx = new_ctx;
+
+  orig_ctx = new_ctx; // always note down the new RecoveryCtx
+
   if (new_ctx) {
     if (messages_pending_flush) {
+      // construct a RecoveryCtx from messages_pending_flush and new_ctx
       rctx = RecoveryCtx(*messages_pending_flush, *new_ctx);
     } else {
       rctx = *new_ctx;
@@ -7706,6 +7731,7 @@ void PG::RecoveryState::start_handle(RecoveryCtx *new_ctx) {
   }
 }
 
+// PG::reset_interval_flush will call this
 void PG::RecoveryState::begin_block_outgoing() {
   assert(!messages_pending_flush);
   assert(orig_ctx);
@@ -7714,12 +7740,17 @@ void PG::RecoveryState::begin_block_outgoing() {
   rctx = RecoveryCtx(*messages_pending_flush, *orig_ctx);
 }
 
+// PG::reset_interval_flush will call this
 void PG::RecoveryState::clear_blocked_outgoing() {
   assert(orig_ctx);
   assert(rctx);
+
+  // invalidate messages_pending_flush
   messages_pending_flush = boost::optional<BufferedRecoveryMessages>();
 }
 
+// RecoveryState::Started and RecoveryState::Reset react to IntervalFlush
+// event will call this
 void PG::RecoveryState::end_block_outgoing() {
   assert(messages_pending_flush);
   assert(orig_ctx);
@@ -7737,6 +7768,8 @@ void PG::RecoveryState::end_handle() {
   }
 
   machine.event_count++;
+
+  // invalidate these two variables, start_handle asserts they are invalid
   rctx = boost::optional<RecoveryCtx>();
   orig_ctx = NULL;
 }
