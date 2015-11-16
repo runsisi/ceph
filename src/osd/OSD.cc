@@ -6801,6 +6801,7 @@ bool OSD::advance_pg(
     max = next_epoch + g_conf->osd_map_max_advance;
   }
 
+  // iterate each osdmap for the same pg
   for (;
        next_epoch <= osd_epoch && next_epoch <= max;
        ++next_epoch) { // iterate each epoch
@@ -6821,7 +6822,7 @@ bool OSD::advance_pg(
       &newup, &up_primary,
       &newacting, &acting_primary);
 
-    // 
+    // construct an AdvMap event to drive the pg recovery state machine
     pg->handle_advance_map(
       nextmap, lastmap, newup, up_primary,
       newacting, acting_primary, rctx);
@@ -7455,9 +7456,9 @@ void OSD::dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap,
 {
   if (service.get_osdmap()->is_up(whoami) &&
       is_active()) {
-    do_notifies(*ctx.notify_list, curmap);
-    do_queries(*ctx.query_map, curmap);
-    do_infos(*ctx.info_map, curmap);
+    do_notifies(*ctx.notify_list, curmap); // send MOSDPGNotify
+    do_queries(*ctx.query_map, curmap); // send MOSDPGQuery
+    do_infos(*ctx.info_map, curmap); // send MOSDPGInfo
   }
   delete ctx.notify_list;
   delete ctx.query_map;
@@ -8699,7 +8700,7 @@ void OSD::process_peering_events(
     }
 
     // iterate each epoch of the osdmap and construct an AvdMap event for
-    // each epoch to drive the pg state machine
+    // each epoch to drive the pg recovery state machine
     if (!advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs)) {
       // there are still maps we have not consumed yet, requeue the pg to 
       // consume the remaining maps later
@@ -8711,7 +8712,8 @@ void OSD::process_peering_events(
       PG::CephPeeringEvtRef evt = pg->peering_queue.front();
       pg->peering_queue.pop_front();
 
-      // ok, do the real thing, handle the peering event
+      // for NullEvt(OSD::consume_map queue this to drive each pg on this osd
+      // to update its map), do nothing
       pg->handle_peering_event(evt, &rctx);
     }
 
@@ -8730,7 +8732,7 @@ void OSD::process_peering_events(
       split_pgs.clear();
     }
 
-    // 
+    // if need to do transaction for this pg, then queue the transaction to apply
     dispatch_context_transaction(rctx, pg, &handle);
     pg->unlock();
     
@@ -8741,7 +8743,7 @@ void OSD::process_peering_events(
     // tell mon that i am still alive through same_interval_since
     queue_want_up_thru(same_interval_since);
 
-  // 
+  // send message(s) and destory rctx
   dispatch_context(rctx, 0, curmap, &handle);
 
   service.send_pg_temp();

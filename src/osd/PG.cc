@@ -4593,7 +4593,20 @@ void PG::set_last_peering_reset()
 {
   dout(20) << "set_last_peering_reset " << get_osdmap()->get_epoch() << dendl;
   if (last_peering_reset != get_osdmap()->get_epoch()) {
+    // epoch below this is obsolete, old peering msg/event which carries with
+    // an epoch like this can be safely discarded
     last_peering_reset = get_osdmap()->get_epoch();
+
+    // restart buffering outgoing recovery messages, any buffered messages discarded
+    // queue a new QueuePeeringEvt<IntervalFlush> callback if needed, use 
+    // IntervalFlush to unblock recovery messages buffering
+    // if currently there are ObjectStore Op(s) inprogress, queue a callback
+    // of type QueuePeeringEvt<IntervalFlush> on OpSequencer::flush_commit_waiters,
+    // and reset RecoveryState::rctx to buffer all outgoing recovery messages in 
+    // RecoveryState::messages_pending_flush
+    // after current busy Op(s) committed, the callback will queue a peering
+    // event of type IntervalFlush for this pg, only after the IntervalFlush 
+    // event is handled will unblock the buffering
     reset_interval_flush();
   }
 }
@@ -4628,16 +4641,24 @@ void PG::reset_interval_flush()
 {
   dout(10) << "Clearing blocked outgoing recovery messages" << dendl;
 
-  // invalidate RecoveryState::messages_pending_flush
+  // restart outgoing recovery messages buffering, discard previous buffered 
+  // messages(RecoveryState::messages_pending_flush)
   recovery_state.clear_blocked_outgoing();
-
-  // when called, the callback queues a peering event(IntervalFlush) for this pg
+  
+  // when called, the callback queues a peering event(IntervalFlush) for this pg,
+  // the previous queued QueuePeeringEvt callback will be called but useless because
+  // we update the last_peering_reset in set_last_peering_reset, so when the
+  // callback try to queue an IntervalFlush event, it will find that the event
+  // is obsolete, thus will discard it silently
   Context *c = new QueuePeeringEvt<IntervalFlush>(
     this, get_osdmap()->get_epoch(), IntervalFlush());
   if (!osr->flush_commit(c)) {
     // filestore is not idle, i.e. there are inprogress ops, queue the callback
     dout(10) << "Beginning to block outgoing recovery messages" << dendl;
 
+    // reset RecoveryState::rctx, all outgoing recovery messages afterward 
+    // buffers in rctx, only after the IntervalFlush event is processed will
+    // unblock this buffering
     recovery_state.begin_block_outgoing();
   } else {
     dout(10) << "Not blocking outgoing recovery messages" << dendl;
@@ -4652,8 +4673,13 @@ void PG::start_peering_interval(
   const vector<int>& newacting, int new_acting_primary,
   ObjectStore::Transaction *t)
 {
-  const OSDMapRef osdmap = get_osdmap();
+  const OSDMapRef osdmap = get_osdmap(); // new map
 
+  // set PG::last_peering_reset to note that we started a new peering
+  // at this epoch, which can be used to block old messages/events,
+  // restart outgoing recovery messages buffering,
+  // queue a new QueuePeeringEvt<IntervalFlush> callback if needed, use 
+  // IntervalFlush to unblock recovery messages buffering
   set_last_peering_reset();
 
   vector<int> oldacting, oldup;
@@ -5318,6 +5344,7 @@ void PG::handle_advance_map(
 
   // handle the AdvMap event
   recovery_state.handle_event(evt, rctx);
+  
   if (pool.info.last_change == osdmap_ref->get_epoch())
     on_pool_change();
 }
@@ -5532,6 +5559,8 @@ boost::statechart::result
 PG::RecoveryState::Reset::react(const IntervalFlush&)
 {
   dout(10) << "Ending blocked outgoing recovery messages" << dendl;
+
+  // populate current rctx with the buffered messages(coveryState::messages_pending_flush)
   context< RecoveryMachine >().pg->recovery_state.end_block_outgoing();
   return discard_event();
 }
@@ -5553,9 +5582,11 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
 	advmap.newup,
 	advmap.newacting,
 	advmap.lastmap,
-	advmap.osdmap)) { // we should restart peering
+	advmap.osdmap)) { // pg mapping changed in new map, we should restart peering
     dout(10) << "should restart peering, calling start_peering_interval again"
 	     << dendl;
+
+    // start new peering interval, may block outgoing recovery messages
     pg->start_peering_interval(
       advmap.lastmap,
       advmap.newup, advmap.up_primary,
