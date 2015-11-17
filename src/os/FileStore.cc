@@ -1562,6 +1562,8 @@ int FileStore::mount()
       ret = -EINVAL;
       goto close_current_fd;
     }
+
+    // omap is implemented as DBObjectMap
     object_map.reset(dbomap);
   }
 
@@ -4926,7 +4928,7 @@ ObjectMap::ObjectMapIterator FileStore::get_omap_iterator(coll_t c,
     RWLock::RLocker l((index.index)->access_lock);
 
     // LFNIndex::lookup -> HashIndex::_lookup
-    r = lfn_find(hoid, index);
+    r = lfn_find(hoid, index); // find if the hoid exists
     if (r < 0) {
       dout(10) << __func__ << " " << c << "/" << hoid << " = 0 "
 	       << "(lfn_find failed with " << cpp_strerror(r) << ")" << dendl;

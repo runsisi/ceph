@@ -877,7 +877,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 
   // legacy?
   struct stat st;
-  int r = store->stat(log_coll, log_oid, &st); // pg meta object
+  int r = store->stat(log_coll, log_oid, &st); // stat pg meta object
   assert(r == 0);
   assert(st.st_size == 0); // pg meta object has no data, only omap
 
@@ -885,11 +885,11 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
   // will get overridden below if it had been recorded
   log.can_rollback_to = info.last_update;
   log.rollback_info_trimmed_to = eversion_t();
-  ObjectMap::ObjectMapIterator p = store->get_omap_iterator(log_coll, log_oid);
 
-  // 
+  // get an iterator to iterate the omap of the pg meta object
+  ObjectMap::ObjectMapIterator p = store->get_omap_iterator(log_coll, log_oid);
   if (p) {
-    for (p->seek_to_first(); p->valid() ; p->next()) {
+    for (p->seek_to_first(); p->valid() ; p->next()) { // iterate each omap
       // non-log pgmeta_oid keys are prefixed with _; skip those
       if (p->key()[0] == '_')
 	continue;

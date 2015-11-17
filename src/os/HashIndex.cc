@@ -392,6 +392,7 @@ int HashIndex::_lookup(const ghobject_t &oid,
     path->push_back(*(next++)); // add a child dir
   }
 
+  // get an escaped oid name, may be in a short form if the name is too long,
   // now "path" may be [D, C, B]
   return get_mangled_name(*path, oid, mangled_name, exists_out);
 }
@@ -806,9 +807,9 @@ void HashIndex::get_path_components(const ghobject_t &oid,
   // http://www.cplusplus.com/reference/cstdio/printf/
   // .* 
   // The precision is not specified in the format string, but as an additional 
-  // integer value argument preceding the argument that has to be formatted.
-  // For integer specifiers (d, i, o, u, x, X): precision specifies the 
-  // minimum number of digits to be written.
+  // integer value argument (MAX_HASH_LEVEL) preceding the argument that has 
+  // to be formatted. For integer specifiers (d, i, o, u, x, X): precision 
+  // specifies the minimum number of digits to be written.
 
   // every hobject has a hash value associated with it, which calculated by 
   // OSDMap::object_locator_to_pg, nibblewise_key is calculated by reverse

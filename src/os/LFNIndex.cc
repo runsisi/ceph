@@ -44,6 +44,7 @@ const string LFNIndex::LFN_ATTR = "user.cephos.lfn";
 const string LFNIndex::PHASH_ATTR_PREFIX = "user.cephos.phash.";
 const string LFNIndex::SUBDIR_PREFIX = "DIR_";
 const string LFNIndex::FILENAME_COOKIE = "long";
+// FILENAME_PREFIX_LEN = 255 - 20 - 4 - 4 = 227
 const int LFNIndex::FILENAME_PREFIX_LEN =  FILENAME_SHORT_LEN - FILENAME_HASH_LEN - 
 								FILENAME_COOKIE.size() - 
 								FILENAME_EXTRA;
@@ -120,13 +121,19 @@ int LFNIndex::lookup(const ghobject_t &oid,
   WRAP_RETRY( // ok, wrap to execute following code
   vector<string> path;
   string short_name;
+
+  // get a vector of sub-dir(s) (without DIR_ prefix) that contains the 
+  // oid, e.g. [D, C, B], and get an escaped oid name which may be in a
+  // short form if the long form is too long
   r = _lookup(oid, &path, &short_name, exist);
   if (r < 0)
     goto out;
+
+  // e.g. /xxx/current/5.4_head/DIR_B/DIR_8/rbd\udata.1f61d2ae8944a.0000000000000000__head_206BD98B__5
   string full_path = get_full_path(path, short_name);
   struct stat buf;
   maybe_inject_failure();
-  r = ::stat(full_path.c_str(), &buf);
+  r = ::stat(full_path.c_str(), &buf); // use stat to test if the oid exists
   maybe_inject_failure();
   if (r < 0) {
     if (errno == ENOENT) {
@@ -320,6 +327,8 @@ int LFNIndex::get_mangled_name(const vector<string> &from,
 			       const ghobject_t &oid,
 			       string *mangled_name, int *exists)
 {
+  // get an escaped oid name, if the escaped name is too long, then get a
+  // short name of the long name
   return lfn_get_name(from, oid, mangled_name, 0, exists);
 }
 
@@ -501,7 +510,7 @@ int LFNIndex::remove_path(const vector<string> &to_remove)
 
 int LFNIndex::path_exists(const vector<string> &to_check, int *exists)
 {
-  string full_path = get_full_path_subdir(to_check);
+  string full_path = get_full_path_subdir(to_check); // get full path of the dir
   struct stat buf;
   if (::stat(full_path.c_str(), &buf)) {
     int r = -errno;
@@ -773,7 +782,8 @@ int LFNIndex::lfn_get_name(const vector<string> &path,
   string full_name = lfn_generate_object_name(oid);
   int r;
 
-  if (!lfn_must_hash(full_name)) { // lenght of escaped oid name less than 255
+  if (!lfn_must_hash(full_name)) {
+    // length of the escaped oid name less than FILENAME_SHORT_LEN (255)
     if (mangled_name)
       *mangled_name = full_name;
     if (out_path)
@@ -795,20 +805,27 @@ int LFNIndex::lfn_get_name(const vector<string> &path,
     return 0;
   }
 
-  // ok, the escaped oid name is too long
+  // ok, the escaped oid name is too long, we need to get a short name
 
   int i = 0;
   string candidate;
   string candidate_path;
   char buf[FILENAME_MAX_LEN + 1]; // 4096 + 1
+
+  // to get a short name of the long name, and to avoid the conflicts
   for ( ; ; ++i) {
+    // construct a short name of the escaped oid name
     candidate = lfn_get_short_name(oid, i);
-    candidate_path = get_full_path(path, candidate);
-    r = chain_getxattr(candidate_path.c_str(), get_lfn_attr().c_str(),
+    candidate_path = get_full_path(path, candidate); // concat the full path name of the short name
+
+    // to get attr "user.cephos.lfn3" of the oid with the short name
+    r = chain_getxattr(candidate_path.c_str(), get_lfn_attr().c_str(), // "user.cephos.lfn3"
 		       buf, sizeof(buf));
     if (r < 0) {
       if (errno != ENODATA && errno != ENOENT)
 	return -errno;
+
+      // oid with the short name exists, but no attr of "user.cephos.lfn3"
       if (errno == ENODATA) {
 	// Left over from incomplete transaction, it'll be replayed
 	maybe_inject_failure();
@@ -817,6 +834,8 @@ int LFNIndex::lfn_get_name(const vector<string> &path,
 	if (r < 0)
 	  return -errno;
       }
+
+      // ENOENT, oid with the short name does not exist
       if (mangled_name)
 	*mangled_name = candidate;
       if (out_path)
@@ -826,8 +845,11 @@ int LFNIndex::lfn_get_name(const vector<string> &path,
       return 0;
     }
     assert(r > 0);
+
+    // oid with the short name exists, and got attr of "user.cephos.lfn3"
+    
     buf[MIN((int)sizeof(buf) - 1, r)] = '\0';
-    if (!strcmp(buf, full_name.c_str())) {
+    if (!strcmp(buf, full_name.c_str())) { // the attr of the oid must be the long name
       if (mangled_name)
 	*mangled_name = candidate;
       if (out_path)
@@ -836,15 +858,19 @@ int LFNIndex::lfn_get_name(const vector<string> &path,
 	*exists = 1;
       return 0;
     }
+
+    // get another attr of "user.cephos.lfn3-alt"
     r = chain_getxattr(candidate_path.c_str(), get_alt_lfn_attr().c_str(),
 		       buf, sizeof(buf));
     if (r > 0) {
+      // alt attr exists, so the oid exists, check if the long name is the 
+      // same as we expected
       // only consider alt name if nlink > 1
       struct stat st;
       int rc = ::stat(candidate_path.c_str(), &st);
       if (rc < 0)
 	return -errno;
-      if (st.st_nlink <= 1) {
+      if (st.st_nlink <= 1) { // The number of hard links to the file
 	// left over from incomplete unlink, remove
 	maybe_inject_failure();
 	dout(20) << __func__ << " found extra alt attr for " << candidate_path
@@ -856,8 +882,10 @@ int LFNIndex::lfn_get_name(const vector<string> &path,
 	  return rc;
 	continue;
       }
+
+      // compare with the long name
       buf[MIN((int)sizeof(buf) - 1, r)] = '\0';
-      if (!strcmp(buf, full_name.c_str())) {
+      if (!strcmp(buf, full_name.c_str())) { // the alt attr of the oid must be the long name
 	dout(20) << __func__ << " used alt attr for " << full_name << dendl;
 	if (mangled_name)
 	  *mangled_name = candidate;
@@ -868,6 +896,10 @@ int LFNIndex::lfn_get_name(const vector<string> &path,
 	return 0;
       }
     }
+
+    // oid with the short name exists, but its attr(s) tell us that it does
+    // not has an attr whose content is the long file name, so the short name
+    // is conflit with others, try to construct another short name, continue
   }
   assert(0); // Unreachable
   return 0;
@@ -1299,16 +1331,17 @@ static inline void buf_to_hex(const unsigned char *buf, int len, char *str)
 
 int LFNIndex::hash_filename(const char *filename, char *hash, int buf_len)
 {
-  if (buf_len < FILENAME_HASH_LEN + 1)
+  if (buf_len < FILENAME_HASH_LEN + 1) // 20 + 1
     return -EINVAL;
 
-  char buf[FILENAME_LFN_DIGEST_SIZE];
+  char buf[FILENAME_LFN_DIGEST_SIZE]; // 20
   char hex[FILENAME_LFN_DIGEST_SIZE * 2];
 
   SHA1 h;
   h.Update((const byte *)filename, strlen(filename));
   h.Final((byte *)buf);
 
+  // buffer to hex string, every byte to two char(s)
   buf_to_hex((byte *)buf, (FILENAME_HASH_LEN + 1) / 2, hex);
   strncpy(hash, hex, FILENAME_HASH_LEN);
   hash[FILENAME_HASH_LEN] = '\0';
@@ -1317,32 +1350,40 @@ int LFNIndex::hash_filename(const char *filename, char *hash, int buf_len)
 
 void LFNIndex::build_filename(const char *old_filename, int i, char *filename, int len)
 {
-  char hash[FILENAME_HASH_LEN + 1];
+  char hash[FILENAME_HASH_LEN + 1]; // 20 + 1
 
-  assert(len >= FILENAME_SHORT_LEN + 4);
+  assert(len >= FILENAME_SHORT_LEN + 4); // 255 + 4
 
-  strncpy(filename, old_filename, FILENAME_PREFIX_LEN);
+  strncpy(filename, old_filename, FILENAME_PREFIX_LEN); // 255 - 20 - 4 - 4 = 227
   filename[FILENAME_PREFIX_LEN] = '\0';
   if ((int)strlen(filename) < FILENAME_PREFIX_LEN)
     return;
   if (old_filename[FILENAME_PREFIX_LEN] == '\0')
     return;
 
+  // ok, length of old_filename >= FILENAME_PREFIX_LEN
+
+  // get a SHA1 hash of the filename, only FILENAME_HASH_LEN (20) hash char(s) included
   hash_filename(old_filename, hash, sizeof(hash));
-  int ofs = FILENAME_PREFIX_LEN;
+  int ofs = FILENAME_PREFIX_LEN; // 255 - 20 - 4 - 4 = 227
   while (1) {
     int suffix_len = sprintf(filename + ofs, "_%s_%d_%s", hash, i, FILENAME_COOKIE.c_str());
     if (ofs + suffix_len <= FILENAME_SHORT_LEN || !ofs)
       break;
+    // truncate prefix (old_filename) to fit the required length of short filename
     ofs--;
   }
 }
 
 string LFNIndex::lfn_get_short_name(const ghobject_t &oid, int i)
 {
-  string long_name = lfn_generate_object_name(oid);
+  string long_name = lfn_generate_object_name(oid); // get escaped oid name
   assert(lfn_must_hash(long_name));
-  char buf[FILENAME_SHORT_LEN + 4];
+  char buf[FILENAME_SHORT_LEN + 4]; // 255 + 4
+
+  // truncate the long filename and concat with the SHA1 hash of the long
+  // filename, e.g.
+  // xxx...xxx => xxx...x_0123456789abcdef67890_0_long
   build_filename(long_name.c_str(), i, buf, sizeof(buf));
   return string(buf);
 }

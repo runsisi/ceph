@@ -76,25 +76,25 @@
 
 class LFNIndex : public CollectionIndex {
   /// Hash digest output size.
-  static const int FILENAME_LFN_DIGEST_SIZE = CEPH_CRYPTO_SHA1_DIGESTSIZE;
+  static const int FILENAME_LFN_DIGEST_SIZE = CEPH_CRYPTO_SHA1_DIGESTSIZE; // 20
   /// Length of filename hash.
-  static const int FILENAME_HASH_LEN = FILENAME_LFN_DIGEST_SIZE;
+  static const int FILENAME_HASH_LEN = FILENAME_LFN_DIGEST_SIZE; // 20
   /// Max filename size.
   static const int FILENAME_MAX_LEN = 4096;
   /// Length of hashed filename.
   static const int FILENAME_SHORT_LEN = 255;
   /// Length of hashed filename prefix.
-  static const int FILENAME_PREFIX_LEN;
+  static const int FILENAME_PREFIX_LEN; // 255 - 20 - 4 - 4 = 227
   /// Length of hashed filename cookie.
   static const int FILENAME_EXTRA = 4;
   /// Lfn cookie value.
-  static const string FILENAME_COOKIE;
+  static const string FILENAME_COOKIE; // "long"
   /// Name of LFN attribute for storing full name.
-  static const string LFN_ATTR;
+  static const string LFN_ATTR; // "user.cephos.lfn"
   /// Prefix for subdir index attributes.
-  static const string PHASH_ATTR_PREFIX;
+  static const string PHASH_ATTR_PREFIX; // "user.cephos.phash."
   /// Prefix for index subdirectories.
-  static const string SUBDIR_PREFIX;
+  static const string SUBDIR_PREFIX; // "DIR_"
 
   /// Path to Index base.
   const string base_path;
@@ -140,12 +140,12 @@ public:
       last_failure(0), current_failure(0),
       collection(collection) {
     if (index_version == HASH_INDEX_TAG) {
-      lfn_attribute = LFN_ATTR;
+      lfn_attribute = LFN_ATTR; // "user.cephos.lfn"
     } else {
       char buf[100];
-      snprintf(buf, sizeof(buf), "%d", index_version);
-      lfn_attribute = LFN_ATTR + string(buf);
-      lfn_alt_attribute = LFN_ATTR + string(buf) + "-alt";
+      snprintf(buf, sizeof(buf), "%d", index_version); // HOBJECT_WITH_POOL (3)
+      lfn_attribute = LFN_ATTR + string(buf); // "user.cephos.lfn3"
+      lfn_alt_attribute = LFN_ATTR + string(buf) + "-alt"; // "user.cephos.lfn3-alt"
    }
   }
 
@@ -411,10 +411,10 @@ private:
    * Gets the version specific lfn attribute tag
    */
   const string &get_lfn_attr() const {
-    return lfn_attribute;
+    return lfn_attribute; // "user.cephos.lfn3"
   }
   const string &get_alt_lfn_attr() const {
-    return lfn_alt_attribute;
+    return lfn_alt_attribute; // "user.cephos.lfn3-alt"
   }
 
   /**
