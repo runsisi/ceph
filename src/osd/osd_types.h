@@ -528,7 +528,7 @@ class coll_t {
 public:
   coll_t() : type(TYPE_META), removal_seq(0)
   {
-    calc_str();
+    calc_str(); // "meta"
   }
 
   coll_t(const coll_t& other)
@@ -623,7 +623,7 @@ public:
   // which we presume is a pg collection.
   coll_t get_temp() const {
     assert(type == TYPE_PG);
-    return coll_t(TYPE_PG_TEMP, pgid, 0);
+    return coll_t(TYPE_PG_TEMP, pgid, 0); // e.g. 1.6e_head => 1.6e_TEMP
   }
 
   void dump(Formatter *f) const;

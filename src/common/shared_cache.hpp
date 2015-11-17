@@ -207,7 +207,7 @@ public:
 	if (weak_refs.empty())
 	  break;
 	typename map<K, pair<WeakVPtr, V*>, C>::iterator i =
-	  weak_refs.lower_bound(key);
+	  weak_refs.lower_bound(key); // weak_refs is type of map<K, pair<WeakVPtr, V*>, C>
 	if (i == weak_refs.end())
 	  --i;
 	val = i->second.first.lock();

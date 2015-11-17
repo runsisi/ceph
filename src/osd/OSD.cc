@@ -388,7 +388,7 @@ void OSDService::init_splits_between(spg_t pgid,
 			nextmap->get_pg_num(i->pool()),
 			&split_pgs)) {
           // update child -> parent (pending_splits) and
-          // parent -> [children] (rev_pending_splits) maps
+          // parent -> [children] (rev_pending_splits) mappings
 	  start_split(*i, split_pgs);
           // children may split at next osdmap epoch
 	  even_newer_pgs.insert(split_pgs.begin(), split_pgs.end());
@@ -1139,13 +1139,16 @@ void OSDService::send_incremental_map(epoch_t since, Connection *con,
 
 bool OSDService::_get_map_bl(epoch_t e, bufferlist& bl)
 {
-  bool found = map_bl_cache.lookup(e, &bl);
+  bool found = map_bl_cache.lookup(e, &bl); // first lookup in SharedLRU map_bl cache
   if (found)
     return true;
-  found = store->read(coll_t::meta(),
-		      OSD::get_osdmap_pobject_name(e), 0, 0, bl) >= 0;
+
+  // read osdmap content from ObjectStore, e.g. 
+  // meta/DIR_4/DIR_F/DIR_8/osdmap.502356__0_C598A8F4__none
+  found = store->read(coll_t::meta(), // TYPE_META, "meta"
+		      OSD::get_osdmap_pobject_name(e), 0, 0, bl) >= 0; // "osdmap.123"
   if (found)
-    _add_map_bl(e, bl);
+    _add_map_bl(e, bl); // add this osdmap bufferlist to SharedLRU map_bl cachess
   return found;
 }
 
@@ -1193,20 +1196,27 @@ void OSDService::clear_map_bl_cache_pins(epoch_t e)
   map_bl_cache.clear_pinned(e);
 }
 
+/*
+ * std::map::lower_bound(k), k <= ?, first item whose key >= k
+ * std::map::upper_bound(k), k < ?, first item whose key > k
+ */
 OSDMapRef OSDService::_add_map(OSDMap *o)
 {
   epoch_t e = o->get_epoch();
 
-  if (cct->_conf->osd_map_dedup) {
+  if (cct->_conf->osd_map_dedup) { // default is true
     // Dedup against an existing map at a nearby epoch
-    OSDMapRef for_dedup = map_cache.lower_bound(e);
+    OSDMapRef for_dedup = map_cache.lower_bound(e); // get a map whose epoch <= e 
     if (for_dedup) {
+      // try to re-use/reference addrs in oldmap from newmap
       OSDMap::dedup(for_dedup.get(), o);
     }
   }
   bool existed;
+
+  // add map to the cache
   OSDMapRef l = map_cache.add(e, o, &existed);
-  if (existed) {
+  if (existed) { // the map was already in the cache
     delete o;
   }
   return l;
@@ -1215,16 +1225,20 @@ OSDMapRef OSDService::_add_map(OSDMap *o)
 OSDMapRef OSDService::try_get_map(epoch_t epoch)
 {
   Mutex::Locker l(map_cache_lock);
-  OSDMapRef retval = map_cache.lookup(epoch);
+  OSDMapRef retval = map_cache.lookup(epoch); // first lookup in SharedLRU map cache
   if (retval) {
     dout(30) << "get_map " << epoch << " -cached" << dendl;
     return retval;
   }
 
+  // map was not in cache, try to create it
+
   OSDMap *map = new OSDMap;
   if (epoch > 0) {
     dout(20) << "get_map " << epoch << " - loading and decoding " << map << dendl;
     bufferlist bl;
+    // get an osdmap bufferlist of the specified epoch, either lookup from 
+    // map_bl cache or load from ObjectStore
     if (!_get_map_bl(epoch, bl)) {
       delete map;
       return OSDMapRef();
@@ -1233,6 +1247,8 @@ OSDMapRef OSDService::try_get_map(epoch_t epoch)
   } else {
     dout(20) << "get_map " << epoch << " - return initial " << map << dendl;
   }
+
+  // add the newly created map to map cache
   return _add_map(map);
 }
 
@@ -2643,12 +2659,14 @@ PG *OSD::_open_lock_pg(
 {
   assert(osd_lock.is_locked());
 
+  // create an instance of ReplicatedPG
   PG* pg = _make_pg(createmap, pgid);
   {
     RWLock::WLocker l(pg_map_lock);
     pg->lock(no_lockdep_check);
-    pg_map[pgid] = pg;
+    pg_map[pgid] = pg; // insert into OSD::pg_map
     pg->get("PGMap");  // because it's in pg_map
+    // insert into OSDService::pg_epoch map and OSDService::pg_epochs multiset
     service.pg_add_epoch(pg->info.pgid, createmap->get_epoch());
   }
   return pg;
@@ -2663,6 +2681,17 @@ PG* OSD::_make_pg(
 
   // create
   PG *pg;
+  /*
+   * struct pg_t {
+   *     uint64_t m_pool;
+   *     uint32_t m_seed;
+   *     int32_t m_preferred;
+   * };
+   * struct spg_t {
+   *     pg_t pgid;
+   *     shard_id_t shard;
+   * };
+   */
   if (createmap->get_pg_type(pgid.pgid) == pg_pool_t::TYPE_REPLICATED ||
       createmap->get_pg_type(pgid.pgid) == pg_pool_t::TYPE_ERASURE)
     pg = new ReplicatedPG(&service, createmap, pool, pgid);
@@ -2870,6 +2899,11 @@ void OSD::load_pgs()
   }
 
   vector<coll_t> ls;
+
+  // list colls of type TYPE_META, TYPE_PG, TYPE_PG_REMOVAL, "omap" and 
+  // TYPE_PG_TEMP are excluded, for other ObjectStore(s) other than FileStore
+  // "omap", TYPE_PG_TEMP, etc. may also included, they have no idea to 
+  // exclude these directories
   int r = store->list_collections(ls);
   if (r < 0) {
     derr << "failed to list pgs: " << cpp_strerror(-r) << dendl;
@@ -2879,16 +2913,18 @@ void OSD::load_pgs()
   for (vector<coll_t>::iterator it = ls.begin();
        it != ls.end();
        ++it) {
-    spg_t pgid;
+    spg_t pgid; // coll_t::is_xxx will set the pgid as output parameter
     if (it->is_temp(&pgid) ||
 	it->is_removal(&pgid) ||
 	(it->is_pg(&pgid) && PG::_has_removal_flag(store, pgid))) {
       dout(10) << "load_pgs " << *it << " clearing temp" << dendl;
+
+      // remove all temp and removal coll(s) synchronously
       recursive_remove_collection(store, pgid, *it);
       continue;
     }
 
-    if (it->is_pg(&pgid)) {
+    if (it->is_pg(&pgid)) { // ok, this is a pg coll
       pgs.insert(pgid);
       continue;
     }
@@ -2897,7 +2933,7 @@ void OSD::load_pgs()
   }
 
   bool has_upgraded = false;
-  for (set<spg_t>::iterator i = pgs.begin(); i != pgs.end(); ++i) {
+  for (set<spg_t>::iterator i = pgs.begin(); i != pgs.end(); ++i) { // iterate each pg coll
     spg_t pgid(*i);
 
     if (pgid.preferred() >= 0) {
@@ -2909,6 +2945,7 @@ void OSD::load_pgs()
     dout(10) << "pgid " << pgid << " coll " << coll_t(pgid) << dendl;
     bufferlist bl;
     epoch_t map_epoch = 0;
+    // get pg's osdmap epoch from omap of pg meta object
     int r = PG::peek_map_epoch(store, pgid, &map_epoch, &bl);
     if (r < 0) {
       derr << __func__ << " unable to peek at " << pgid << " metadata, skipping"
@@ -2918,6 +2955,7 @@ void OSD::load_pgs()
 
     PG *pg = NULL;
     if (map_epoch > 0) {
+      // get an osdmap for specified epoch, may return NULL
       OSDMapRef pgosdmap = service.try_get_map(map_epoch);
       if (!pgosdmap) {
 	if (!osdmap->have_pg_pool(pgid.pool())) {
@@ -2934,8 +2972,11 @@ void OSD::load_pgs()
 	  assert(0 == "Missing map in load_pgs");
 	}
       }
+
+      // create an instance of ReplicatedPG, insert into OSD::pg_map,
+      // OSDService::pg_epoch and OSDService::pg_epochs
       pg = _open_lock_pg(pgosdmap, pgid);
-    } else {
+    } else { // map_epoch == 0
       pg = _open_lock_pg(osdmap, pgid);
     }
     // there can be no waiters here, so we don't call wake_pg_waiters
@@ -2958,13 +2999,20 @@ void OSD::load_pgs()
       pg->upgrade(store);
     }
 
+    // if pg's map and osd's map have different pg_num, and the child
+    // pg(s) must split from us, we construct parent->children and 
+    // child->parent mappings:
+    // OSDService::pending_splits and OSDService::rev_pending_splits
     service.init_splits_between(pg->info.pgid, pg->get_osdmap(), osdmap);
 
     // generate state for PG's current mapping
     int primary, up_primary;
     vector<int> acting, up;
+    // get up set, up primary, acting set and acting primary
     pg->get_osdmap()->pg_to_up_acting_osds(
       pgid.pgid, &up, &up_primary, &acting, &primary);
+
+    // 
     pg->init_primary_up_acting(
       up,
       acting,

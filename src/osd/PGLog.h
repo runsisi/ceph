@@ -674,6 +674,7 @@ public:
   void read_log(ObjectStore *store, coll_t pg_coll,
 		coll_t log_coll, ghobject_t log_oid,
 		const pg_info_t &info, ostringstream &oss) {
+    // read PGLog::log, PGLog::missing, PGLog::divergent_priors
     return read_log(
       store, pg_coll, log_coll, log_oid, info, divergent_priors,
       log, missing, oss,

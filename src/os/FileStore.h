@@ -145,7 +145,7 @@ private:
     // - hammer temp case: cid is pg (or already temp), object pool is -1
     if (cid.is_pg() && (oid.hobj.pool < -1 ||
 			oid.hobj.pool == -1))
-      cid = cid.get_temp();
+      cid = cid.get_temp(); // e.g. 1.6e_head => 1.6e_TEMP
   }
   void init_temp_collections();
 

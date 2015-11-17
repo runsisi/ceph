@@ -893,6 +893,9 @@ public:
   void _start_split(spg_t parent, const set<spg_t> &children);
   void start_split(spg_t parent, const set<spg_t> &children) {
     Mutex::Locker l(in_progress_split_lock);
+
+    // construct parent->children and child->parent mappings:
+    // OSDService::pending_splits and OSDService::rev_pending_splits
     return _start_split(parent, children);
   }
   void mark_split_in_progress(spg_t parent, const set<spg_t> &pgs);

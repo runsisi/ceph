@@ -43,6 +43,8 @@ private:
   uint32_t nibblewise_key_cache;
   uint32_t hash_reverse_bits;
   static const int64_t POOL_META = -1;
+  // hobject_t::pool field for temp hobject start from POOL_TEMP_START(-2), see 
+  // spg_t::make_temp_object and hobject_t::is_temp
   static const int64_t POOL_TEMP_START = -2; // and then negative
   friend class spg_t;  // for POOL_TEMP_START
 public:

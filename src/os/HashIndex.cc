@@ -363,23 +363,36 @@ int HashIndex::_lookup(const ghobject_t &oid,
 		       string *mangled_name,
 		       int *exists_out) {
   vector<string> path_comp;
+
+  // hash of the oid => path_comp, e.g.
+  // 0x1234ABCD => 0xDCBA4321 => [D, C, B, A, 4, 3, 2, 1]
   get_path_components(oid, &path_comp);
   vector<string>::iterator next = path_comp.begin();
   int exists;
   while (1) {
+    // "/xxx/current/61426.21_head" 
+    // => "/xxx/current/61426.21_head/DIR_D"
+    // => "/xxx/current/61426.21_head/DIR_D/DIR_C"
+    // => "/xxx/current/61426.21_head/DIR_D/DIR_C/DIR_B"
+    // => ...
     int r = path_exists(*path, &exists);
     if (r < 0)
       return r;
     if (!exists) {
       if (path->empty())
 	return -ENOENT;
-      path->pop_back();
+      path->pop_back(); // the last child dir does not exist
       break;
     }
+
+    // exists, try to add a child dir to the path
+    
     if (next == path_comp.end())
-      break;
-    path->push_back(*(next++));
+      break; // no more child path, max MAX_HASH_LEVEL (8) level
+    path->push_back(*(next++)); // add a child dir
   }
+
+  // now "path" may be [D, C, B]
   return get_mangled_name(*path, oid, mangled_name, exists_out);
 }
 
@@ -789,19 +802,26 @@ int HashIndex::complete_split(const vector<string> &path, subdir_info_s info) {
 void HashIndex::get_path_components(const ghobject_t &oid,
 				    vector<string> *path) {
   char buf[MAX_HASH_LEVEL + 1];
+  // refer to:
+  // http://www.cplusplus.com/reference/cstdio/printf/
   // .* 
   // The precision is not specified in the format string, but as an additional 
   // integer value argument preceding the argument that has to be formatted.
   // For integer specifiers (d, i, o, u, x, X): precision specifies the 
   // minimum number of digits to be written.
+
+  // every hobject has a hash value associated with it, which calculated by 
+  // OSDMap::object_locator_to_pg, nibblewise_key is calculated by reverse
+  // every four bits of the hash value
   snprintf(buf, sizeof(buf), "%.*X", MAX_HASH_LEVEL, (uint32_t)oid.hobj.get_nibblewise_key());
   // X
   // Unsigned hexadecimal integer (uppercase)
 
-  // Path components are the hex characters of oid.hobj.hash, least
-  // significant first
+  // Path components are the hex characters of oid.hobj.hash, then reverse
+  // every four bits of the hash value, e.g.
+  // hash: 0x1234ABCD => nibblewise_key: 0xDCBA4321
   for (int i = 0; i < MAX_HASH_LEVEL; ++i) {
-    path->push_back(string(&buf[i], 1));
+    path->push_back(string(&buf[i], 1)); // [D, C, B, A, 4, 3, 2, 1]
   }
 }
 

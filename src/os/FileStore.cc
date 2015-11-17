@@ -163,6 +163,9 @@ int FileStore::get_cdir(coll_t cid, char *s, int len)
 
 int FileStore::get_index(coll_t cid, Index *index)
 {
+  // set index->index, i.e. Index::index, if IndexManager::col_indices 
+  // (index_manager.col_indices) has no CollectionIndex for the coll,
+  // then build a CollectionIndex and insert into the map
   int r = index_manager.get_index(cid, basedir, index);
   assert(!m_filestore_fail_eio || r != -EIO);
   return r;
@@ -172,6 +175,7 @@ int FileStore::init_index(coll_t cid)
 {
   char path[PATH_MAX];
   get_cdir(cid, path, sizeof(path));
+  // target_version is a static const uint32_t of FileStore, value is 4
   int r = index_manager.init_index(cid, path, target_version);
   assert(!m_filestore_fail_eio || r != -EIO);
   return r;
@@ -181,9 +185,11 @@ int FileStore::lfn_find(const ghobject_t& oid, const Index& index, IndexedPath *
 {
   IndexedPath path2;
   if (!path)
-    path = &path2;
+    path = &path2; // output parameter
   int r, exist;
-  assert(NULL != index.index);
+  assert(NULL != index.index); // CollectionIndex
+
+  // LFNIndex::lookup -> HashIndex::_lookup
   r = (index.index)->lookup(oid, path, &exist);
   if (r < 0) {
     assert(!m_filestore_fail_eio || r != -EIO);
@@ -4534,6 +4540,8 @@ int FileStore::collection_version_current(coll_t c, uint32_t *version)
 
 int FileStore::list_collections(vector<coll_t>& ls)
 {
+  // list colls of type TYPE_META, TYPE_PG, TYPE_PG_REMOVAL, "omap" and 
+  // TYPE_PG_TEMP are excluded
   return list_collections(ls, false);
 }
 
@@ -4572,26 +4580,29 @@ int FileStore::list_collections(vector<coll_t>& ls, bool include_temp)
 	assert(!m_filestore_fail_eio || r != -EIO);
 	break;
       }
-      if (!S_ISDIR(sb.st_mode)) {
+      if (!S_ISDIR(sb.st_mode)) { // not directory
 	continue;
       }
-    } else if (de->d_type != DT_DIR) {
+    } else if (de->d_type != DT_DIR) { // not directory
       continue;
     }
-    if (strcmp(de->d_name, "omap") == 0) {
+    
+    if (strcmp(de->d_name, "omap") == 0) { // exclude "omap"
       continue;
     }
+    
     if (de->d_name[0] == '.' &&
 	(de->d_name[1] == '\0' ||
 	 (de->d_name[1] == '.' &&
-	  de->d_name[2] == '\0')))
+	  de->d_name[2] == '\0'))) // exclude "." or ".."
       continue;
+    
     coll_t cid;
-    if (!cid.parse(de->d_name)) {
+    if (!cid.parse(de->d_name)) { // invalid coll name
       derr << "ignoging invalid collection '" << de->d_name << "'" << dendl;
       continue;
     }
-    if (!cid.is_temp() || include_temp)
+    if (!cid.is_temp() || include_temp) // exclude temp pg
       ls.push_back(cid);
   }
 
@@ -4883,9 +4894,27 @@ ObjectMap::ObjectMapIterator FileStore::get_omap_iterator(coll_t c,
 							  const ghobject_t &hoid)
 {
   tracepoint(objectstore, get_omap_iterator, c.c_str());
+
+  // hobject has a field of pool, its value can be normal pool id (positive) or 
+  // POOL_META or (POOL_TEMP_START - pool):
+  // static const int64_t POOL_META = -1;
+  // static const int64_t POOL_TEMP_START = -2; // (POOL_TEMP_START - pool), see spg_t::make_temp_object and hobject_t::is_temp
+
+  // if the hobject is a temp object, construct a pg temp coll
   _kludge_temp_object_collection(c, hoid);
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
-  Index index;
+
+  /* Index define in IndexManager.h
+   * struct Index {
+   *     CollectionIndex *index;
+   * };
+   */
+  Index index; 
+  
+  // set index.index, index type inheritance hierarchy as follows:
+  // HashIndex : LFNIndex : CollectionIndex
+  // Index is used as a public interface, Index::index is a pointer of 
+  // type CollectionIndex
   int r = get_index(c, &index);
   if (r < 0) {
     dout(10) << __func__ << " " << c << "/" << hoid << " = 0 "
@@ -4895,6 +4924,8 @@ ObjectMap::ObjectMapIterator FileStore::get_omap_iterator(coll_t c,
   {
     assert(NULL != index.index);
     RWLock::RLocker l((index.index)->access_lock);
+
+    // LFNIndex::lookup -> HashIndex::_lookup
     r = lfn_find(hoid, index);
     if (r < 0) {
       dout(10) << __func__ << " " << c << "/" << hoid << " = 0 "

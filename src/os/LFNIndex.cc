@@ -117,7 +117,7 @@ int LFNIndex::lookup(const ghobject_t &oid,
 		     IndexedPath *out_path,
 		     int *exist)
 {
-  WRAP_RETRY(
+  WRAP_RETRY( // ok, wrap to execute following code
   vector<string> path;
   string short_name;
   r = _lookup(oid, &path, &short_name, exist);
@@ -625,40 +625,77 @@ static void append_escaped(string::const_iterator begin,
 
 string LFNIndex::lfn_generate_object_name(const ghobject_t &oid)
 {
+  // IndexManager only used in FileStore, for it index_version always 
+  // be HOBJECT_WITH_POOL
   if (index_version == HASH_INDEX_TAG)
     return lfn_generate_object_name_keyless(oid);
   if (index_version == HASH_INDEX_TAG_2)
     return lfn_generate_object_name_poolless(oid);
 
+  // 0) escaped prefix + 1) oid.hobj.oid.name + 2) oid.hobj.key + 3) oid.hobj.snap
+  // + 4) oid.hobj.hash + 5) oid.hobj.nspace + 6) oid.hobj.pool + 7) oid.generation
+  // + 8) oid.shard_id, except the prefix, all other fields are separated by an 
+  // underline ('_'), e.g.
+  //
+  // DIR_1234abcd => \d1234abcd__head_7D4FDE61__5
+  // .1234abcd => \.1234abcd__head_9EC52B9C__5
+  // rbd\udata.1f61d2ae8944a.0000000000000000__head_206BD98B__5
+  // rbd\udata.1f61d2ae8944a.0000000000000000__2_206BD98B__5
+
   string full_name;
   string::const_iterator i = oid.hobj.oid.name.begin();
-  if (oid.hobj.oid.name.substr(0, 4) == "DIR_") {
+
+  // 0. append escaped prefix, if any
+
+  // escape prefix of "DIR_" and '.'
+  if (oid.hobj.oid.name.substr(0, 4) == "DIR_") { // DIR_xxx => \d_xxx
     full_name.append("\\d");
     i += 4;
-  } else if (oid.hobj.oid.name[0] == '.') {
+  } else if (oid.hobj.oid.name[0] == '.') { // .xxx => \.xxx
     full_name.append("\\.");
     ++i;
   }
+
+  // 1. append oid.hobj.oid.name
+
+  // escape backslash (\), slash (/), underline (_), null (\0), e.g.
+  // \aaa/bbb_ccc\0ddd => \\aaa\sbbb\uccc\nddd
   append_escaped(i, oid.hobj.oid.name.end(), &full_name);
-  full_name.append("_");
+  full_name.append("_"); // append an underline
+
+  // 2. append oid.hobj.key
+  
+  // escape hobject_t::key, most of the time this field is an empty string, so most
+  // of the time we see two underlines after the oid.hobj.oid.name string
   append_escaped(oid.hobj.get_key().begin(), oid.hobj.get_key().end(), &full_name);
-  full_name.append("_");
+  full_name.append("_"); // append an underline
+
+  // 3. append oid.hobj.snap
 
   char buf[PATH_MAX];
   char *t = buf;
   char *end = t + sizeof(buf);
-  if (oid.hobj.snap == CEPH_NOSNAP)
+  if (oid.hobj.snap == CEPH_NOSNAP) // head object
     t += snprintf(t, end - t, "head");
-  else if (oid.hobj.snap == CEPH_SNAPDIR)
+  else if (oid.hobj.snap == CEPH_SNAPDIR) // snapdir object
     t += snprintf(t, end - t, "snapdir");
-  else
+  else // snapshot object
     t += snprintf(t, end - t, "%llx", (long long unsigned)oid.hobj.snap);
+
+  // 4. append oid.hobj.hash
+  
   snprintf(t, end - t, "_%.*X", (int)(sizeof(oid.hobj.get_hash())*2), oid.hobj.get_hash());
   full_name += string(buf);
-  full_name.append("_");
+  full_name.append("_"); // append an underline
 
+  // 5. append oid.hobj.nspace
+
+  // escape hobject_t::nspace, most of the time this field is an empty string, so most
+  // of the time we see two underlines after the oid.hobj.snap string
   append_escaped(oid.hobj.nspace.begin(), oid.hobj.nspace.end(), &full_name);
-  full_name.append("_");
+  full_name.append("_"); // append an underline
+
+  // 6. append oid.hobj.pool
 
   t = buf;
   end = t + sizeof(buf);
@@ -667,6 +704,8 @@ string LFNIndex::lfn_generate_object_name(const ghobject_t &oid)
   else
     t += snprintf(t, end - t, "%llx", (long long unsigned)oid.hobj.pool);
   full_name += string(buf);
+
+  // 7. append oid.generation and oid.shard_id, if any
 
   if (oid.generation != ghobject_t::NO_GEN ||
       oid.shard_id != shard_id_t::NO_SHARD) {
@@ -727,15 +766,18 @@ int LFNIndex::lfn_get_name(const vector<string> &path,
 			   string *mangled_name, string *out_path,
 			   int *exists)
 {
+  // full path name of the dir that may contain the oid
   string subdir_path = get_full_path_subdir(path);
+
+  // get an escaped name of the oid
   string full_name = lfn_generate_object_name(oid);
   int r;
 
-  if (!lfn_must_hash(full_name)) {
+  if (!lfn_must_hash(full_name)) { // lenght of escaped oid name less than 255
     if (mangled_name)
       *mangled_name = full_name;
     if (out_path)
-      *out_path = get_full_path(path, full_name);
+      *out_path = get_full_path(path, full_name); // concat the full path name of the oid
     if (exists) {
       struct stat buf;
       string full_path = get_full_path(path, full_name);
@@ -753,10 +795,12 @@ int LFNIndex::lfn_get_name(const vector<string> &path,
     return 0;
   }
 
+  // ok, the escaped oid name is too long
+
   int i = 0;
   string candidate;
   string candidate_path;
-  char buf[FILENAME_MAX_LEN + 1];
+  char buf[FILENAME_MAX_LEN + 1]; // 4096 + 1
   for ( ; ; ++i) {
     candidate = lfn_get_short_name(oid, i);
     candidate_path = get_full_path(path, candidate);
@@ -1241,7 +1285,7 @@ bool LFNIndex::lfn_is_hashed_filename(const string &name)
 
 bool LFNIndex::lfn_must_hash(const string &long_name)
 {
-  return (int)long_name.size() >= FILENAME_SHORT_LEN;
+  return (int)long_name.size() >= FILENAME_SHORT_LEN; // 255
 }
 
 static inline void buf_to_hex(const unsigned char *buf, int len, char *str)
@@ -1310,12 +1354,12 @@ const string &LFNIndex::get_base_path()
 
 string LFNIndex::get_full_path_subdir(const vector<string> &rel)
 {
-  string retval = get_base_path();
+  string retval = get_base_path(); // full path name of coll
   for (vector<string>::const_iterator i = rel.begin();
        i != rel.end();
        ++i) {
     retval += "/";
-    retval += mangle_path_component(*i);
+    retval += mangle_path_component(*i); // "DIR_" + '[0-9A-Z]'
   }
   return retval;
 }
@@ -1327,7 +1371,7 @@ string LFNIndex::get_full_path(const vector<string> &rel, const string &name)
 
 string LFNIndex::mangle_path_component(const string &component)
 {
-  return SUBDIR_PREFIX + component;
+  return SUBDIR_PREFIX + component; // "DIR_" + '[0-9A-Z]'
 }
 
 string LFNIndex::demangle_path_component(const string &component)

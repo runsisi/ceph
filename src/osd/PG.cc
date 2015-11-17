@@ -2752,7 +2752,7 @@ int PG::peek_map_epoch(ObjectStore *store,
 {
   coll_t coll(pgid);
   ghobject_t legacy_infos_oid(OSD::make_infos_oid());
-  ghobject_t pgmeta_oid(pgid.make_pgmeta_oid());
+  ghobject_t pgmeta_oid(pgid.make_pgmeta_oid()); // e.g. current/5.7_head/__head_00000007__5
   epoch_t cur_epoch = 0;
 
   assert(bl);
@@ -2763,8 +2763,8 @@ int PG::peek_map_epoch(ObjectStore *store,
 
   // try for v8
   set<string> keys;
-  keys.insert(infover_key);
-  keys.insert(epoch_key);
+  keys.insert(infover_key); // "_infover"
+  keys.insert(epoch_key); // "_epoch"
   map<string,bufferlist> values;
   int r = store->omap_get_values(coll, pgmeta_oid, keys, &values);
   if (r != 0) {
@@ -2927,11 +2927,14 @@ int PG::read_info(
 {
   // try for v8 or later
   set<string> keys;
-  keys.insert(infover_key);
-  keys.insert(info_key);
-  keys.insert(biginfo_key);
-  ghobject_t pgmeta_oid(pgid.make_pgmeta_oid());
+  keys.insert(infover_key); // "_infover"
+  keys.insert(info_key); // "_info"
+  keys.insert(biginfo_key); // "_biginfo"
+  ghobject_t pgmeta_oid(pgid.make_pgmeta_oid()); // e.g. current/5.4_head/__head_00000004__5
   map<string,bufferlist> values;
+
+  // get values of sepcified keys from pg's meta object, e.g.
+  // current/5.4_head/__head_00000004__5
   int r = store->omap_get_values(coll, pgmeta_oid, keys, &values);
   if (r == 0) {
     assert(values.size() == 3);
@@ -2941,10 +2944,14 @@ int PG::read_info(
     assert(struct_v >= 8);
 
     p = values[info_key].begin();
+    // pg_info_t
     ::decode(info, p);
 
     p = values[biginfo_key].begin();
+
+    // map<epoch_t,pg_interval_t>
     ::decode(past_intervals, p);
+    // interval_set<snapid_t>
     ::decode(info.purged_snaps, p);
     return 0;
   }
@@ -2978,11 +2985,19 @@ int PG::read_info(
 
 void PG::read_state(ObjectStore *store, bufferlist &bl)
 {
+  // get PG::info, PG::past_intervals from pg meta object, e.g. 
+  // current/5.4_head/__head_00000004__5
   int r = read_info(store, pg_id, coll, bl, info, past_intervals,
 		    info_struct_v);
   assert(r >= 0);
 
   ostringstream oss;
+
+  // read PGLog::log, PGLog::missing, PGLog::divergent_priors from pg's meta object,
+  // old meta object, e.g. current/meta/pglog\u342.a1__0_A0B3C172__none
+  // new meta object, e.g. current/5.4_head/__head_00000004__5
+  // osd map is still stored in current/meta, e.g.
+  // current/meta/DIR_4/DIR_0/osdmap.156833__0_DF8E0104__none
   pg_log.read_log(store,
 		  coll,
 		  info_struct_v < 8 ? coll_t::meta() : coll,
@@ -2991,7 +3006,7 @@ void PG::read_state(ObjectStore *store, bufferlist &bl)
   if (oss.tellp())
     osd->clog->error() << oss.rdbuf();
 
-  // log any weirdness
+  // log any weirdness, do osd->clog log
   log_weirdness();
 }
 

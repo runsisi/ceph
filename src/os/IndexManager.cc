@@ -74,6 +74,8 @@ IndexManager::~IndexManager() {
 
 int IndexManager::init_index(coll_t c, const char *path, uint32_t version) {
   Mutex::Locker l(lock);
+  // note: the version (coll version) here is not the same meaning 
+  // as LFNIndex::index_version (index version)
   int r = set_version(path, version);
   if (r < 0)
     return r;
@@ -84,12 +86,14 @@ int IndexManager::init_index(coll_t c, const char *path, uint32_t version) {
   return index.init();
 }
 
+// HashIndex : LFNIndex : CollectionIndex
 int IndexManager::build_index(coll_t c, const char *path, CollectionIndex **index) {
-  if (upgrade) {
+  if (upgrade) { // this parameter is passed from ctor, FileStore set this default to false
     // Need to check the collection generation
     int r;
     uint32_t version = 0;
-    r = get_version(path, &version);
+    // get coll version from coll's attr "user.cephos.collection_version"
+    r = get_version(path, &version); // coll version
     if (r < 0)
       return r;
 
@@ -99,8 +103,8 @@ int IndexManager::build_index(coll_t c, const char *path, CollectionIndex **inde
     case CollectionIndex::HASH_INDEX_TAG_2: // fall through
     case CollectionIndex::HOBJECT_WITH_POOL: {
       // Must be a HashIndex
-      *index = new HashIndex(c, path, g_conf->filestore_merge_threshold,
-				   g_conf->filestore_split_multiple, version);
+      *index = new HashIndex(c, path, g_conf->filestore_merge_threshold, // default is 10
+				   g_conf->filestore_split_multiple, version); // default is 2
       return 0;
     }
     default: assert(0);
@@ -108,10 +112,10 @@ int IndexManager::build_index(coll_t c, const char *path, CollectionIndex **inde
 
   } else {
     // No need to check
-    *index = new HashIndex(c, path, g_conf->filestore_merge_threshold,
-				 g_conf->filestore_split_multiple,
-				 CollectionIndex::HOBJECT_WITH_POOL,
-				 g_conf->filestore_index_retry_probability);
+    *index = new HashIndex(c, path, g_conf->filestore_merge_threshold, // default is 10
+				 g_conf->filestore_split_multiple, // default is 2
+				 CollectionIndex::HOBJECT_WITH_POOL, // index version
+				 g_conf->filestore_index_retry_probability); // default is 0
     return 0;
   }
 }
@@ -121,9 +125,11 @@ int IndexManager::get_index(coll_t c, const string& baseDir, Index *index) {
   Mutex::Locker l(lock);
   ceph::unordered_map<coll_t, CollectionIndex* > ::iterator it = col_indices.find(c);
   if (it == col_indices.end()) {
-    char path[PATH_MAX];
+    char path[PATH_MAX]; // full path name of coll, e.g. /xxx/current/360.41_head
     snprintf(path, sizeof(path), "%s/current/%s", baseDir.c_str(), c.to_str().c_str());
     CollectionIndex* colIndex = NULL;
+    // create an index of HashIndex, type inheritance hierarchy as follows:
+    // HashIndex : LFNIndex : CollectionIndex
     int r = build_index(c, path, &colIndex);
     if (r < 0)
       return r;
