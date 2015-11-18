@@ -216,6 +216,11 @@ ostream& operator<<(ostream& out, const hobject_t& o)
   return out;
 }
 
+// only differences between cmp_nibblewise and cmp_bitwise is except other fields
+// of the hobject, one different field is compared:
+// cmp_nibblewise compares nibblewise_key_cache
+// cmp_bitwise compares hash_reverse_bits
+
 int cmp_nibblewise(const hobject_t& l, const hobject_t& r)
 {
   if (l.max < r.max)

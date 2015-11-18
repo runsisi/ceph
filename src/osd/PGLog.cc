@@ -736,6 +736,7 @@ void PGLog::check() {
   }
 }
 
+// write the pg log that the PGLog contains
 void PGLog::write_log(
   ObjectStore::Transaction& t,
   map<string,bufferlist> *km,
@@ -753,19 +754,22 @@ void PGLog::write_log(
 	     << dendl;
     _write_log(
       t, km, log, coll, log_oid, divergent_priors,
-      dirty_to,
-      dirty_from,
-      writeout_from,
-      trimmed,
+      dirty_to, // clear [eversion_t(), dirty_to), then write entries [..dirty_to)
+      dirty_from, // clear [dirty_from, eversion_t::max()), then write entries [min(dirty_from, writeout_from)..]
+      writeout_from, // used for determine the start of the write entry
+      trimmed, // explicitly marked to clear
       dirty_divergent_priors,
       !touched_log,
       (pg_log_debug ? &log_keys_debug : 0));
-    undirty();
+    
+    undirty(); // mark that there is no dirty log entries
   } else {
     dout(10) << "log is not dirty" << dendl;
   }
 }
 
+// write the specified pg log which provided in the input parameters, this
+// is a static method of PGLog, it is only used in ceph_objectstore_tool.cc
 void PGLog::write_log(
     ObjectStore::Transaction& t,
     map<string,bufferlist> *km,
@@ -798,8 +802,8 @@ void PGLog::_write_log(
   set<string> to_remove;
   for (set<eversion_t>::const_iterator i = trimmed.begin();
        i != trimmed.end();
-       ++i) {
-    to_remove.insert(i->get_key_name());
+       ++i) { // note down those entries (identified by the key) to be removed
+    to_remove.insert(i->get_key_name()); // sprintf(key, "%010u.%020llu", epoch, version)
     if (log_keys_debug) {
       assert(log_keys_debug->count(i->get_key_name()));
       log_keys_debug->erase(i->get_key_name());
@@ -808,21 +812,31 @@ void PGLog::_write_log(
 
 //dout(10) << "write_log, clearing up to " << dirty_to << dendl;
   if (touch_log)
-    t.touch(coll, log_oid);
-  if (dirty_to != eversion_t()) {
+    t.touch(coll, log_oid); // ensure the pg meta oid exist
+
+  // Log is clean on [dirty_to, dirty_from), we only write those entries 
+  // that are dirty, e.g. [e3 - e6] are excluded to write:
+  // [e1 e2 dirty_to(e3) e4 e5 e6 dirty_from(e7) e8 e9]
+
+  // remove the old entries [eversion_t(), dirty_to) that are dirty
+  if (dirty_to != eversion_t()) { 
     t.omap_rmkeyrange(
       coll, log_oid,
       eversion_t().get_key_name(), dirty_to.get_key_name());
-    clear_up_to(log_keys_debug, dirty_to.get_key_name());
+    
+    clear_up_to(log_keys_debug, dirty_to.get_key_name()); // for debug use only
   }
+  // remove the old entries [dirty_from, eversion_t::max()) that are dirty
   if (dirty_to != eversion_t::max() && dirty_from != eversion_t::max()) {
     //   dout(10) << "write_log, clearing from " << dirty_from << dendl;
     t.omap_rmkeyrange(
       coll, log_oid,
       dirty_from.get_key_name(), eversion_t::max().get_key_name());
-    clear_after(log_keys_debug, dirty_from.get_key_name());
+    
+    clear_after(log_keys_debug, dirty_from.get_key_name()); // for debug use only
   }
 
+  // encode the dirty entries up to dirty_to
   for (list<pg_log_entry_t>::iterator p = log.log.begin();
        p != log.log.end() && p->version <= dirty_to;
        ++p) {
@@ -830,7 +844,7 @@ void PGLog::_write_log(
     p->encode_with_checksum(bl);
     (*km)[p->get_key_name()].claim(bl);
   }
-
+  // encode the dirty entries down to min(dirty_from, writeout_from)
   for (list<pg_log_entry_t>::reverse_iterator p = log.log.rbegin();
        p != log.log.rend() &&
 	 (p->version >= dirty_from || p->version >= writeout_from) &&
@@ -859,8 +873,9 @@ void PGLog::_write_log(
   ::encode(log.can_rollback_to, (*km)["can_rollback_to"]);
   ::encode(log.rollback_info_trimmed_to, (*km)["rollback_info_trimmed_to"]);
 
+  // remove the entries must be trimmed
   if (!to_remove.empty())
-    t.omap_rmkeys(coll, log_oid, to_remove);
+    t.omap_rmkeys(coll, log_oid, to_remove); // remove those log entries identified by their keys
 }
 
 /* IndexedLog is derived from pg_log_t
@@ -942,19 +957,21 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	bufferlist bl = p->value();
 	bufferlist::iterator bp = bl.begin();
 	::decode(log.rollback_info_trimmed_to, bp);
-      } else { // a log entry
+      } else {
+        // a log entry, the key is constructed from pg_log_entry_t::version, i.e.
+        // sprintf(key, "%010u.%020llu", epoch, version)
 	pg_log_entry_t e;
 	e.decode_with_checksum(bp);
 	dout(20) << "read_log " << e << dendl;
 	if (!log.log.empty()) { // list<pg_log_entry_t> IndexedLog::log;
 	  pg_log_entry_t last_e(log.log.back());
-	  assert(last_e.version.version < e.version.version);
+	  assert(last_e.version.version < e.version.version); // pg log entry is logged in ascending order
 	  assert(last_e.version.epoch <= e.version.epoch);
 	}
 	log.log.push_back(e); // push the log entry to log list
 	log.head = e.version; // update log head
 	if (log_keys_debug)
-	  log_keys_debug->insert(e.get_key_name());
+	  log_keys_debug->insert(e.get_key_name()); // sprintf(key, "%010u.%020llu", epoch, version)
       }
     }
   }
@@ -975,16 +992,26 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	     << "," << info.last_update << "]" << dendl;
 
     set<hobject_t, hobject_t::BitwiseComparator> did;
-    for (list<pg_log_entry_t>::reverse_iterator i = log.log.rbegin();
+    for (list<pg_log_entry_t>::reverse_iterator i = log.log.rbegin(); // every log entry associates with an object
 	 i != log.log.rend();
 	 ++i) { // reverse iterate log entries down to info.last_complete
-      if (i->version <= info.last_complete) break; // done the loop
-      
-      if (cmp(i->soid, info.last_backfill, info.last_backfill_bitwise) > 0)
+      if (i->version <= info.last_complete) 
+        // reached the entry that the pg is complete throught, no need to traval 
+        // any older entries, done the loop
+        break;
+
+      // refer to: http://dachary.org/?p=2009
+      // The last_backfill attribute of the placement group draws the limit 
+      // separating the objects that have already been copied from other OSDs 
+      // and those in the process of being copied. The objects that are lower 
+      // than last_backfill have been copied and the objects that are greater 
+      // than last_backfill are going to be copied.
+      if (cmp(i->soid, info.last_backfill, info.last_backfill_bitwise) > 0) // cmp for hobject_t defined in hobject.h
+        // i->soid > info.last_backfill
 	continue;
-      if (did.count(i->soid)) continue; // already inserted
+      if (did.count(i->soid)) continue; // the log entry associated object has already been handled
       
-      did.insert(i->soid); // insert
+      did.insert(i->soid); // insert the oid, so without handling one object twice
 
       // op == DELETE || op == LOST_DELETE, the object does not exist now
       if (i->is_delete()) continue;
@@ -995,14 +1022,16 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	ghobject_t(i->soid, ghobject_t::NO_GEN, info.pgid.shard),
 	OI_ATTR,
 	bv);
-      if (r >= 0) {
+      if (r >= 0) { // get current info of the modified object
         
 	object_info_t oi(bv);
 	if (oi.version < i->version) {
+          // version in the log is newer, the object of the modified version 
+          // may have been lost
 	  dout(15) << "read_log  missing " << *i << " (have " << oi.version << ")" << dendl;
 	  missing.add(i->soid, i->version, oi.version);
 	}
-      } else {
+      } else { // no info found for the modified object, object does not exist
 	dout(15) << "read_log  missing " << *i << dendl;
 	missing.add(i->soid, i->version, eversion_t());
       }
@@ -1014,17 +1043,18 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	 i != divergent_priors.rend();
 	 ++i) {
       if (i->first <= info.last_complete) break;
+      // skip those objects past backfill line
       if (cmp(i->second, info.last_backfill, info.last_backfill_bitwise) > 0)
 	continue;
       if (did.count(i->second)) continue;
-      did.insert(i->second);
+      did.insert(i->second); // ok, mark that we have handled this object
       bufferlist bv;
       int r = store->getattr(
 	pg_coll,
 	ghobject_t(i->second, ghobject_t::NO_GEN, info.pgid.shard),
 	OI_ATTR,
 	bv);
-      if (r >= 0) {
+      if (r >= 0) { // this oid does not have an entry in the log
 	object_info_t oi(bv);
 	/**
 	 * 1) we see this entry in the divergent priors mapping

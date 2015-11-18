@@ -697,7 +697,7 @@ public:
     return c;
   }
 
-  string get_key_name() const;
+  string get_key_name() const; // sprintf(key, "%010u.%020llu", epoch, version)
 
   void encode(bufferlist &bl) const {
     ::encode(version, bl);

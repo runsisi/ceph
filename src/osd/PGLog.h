@@ -308,9 +308,9 @@ protected:
   pg_missing_t     missing;
   IndexedLog  log;
 
-  eversion_t dirty_to;         ///< must clear/writeout all keys <= dirty_to
-  eversion_t dirty_from;       ///< must clear/writeout all keys >= dirty_from
-  eversion_t writeout_from;    ///< must writout keys >= writeout_from
+  eversion_t dirty_to;         ///< must clear/writeout all keys <= dirty_to, first clear then write
+  eversion_t dirty_from;       ///< must clear/writeout all keys >= dirty_from, first clear then write
+  eversion_t writeout_from;    ///< must writout keys >= writeout_from, write starts from min(dirty_from, writeout_from)
   set<eversion_t> trimmed;     ///< must clear keys in trimmed
   CephContext *cct;
   bool pg_log_debug;
