@@ -67,6 +67,7 @@ public:
   /**
    * Set of headers currently in use
    */
+  // a _Header corresponds to a ghobject_t
   set<uint64_t> in_use;
   set<ghobject_t, ghobject_t::BitwiseComparator> map_header_in_use;
 
@@ -85,6 +86,8 @@ public:
     MapHeaderLock(DBObjectMap *db, const ghobject_t &oid) : db(db), locked(oid) {
       Mutex::Locker l(db->header_lock);
       while (db->map_header_in_use.count(*locked))
+        // the _Header, i.e. ghobject, we want to lock is in use by others, wait 
+        // them to release
 	db->map_header_cond.Wait(db->header_lock);
       db->map_header_in_use.insert(*locked);
     }
@@ -219,6 +222,11 @@ public:
   int list_objects(vector<ghobject_t> *objs ///< [out] objects
     );
 
+  /* ObjectMapIterator is a typedef of shared_ptr<ObjectMapIteratorImpl>
+   * DBObjectMapIterator is a typedef of shared_ptr<DBObjectMapIteratorImpl>
+   * DBObjectMapIteratorImpl : ObjectMapIteratorImpl =>
+   * DBObjectMapIterator : ObjectMapIterator
+   */
   ObjectMapIterator get_iterator(const ghobject_t &oid);
 
   static const string USER_PREFIX;
@@ -462,9 +470,9 @@ private:
     const MapHeaderLock &l,
     const ghobject_t &oid);
   Header lookup_map_header(
-    const MapHeaderLock &l2,
+    const MapHeaderLock &l2, // while locking the oid, the global DBObjectMap::header_lock has been released
     const ghobject_t &oid) {
-    Mutex::Locker l(header_lock);
+    Mutex::Locker l(header_lock); // regain the lock of the global DBObjectMap::header_lock
     return _lookup_map_header(l2, oid);
   }
 

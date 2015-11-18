@@ -4935,6 +4935,8 @@ ObjectMap::ObjectMapIterator FileStore::get_omap_iterator(coll_t c,
       return ObjectMap::ObjectMapIterator();
     }
   }
+
+  // object_map is a scoped_ptr of ObjectMap, initialized in FileStore::mount
   return object_map->get_iterator(hoid);
 }
 

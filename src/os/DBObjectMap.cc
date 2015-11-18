@@ -226,11 +226,11 @@ string DBObjectMap::sys_parent_prefix(_Header header)
 
 int DBObjectMap::DBObjectMapIteratorImpl::init()
 {
-  invalid = false;
-  if (ready) {
+  invalid = false; // in ctor, this is initialized to true
+  if (ready) { // have called this already
     return 0;
   }
-  assert(!parent_iter);
+  assert(!parent_iter); // initialized to 0 in ctor
   if (header->parent) {
     Header parent = map->lookup_parent(header);
     if (!parent) {
@@ -239,10 +239,16 @@ int DBObjectMap::DBObjectMapIteratorImpl::init()
     }
     parent_iter.reset(new DBObjectMapIteratorImpl(map, parent));
   }
+
+  
   key_iter = map->db->get_iterator(map->user_prefix(header));
   assert(key_iter);
+
+  
   complete_iter = map->db->get_iterator(map->complete_prefix(header));
   assert(complete_iter);
+
+  
   cur_iter = key_iter;
   assert(cur_iter);
   ready = true;
@@ -252,17 +258,37 @@ int DBObjectMap::DBObjectMapIteratorImpl::init()
 ObjectMap::ObjectMapIterator DBObjectMap::get_iterator(
   const ghobject_t &oid)
 {
+  // insert oid into DBObjectMap::map_header_in_use, which means we have 
+  // locked it, the iterator below use swap to continue the lock holding
+  // of the oid until the iterator is deconstructed
   MapHeaderLock hl(this, oid);
+
+  // get a map Header for the oid, first try to get it from the cache, if
+  // not in the cache, then try to load it from the backing db
   Header header = lookup_map_header(hl, oid);
   if (!header)
     return ObjectMapIterator(new EmptyIteratorImpl());
+
+  // create an instance of DBObjectMapIteratorImpl and encapsulates it 
+  // in DBObjectMapIterator, when the iterator is deconstructed, the header
+  // will also be deconstructed, which will remove header->seq from the
+  // DBObjectMap::in_use
+  // the iterator is still invalid until DBObjectMapIteratorImpl::seek_to_first
+  // get called which will call DBObjectMapIteratorImpl::init to initialize
+  // all inner iterators
   DBObjectMapIterator iter = _get_iterator(header);
+
+  // the MapHeaderLock gained above passes to iter->hlock, so we continue to 
+  // lock the oid, when the iterator is deconstructed, the hlock will also be 
+  // deconstructed, then the lock of the oid will be released (remove from 
+  // DBObjectMap::map_header_in_use) in the dctor of MapHeaderLock
   iter->hlock.swap(hl);
   return iter;
 }
 
 int DBObjectMap::DBObjectMapIteratorImpl::seek_to_first()
 {
+  // init the iterator
   init();
   r = 0;
   if (parent_iter) {
@@ -1074,39 +1100,63 @@ int DBObjectMap::write_state(KeyValueDB::Transaction _t) {
 
 
 DBObjectMap::Header DBObjectMap::_lookup_map_header(
-  const MapHeaderLock &l,
+  const MapHeaderLock &l, // oid has been locked, only used for sanity assertion
   const ghobject_t &oid)
 {
-  assert(l.get_locked() == oid);
+  assert(l.get_locked() == oid); // sanity assertion, assert that we have locked the oid
+
+  // DBObjectMap::header_lock has been locked by the caller
 
   _Header *header = new _Header();
   {
     Mutex::Locker l(cache_lock);
-    if (caches.lookup(oid, header)) {
+    if (caches.lookup(oid, header)) { // oid has already been in cache, copy the value to *header
+      // apparently, we can not call this interface for the same oid twice, 
+      // because we can only get the lock of the oid (MapHeaderLock) once, only 
+      // after the lock is released, which caused by we deconstruct the outmost 
+      // iterator (DBObjectMapIterator), then we can get the lock again
+      // when the iterator is deconstructed, the Header (DBObjectMapIteratorImpl::header) 
+      // associated with the iterator is also deconstructed, then the deleter 
+      // (RemoveOnDelete) of the Header will remove header->seq from the 
+      // DBObjectMap::in_use set
+      // to sum up, we can not get two different iterators of type 
+      // DBObjectMapIterator for the same oid, i.e. the second call to
+      // DBObjectMap::get_iterator will get blocked until the first iterator is
+      // deconstruced
       assert(!in_use.count(header->seq));
       in_use.insert(header->seq);
-      return Header(header, RemoveOnDelete(this));
+
+      // Header is a typedef of shared_ptr<_Header>
+      return Header(header, RemoveOnDelete(this)); // when the header is deleting, remove header->seq from DBObjectMap::in_use
     }
   }
+
+  // ok, Header of the oid does not exist in cache, we need to load the Header
+  // from the backing db and add it to the cache
 
   map<string, bufferlist> out;
   set<string> to_get;
   to_get.insert(map_header_key(oid));
   int r = db->get(HOBJECT_TO_SEQ, to_get, &out);
-  if (r < 0 || out.empty()) {
+  if (r < 0 || out.empty()) { // Header does not exist in backing db
     delete header;
     return Header();
   }
+
+  // Header has been persisted in backing db
 
   Header ret(header, RemoveOnDelete(this));
   bufferlist::iterator iter = out.begin()->second.begin();
   ret->decode(iter);
   {
     Mutex::Locker l(cache_lock);
-    caches.add(oid, *ret);
+    caches.add(oid, *ret); // add oid and the _value_ of the header to cache
   }
 
   assert(!in_use.count(header->seq));
+
+  // now the header is in use by an iterator, will be removed by the deleter of
+  // Header (ret) above
   in_use.insert(header->seq);
   return ret;
 }

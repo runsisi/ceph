@@ -863,12 +863,45 @@ void PGLog::_write_log(
     t.omap_rmkeys(coll, log_oid, to_remove);
 }
 
+/* IndexedLog is derived from pg_log_t
+ *
+ * struct pg_log_t {
+ *     // head - newest entry (update|delete)
+ *     // tail - entry previous to oldest (update|delete) for which we have
+ *               complete negative information.  
+ *     // i.e. we can infer pg contents for any store whose last_update >= tail.
+ *  
+ *      eversion_t head;    // newest entry
+ *      eversion_t tail;    // version prior to oldest
+ *
+ *      // We can rollback rollback-able entries > can_rollback_to
+ *      eversion_t can_rollback_to;
+ *
+ *      // always <= can_rollback_to, indicates how far stashed rollback
+ *      // data can be found
+ *      eversion_t rollback_info_trimmed_to;
+ *
+ *      list<pg_log_entry_t> log;  // the actual log.
+ * };
+ *
+ * struct PGLog {
+ *     map<eversion_t, hobject_t> divergent_priors;
+ *     pg_missing_t     missing;
+ *     IndexedLog  log;
+ *
+ *     eversion_t dirty_to;         ///< must clear/writeout all keys <= dirty_to
+ *     eversion_t dirty_from;       ///< must clear/writeout all keys >= dirty_from
+ *     eversion_t writeout_from;    ///< must writout keys >= writeout_from
+ *     set<eversion_t> trimmed;     ///< must clear keys in trimmed
+ * };
+ */
+
 void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 		     coll_t log_coll,
 		    ghobject_t log_oid,
 		    const pg_info_t &info,
 		    map<eversion_t, hobject_t> &divergent_priors,
-		    IndexedLog &log,
+		    IndexedLog &log, // IndexedLog derives from pg_log_t
 		    pg_missing_t &missing,
 		    ostringstream &oss,
 		    set<string> *log_keys_debug)
@@ -877,7 +910,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 
   // legacy?
   struct stat st;
-  int r = store->stat(log_coll, log_oid, &st); // stat pg meta object
+  int r = store->stat(log_coll, log_oid, &st); // stat pg meta object, only for sanity checks
   assert(r == 0);
   assert(st.st_size == 0); // pg meta object has no data, only omap
 
@@ -893,6 +926,9 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
       // non-log pgmeta_oid keys are prefixed with _; skip those
       if (p->key()[0] == '_')
 	continue;
+
+      // ok, a log related item to handle
+      
       bufferlist bl = p->value();//Copy bufferlist before creating iterator
       bufferlist::iterator bp = bl.begin();
       if (p->key() == "divergent_priors") {
@@ -906,25 +942,31 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	bufferlist bl = p->value();
 	bufferlist::iterator bp = bl.begin();
 	::decode(log.rollback_info_trimmed_to, bp);
-      } else {
+      } else { // a log entry
 	pg_log_entry_t e;
 	e.decode_with_checksum(bp);
 	dout(20) << "read_log " << e << dendl;
-	if (!log.log.empty()) {
+	if (!log.log.empty()) { // list<pg_log_entry_t> IndexedLog::log;
 	  pg_log_entry_t last_e(log.log.back());
 	  assert(last_e.version.version < e.version.version);
 	  assert(last_e.version.epoch <= e.version.epoch);
 	}
-	log.log.push_back(e);
-	log.head = e.version;
+	log.log.push_back(e); // push the log entry to log list
+	log.head = e.version; // update log head
 	if (log_keys_debug)
 	  log_keys_debug->insert(e.get_key_name());
       }
     }
   }
 
+  // all log entries read
+
+  // log.tail and log.head both are set by pg info
   
   log.head = info.last_update;
+
+  // build log entry index and update rollback_info_trimmed_to down to 
+  // log entry <= rollback_info_trimmed_to
   log.index();
 
   // build missing
@@ -935,13 +977,16 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
     set<hobject_t, hobject_t::BitwiseComparator> did;
     for (list<pg_log_entry_t>::reverse_iterator i = log.log.rbegin();
 	 i != log.log.rend();
-	 ++i) {
-      if (i->version <= info.last_complete) break;
+	 ++i) { // reverse iterate log entries down to info.last_complete
+      if (i->version <= info.last_complete) break; // done the loop
+      
       if (cmp(i->soid, info.last_backfill, info.last_backfill_bitwise) > 0)
 	continue;
-      if (did.count(i->soid)) continue;
-      did.insert(i->soid);
+      if (did.count(i->soid)) continue; // already inserted
       
+      did.insert(i->soid); // insert
+
+      // op == DELETE || op == LOST_DELETE, the object does not exist now
       if (i->is_delete()) continue;
       
       bufferlist bv;
@@ -951,6 +996,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	OI_ATTR,
 	bv);
       if (r >= 0) {
+        
 	object_info_t oi(bv);
 	if (oi.version < i->version) {
 	  dout(15) << "read_log  missing " << *i << " (have " << oi.version << ")" << dendl;
@@ -961,6 +1007,8 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	missing.add(i->soid, i->version, eversion_t());
       }
     }
+
+
     for (map<eversion_t, hobject_t>::reverse_iterator i =
 	   divergent_priors.rbegin();
 	 i != divergent_priors.rend();

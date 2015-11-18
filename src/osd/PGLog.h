@@ -170,7 +170,7 @@ struct PGLog {
            i != log.rend();
            ++i) {
 	if (i->soid == oid) {
-	  if (i->reqid_is_indexed())
+	  if (i->reqid_is_indexed()) // reqid != osd_reqid_t() && (op == MODIFY || op == DELETE)
 	    pls->push_back(make_pair(i->reqid, i->user_version));
 	  pls->insert(pls->end(), i->extra_reqids.begin(), i->extra_reqids.end());
 	  if (pls->size() >= max) {
@@ -187,11 +187,12 @@ struct PGLog {
       objects.clear();
       caller_ops.clear();
       extra_caller_ops.clear();
+      
       for (list<pg_log_entry_t>::iterator i = log.begin();
            i != log.end();
-           ++i) {
+           ++i) { // iterate each log entry
         objects[i->soid] = &(*i);
-	if (i->reqid_is_indexed()) {
+	if (i->reqid_is_indexed()) { // reqid != osd_reqid_t() && (op == MODIFY || op == DELETE)
 	  //assert(caller_ops.count(i->reqid) == 0);  // divergent merge_log indexes new before unindexing old
 	  caller_ops[i->reqid] = &(*i);
 	}
@@ -203,13 +204,16 @@ struct PGLog {
 	}
       }
 
+      // rollback_info_trimmed_to_riter points to the first log entry <=
+      // rollback_info_trimmed_to
+
       rollback_info_trimmed_to_riter = log.rbegin();
       while (rollback_info_trimmed_to_riter != log.rend() &&
 	     rollback_info_trimmed_to_riter->version > rollback_info_trimmed_to)
-	++rollback_info_trimmed_to_riter;
+	++rollback_info_trimmed_to_riter; // down to log entry <= rollback_info_trimmed_to
     }
 
-    void index(pg_log_entry_t& e) {
+    void index(pg_log_entry_t& e) { // add the specified log entry to the index
       if (objects.count(e.soid) == 0 || 
           objects[e.soid]->version < e.version)
         objects[e.soid] = &e;
@@ -229,7 +233,7 @@ struct PGLog {
       caller_ops.clear();
       extra_caller_ops.clear();
     }
-    void unindex(pg_log_entry_t& e) {
+    void unindex(pg_log_entry_t& e) { // remove the specified log entry from the index
       // NOTE: this only works if we remove from the _tail_ of the log!
       if (objects.count(e.soid) && objects[e.soid]->version == e.version)
         objects.erase(e.soid);
@@ -676,8 +680,11 @@ public:
 		const pg_info_t &info, ostringstream &oss) {
     // read PGLog::log, PGLog::missing, PGLog::divergent_priors
     return read_log(
-      store, pg_coll, log_coll, log_oid, info, divergent_priors,
-      log, missing, oss,
+      store, pg_coll, log_coll, log_oid, info, 
+      divergent_priors, // map<eversion_t, hobject_t>
+      log,              // IndexedLog
+      missing,          // pg_missing_t
+      oss,
       (pg_log_debug ? &log_keys_debug : 0));
   }
 
