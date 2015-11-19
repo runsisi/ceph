@@ -6678,10 +6678,14 @@ void OSD::handle_osd_map(MOSDMap *m)
 		     << " != my " << hb_front_server_messenger->get_myaddr() << ")";
       
       if (!service.is_stopping()) {
-        epoch_t up_epoch = 0;
+        epoch_t up_epoch = 0; // we need to restart, so set the up_epoch to 0
         epoch_t bind_epoch = osdmap->get_epoch();
+
+        // prepare to restart booting process, set the up_epoch to 0, which will 
+        // be reset in OSD::advance_map
         service.set_epochs(NULL,&up_epoch, &bind_epoch);
-	do_restart = true;
+        
+	do_restart = true; // mark that we need to restart the booting process
 
 	start_waiting_for_healthy();
 
@@ -6931,6 +6935,12 @@ void OSD::advance_map()
   if (!up_epoch &&
       osdmap->is_up(whoami) &&
       osdmap->get_inst(whoami) == client_messenger->get_myinst()) {
+    // we are newly started or have just restarted the booting process, 
+    // if we are newly started, the up_epoch is initialized to 0 in
+    // OSDService's ctor
+    // if we have just restarted the booting process, the up_epoch 
+    // was set to 0 in OSD::handle_osd_map when we found that we have 
+    // to restart the booting process
     up_epoch = osdmap->get_epoch();
     dout(10) << "up_epoch is " << up_epoch << dendl;
     if (!boot_epoch) {
@@ -7141,8 +7151,8 @@ bool OSD::require_osd_peer(Message *m)
 
 bool OSD::require_self_aliveness(Message *m, epoch_t epoch)
 {
-  epoch_t up_epoch = service.get_up_epoch();
-  if (epoch < up_epoch) {
+  epoch_t up_epoch = service.get_up_epoch(); // which epoch that we are up marked by the mon
+  if (epoch < up_epoch) { // obsolete message
     dout(7) << "from pre-up epoch " << epoch << " < " << up_epoch << dendl;
     return false;
   }
@@ -7173,7 +7183,7 @@ bool OSD::require_same_peer_instance(Message *m, OSDMapRef& map,
     if (s) {
       if (!is_fast_dispatch)
 	s->session_dispatch_lock.Lock();
-      clear_session_waiting_on_map(s);
+      clear_session_waiting_on_map(s); // remove session from OSD::session_waiting_for_map if on the map
       con->set_priv(NULL);   // break ref <-> session cycle, if any
       if (!is_fast_dispatch)
 	s->session_dispatch_lock.Unlock();
@@ -7189,7 +7199,7 @@ bool OSD::require_same_peer_instance(Message *m, OSDMapRef& map,
  * require that we have same (or newer) map, and that
  * the source is the pg primary.
  */
-bool OSD::require_same_or_newer_map(OpRequestRef& op, epoch_t epoch,
+bool OSD::require_same_or_newer_map(OpRequestRef& op, epoch_t epoch, // epoch carried with the op
 				    bool is_fast_dispatch)
 {
   Message *m = op->get_req();
@@ -7199,13 +7209,14 @@ bool OSD::require_same_or_newer_map(OpRequestRef& op, epoch_t epoch,
   assert(osd_lock.is_locked());
 
   // do they have a newer map?
-  if (epoch > osdmap->get_epoch()) {
+  if (epoch > osdmap->get_epoch()) { // peer has a newer map than us
     dout(7) << "waiting for newer map epoch " << epoch
 	    << " > my " << osdmap->get_epoch() << " with " << m << dendl;
-    wait_for_new_map(op);
+    wait_for_new_map(op); // subscribe a new map and put us in waiting list (OSD::waiting_for_osdmap)
     return false;
   }
 
+  // must not be sent before we are up, and we must in state STATE_ACTIVE
   if (!require_self_aliveness(op->get_req(), epoch)) {
     return false;
   }
@@ -7213,6 +7224,9 @@ bool OSD::require_same_or_newer_map(OpRequestRef& op, epoch_t epoch,
   // ok, our map is same or newer.. do they still exist?
   if (m->get_connection()->get_messenger() == cluster_messenger &&
       !require_same_peer_instance(op->get_req(), osdmap, is_fast_dispatch)) {
+    // if we are osd(s), the peer must still in our map, and the cluster address
+    // has not been changed, which means the peer did not restart since the
+    // message sent off the peer
     return false;
   }
 
@@ -7743,10 +7757,19 @@ void OSD::handle_pg_trim(OpRequestRef op)
 
   dout(7) << "handle_pg_trim " << *m << " from " << m->get_source() << dendl;
 
-  if (!require_osd_peer(op->get_req()))
+  if (!require_osd_peer(op->get_req())) // peer must be an osd
     return;
 
   int from = m->get_source().num();
+
+  // 1. we must have same or newer map than the peer, else we subscribe a new
+  // map, and push the op back of OSD::waiting_for_osdmap
+  // 2. the message must be sent after we are up, which means the peer must got
+  // an osdmap that is the same or newer than the one that (the latest up interval) 
+  // marked we up, and we are in STATE_ACTIVE now
+  // 3. the peer must still in our map, and the cluster address has not been 
+  // changed, which means the peer did not restart since the message sent off 
+  // the peer
   if (!require_same_or_newer_map(op, m->epoch, false))
     return;
 
@@ -7755,13 +7778,14 @@ void OSD::handle_pg_trim(OpRequestRef op)
     return;
   }
 
+  // mark we are start to handle this op, the OSD::op_tracker will know where are we
   op->mark_started();
 
-  if (!_have_pg(m->pgid)) {
+  if (!_have_pg(m->pgid)) { // we are not in OSD::pg_map
     dout(10) << " don't have pg " << m->pgid << dendl;
   } else {
-    PG *pg = _lookup_lock_pg(m->pgid);
-    if (m->epoch < pg->info.history.same_interval_since) {
+    PG *pg = _lookup_lock_pg(m->pgid); // get PG* from OSD::pg_map
+    if (m->epoch < pg->info.history.same_interval_since) { // ???
       dout(10) << *pg << " got old trim to " << m->trim_to << ", ignoring" << dendl;
       pg->unlock();
       return;

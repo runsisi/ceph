@@ -25,20 +25,31 @@
 //////////////////// PGLog::IndexedLog ////////////////////
 
 void PGLog::IndexedLog::advance_rollback_info_trimmed_to(
-  eversion_t to,
-  LogEntryHandler *h)
+  eversion_t to, // eversion we want to trim to
+  LogEntryHandler *h) // h is of type PG::PGLogEntryHandler
 {
-  assert(to <= can_rollback_to);
+  assert(to <= can_rollback_to); // We can rollback rollback-able entries > can_rollback_to
 
   if (to > rollback_info_trimmed_to)
+    // rollback_info_trimmed_to always <= can_rollback_to, indicates how 
+    // far stashed rollback data can be found
     rollback_info_trimmed_to = to;
 
+  // rollback_info_trimmed_to_riter points to the first log entry <=
+  // rollback_info_trimmed_to
+
   while (rollback_info_trimmed_to_riter != log.rbegin()) {
+    // iterate log entries in _positive_ order, i.e. log.tail -> log.head, from 
+    // last updated riter to log.rbegin
+    // update rollback_info_trimmed_to_riter to catch up rollback_info_trimmed_to,
+    // i.e. trim the old entries and update the iterator
     --rollback_info_trimmed_to_riter;
     if (rollback_info_trimmed_to_riter->version > rollback_info_trimmed_to) {
       ++rollback_info_trimmed_to_riter;
       break;
     }
+
+    // push the entry back of PGLogEntryHandler::to_trim list
     h->trim(*rollback_info_trimmed_to_riter);
   }
 }
@@ -86,34 +97,45 @@ void PGLog::IndexedLog::split_into(
 
 void PGLog::IndexedLog::trim(
   LogEntryHandler *handler,
-  eversion_t s,
+  eversion_t s, // eversion we want to trim to
   set<eversion_t> *trimmed)
 {
   if (complete_to != log.end() &&
       complete_to->version <= s) {
+    // do not trim the log past IndexedLog::complete_to 
+    // (type of list<pg_log_entry_t>::iterator), the caller has ensured that 
+    // they will not trim the log past info.last_complete (type of eversion_t)
     generic_dout(0) << " bad trim to " << s << " when complete_to is "
 		    << complete_to->version
 		    << " on " << *this << dendl;
   }
 
   if (s > can_rollback_to)
-    can_rollback_to = s;
+    // we will trim the older log entries, apparently we can not rollback
+    // to those old versions, so increase the can_rollback_to version
+    can_rollback_to = s; // member variable derived from pg_info_t
+
+  // update rollback_info_trimmed_to and rollback_info_trimmed_to_riter, note
+  // down entries to be deleted in handler
   advance_rollback_info_trimmed_to(s, handler);
 
-  while (!log.empty()) {
+  while (!log.empty()) { // iterate log entries in _positive_ order, i.e. log.tail -> log.head
     pg_log_entry_t &e = *log.begin();
     if (e.version > s)
       break;
     generic_dout(20) << "trim " << e << dendl;
     if (trimmed)
-      trimmed->insert(e.version);
+      trimmed->insert(e.version); // note down entries to be deleted
 
     unindex(e);         // remove from index,
 
-    if (rollback_info_trimmed_to_riter == log.rend() ||
+    if (rollback_info_trimmed_to_riter == log.rend() || // why need the first condition???
 	e.version == rollback_info_trimmed_to_riter->version) {
+      // we reached the last entry to trim, after pop_front, the reverse 
+      // iterator will be invalidated
       log.pop_front();
-      rollback_info_trimmed_to_riter = log.rend();
+      // validate the reverse iterator again
+      rollback_info_trimmed_to_riter = log.rend(); // we should always be a valid iterator
     } else {
       log.pop_front();
     }
@@ -166,7 +188,7 @@ void PGLog::trim(
   pg_info_t &info)
 {
   // trim?
-  if (trim_to > log.tail) {
+  if (trim_to > log.tail) { // log.tail < trim_to <= info.last_complete
     /* If we are trimming, we must be complete up to trim_to, time
      * to throw out any divergent_priors
      */
@@ -175,7 +197,14 @@ void PGLog::trim(
     assert(trim_to <= info.last_complete);
 
     dout(10) << "trim " << log << " to " << trim_to << dendl;
+
+    // update can_rollback_to, rollback_info_trimmed_to and rollback_info_trimmed_to_riter,
+    // remove the old entries from the index and note down the old entries to remove,
+    // the real remove action will be performed by the caller, raise log.tail after
+    // all these
     log.trim(handler, trim_to, &trimmed);
+
+    // update log tail of pg info
     info.log_tail = log.tail;
   }
 }

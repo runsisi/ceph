@@ -207,8 +207,11 @@ struct PGLog {
       // rollback_info_trimmed_to_riter points to the first log entry <=
       // rollback_info_trimmed_to
 
+      // update rollback_info_trimmed_to_riter to the proper position, if
+      // rollback_info_trimmed_to may lag behind log.rend(), then the reverse 
+      // iterator point to log.rend
       rollback_info_trimmed_to_riter = log.rbegin();
-      while (rollback_info_trimmed_to_riter != log.rend() &&
+      while (rollback_info_trimmed_to_riter != log.rend() && // rollback_info_trimmed_to may lag behind log.rend()
 	     rollback_info_trimmed_to_riter->version > rollback_info_trimmed_to)
 	++rollback_info_trimmed_to_riter; // down to log entry <= rollback_info_trimmed_to
     }

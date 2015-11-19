@@ -1291,7 +1291,7 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 
 void ReplicatedPG::calc_trim_to()
 {
-  size_t target = cct->_conf->osd_min_pg_log_entries;
+  size_t target = cct->_conf->osd_min_pg_log_entries; // default is 3000
   if (is_degraded() ||
       state_test(PG_STATE_RECOVERING |
 		 PG_STATE_RECOVERY_WAIT |
@@ -1305,10 +1305,11 @@ void ReplicatedPG::calc_trim_to()
       min_last_complete_ondisk != pg_trim_to &&
       pg_log.get_log().approx_size() > target) {
     size_t num_to_trim = pg_log.get_log().approx_size() - target;
-    if (num_to_trim < cct->_conf->osd_pg_log_trim_min) {
+    if (num_to_trim < cct->_conf->osd_pg_log_trim_min) { // default is 100
+      // too small number
       return;
     }
-    list<pg_log_entry_t>::const_iterator it = pg_log.get_log().log.begin();
+    list<pg_log_entry_t>::const_iterator it = pg_log.get_log().log.begin(); // raw log entry iterater
     eversion_t new_trim_to;
     for (size_t i = 0; i < num_to_trim; ++i) {
       new_trim_to = it->version;
