@@ -1035,6 +1035,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
       // and those in the process of being copied. The objects that are lower 
       // than last_backfill have been copied and the objects that are greater 
       // than last_backfill are going to be copied.
+      // TODO: ???
       if (cmp(i->soid, info.last_backfill, info.last_backfill_bitwise) > 0) // cmp for hobject_t defined in hobject.h
         // i->soid > info.last_backfill
 	continue;
@@ -1096,7 +1097,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	 * version would not have been recovered, and a newer version
 	 * would show up in the log above.
 	 */
-	assert(oi.version == i->first);
+	assert(oi.version == i->first); // TODO: ???
       } else {
 	dout(15) << "read_log  missing " << *i << dendl;
 	missing.add(i->second, i->first, eversion_t());

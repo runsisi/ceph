@@ -1371,13 +1371,15 @@ void ReplicatedPG::do_request(
     return;
   }
 
-  if (!is_peered()) {
+  if (!is_peered()) { // peered = PG_STATE_ACTIVE || PG_STATE_PEERED
     // Delay unless PGBackend says it's ok
-    if (pgbackend->can_handle_while_inactive(op)) {
+    if (pgbackend->can_handle_while_inactive(op)) { // for replicated backend we can handle pull op at any time      
+      // ec backend is always false, for replicated backend only ops below are allowed:
+      // MSG_OSD_PG_PULL and CEPH_OSD_OP_PULL (subop of MSG_OSD_SUBOP, defined in rados.h)
       bool handled = pgbackend->handle_message(op);
       assert(handled);
       return;
-    } else {
+    } else { // ok, we must wait until our state get into PG_STATE_ACTIVE or PG_STATE_PEERED
       waiting_for_peered.push_back(op);
       op->mark_delayed("waiting for peered");
       return;
@@ -1385,9 +1387,60 @@ void ReplicatedPG::do_request(
   }
 
   assert(is_peered() && flushes_in_progress == 0);
+
+  /** replicated backend handles ops below:
+   *
+   *  case MSG_OSD_PG_PUSH:
+   *  case MSG_OSD_PG_PULL:   
+   *  case MSG_OSD_PG_PUSH_REPLY:
+   *  case MSG_OSD_REPOP: // all replicas got this from primary to implement multiple copies write
+   *  case MSG_OSD_REPOPREPLY:
+   *
+   *  case MSG_OSD_SUBOP:
+   *    carried with subop:
+   *      case CEPH_OSD_OP_PUSH: // MSG_OSD_PG_PUSH
+   *      case CEPH_OSD_OP_PULL: // MSG_OSD_PG_PULL
+   *    or
+   *      carried with no subop  // MSG_OSD_REPOP
+   *  case MSG_OSD_SUBOPREPLY:    
+   *    carried with subop:
+   *      case CEPH_OSD_OP_PUSH: // MSG_OSD_PG_PUSH_REPLY
+   *    or
+   *      carried with no subop  // MSG_OSD_REPOPREPLY
+   *
+   ** ec backend handles ops below:
+   *
+   *  case MSG_OSD_EC_WRITE:
+   *  case MSG_OSD_EC_WRITE_REPLY:
+   *  case MSG_OSD_EC_READ:
+   *  case MSG_OSD_EC_READ_REPLY:
+   *  case MSG_OSD_PG_PUSH:
+   *  case MSG_OSD_PG_PUSH_REPLY:
+   */
+
+  // pg backend can only handle intra-osd ops
   if (pgbackend->handle_message(op))
     return;
 
+  /** pg front end handles ops below:
+   *  
+   *  case CEPH_MSG_OSD_OP:
+   *  case MSG_OSD_SUBOP:
+   *    carried with subop:
+   *      case CEPH_OSD_OP_DELETE:
+   *      case CEPH_OSD_OP_SCRUB_RESERVE:
+   *      case CEPH_OSD_OP_SCRUB_UNRESERVE:
+   *      case CEPH_OSD_OP_SCRUB_STOP:
+   *      case CEPH_OSD_OP_SCRUB_MAP:
+   *  case MSG_OSD_SUBOPREPLY:
+   *    carried with subop:
+   *      case CEPH_OSD_OP_SCRUB_RESERVE:
+   *  case MSG_OSD_PG_SCAN:
+   *  case MSG_OSD_PG_BACKFILL:
+   *  case MSG_OSD_REP_SCRUB:
+   */
+
+  // ok, pg backend did not handle the op
   switch (op->get_req()->get_type()) {
   case CEPH_MSG_OSD_OP:
     if (!is_active()) {

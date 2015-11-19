@@ -418,7 +418,7 @@ private:
     C_OSD_RepModifyApply(ReplicatedBackend *pg, RepModifyRef r)
       : pg(pg), rm(r) {}
     void finish(int r) {
-      pg->sub_op_modify_applied(rm);
+      pg->sub_op_modify_applied(rm); // the replica write has applied
     }
   };
   struct C_OSD_RepModifyCommit : public Context {
@@ -427,7 +427,7 @@ private:
     C_OSD_RepModifyCommit(ReplicatedBackend *pg, RepModifyRef r)
       : pg(pg), rm(r) {}
     void finish(int r) {
-      pg->sub_op_modify_commit(rm);
+      pg->sub_op_modify_commit(rm); // the replica write has committed
     }
   };
   void sub_op_modify_applied(RepModifyRef rm);

@@ -7762,18 +7762,18 @@ void OSD::handle_pg_trim(OpRequestRef op)
 
   int from = m->get_source().num();
 
-  // 1. we must have same or newer map than the peer, else we subscribe a new
+  // 1. we must have the same or newer map than the peer, else we subscribe a new
   // map, and push the op back of OSD::waiting_for_osdmap
   // 2. the message must be sent after we are up, which means the peer must got
-  // an osdmap that is the same or newer than the one that (the latest up interval) 
-  // marked we up, and we are in STATE_ACTIVE now
+  // an osdmap that is the same or newer than the one that marked we up 
+  // (the latest up interval) , and we are in STATE_ACTIVE now
   // 3. the peer must still in our map, and the cluster address has not been 
   // changed, which means the peer did not restart since the message sent off 
   // the peer
   if (!require_same_or_newer_map(op, m->epoch, false))
     return;
 
-  if (m->pgid.preferred() >= 0) {
+  if (m->pgid.preferred() >= 0) { // ???
     dout(10) << "ignoring localized pg " << m->pgid << dendl;
     return;
   }
@@ -7795,6 +7795,7 @@ void OSD::handle_pg_trim(OpRequestRef op)
     if (pg->is_primary()) {
       // peer is informing us of their last_complete_ondisk
       dout(10) << *pg << " replica osd." << from << " lcod " << m->trim_to << dendl;
+      // primary pg has a map to record all other replias's last_complete_on_disk eversion
       pg->peer_last_complete_ondisk[pg_shard_t(from, m->pgid.shard)] =
 	m->trim_to;
       if (pg->calc_min_last_complete_ondisk()) {

@@ -1151,12 +1151,16 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
 	   << dendl;
 
   // sanity checks
+  // primary only send replica write after it has finished the peering process,
+  // and we can only handle replica write after we have peered with primary and 
+  // other replicas, after peering primary and replicas have the same
+  // history.same_interval_since, so asserts here
   assert(m->map_epoch >= get_info().history.same_interval_since);
 
   // we better not be missing this.
-  assert(!parent->get_log().get_missing().is_missing(soid));
+  assert(!parent->get_log().get_missing().is_missing(soid)); // TODO: we should backfill the missing first???
 
-  int ackerosd = m->get_source().num();
+  int ackerosd = m->get_source().num(); // primary osd id
 
   op->mark_started();
 
@@ -1171,7 +1175,7 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
   vector<pg_log_entry_t> log;
 
   bufferlist::iterator p = m->get_data().begin();
-  ::decode(rm->opt, p);
+  ::decode(rm->opt, p); // op transaction
   rm->localt.set_use_tbl(rm->opt.get_use_tbl());
 
   if (m->new_temp_oid != hobject_t()) {
@@ -1189,7 +1193,7 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
   }
 
   p = m->logbl.begin();
-  ::decode(log, p);
+  ::decode(log, p); // vector<pg_log_entry_t>
   rm->opt.set_fadvise_flag(CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
 
   bool update_snaps = false;
@@ -1202,7 +1206,7 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
   }
   parent->update_stats(m->pg_stats);
   parent->log_operation(
-    log,
+    log, // a vector of pg log entries
     m->updated_hit_set_history,
     m->pg_trim_to,
     m->pg_trim_rollback_to,
@@ -1288,6 +1292,8 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
       static_cast<MOSDSubOp*>(m),
       get_parent()->whoami_shard(),
       0, get_osdmap()->get_epoch(), CEPH_OSD_FLAG_ONDISK);
+
+    // 
     reply->set_last_complete_ondisk(rm->last_complete);
     commit = reply;
   } else if (m->get_type() == MSG_OSD_REPOP) {
