@@ -585,7 +585,7 @@ void ReplicatedBackend::submit_transaction(
     parent->get_actingbackfill_shards().begin(),
     parent->get_actingbackfill_shards().end());
 
-  // generate subop and send to replica osds
+  // generate repop/subop and send to replicas to execute the transaction
   issue_op(
     soid,
     at_version,
@@ -598,7 +598,7 @@ void ReplicatedBackend::submit_transaction(
       hobject_t() : *(t->get_temp_cleared().begin()),
     log_entries,
     hset_history,
-    &op,
+    &op, // in progress op to record the write op
     op_t);
 
   // do op locally
@@ -1105,8 +1105,8 @@ void ReplicatedBackend::issue_op(
 	    discard_temp_oid,
 	    log_entries,
 	    hset_hist,
-	    op,
-	    op_t,
+	    op, // 
+	    op_t, // transaction to execute
 	    peer,
 	    pinfo);
     } else {
@@ -1165,7 +1165,7 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
   // sanity checks
   // primary only send replica write after it has finished the peering process,
   // and we can only handle replica write after we have peered with primary and 
-  // other replicas, after peering primary and replicas have the same
+  // other replicas, because after peering primary and replicas have the same
   // history.same_interval_since, so asserts here
   assert(m->map_epoch >= get_info().history.same_interval_since);
 

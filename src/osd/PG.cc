@@ -2813,9 +2813,13 @@ void PG::write_if_dirty(ObjectStore::Transaction& t)
 void PG::trim_peers()
 {
   assert(is_primary());
+
+  // calc which eversion of pg log we can trim to, i.e. ReplicatedPG::pg_trim_to,
+  // never past min_last_complete_ondisk 
   calc_trim_to();
   dout(10) << "trim_peers " << pg_trim_to << dendl;
-  if (pg_trim_to != eversion_t()) {
+  
+  if (pg_trim_to != eversion_t()) { // ok, we want to trim some of the pg log entries
     assert(!actingbackfill.empty());
     for (set<pg_shard_t>::iterator i = actingbackfill.begin();
 	 i != actingbackfill.end();
@@ -2826,8 +2830,8 @@ void PG::trim_peers()
 	new MOSDPGTrim(
 	  get_osdmap()->get_epoch(),
 	  spg_t(info.pgid.pgid, i->shard),
-	  pg_trim_to),
-	get_osdmap()->get_epoch());
+	  pg_trim_to), // eversion of the pg log entry i want the replicas to trim to
+	get_osdmap()->get_epoch()); // the osdmap epoch i send the message
     }
   }
 }

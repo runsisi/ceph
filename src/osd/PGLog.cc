@@ -192,7 +192,7 @@ void PGLog::trim(
     /* If we are trimming, we must be complete up to trim_to, time
      * to throw out any divergent_priors
      */
-    divergent_priors.clear();
+    divergent_priors.clear(); // TODO: ???
     // We shouldn't be trimming the log past last_complete
     assert(trim_to <= info.last_complete);
 

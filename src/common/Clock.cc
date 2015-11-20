@@ -32,7 +32,7 @@ utime_t ceph_clock_now(CephContext *cct)
   utime_t n(&tv);
 #endif
   if (cct)
-    n += cct->_conf->clock_offset;
+    n += cct->_conf->clock_offset; // default is 0
   return n;
 }
 

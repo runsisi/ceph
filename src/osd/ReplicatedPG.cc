@@ -1303,24 +1303,30 @@ void ReplicatedPG::calc_trim_to()
 
   if (min_last_complete_ondisk != eversion_t() &&
       min_last_complete_ondisk != pg_trim_to &&
-      pg_log.get_log().approx_size() > target) {
-    size_t num_to_trim = pg_log.get_log().approx_size() - target;
+      pg_log.get_log().approx_size() > target) { // we must keep at least "target" number of pg log entries
+    // TODO: why it is a approximate???
+    size_t num_to_trim = pg_log.get_log().approx_size() - target; // total number minus we want to keep
     if (num_to_trim < cct->_conf->osd_pg_log_trim_min) { // default is 100
-      // too small number
+      // too small number of entries to trim, left to next time to trim
       return;
     }
-    list<pg_log_entry_t>::const_iterator it = pg_log.get_log().log.begin(); // raw log entry iterater
+    
+    list<pg_log_entry_t>::const_iterator it = pg_log.get_log().log.begin();
     eversion_t new_trim_to;
     for (size_t i = 0; i < num_to_trim; ++i) {
       new_trim_to = it->version;
       ++it;
       if (new_trim_to > min_last_complete_ondisk) {
+        // never past the min_last_complete_ondisk, because we (primary + replicas) 
+        // have not synchronized since min_last_complete_ondisk
 	new_trim_to = min_last_complete_ondisk;
 	dout(10) << "calc_trim_to trimming to min_last_complete_ondisk" << dendl;
 	break;
       }
     }
     dout(10) << "calc_trim_to " << pg_trim_to << " -> " << new_trim_to << dendl;
+
+    // ok, we can trim to min(min_last_complete_ondisk, log.tail + num_to_trim)
     pg_trim_to = new_trim_to;
     assert(pg_trim_to <= pg_log.get_head());
     assert(pg_trim_to <= min_last_complete_ondisk);
@@ -4802,7 +4808,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  ctx->mod_desc.append(oi.size);
 	} else {
 	  ctx->mod_desc.mark_unrollbackable();
-	  if (pool.info.require_rollback()) {
+	  if (pool.info.require_rollback()) { // ec pool
 	    result = -EOPNOTSUPP;
 	    break;
 	  }
@@ -4876,7 +4882,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	if (pool.info.has_flag(pg_pool_t::FLAG_WRITE_FADVISE_DONTNEED))
 	  op.flags = op.flags | CEPH_OSD_OP_FLAG_FADVISE_DONTNEED;
 
-	if (pool.info.require_rollback()) {
+	if (pool.info.require_rollback()) { // ec pool
 	  if (obs.exists) {
 	    if (ctx->mod_desc.rmobject(ctx->at_version.version)) {
 	      t->stash(soid, ctx->at_version.version);
@@ -6338,10 +6344,12 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
     return result;
 
   // read-op?  done?
-  if (ctx->op_t->empty() && !ctx->modify) {
+  if (ctx->op_t->empty() && !ctx->modify) { // only ReplicatedPG::_rollback_to may set ctx->modify to true
     unstable_stats.add(ctx->delta_stats);
     return result;
   }
+
+  // ok, we are to write something
 
   // check for full
   if ((ctx->delta_stats.num_bytes > 0 ||
@@ -6366,7 +6374,7 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
 
   // clone, if necessary
   if (soid.snap == CEPH_NOSNAP)
-    make_writeable(ctx);
+    make_writeable(ctx); // COW, make a snap object and write to the original object
 
   finish_ctx(ctx,
 	     ctx->new_obs.exists ? pg_log_entry_t::MODIFY :
@@ -6375,8 +6383,9 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
   return result;
 }
 
-void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc,
-			      bool scrub_ok)
+void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, 
+                              bool maintain_ssc, // default to true
+			      bool scrub_ok) // default to false
 {
   const hobject_t& soid = ctx->obs->oi.soid;
   dout(20) << __func__ << " " << soid << " " << ctx
@@ -6512,7 +6521,7 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     }
     setattrs_maybe_cache(ctx->obc, ctx, ctx->op_t, attrs);
 
-    if (pool.info.require_rollback()) {
+    if (pool.info.require_rollback()) { // ec pool
       set<string> changing;
       changing.insert(OI_ATTR);
       if (!soid.is_snap())
@@ -8240,7 +8249,7 @@ void ReplicatedPG::issue_repop(RepGather *repop)
 
   repop->ctx->apply_pending_attrs();
 
-  if (pool.info.require_rollback()) {
+  if (pool.info.require_rollback()) { // ec pool
     for (vector<pg_log_entry_t>::iterator i = repop->ctx->log.begin();
 	 i != repop->ctx->log.end();
 	 ++i) {
@@ -8261,8 +8270,8 @@ void ReplicatedPG::issue_repop(RepGather *repop)
     soid,
     repop->ctx->at_version, // modification eversion (pg epoch, log.head.version) to the pg by the op
     repop->ctx->op_t, // transaction to execute for the op
-    pg_trim_to, // trim log to here
-    min_last_complete_ondisk, // trim rollback info to here, min(last_complete_ondisk, peer_last_complete_ondisk)
+    pg_trim_to, // trim log to this eversion
+    min_last_complete_ondisk, // trim rollback info to this version, min(last_complete_ondisk, peer_last_complete_ondisk)
     repop->ctx->log, // pg log entry for repop->ctx->op_t
     repop->ctx->updated_hset_history,
     onapplied_sync,

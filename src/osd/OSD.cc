@@ -7792,18 +7792,29 @@ void OSD::handle_pg_trim(OpRequestRef op)
     }
     assert(pg);
 
-    if (pg->is_primary()) { // we are primary
+    if (pg->is_primary()) { // we are primary, we received a MOSDPGTrim from a replica
       // peer is informing us of their last_complete_ondisk
       dout(10) << *pg << " replica osd." << from << " lcod " << m->trim_to << dendl;
       
       // primary pg has a map to record all other replias's last_complete_on_disk eversion
       pg->peer_last_complete_ondisk[pg_shard_t(from, m->pgid.shard)] =
-	m->trim_to; // replica's last_complete_on_disk
+	m->trim_to; // update replica's last_complete_on_disk, which means it has finished the write
       
-      if (pg->calc_min_last_complete_ondisk()) { // PG::min_last_complete_ondisk updated to a new value
+      if (pg->calc_min_last_complete_ondisk()) { // PG::min_last_complete_ondisk updated to a newer value
 	dout(10) << *pg << " min lcod now " << pg->min_last_complete_ondisk << dendl;
 
-        // send MOSDPGTrim to notify replicas that they can trim their pg log now
+        // i have a record of all other replicas' (actingbackfill) last_complete_ondisk,
+        // and i have a last_complete_ondisk for my own, every time i received a 
+        // MOSDPGTrim from another replica, i recalc the min last_complete_ondisk
+        // eversion over all of us, if the min eversion changed, which means
+        // all of us updated to a newer version, so i can notify other replicas
+        // to trim their pg log entries
+
+        // calc which eversion of the pg log we can trim to (we always want to keep
+        // some of the recent entries, and never past min_last_complete_ondisk),
+        // if the number of entries to trim is too small we exit without calc,
+        // if we can trim some entries, we send MOSDPGTrim to notify all other
+        // replicas that they can trim their pg log entries now
         pg->trim_peers();
       }
     } else {
