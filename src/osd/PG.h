@@ -888,6 +888,7 @@ public:
     LogEntryTrimmer(const hobject_t &soid, PG *pg, ObjectStore::Transaction *t)
       : soid(soid), pg(pg), t(t) {}
     void rmobject(version_t old_version) {
+      // remove specfied version of object
       pg->get_pgbackend()->trim_stashed_object(
 	soid,
 	old_version,
@@ -910,6 +911,18 @@ public:
 	soid);
     }
   };
+
+  /*
+   * class Visitor {
+   * public:
+   *     virtual void append(uint64_t old_offset) {}
+   *     virtual void setattrs(map<string, boost::optional<bufferlist> > &attrs) {}
+   *     virtual void rmobject(version_t old_version) {}
+   *     virtual void create() {}
+   *     virtual void update_snaps(set<snapid_t> &old_snaps) {}
+   *     virtual ~Visitor() {}
+   * };
+   */
 
   struct PGLogEntryHandler : public PGLog::LogEntryHandler {
     list<pg_log_entry_t> to_rollback;
@@ -944,8 +957,10 @@ public:
       }
       for (list<pg_log_entry_t>::reverse_iterator i = to_trim.rbegin();
 	   i != to_trim.rend();
-	   ++i) {
+	   ++i) { // iterate each log entry in reverse order, i.e. new -> old
 	LogEntryTrimmer trimmer(i->soid, pg, t);
+
+        // trim stashed object
 	i->mod_desc.visit(&trimmer);
       }
     }

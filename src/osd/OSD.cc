@@ -7785,31 +7785,45 @@ void OSD::handle_pg_trim(OpRequestRef op)
     dout(10) << " don't have pg " << m->pgid << dendl;
   } else {
     PG *pg = _lookup_lock_pg(m->pgid); // get PG* from OSD::pg_map
-    if (m->epoch < pg->info.history.same_interval_since) { // ???
+    if (m->epoch < pg->info.history.same_interval_since) { // TODO: ???
       dout(10) << *pg << " got old trim to " << m->trim_to << ", ignoring" << dendl;
       pg->unlock();
       return;
     }
     assert(pg);
 
-    if (pg->is_primary()) {
+    if (pg->is_primary()) { // we are primary
       // peer is informing us of their last_complete_ondisk
       dout(10) << *pg << " replica osd." << from << " lcod " << m->trim_to << dendl;
+      
       // primary pg has a map to record all other replias's last_complete_on_disk eversion
       pg->peer_last_complete_ondisk[pg_shard_t(from, m->pgid.shard)] =
-	m->trim_to;
-      if (pg->calc_min_last_complete_ondisk()) {
+	m->trim_to; // replica's last_complete_on_disk
+      
+      if (pg->calc_min_last_complete_ondisk()) { // PG::min_last_complete_ondisk updated to a new value
 	dout(10) << *pg << " min lcod now " << pg->min_last_complete_ondisk << dendl;
-	pg->trim_peers();
+
+        // send MOSDPGTrim to notify replicas that they can trim their pg log now
+        pg->trim_peers();
       }
     } else {
       // primary is instructing us to trim
       ObjectStore::Transaction *t = new ObjectStore::Transaction;
       PG::PGLogEntryHandler handler;
+
+      // update the in memory pg log entry list, and note down the 
+      // log entries to trim into "handler"
       pg->pg_log.trim(&handler, m->trim_to, pg->info);
+
+      // apply trim operations(remove stashed objects) on transaction
       handler.apply(pg, t);
       pg->dirty_info = true;
+
+      // write current pg epoch and pg info, remove old dirty log entries and
+      // write new dirty log entries
       pg->write_if_dirty(*t);
+
+      // queue backend store to execute the transaction
       int tr = store->queue_transaction(
 	pg->osr.get(), t,
 	new ObjectStore::C_DeleteTransaction(t));

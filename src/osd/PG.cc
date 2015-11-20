@@ -2668,14 +2668,14 @@ int PG::_prepare_write_info(map<string,bufferlist> *km,
 {
   // info.  store purged_snaps separately.
   interval_set<snapid_t> purged_snaps;
-  ::encode(epoch, (*km)[epoch_key]);
+  ::encode(epoch, (*km)[epoch_key]); // "_epoch"
   purged_snaps.swap(info.purged_snaps);
-  ::encode(info, (*km)[info_key]);
+  ::encode(info, (*km)[info_key]); // "_info"
   purged_snaps.swap(info.purged_snaps);
 
   if (dirty_big_info) {
     // potentially big stuff
-    bufferlist& bigbl = (*km)[biginfo_key];
+    bufferlist& bigbl = (*km)[biginfo_key]; // "_biginfo"
     ::encode(past_intervals, bigbl);
     ::encode(info.purged_snaps, bigbl);
     //dout(20) << "write_info bigbl " << bigbl.length() << dendl;
@@ -2718,6 +2718,8 @@ void PG::prepare_write_info(map<string,bufferlist> *km)
   info.stats.stats.add(unstable_stats);
   unstable_stats.clear();
 
+  // encode current pg epoch, pg info, and if dirty_big_info is true encode
+  // past_intervals and info.purged_snaps too into km
   int ret = _prepare_write_info(km, get_osdmap()->get_epoch(), info, coll,
 				past_intervals, pgmeta_oid,
 				dirty_big_info);
@@ -2791,8 +2793,19 @@ void PG::write_if_dirty(ObjectStore::Transaction& t)
 {
   map<string,bufferlist> km;
   if (dirty_big_info || dirty_info)
+    // encode current pg epoch, pg info, and maybe (when dirty_big_info is true) 
+    // past_intervals and info.purged_snaps into km
     prepare_write_info(&km);
+
+  // remove old dirty log entries, and encode the new dirty log entries into km
   pg_log.write_log(t, &km, coll, pgmeta_oid);
+
+  // ok, we get all what we want to write, includes current pg epoch, pg info, and
+  // maybe past_intervals and info.purged_snaps, new dirty log entries are also
+  // included, all these have been encoded into km (note: the old dirty entries 
+  // have been removed in pg_log.write_log)
+  
+  // write km into omap of the pg meta object
   if (!km.empty())
     t.omap_setkeys(coll, pgmeta_oid, km);
 }

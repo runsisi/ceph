@@ -116,7 +116,7 @@ void PGLog::IndexedLog::trim(
     can_rollback_to = s; // member variable derived from pg_info_t
 
   // update rollback_info_trimmed_to and rollback_info_trimmed_to_riter, note
-  // down entries to be deleted in handler
+  // down entries to be trimmed into handler
   advance_rollback_info_trimmed_to(s, handler);
 
   while (!log.empty()) { // iterate log entries in _positive_ order, i.e. log.tail -> log.head
@@ -771,7 +771,7 @@ void PGLog::write_log(
   map<string,bufferlist> *km,
   const coll_t& coll, const ghobject_t &log_oid)
 {
-  if (is_dirty()) {
+  if (is_dirty()) { // pg log is dirty, need to write the log
     dout(5) << "write_log with: "
 	     << "dirty_to: " << dirty_to
 	     << ", dirty_from: " << dirty_from
@@ -781,6 +781,8 @@ void PGLog::write_log(
 	     << ", writeout_from: " << writeout_from
 	     << ", trimmed: " << trimmed
 	     << dendl;
+
+    // remove old dirty log entries and encode new dirty log entries into km
     _write_log(
       t, km, log, coll, log_oid, divergent_priors,
       dirty_to, // clear [eversion_t(), dirty_to), then write entries [..dirty_to)
@@ -870,7 +872,7 @@ void PGLog::_write_log(
        p != log.log.end() && p->version <= dirty_to;
        ++p) {
     bufferlist bl(sizeof(*p) * 2);
-    p->encode_with_checksum(bl);
+    p->encode_with_checksum(bl); // encode log entry
     (*km)[p->get_key_name()].claim(bl);
   }
   // encode the dirty entries down to min(dirty_from, writeout_from)

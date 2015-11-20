@@ -546,7 +546,7 @@ void ReplicatedBackend::submit_transaction(
   PGTransaction *_t,
   const eversion_t &trim_to,
   const eversion_t &trim_rollback_to,
-  const vector<pg_log_entry_t> &log_entries,
+  const vector<pg_log_entry_t> &log_entries, // pg log entry of the op
   boost::optional<pg_hit_set_history_t> &hset_history,
   Context *on_local_applied_sync,
   Context *on_all_acked,
@@ -562,8 +562,13 @@ void ReplicatedBackend::submit_transaction(
   assert(t->get_temp_added().size() <= 1);
   assert(t->get_temp_cleared().size() <= 1);
 
-  // tid is a replica op tid generated on primary osd
+  // tid is a replica op tid generated on primary osd in ReplicatedPG::execute_ctx
+  // for write op, it increased monotonically, so never duplicates
   assert(!in_progress_ops.count(tid));
+
+  // we wait the replicas and ourself finish the write op asynchronously, so
+  // record the op we are to issue, or we never know when or whether the op
+  // finished
   InProgressOp &op = in_progress_ops.insert(
     make_pair(
       tid,
@@ -584,8 +589,8 @@ void ReplicatedBackend::submit_transaction(
   issue_op(
     soid,
     at_version,
-    tid,
-    reqid,
+    tid, // monotonically increased for each write op i issued, generated in ReplicatedPG::execute_ctx for write op
+    reqid, // reqid to identify the client's request
     trim_to,
     trim_rollback_to,
     t->get_temp_added().empty() ? hobject_t() : *(t->get_temp_added().begin()),
@@ -595,6 +600,8 @@ void ReplicatedBackend::submit_transaction(
     hset_history,
     &op,
     op_t);
+
+  // do op locally
 
   ObjectStore::Transaction *local_t = new ObjectStore::Transaction;
   local_t->set_use_tbl(op_t->get_use_tbl());
@@ -1065,28 +1072,33 @@ void ReplicatedBackend::issue_op(
   if (parent->get_actingbackfill_shards().size() > 1) {
     ostringstream ss;
     set<pg_shard_t> replicas = parent->get_actingbackfill_shards();
+
+    // we are the one issue the op, and will do the op locally
     replicas.erase(parent->whoami_shard());
     ss << "waiting for subops from " << replicas;
     if (op->op)
       op->op->mark_sub_op_sent(ss.str());
   }
+  
   for (set<pg_shard_t>::const_iterator i =
 	 parent->get_actingbackfill_shards().begin();
        i != parent->get_actingbackfill_shards().end();
-       ++i) {
-    if (*i == parent->whoami_shard()) continue;
+       ++i) { // iterate replicas
+    if (*i == parent->whoami_shard()) continue; // we are to do the op locally, later
     pg_shard_t peer = *i;
     const pg_info_t &pinfo = parent->get_shard_info().find(peer)->second;
 
     Message *wr;
     uint64_t min_features = parent->min_peer_features();
     if (!(min_features & CEPH_FEATURE_OSD_REPOP)) {
+      // the peer does not support MSG_OSD_REPOP and MSG_OSD_REPOPREPLY, use
+      // MSG_OSD_SUBOP with carried subop instread
       dout(20) << "Talking to old version of OSD, doesn't support RepOp, fall back to SubOp" << dendl;
       wr = generate_subop<MOSDSubOp, MSG_OSD_SUBOP>(
 	    soid,
 	    at_version,
-	    tid,
-	    reqid,
+	    tid, // monotonically increased for each write op i issued, generated in ReplicatedPG::execute_ctx for write op
+	    reqid, // reqid to identify the client's request
 	    pg_trim_to,
 	    pg_trim_rollback_to,
 	    new_temp_oid,

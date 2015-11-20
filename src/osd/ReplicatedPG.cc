@@ -2806,6 +2806,8 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
     }
 
     // version
+    // for write op, construct an eversion by (pg current epoch and log.head.version + 1)
+    // to identify a new write to the pg
     ctx->at_version = get_next_version();
     ctx->mtime = m->get_mtime();
 
@@ -8211,7 +8213,7 @@ void ReplicatedPG::issue_repop(RepGather *repop)
           << " o " << soid
           << dendl;
 
-  repop->v = ctx->at_version;
+  repop->v = ctx->at_version; // modification eversion (pg epoch, log.head.version) to the pg by the op
   if (ctx->at_version > eversion_t()) {
     for (set<pg_shard_t>::iterator i = actingbackfill.begin();
 	 i != actingbackfill.end();
@@ -8254,21 +8256,21 @@ void ReplicatedPG::issue_repop(RepGather *repop)
     repop->ctx->clone_obc,
     unlock_snapset_obc ? repop->ctx->snapset_obc : ObjectContextRef());
 
-  // call issue_op to send transaction to replicas and apply transaction locally
+  // call issue_op to send transaction of the op to replicas and do transaction locally
   pgbackend->submit_transaction(
     soid,
-    repop->ctx->at_version,
-    repop->ctx->op_t,
-    pg_trim_to,
-    min_last_complete_ondisk,
-    repop->ctx->log,
+    repop->ctx->at_version, // modification eversion (pg epoch, log.head.version) to the pg by the op
+    repop->ctx->op_t, // transaction to execute for the op
+    pg_trim_to, // trim log to here
+    min_last_complete_ondisk, // trim rollback info to here, min(last_complete_ondisk, peer_last_complete_ondisk)
+    repop->ctx->log, // pg log entry for repop->ctx->op_t
     repop->ctx->updated_hset_history,
     onapplied_sync,
     on_all_applied,
     on_all_commit,
-    repop->rep_tid,
-    repop->ctx->reqid,
-    repop->ctx->op);
+    repop->rep_tid, // monotonically increased for each write op i issued, generated in ReplicatedPG::execute_ctx for write op
+    repop->ctx->reqid, // reqid to identify the client's request
+    repop->ctx->op); // original client op
   repop->ctx->op_t = NULL;
 }
 
