@@ -585,10 +585,10 @@ void ReplicatedBackend::submit_transaction(
     parent->get_actingbackfill_shards().begin(),
     parent->get_actingbackfill_shards().end());
 
-  // generate repop/subop and send to replicas to execute the transaction
+  // generate repop/subop and send to replicas to execute the transaction (transaction of the op)
   issue_op(
     soid,
-    at_version,
+    at_version, // modification eversion (pg epoch, log.head.version) to the pg by the op
     tid, // monotonically increased for each write op i issued, generated in ReplicatedPG::execute_ctx for write op
     reqid, // reqid to identify the client's request
     trim_to,
@@ -603,14 +603,14 @@ void ReplicatedBackend::submit_transaction(
 
   // do op locally
 
-  ObjectStore::Transaction *local_t = new ObjectStore::Transaction;
+  ObjectStore::Transaction *local_t = new ObjectStore::Transaction; // transaction to update pg info and pg log
   local_t->set_use_tbl(op_t->get_use_tbl());
   if (!(t->get_temp_added().empty())) {
     add_temp_objs(t->get_temp_added());
   }
   clear_temp_objs(t->get_temp_cleared());
 
-  // write pg log to pg meta object's omap, and build this write op into local_t
+  // update pg info and pg log, wrap these modifications into localt
   parent->log_operation(
     log_entries,
     hset_history,
@@ -692,7 +692,7 @@ void ReplicatedBackend::op_commit(
 template<typename T, int MSGTYPE>
 void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
 {
-  T *r = static_cast<T *>(op->get_req());
+  T *r = static_cast<T *>(op->get_req()); // subop/repop reply message
   assert(r->get_header().type == MSGTYPE);
   assert(MSGTYPE == MSG_OSD_SUBOPREPLY || MSGTYPE == MSG_OSD_REPOPREPLY);
 
@@ -739,6 +739,10 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
 	ip_op.op->mark_event(ss.str());
       }
     }
+
+    // if the replica op committed before applied, then the applied reply 
+    // will not be sent, so whenever applied or committed reply received,
+    // we erase the replica from ip_op.waiting_for_applied
     ip_op.waiting_for_applied.erase(from);
 
     parent->update_peer_last_complete_ondisk(
@@ -1038,9 +1042,9 @@ Message * ReplicatedBackend::generate_subop(
     ::encode(*op_t, wr->get_data());
   }
 
-  ::encode(log_entries, wr->logbl);
+  ::encode(log_entries, wr->logbl); // pg log entries for the op
 
-  if (pinfo.is_incomplete())
+  if (pinfo.is_incomplete()) // backfill has not been finished
     wr->pg_stats = pinfo.stats;  // reflects backfill progress
   else
     wr->pg_stats = get_info().stats;
@@ -1068,7 +1072,7 @@ void ReplicatedBackend::issue_op(
   InProgressOp *op,
   ObjectStore::Transaction *op_t)
 {
-
+  // if we need to write to replica, mark the state flag of the client op
   if (parent->get_actingbackfill_shards().size() > 1) {
     ostringstream ss;
     set<pg_shard_t> replicas = parent->get_actingbackfill_shards();
@@ -1096,7 +1100,7 @@ void ReplicatedBackend::issue_op(
       dout(20) << "Talking to old version of OSD, doesn't support RepOp, fall back to SubOp" << dendl;
       wr = generate_subop<MOSDSubOp, MSG_OSD_SUBOP>(
 	    soid,
-	    at_version,
+	    at_version, // modification eversion (pg epoch, log.head.version) to the pg by the op
 	    tid, // monotonically increased for each write op i issued, generated in ReplicatedPG::execute_ctx for write op
 	    reqid, // reqid to identify the client's request
 	    pg_trim_to,
@@ -1105,7 +1109,7 @@ void ReplicatedBackend::issue_op(
 	    discard_temp_oid,
 	    log_entries,
 	    hset_hist,
-	    op, // 
+	    op, // not used
 	    op_t, // transaction to execute
 	    peer,
 	    pinfo);
@@ -1205,7 +1209,7 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
   }
 
   p = m->logbl.begin();
-  ::decode(log, p); // vector<pg_log_entry_t>
+  ::decode(log, p); // pg log entries for the op
   rm->opt.set_fadvise_flag(CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
 
   bool update_snaps = false;
@@ -1217,8 +1221,10 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
     update_snaps = true;
   }
   parent->update_stats(m->pg_stats);
+
+  // update pg info and pg log, wrap these modifications into rm->localt
   parent->log_operation(
-    log, // a vector of pg log entries
+    log, // a vector of pg log entries for the op
     m->updated_hit_set_history,
     m->pg_trim_to,
     m->pg_trim_rollback_to,
@@ -1254,8 +1260,10 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
   Message *ack = NULL;
   eversion_t version;
 
+  // tell primary that we have applied the op (not commited yet)
+
   if (m->get_type() == MSG_OSD_SUBOP) {
-    // doesn't have CLIENT SUBOP feature ,use Subop
+    // doesn't have CLIENT REPOP feature ,use Subop
     MOSDSubOp *req = static_cast<MOSDSubOp*>(m);
     version = req->version;
     if (!rm->committed)
@@ -1280,6 +1288,7 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
       rm->ackerosd, ack, get_osdmap()->get_epoch());
   }
 
+  // update PG::last_update_applied and PG::scrubber
   parent->op_applied(version);
 }
 
@@ -1295,6 +1304,8 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
 
   assert(get_osdmap()->is_up(rm->ackerosd));
   get_parent()->update_last_complete_ondisk(rm->last_complete);
+
+  // tell primary that we have committed the op
 
   Message *m = rm->op->get_req();
   Message *commit = NULL;

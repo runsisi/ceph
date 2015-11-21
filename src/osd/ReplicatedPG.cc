@@ -1992,6 +1992,8 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     }
   }
 
+  // create an instance of OpContext to wrap the client op and the object 
+  // that the client op specified
   OpContext *ctx = new OpContext(op, m->get_reqid(), m->ops, obc, this);
 
   if (!obc->obs.exists)
@@ -2066,6 +2068,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   op->mark_started();
   ctx->src_obc.swap(src_obc);
 
+  // do the client op wrapped in the OpContext
   execute_ctx(ctx);
 }
 
@@ -2789,6 +2792,8 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
   // this method must be idempotent since we may call it several times
   // before we finally apply the resulting transaction.
   delete ctx->op_t;
+
+  // allocate an instance of ECTransaction/RPGTransaction
   ctx->op_t = pgbackend->get_transaction();
 
   if (op->may_write() || op->may_cache()) {
@@ -2849,10 +2854,8 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
         reqid.name._num, reqid.tid, reqid.inc);
   }
 
-  // call do_osd_ops to read or build a transaction for write
-  // for sync read, we read the data
-  // for async read, we will start the real read op later
-  // for write, we build a transaction for this wirte op
+  // call do_osd_ops to do the ops request by the client, for read request, this
+  // is all we need to do, for write request, we do more
   int result = prepare_transaction(ctx);
 
   {
@@ -2918,7 +2921,7 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
     return;
   }
 
-  // for write op, we have a long way to go
+  // ok, for write op, we have a long way to go
 
   ctx->reply->set_reply_versions(ctx->at_version, ctx->user_at_version);
 
@@ -3950,10 +3953,12 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 
   bool first_read = true;
 
+  // transaction allocated in ReplicatedPG::execute_ctx
   PGBackend::PGTransaction* t = ctx->op_t;
 
   dout(10) << "do_osd_op " << soid << " " << ops << dendl;
 
+  // iterate each op carried with the client request
   for (vector<OSDOp>::iterator p = ops.begin(); p != ops.end(); ++p, ctx->current_osd_subop_num++) {
     OSDOp& osd_op = *p;
     ceph_osd_op& op = osd_op.op;
@@ -3980,11 +3985,18 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
       break;
     default:
       if (op.op & CEPH_OSD_OP_MODE_WR)
+        // the client carried with user-visible modification(s), used only
+        // in ReplicatedPG::finish_ctx to update ctx->user_at_version and
+        // ctx->new_obs.oi.user_version
 	ctx->user_modify = true;
     }
 
     ObjectContextRef src_obc;
-    if (ceph_osd_op_type_multi(op.op)) {
+    if (ceph_osd_op_type_multi(op.op)) { // get src_obc
+      // only the ops below are type of CEPH_OSD_OP_TYPE_MULTI
+      // f(CLONERANGE,   __CEPH_OSD_OP(WR, MULTI, 1),    "clonerange")       \
+      // f(ASSERT_SRC_VERSION, __CEPH_OSD_OP(RD, MULTI, 2), "assert-src-version") \
+      // f(SRC_CMPXATTR, __CEPH_OSD_OP(RD, MULTI, 3),    "src-cmpxattr")     \
       MOSDOp *m = static_cast<MOSDOp *>(ctx->op->get_req());
       object_locator_t src_oloc;
       get_src_oloc(soid.oid, m->get_object_locator(), src_oloc);
@@ -4018,6 +4030,8 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	       << " -> TRUNCATE " << op.extent.offset << " (old size is " << oi.size << ")" << dendl;
       op.op = CEPH_OSD_OP_TRUNCATE;
     }
+
+    // ok, handle op
 
     switch (op.op) {
       
@@ -5736,6 +5750,10 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
     if (result < 0 && (op.flags & CEPH_OSD_OP_FLAG_FAILOK))
       result = 0;
 
+    // failed for this op and we can not continue when failed, so skip the 
+    // remaining op(s)
+    // most of the time, we only have one op carried with the client request 
+    // except the request of type CEPH_OSD_OP_TYPE_MULTI
     if (result < 0)
       break;
   }
@@ -8272,7 +8290,7 @@ void ReplicatedPG::issue_repop(RepGather *repop)
     repop->ctx->op_t, // transaction to execute for the op
     pg_trim_to, // trim log to this eversion
     min_last_complete_ondisk, // trim rollback info to this version, min(last_complete_ondisk, peer_last_complete_ondisk)
-    repop->ctx->log, // pg log entry for repop->ctx->op_t
+    repop->ctx->log, // a vector of pg log entries for repop->ctx->op_t
     repop->ctx->updated_hset_history,
     onapplied_sync,
     on_all_applied,

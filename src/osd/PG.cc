@@ -2880,6 +2880,11 @@ void PG::append_log(
   for (vector<pg_log_entry_t>::const_iterator p = logv.begin();
        p != logv.end();
        ++p) {
+    // update info.last_complete if needed, update info.last_update to
+    // the logged operation and push this log entry back of PG::pg_log,
+    // so, if the op generates multiple log entries, the info.last_update
+    // always update to the latest eversion, the info.last_complete may
+    // lag behind
     add_log_entry(*p);
   }
 

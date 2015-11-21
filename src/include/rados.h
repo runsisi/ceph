@@ -268,7 +268,7 @@ extern const char *ceph_osd_state_name(int s);
 	f(RESETXATTRS,	__CEPH_OSD_OP(WR, ATTR, 3),	"resetxattrs")	    \
 	f(RMXATTR,	__CEPH_OSD_OP(WR, ATTR, 4),	"rmxattr")	    \
 									    \
-	/** subop **/							    \
+	/** subop **/	// op & CEPH_OSD_OP_TYPE_XXX is 0					    \
 	f(PULL,		__CEPH_OSD_OP1(SUB, 1),		"pull")		    \
 	f(PUSH,		__CEPH_OSD_OP1(SUB, 2),		"push")		    \
 	f(BALANCEREADS,	__CEPH_OSD_OP1(SUB, 3),		"balance-reads")    \
