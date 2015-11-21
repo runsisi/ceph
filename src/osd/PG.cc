@@ -2840,6 +2840,8 @@ void PG::add_log_entry(const pg_log_entry_t& e)
 {
   // raise last_complete only if we were previously up to date
   if (info.last_complete == info.last_update)
+    // if this condition is true, then even if we get called multiple times by the 
+    // caller, info.last_complete still equals to info.last_update
     info.last_complete = e.version;
   
   // raise last_update.
@@ -2897,6 +2899,8 @@ void PG::append_log(
 	get_osdmap()->get_epoch(),
 	info.last_update));
   } else if (trim_rollback_to > pg_log.get_rollback_trimmed_to()) {
+    // update log.can_rollback_to, log.rollback_info_trimmed_to and 
+    // log.rollback_info_trimmed_to_riter
     pg_log.trim_rollback_info(
       trim_rollback_to,
       &handler);
@@ -2907,14 +2911,22 @@ void PG::append_log(
 	trim_rollback_to));
   }
 
+  // trim pg log, i.e. remove old entries from the log entry list, pg_log.trim
+  // will also record trimmed log entries in "handler", but the trim_to always
+  // <= trim_rollback_to, so no duplicate entries recorded
   pg_log.trim(&handler, trim_to, info);
 
   dout(10) << __func__ << ": trimming to " << trim_rollback_to
 	   << " entries " << handler.to_trim << dendl;
+
+  // apply the trim, i.e. remove the stashed objects
   handler.apply(this, &t);
 
   // update the local pg, pg log
   dirty_info = true;
+
+  // write pg info, pg log entries, so the info.last_complete, info.last_update, 
+  // etc. get persisted
   write_if_dirty(t);
 }
 

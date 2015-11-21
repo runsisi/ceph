@@ -199,9 +199,9 @@ void PGLog::trim(
     dout(10) << "trim " << log << " to " << trim_to << dendl;
 
     // update can_rollback_to, rollback_info_trimmed_to and rollback_info_trimmed_to_riter,
-    // remove the old entries from the index and note down the old entries to remove,
-    // the real remove action will be performed by the caller, raise log.tail after
-    // all these
+    // remove the old entries from the index and note down the old entries to remove
+    // in PGLog::trimmed, note down the old old entries for rollback to remove in "handler",
+    // and raise log.tail after all these, the real remove action will be performed by the caller
     log.trim(handler, trim_to, &trimmed);
 
     // update log tail of pg info

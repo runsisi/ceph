@@ -2928,6 +2928,9 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
   assert(op->may_write() || op->may_cache());
 
   // trim log?
+
+  // calc which eversion of pg log we can trim to, i.e. ReplicatedPG::pg_trim_to,
+  // never past min_last_complete_ondisk 
   calc_trim_to();
 
   // verify that we are doing this in order?
@@ -3928,11 +3931,13 @@ static string list_entries(const T& m) {
 
 bool ReplicatedPG::maybe_create_new_object(OpContext *ctx)
 {
+  // ctx->new_obs was constructed from the old obs when construct the 
+  // instance of OpContext in ReplicatedPG::do_op
   ObjectState& obs = ctx->new_obs;
   if (!obs.exists) {
     ctx->delta_stats.num_objects++;
     obs.exists = true;
-    obs.oi.new_object();
+    obs.oi.new_object(); // set oi flag FLAG_DATA_DIGEST and FLAG_OMAP_DIGEST
     return true;
   } else if (obs.oi.is_whiteout()) {
     dout(10) << __func__ << " clearing whiteout on " << obs.oi.soid << dendl;
@@ -4796,7 +4801,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
     case CEPH_OSD_OP_WRITE:
       ++ctx->num_write;
       { // write
-        __u32 seq = oi.truncate_seq;
+        __u32 seq = oi.truncate_seq; // always 0 for non-MDS client
 	tracepoint(osd, do_osd_op_pre_write, soid.oid.name.c_str(), soid.snap.val, oi.size, seq, op.extent.offset, op.extent.length, op.extent.truncate_size, op.extent.truncate_seq);
 	if (op.extent.length != osd_op.indata.length()) {
 	  result = -EINVAL;
@@ -4812,13 +4817,14 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  break;
 	}
 
-	if (!obs.exists) {
+	if (!obs.exists) { // object does not exist
 	  if (pool.info.require_rollback() && op.extent.offset) {
 	    result = -EOPNOTSUPP;
 	    break;
 	  }
 	  ctx->mod_desc.create();
 	} else if (op.extent.offset == oi.size) {
+	  // write offset is the same as previous object size
 	  ctx->mod_desc.append(oi.size);
 	} else {
 	  ctx->mod_desc.mark_unrollbackable();
@@ -4858,9 +4864,13 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	    oi.truncate_size = op.extent.truncate_size;
 	  }
 	}
+
+        // max object size default is 100*1024L*1024L*1024L, i.e. 100G
 	result = check_offset_and_length(op.extent.offset, op.extent.length, cct->_conf->osd_max_object_size);
 	if (result < 0)
 	  break;
+
+        // write data
 	if (pool.info.require_rollback()) {
 	  t->append(soid, op.extent.offset, op.extent.length, osd_op.indata, op.flags);
 	} else {
@@ -4923,13 +4933,22 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	    t->setattrs(soid, to_set);
 	  }
 	} else {
-	  ctx->mod_desc.mark_unrollbackable();
+          // set ctx->mod_desc.can_local_rollback to false
+          ctx->mod_desc.mark_unrollbackable();
+
+          // write data from offset 0
 	  t->write(soid, 0, op.extent.length, osd_op.indata, op.flags);
+          // then truncate to the client provided data size
 	  if (obs.exists && op.extent.length < oi.size) {
 	    t->truncate(soid, op.extent.length);
 	  }
 	}
-	maybe_create_new_object(ctx);
+
+        // if the object does not exist, initialize ctx->new_obs.oi and set 
+        // ctx->new_obs.exists to true
+	maybe_create_new_object(ctx);   
+        // note: obs is a local reference to ctx->new_obs at the beginning of 
+        // the function
 	obs.oi.set_data_digest(osd_op.indata.crc32c(-1));
 
 	write_update_size_and_usage(ctx->delta_stats, oi, ctx->modified_ranges,
@@ -6367,7 +6386,7 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
     return result;
   }
 
-  // ok, we are to write something
+  // ok, we are writting something
 
   // check for full
   if ((ctx->delta_stats.num_bytes > 0 ||
@@ -6401,6 +6420,10 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
   return result;
 }
 
+// only ReplicatedPG::agent_maybe_evict call this interface with the third 
+// parameter set to false
+// and only ReplicatedPG::_scrub call this interface with the forth parameter
+// set to true
 void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, 
                               bool maintain_ssc, // default to true
 			      bool scrub_ok) // default to false
@@ -6419,13 +6442,18 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type,
     assert(ctx->new_obs.exists == ctx->new_snapset.head_exists);
 
     if (ctx->new_obs.exists) {
-      if (!ctx->obs->exists) {
-	if (ctx->snapset_obc && ctx->snapset_obc->obs.exists) {
-	  hobject_t snapoid = soid.get_snapdir();
+      if (!ctx->obs->exists) { // the object previously does not exist
+	if (ctx->snapset_obc && ctx->snapset_obc->obs.exists) { // but the snapdir object exists
+          // now we can use the newly created object to store the SnapSet, so we 
+          // can safely remove the snapdir object
+          hobject_t snapoid = soid.get_snapdir();
+
+          // add a new pg log entry for removing the snapdir object
 	  ctx->log.push_back(pg_log_entry_t(pg_log_entry_t::DELETE, snapoid,
-	      ctx->at_version,
-	      ctx->snapset_obc->obs.oi.version,
-	      0, osd_reqid_t(), ctx->mtime));
+	      ctx->at_version, // version
+	      ctx->snapset_obc->obs.oi.version, // prior_version
+	      0, // user_version
+	      osd_reqid_t(), ctx->mtime));
 	  if (pool.info.require_rollback()) {
 	    if (ctx->log.back().mod_desc.rmobject(ctx->at_version.version)) {
 	      ctx->op_t->stash(snapoid, ctx->at_version.version);
@@ -6440,17 +6468,24 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type,
 
 	  ctx->at_version.version++;
 
-	  ctx->snapset_obc->obs.exists = false;
+	  ctx->snapset_obc->obs.exists = false; // we removed the snapdir object
 	}
       }
     } else if (ctx->new_snapset.clones.size() &&
 	       !ctx->cache_evict &&
-	       (!ctx->snapset_obc || !ctx->snapset_obc->obs.exists)) {
+	       (!ctx->snapset_obc || !ctx->snapset_obc->obs.exists)) { // object does not exist
+      // we removed the object and the snapdir does not exist, which can happen
+      // when we delete a object with snapshot(s), because we still have snapshot 
+      // object(s), in order to maintain these snap object(s), we record these 
+      // info (SnapSet) into snapdir object
+      
       // save snapset on _snap
       hobject_t snapoid(soid.oid, soid.get_key(), CEPH_SNAPDIR, soid.get_hash(),
 			info.pgid.pool(), soid.get_namespace());
       dout(10) << " final snapset " << ctx->new_snapset
 	       << " in " << snapoid << dendl;
+
+      // add a new pg log entry for creating the snapdir object
       ctx->log.push_back(pg_log_entry_t(pg_log_entry_t::MODIFY, snapoid,
 					ctx->at_version,
 	                                eversion_t(),
@@ -6482,10 +6517,15 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type,
       map<string, bufferlist> attrs;
       bufferlist bv(sizeof(ctx->new_obs.oi));
       ::encode(ctx->snapset_obc->obs.oi, bv);
+
+      // create snapdir object
       ctx->op_t->touch(snapoid);
-      attrs[OI_ATTR].claim(bv);
-      attrs[SS_ATTR].claim(bss);
+      attrs[OI_ATTR].claim(bv); // object_info_t
+      attrs[SS_ATTR].claim(bss); // SnapSet
+
+      // set attrs on the snapdir object
       setattrs_maybe_cache(ctx->snapset_obc, ctx, ctx->op_t, attrs);
+      
       if (pool.info.require_rollback()) {
 	map<string, boost::optional<bufferlist> > to_set;
 	to_set[SS_ATTR];
@@ -6512,7 +6552,7 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type,
   }
   ctx->bytes_written = ctx->op_t->get_bytes_written();
  
-  if (ctx->new_obs.exists) {
+  if (ctx->new_obs.exists) { // update object attrs
     // on the head object
     ctx->new_obs.oi.version = ctx->at_version;
     ctx->new_obs.oi.prior_version = ctx->obs->oi.version;
@@ -6553,7 +6593,7 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type,
     ctx->new_obs.oi = object_info_t(ctx->obc->obs.oi.soid);
   }
 
-  // append to log
+  // add a new pg log entry for modifying for removing the final target object
   ctx->log.push_back(pg_log_entry_t(log_op_type, soid, ctx->at_version,
 				    ctx->obs->oi.version,
 				    ctx->user_at_version, ctx->reqid,
@@ -6577,6 +6617,9 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type,
     dout(20) << __func__ << "  extra_reqids " << ctx->extra_reqids << dendl;
     ctx->log.back().extra_reqids.swap(ctx->extra_reqids);
   }
+
+  // ctx->obc and original obc both point to the sam ObjectContext instance, so 
+  // we update ctx->obc here actually update the orignal obc
 
   // apply new object state.
   ctx->obc->obs = ctx->new_obs;
@@ -8284,11 +8327,11 @@ void ReplicatedPG::issue_repop(RepGather *repop)
     unlock_snapset_obc ? repop->ctx->snapset_obc : ObjectContextRef());
 
   // call issue_op to send transaction of the op to replicas and do transaction locally
-  pgbackend->submit_transaction(
+  pgbackend->submit_transaction( // pg_trim_to <= min_last_complete_ondisk
     soid,
     repop->ctx->at_version, // modification eversion (pg epoch, log.head.version) to the pg by the op
     repop->ctx->op_t, // transaction to execute for the op
-    pg_trim_to, // trim log to this eversion
+    pg_trim_to, // trim log to this eversion, updated by ReplicatedPG::calc_trim_to in ReplicatedPG::execute_ctx
     min_last_complete_ondisk, // trim rollback info to this version, min(last_complete_ondisk, peer_last_complete_ondisk)
     repop->ctx->log, // a vector of pg log entries for repop->ctx->op_t
     repop->ctx->updated_hset_history,

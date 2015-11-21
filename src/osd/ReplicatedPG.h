@@ -604,9 +604,9 @@ public:
 	      ObjectContextRef& obc,
 	      ReplicatedPG *_pg) :
       op(_op), reqid(_reqid), ops(_ops),
-      obs(&obc->obs),
+      obs(&obc->obs), // old ObjectState
       snapset(0),
-      new_obs(obs->oi, obs->exists),
+      new_obs(obs->oi, obs->exists), // new ObjectState constructed from old ObjectState
       modify(false), user_modify(false), undirty(false), cache_evict(false),
       ignore_cache(false), ignore_log_op_stats(false),
       bytes_written(0), bytes_read(0), user_at_version(0),
@@ -623,8 +623,8 @@ public:
       on_finish(NULL),
       release_snapset_obc(false) {
       if (obc->ssc) {
-	new_snapset = obc->ssc->snapset;
-	snapset = &obc->ssc->snapset;
+	new_snapset = obc->ssc->snapset; // new SnapSet constructed from old SnapSet
+	snapset = &obc->ssc->snapset; // old SnapSet
       }
     }
     OpContext(OpRequestRef _op, osd_reqid_t _reqid,

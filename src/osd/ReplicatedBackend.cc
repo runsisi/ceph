@@ -540,7 +540,7 @@ public:
   }
 };
 
-void ReplicatedBackend::submit_transaction(
+void ReplicatedBackend::submit_transaction( // trim_to <= trim_rollback_to
   const hobject_t &soid,
   const eversion_t &at_version,
   PGTransaction *_t,
@@ -657,15 +657,22 @@ void ReplicatedBackend::op_applied(
   if (op->op)
     op->op->mark_event("op_applied");
 
+  // we (primary) have applied the local modification, remove ourself from 
+  // the waiting_for_applied of in progress op
   op->waiting_for_applied.erase(get_parent()->whoami_shard());
+
+  // update ReplicatedBackend::last_update_applied and ReplicatedBackend::scrubber
   parent->op_applied(op->v);
 
-  if (op->waiting_for_applied.empty()) {
+  if (op->waiting_for_applied.empty()) { // primary and all replicas have applied the modification
     op->on_applied->complete(0);
     op->on_applied = 0;
   }
-  if (op->done()) {
+  
+  if (op->done()) { // waiting_for_commit.empty() && waiting_for_applied.empty
     assert(!op->on_commit && !op->on_applied);
+
+    // done, applied and committed, the client op finished
     in_progress_ops.erase(op->tid);
   }
 }
@@ -677,14 +684,19 @@ void ReplicatedBackend::op_commit(
   if (op->op)
     op->op->mark_event("op_commit");
 
+  // we (primary) have committed the local modification, remove ourself from 
+  // the waiting_for_commit of in progress op
   op->waiting_for_commit.erase(get_parent()->whoami_shard());
 
-  if (op->waiting_for_commit.empty()) {
+  if (op->waiting_for_commit.empty()) { // primary and all replicas have committed the modification
     op->on_commit->complete(0);
     op->on_commit = 0;
   }
-  if (op->done()) {
+  
+  if (op->done()) { // waiting_for_commit.empty() && waiting_for_applied.empty
     assert(!op->on_commit && !op->on_applied);
+
+    // done, applied and committed, the client op finished
     in_progress_ops.erase(op->tid);
   }
 }
