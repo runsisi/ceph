@@ -1338,8 +1338,8 @@ ReplicatedPG::ReplicatedPG(OSDService *o, OSDMapRef curmap,
   PG(o, curmap, _pool, p),
   pgbackend(
     PGBackend::build_pg_backend(
-      _pool.info, curmap, this, coll_t(p), o->store, cct)),
-  object_contexts(o->cct, g_conf->osd_pg_object_context_cache_count),
+      _pool.info, curmap, this, coll_t(p), o->store, cct)), // allocate an instance of ReplicatedBackend/ECBackend
+  object_contexts(o->cct, g_conf->osd_pg_object_context_cache_count), // default is 64
   snapset_contexts_lock("ReplicatedPG::snapset_contexts"),
   backfills_in_flight(hobject_t::Comparator(true)),
   pending_backfill_updates(hobject_t::Comparator(true)),
@@ -1348,8 +1348,8 @@ ReplicatedPG::ReplicatedPG(OSDService *o, OSDMapRef curmap,
   snap_trimmer_machine(this)
 { 
   missing_loc.set_backend_predicates(
-    pgbackend->get_is_readable_predicate(),
-    pgbackend->get_is_recoverable_predicate());
+    pgbackend->get_is_readable_predicate(), // allocate an instance of ECReadPred/RPCReadPred
+    pgbackend->get_is_recoverable_predicate()); // allocate an instance of ECRecPred/RPCRecPred
   snap_trimmer_machine.initiate();
 }
 

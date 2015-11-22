@@ -2981,7 +2981,7 @@ void OSD::load_pgs()
     }
     // there can be no waiters here, so we don't call wake_pg_waiters
 
-    // read pg state, log
+    // read pg info and pg log entries
     pg->read_state(store, bl);
 
     if (pg->must_upgrade()) {
