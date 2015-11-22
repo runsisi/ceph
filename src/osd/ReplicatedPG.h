@@ -682,7 +682,8 @@ public:
     xlist<RepGather*>::item queue_item;
     int nref;
 
-    eversion_t v;
+    // used to update PG::last_update_ondisk by callback C_OSD_RepopCommit 
+    eversion_t v; // initialized in issue_repop
 
     OpContext *ctx;
     ObjectContextRef obc;
@@ -699,8 +700,9 @@ public:
     bool sent_disk;
     
     utime_t   start;
-    
-    eversion_t          pg_local_last_complete;
+
+    // used to update PG::last_complete_ondisk by callback C_OSD_RepopCommit
+    eversion_t          pg_local_last_complete; // initialized in ctor to the previous op's eversion
 
     bool queue_snap_trimmer;
 

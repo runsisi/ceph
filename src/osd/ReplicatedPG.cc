@@ -3467,7 +3467,7 @@ ReplicatedPG::RepGather *ReplicatedPG::trim_object(const hobject_t &coid)
 
 void ReplicatedPG::snap_trimmer(epoch_t queued)
 {
-  if (g_conf->osd_snap_trim_sleep > 0) {
+  if (g_conf->osd_snap_trim_sleep > 0) { // default is 0
     unlock();
     utime_t t;
     t.set_from_double(g_conf->osd_snap_trim_sleep);
@@ -8283,6 +8283,7 @@ void ReplicatedPG::issue_repop(RepGather *repop)
           << " o " << soid
           << dendl;
 
+  // will be used to update PG::last_update_ondisk in callback C_OSD_RepopCommit
   repop->v = ctx->at_version; // modification eversion (pg epoch, log.head.version) to the pg by the op
   if (ctx->at_version > eversion_t()) {
     for (set<pg_shard_t>::iterator i = actingbackfill.begin();
@@ -8352,6 +8353,9 @@ ReplicatedPG::RepGather *ReplicatedPG::new_repop(OpContext *ctx, ObjectContextRe
   else
     dout(10) << "new_repop rep_tid " << rep_tid << " (no op)" << dendl;
 
+  // note: we have not call ReplicatedPG::issue_repop yet, so the info.last_complete
+  // has not been updated by pgbackend->submit_transaction in ReplicatedPG::issue_repop,
+  // so at this moment, info.last_complete point to the previous op's eversion
   RepGather *repop = new RepGather(ctx, obc, rep_tid, info.last_complete);
 
   repop->start = ceph_clock_now(cct);

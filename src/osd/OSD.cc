@@ -303,15 +303,15 @@ void OSDService::mark_split_in_progress(spg_t parent, const set<spg_t> &children
   assert(piter != rev_pending_splits.end());
   for (set<spg_t>::const_iterator i = children.begin();
        i != children.end();
-       ++i) {
+       ++i) { // iterate each child pg start to split
     assert(piter->second.count(*i));
     assert(pending_splits.count(*i));
     assert(!in_progress_splits.count(*i));
     assert(pending_splits[*i] == parent);
 
-    pending_splits.erase(*i);
-    piter->second.erase(*i);
-    in_progress_splits.insert(*i);
+    pending_splits.erase(*i); // remove from pending map
+    piter->second.erase(*i); // remove from pending map
+    in_progress_splits.insert(*i); // insert into in progress set
   }
   if (piter->second.empty())
     rev_pending_splits.erase(piter);
@@ -409,17 +409,17 @@ void OSDService::expand_pg_num(OSDMapRef old_map,
   for (set<spg_t>::iterator i = in_progress_splits.begin();
        i != in_progress_splits.end();
     ) {
-    if (!new_map->have_pg_pool(i->pool())) {
-      in_progress_splits.erase(i++);
+    if (!new_map->have_pg_pool(i->pool())) { // pool deleted, stop split
+      in_progress_splits.erase(i++); // TODO: the next iterator is valid?
     } else {
-      _maybe_split_pgid(old_map, new_map, *i);
+      _maybe_split_pgid(old_map, new_map, *i); // split even more
       ++i;
     }
   }
   for (map<spg_t, spg_t>::iterator i = pending_splits.begin();
        i != pending_splits.end();
     ) {
-    if (!new_map->have_pg_pool(i->first.pool())) {
+    if (!new_map->have_pg_pool(i->first.pool())) { // pool deleted, no need to split anymore
       rev_pending_splits.erase(i->second);
       pending_splits.erase(i++);
     } else {
@@ -1853,7 +1853,7 @@ int OSD::init()
   dout(2) << "boot" << dendl;
 
   // read superblock
-  r = read_superblock();
+  r = read_superblock(); // read OSD::superblock from "current/meta/osd_superblock"
   if (r < 0) {
     derr << "OSD::init() : unable to read osd superblock" << dendl;
     r = -EINVAL;
@@ -1946,10 +1946,19 @@ int OSD::init()
   clear_temp_objects();
 
   // load up pgs (as they previously existed)
+
+  // iterate each pg coll under current/, allocate an instance of ReplicatedPG 
+  // for each coll of type TYPE_PG, and insert this instance into OSD::pg_map,
+  // read pg info, log entries and past_intervals from pg meta object, restore 
+  // vector<int> up/acting, set<pg_shard_t> up_primary/primary, set my own role, 
+  // transit pg state to Reset, build past_intervals for all pg(s) on this osd, 
+  // and write the updated pg info and past_intervals into pg meta object 
+  // synchronously
   load_pgs();
 
   dout(2) << "superblock: i am osd." << superblock.whoami << dendl;
 
+  // create performance counters
   create_logger();
 
   // i'm ready!
@@ -1990,12 +1999,16 @@ int OSD::init()
   }
 
   service.init();
+  
+  // update OSDService::osdmap to osdmap of epoch superblock.current_epoch
   service.publish_map(osdmap);
+  // update OSDService::superblock
   service.publish_superblock(superblock);
 
   osd_lock.Unlock();
 
-  // auth ourself with mon
+  // auth ourself with mon, the msgr(s) and dispatcher(s) have been setup above,
+  // so now we can safely use the transport layer to communicate with others
   r = monc->authenticate();
   if (r < 0) {
     osd_lock.Lock(); // locker is going to unlock this on function exit
@@ -2013,20 +2026,27 @@ int OSD::init()
   if (is_stopping())
     return 0;
 
-  check_config();
+  check_config(); // sanity check settings for osdmap cache size
 
   dout(10) << "ensuring pgs have consumed prior maps" << dendl;
+
+  // consume osdmap from each pg's current map to OSD::osdmap, i.e. consume
+  // every osdmap we have lagged behind
   consume_map();
+
+  // wait until the peering_wq is empty, which means we have consumed all maps
+  // we have not consumed during previous life-cycle
   peering_wq.drain();
 
   dout(0) << "done with init, starting boot process" << dendl;
 
   // state is initialized to STATE_INITIALIZING in OSD's ctor,
   // then in OSD::handle_osd_map, state will be changed to STATE_ACTIVE if
-  // everything's ok and we are in booting state
+  // everything's ok, now we are in booting state
   set_state(STATE_BOOTING);
 
-  // send MMonGetVersion to mon to get osdmap version info
+  // send MMonGetVersion to mon to get osdmap version info, after the mon send
+  // the reply to us, we send MOSDBoot to start the booting process
   start_boot();
 
   return 0;
@@ -2905,7 +2925,7 @@ void OSD::load_pgs()
   dout(0) << "load_pgs" << dendl;
   {
     RWLock::RLocker l(pg_map_lock);
-    assert(pg_map.empty());
+    assert(pg_map.empty()); // we have not loaded any pg yet
   }
 
   vector<coll_t> ls;
@@ -2991,7 +3011,7 @@ void OSD::load_pgs()
     }
     // there can be no waiters here, so we don't call wake_pg_waiters
 
-    // read pg info and pg log entries
+    // read pg info, pg log entries, past_intervals and others
     pg->read_state(store, bl);
 
     if (pg->must_upgrade()) {
@@ -3068,7 +3088,8 @@ void OSD::load_pgs()
     }
   }
 
-  // build past_intervals for all pg(s) on this osd
+  // build past_intervals for all pg(s) on this osd, and write the updated
+  // pg info and past_intervals into pg meta object synchronously
   build_past_intervals_parallel();
 }
 
@@ -3105,6 +3126,9 @@ void OSD::build_past_intervals_parallel()
       PG *pg = i->second;
 
       epoch_t start, end;
+      // roughly, we calc past_intervals from info.history.last_epoch_clean to
+      // info.history.same_interval_since, and during calc, we need to exclude
+      // those epochs that have been calculated
       if (!pg->_calc_past_interval_range(&start, &end, superblock.oldest_map)) { // no need to calc past_intervals
         if (pg->info.history.same_interval_since == 0) // an imported pg
           pg->info.history.same_interval_since = end;
@@ -3195,7 +3219,7 @@ void OSD::build_past_intervals_parallel()
         recoverable.get(),
 	&pg->past_intervals, // if we are to change to a new interval, we construct a pg_interval_t and insert into pg->past_intervals
 	&debug);
-      if (new_interval) {
+      if (new_interval) { // interval has to change
         // we are to change to a new interval, record things we need for
         // the new interval
 	dout(10) << __func__ << " epoch " << cur_epoch << " pg " << pg->info.pgid
@@ -3217,7 +3241,8 @@ void OSD::build_past_intervals_parallel()
     if (pg->info.history.same_interval_since) {
       assert(pg->info.history.same_interval_since == p.same_interval_since);
     } else {
-      assert(p.same_interval_since);
+      assert(p.same_interval_since); // we iterated at least one epoch
+      
       dout(10) << __func__ << " fix same_interval_since " << p.same_interval_since << " pg " << *pg << dendl;
       dout(10) << __func__ << " past_intervals " << pg->past_intervals << dendl;
       // Fix it
@@ -3237,16 +3262,22 @@ void OSD::build_past_intervals_parallel()
     pg->lock();
     pg->dirty_big_info = true;
     pg->dirty_info = true;
+
+    // write pg info and past_intervals
     pg->write_if_dirty(t);
     pg->unlock();
 
     // don't let the transaction get too big
     if (++num >= cct->_conf->osd_target_transaction_size) { // default is 30
+      // execute the txn synchronously
       store->apply_transaction(service.meta_osr.get(), t);
       t = ObjectStore::Transaction();
       num = 0;
     }
   }
+
+  // if num % cct->_conf->osd_target_transaction_size != 0, we left txn(s)
+  // to execute above, so do it here
   if (!t.empty())
     store->apply_transaction(service.meta_osr.get(), t);
 }
@@ -4575,7 +4606,7 @@ void OSD::start_boot()
 {
   dout(10) << "start_boot - have maps " << superblock.oldest_map
 	   << ".." << superblock.newest_map << dendl;
-  C_OSD_GetVersion *c = new C_OSD_GetVersion(this);
+  C_OSD_GetVersion *c = new C_OSD_GetVersion(this); // send MOSDBoot in the callback
   monc->get_version("osdmap", &c->newest, &c->oldest, c);
 }
 
@@ -7026,7 +7057,7 @@ void OSD::consume_map()
     // service.expand_pg_num below will add these new splits
     for (ceph::unordered_map<spg_t,PG*>::iterator it = pg_map.begin();
         it != pg_map.end();
-        ++it) {
+        ++it) { // iterate each pg on this osd
       PG *pg = it->second;
       pg->lock();
       if (pg->is_primary())
@@ -7045,7 +7076,12 @@ void OSD::consume_map()
         // occur on this pg, thus update service.pending_splits and 
         // service.rev_pending_splits (in reverse order)
         // these three maps (service.pending_splits, service.rev_pending_splits, 
-        // service.in_progress_splits) are only useful for debugging
+        // service.in_progress_splits) are only useful for debugging, i.e. asserts
+
+        // if we (consume_map) are called in OSD::init, OSDService::osdmap and
+        // OSD::osdmap are at the same epoch, so we do nothing here, but load_pgs 
+        // which called before us in OSD::init will call this with the second 
+        // parameter set to pg's osdmap, so they do the real thing there
         service.init_splits_between(it->first, service.get_osdmap(), osdmap);
       }
 
@@ -7064,9 +7100,9 @@ void OSD::consume_map()
   }
   to_remove.clear();
 
-  // add new splits that parent pg is still in its own splitting, 
-  // service.init_splits_between above only generate pending_splits
-  // (and rev_pending_splits) for pgs already on pg_map
+  // add new splits that parent pg is also on its own splitting, note:
+  // service.init_splits_between called previously only generate pending_splits
+  // (and rev_pending_splits) for those pgs that are already on OSD::pg_map
   service.expand_pg_num(service.get_osdmap(), osdmap);
 
   // update next_osdmap in service
@@ -8833,8 +8869,9 @@ void OSD::process_peering_events(
       continue;
     }
 
-    // iterate each epoch of the osdmap and construct an AvdMap event for
-    // each epoch to drive the pg recovery state machine
+    // iterate each epoch of the osdmap from epoch the pg currently has to epoch
+    // the OSDService has, construct an AvdMap event for each epoch to drive 
+    // the pg recovery state machine
     if (!advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs)) {
       // there are still maps we have not consumed yet, requeue the pg to 
       // consume the remaining maps later
@@ -8847,7 +8884,7 @@ void OSD::process_peering_events(
       pg->peering_queue.pop_front();
 
       // for NullEvt(OSD::consume_map queue this to drive each pg on this osd
-      // to update its map), do nothing
+      // to update its map), in process this event, the state machine do nothing
       pg->handle_peering_event(evt, &rctx);
     }
 

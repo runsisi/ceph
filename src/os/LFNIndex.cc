@@ -651,6 +651,8 @@ string LFNIndex::lfn_generate_object_name(const ghobject_t &oid)
   // rbd\udata.1f61d2ae8944a.0000000000000000__head_206BD98B__5
   // rbd\udata.1f61d2ae8944a.0000000000000000__2_206BD98B__5
 
+  // __head_00000004__5 for pg meta object
+
   string full_name;
   string::const_iterator i = oid.hobj.oid.name.begin();
 

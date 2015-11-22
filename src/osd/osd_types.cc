@@ -2748,7 +2748,7 @@ bool pg_interval_t::is_new_interval(
     new_up != old_up ||
     old_min_size != new_min_size ||
     old_size != new_size ||
-    pgid.is_split(old_pg_num, new_pg_num, 0) ||
+    pgid.is_split(old_pg_num, new_pg_num, 0) || // new pg(s) are splitting from us
     old_sort_bitwise != new_sort_bitwise;
 }
 
@@ -2764,7 +2764,7 @@ bool pg_interval_t::is_new_interval(
   OSDMapRef osdmap,
   OSDMapRef lastmap,
   pg_t pgid) {
-  return !(lastmap->get_pools().count(pgid.pool())) ||
+  return !(lastmap->get_pools().count(pgid.pool())) || // pool that contains this pg removed
     is_new_interval(old_acting_primary,
 		    new_acting_primary,
 		    old_acting,
@@ -2777,7 +2777,7 @@ bool pg_interval_t::is_new_interval(
 		    osdmap->get_pools().find(pgid.pool())->second.size,
 		    lastmap->get_pools().find(pgid.pool())->second.min_size,
 		    osdmap->get_pools().find(pgid.pool())->second.min_size,
-		    lastmap->get_pg_num(pgid.pool()),
+		    lastmap->get_pg_num(pgid.pool()), // maybe we are splitting child pg(s)
 		    osdmap->get_pg_num(pgid.pool()),
 		    lastmap->test_flag(CEPH_OSDMAP_SORTBITWISE),
 		    osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE),
@@ -2806,6 +2806,10 @@ bool pg_interval_t::check_new_interval(
   //  NOTE: a change in the up set primary triggers an interval
   //  change, even though the interval members in the pg_interval_t
   //  do not change.
+
+  // check if any changes in pool existent, acting, acting primary, up, up primary, 
+  // size, min size, sortbitwise has, or if we are splitting
+  // child pg(s)
   if (is_new_interval(
 	old_acting_primary,
 	new_acting_primary,
@@ -2817,16 +2821,21 @@ bool pg_interval_t::check_new_interval(
 	new_up,
 	osdmap,
 	lastmap,
-	pgid)) {
+	pgid)) { // we are to change to a new interval
     pg_interval_t& i = (*past_intervals)[same_interval_since];
-    i.first = same_interval_since;
-    i.last = osdmap->get_epoch() - 1;
+
+    // record all things needed for an pg_interval_t
+
+    // the interval starts from same_interval_since and end to last osdmap epoch 
+    i.first = same_interval_since; // start interval
+    i.last = osdmap->get_epoch() - 1; // end interval
     assert(i.first <= i.last);
     i.acting = old_acting;
     i.up = old_up;
     i.primary = old_acting_primary;
     i.up_primary = old_up_primary;
 
+    // get total number of osd(s) that holding the pg during the interval
     unsigned num_acting = 0;
     for (vector<int>::const_iterator p = i.acting.begin(); p != i.acting.end();
 	 ++p)
@@ -2835,12 +2844,14 @@ bool pg_interval_t::check_new_interval(
 
     const pg_pool_t& old_pg_pool = lastmap->get_pools().find(pgid.pool())->second;
     set<pg_shard_t> old_acting_shards;
-    old_pg_pool.convert_to_pg_shards(old_acting, &old_acting_shards);
+    old_pg_pool.convert_to_pg_shards(old_acting, &old_acting_shards); // vector<int> => set<pg_shard_t>
 
     if (num_acting &&
 	i.primary != -1 &&
 	num_acting >= old_pg_pool.min_size &&
-        (*could_have_gone_active)(old_acting_shards)) {
+        (*could_have_gone_active)(old_acting_shards)) { // !old_acting_shards.empty()
+      // we are active or active+degraded during this interval, so we may write 
+      // something to pg during this interval
       if (out)
 	*out << "generate_past_intervals " << i
 	     << ": not rw,"
@@ -2848,9 +2859,22 @@ bool pg_interval_t::check_new_interval(
 	     << " up_from " << lastmap->get_up_from(i.primary)
 	     << " last_epoch_clean " << last_epoch_clean
 	     << std::endl;
+
+      // the osd down is not detectable at real time, so even if the primary
+      // is down, the mon may still record the primary as up in the osdmap, which
+      // results the pg still map to the down primary osd, so we need a explicit
+      // flag (up_thru) to mark that the osd is definitely up
+      // up_from is set when the osd is up, i.e. by MOSDBoot
+      // up_thru is set explicitly by MOSDAlive (send_alive)
+      
       if (lastmap->get_up_thru(i.primary) >= i.first &&
 	  lastmap->get_up_from(i.primary) <= i.first) {
-	i.maybe_went_rw = true;
+	  
+	// ---------------|--------------------------------------|-------
+	//    ^           ^        ^                             ^     
+	//  up_from     first   up_thru                         last
+
+        i.maybe_went_rw = true;
 	if (out)
 	  *out << "generate_past_intervals " << i
 	       << " : primary up " << lastmap->get_up_from(i.primary)
@@ -2859,6 +2883,11 @@ bool pg_interval_t::check_new_interval(
 	       << std::endl;
       } else if (last_epoch_clean >= i.first &&
 		 last_epoch_clean <= i.last) {
+
+        // ---------------|--------------------------------------|-------
+	//    ^           ^                      ^               ^     
+	//  up_thru     first             last_epoch_clean       last
+              
 	// If the last_epoch_clean is included in this interval, then
 	// the pg must have been rw (for recovery to have completed).
 	// This is important because we won't know the _real_
@@ -2881,13 +2910,13 @@ bool pg_interval_t::check_new_interval(
 	       << " does not include interval"
 	       << std::endl;
       }
-    } else {
+    } else { // we are not active during this interval, no write possible
       i.maybe_went_rw = false;
       if (out)
 	*out << "generate_past_intervals " << i << " : acting set is too small" << std::endl;
     }
     return true;
-  } else {
+  } else { // we remain in the same interval
     return false;
   }
 }

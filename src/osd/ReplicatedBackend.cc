@@ -573,7 +573,9 @@ void ReplicatedBackend::submit_transaction( // trim_to <= trim_rollback_to
     make_pair(
       tid,
       InProgressOp(
-	tid, on_all_commit, on_all_acked,
+	tid, 
+	on_all_commit, // C_OSD_RepopCommit
+	on_all_acked, // C_OSD_RepopApplied
 	orig_op, at_version)
       )
     ).first->second;
@@ -621,8 +623,13 @@ void ReplicatedBackend::submit_transaction( // trim_to <= trim_rollback_to
   
   // register callback contexts on op_t->on_applied list
   op_t->register_on_applied_sync(on_local_applied_sync);
+  
   // call this callback if pg's peering process never be reset since current epoch,
   // or do nothing except release the memory the callback occupied
+
+  // when called, remove us from op->waiting_for_applied, and update 
+  // ReplicatedBackend::last_update_applied and ReplicatedBackend::scrubber, 
+  // then check if we could complete the in progress op
   op_t->register_on_applied(
     parent->bless_context(
       new C_OSD_OnOpApplied(this, &op)));
@@ -630,6 +637,9 @@ void ReplicatedBackend::submit_transaction( // trim_to <= trim_rollback_to
     new ObjectStore::C_DeleteTransaction(op_t));
   op_t->register_on_applied(
     new ObjectStore::C_DeleteTransaction(local_t));
+
+  // when called, remove us from the op->waiting_for_commit, then check if we 
+  // could complete the in progress op
   op_t->register_on_commit(
     parent->bless_context(
       new C_OSD_OnOpCommit(this, &op)));
@@ -735,7 +745,7 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
 
     // oh, good.
 
-    if (r->ack_type & CEPH_OSD_FLAG_ONDISK) {
+    if (r->ack_type & CEPH_OSD_FLAG_ONDISK) { // subop committed
       assert(ip_op.waiting_for_commit.count(from));
       ip_op.waiting_for_commit.erase(from);
       if (ip_op.op) {
@@ -743,7 +753,7 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
         ss << "sub_op_commit_rec from " << from;
 	ip_op.op->mark_event(ss.str());
       }
-    } else {
+    } else { // subop applied
       assert(ip_op.waiting_for_applied.count(from));
       if (ip_op.op) {
         ostringstream ss;
@@ -757,17 +767,18 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
     // we erase the replica from ip_op.waiting_for_applied
     ip_op.waiting_for_applied.erase(from);
 
+    // update PG::peer_last_complete_ondisk
     parent->update_peer_last_complete_ondisk(
       from,
       r->get_last_complete_ondisk());
 
     if (ip_op.waiting_for_applied.empty() &&
-        ip_op.on_applied) {
+        ip_op.on_applied) { // call all applied callback set in OSD::issue_repop
       ip_op.on_applied->complete(0);
       ip_op.on_applied = 0;
     }
     if (ip_op.waiting_for_commit.empty() &&
-        ip_op.on_commit) {
+        ip_op.on_commit) { // call all committed callback set in OSD::issue_repop
       ip_op.on_commit->complete(0);
       ip_op.on_commit= 0;
     }
@@ -1195,7 +1206,7 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
   RepModifyRef rm(new RepModify);
   rm->op = op;
   rm->ackerosd = ackerosd;
-  rm->last_complete = get_info().last_complete;
+  rm->last_complete = get_info().last_complete; // get_parent()->get_info()
   rm->epoch_started = get_osdmap()->get_epoch();
 
   assert(m->logbl.length());
@@ -1247,12 +1258,18 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
 
   op->mark_started();
 
+  // when called, update PG::last_complete_ondisk, and send MOSDSubOpReply/MOSDRepOpReply
+  // to primary
   rm->opt.register_on_commit(
     parent->bless_context(
       new C_OSD_RepModifyCommit(this, rm)));
+  
+  // when called, update PG::last_update_applied and PG::scrubber, and send 
+  // MOSDSubOpReply/MOSDRepOpReply to primary if we haven't sent a commit already
   rm->localt.register_on_applied(
     parent->bless_context(
       new C_OSD_RepModifyApply(this, rm)));
+  
   list<ObjectStore::Transaction*> tls;
   tls.push_back(&(rm->localt));
   tls.push_back(&(rm->opt));
@@ -1315,6 +1332,8 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
 	   << dendl;
 
   assert(get_osdmap()->is_up(rm->ackerosd));
+
+  // update PG::last_complete_ondisk
   get_parent()->update_last_complete_ondisk(rm->last_complete);
 
   // tell primary that we have committed the op
@@ -1328,7 +1347,7 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
       get_parent()->whoami_shard(),
       0, get_osdmap()->get_epoch(), CEPH_OSD_FLAG_ONDISK);
 
-    // 
+    // set MOSDSubOpReply::last_complete_ondisk
     reply->set_last_complete_ondisk(rm->last_complete);
     commit = reply;
   } else if (m->get_type() == MSG_OSD_REPOP) {

@@ -5333,13 +5333,19 @@ void PG::handle_peering_event(CephPeeringEvtRef evt, RecoveryCtx *rctx)
 {
   dout(10) << "handle_peering_event: " << evt->get_desc() << dendl;
   if (!have_same_or_newer_map(evt->get_epoch_sent())) {
+    // pg must have the same or newer map than the evt sent to us, note
+    // that OSD::require_same_or_newer_map has a much more paranoid check,
+    // refer to: OSD::handle_pg_trim
+    
     // this pg has older osdmap than evt
     dout(10) << "deferring event " << evt->get_desc() << dendl;
-    peering_waiters.push_back(evt);
+    peering_waiters.push_back(evt); // wait for newer map
     return;
   }
-  if (old_peering_evt(evt))
+  if (old_peering_evt(evt)) // evt sent before last_peering_reset, we have started a new interval
     return;
+
+  // ok, drive the state machine
   recovery_state.handle_event(evt, rctx);
 }
 
