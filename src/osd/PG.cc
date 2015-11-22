@@ -666,8 +666,11 @@ bool PG::needs_backfill() const
   return ret;
 }
 
+// roughly, we calc past_intervals from info.history.last_epoch_clean to
+// info.history.same_interval_since, and during calc, we need to exclude
+// those epochs that have been calculated
 bool PG::_calc_past_interval_range(epoch_t *start, epoch_t *end, epoch_t oldest_map)
-{
+{  
   if (info.history.same_interval_since) {
     *end = info.history.same_interval_since;
   } else {
@@ -677,15 +680,19 @@ bool PG::_calc_past_interval_range(epoch_t *start, epoch_t *end, epoch_t oldest_
 
   // Do we already have the intervals we want?
   map<epoch_t,pg_interval_t>::const_iterator pif = past_intervals.begin();
-  if (pif != past_intervals.end()) {
+  if (pif != past_intervals.end()) { // we have past_intervals
     if (pif->first <= info.history.last_epoch_clean) {
+      // our existing past_intervals has covered the interval we want
       dout(10) << __func__ << ": already have past intervals back to "
 	       << info.history.last_epoch_clean << dendl;
       return false;
     }
+
+    // the epochs behind this have been calculated by the existing past_intervals
     *end = past_intervals.begin()->first;
   }
 
+  // the interval start from the epoch when the pg is completely clean
   *start = MAX(MAX(info.history.epoch_created,
 		   info.history.last_epoch_clean),
 	       oldest_map);
@@ -2622,6 +2629,10 @@ void PG::init(
   set_role(role);
   acting = newacting;
   up = newup;
+
+  // initialize vector<int> up, vector<int> acting, 
+  // pg_shard_t up_primary, pg_shard_t primary, 
+  // vector<pg_shard_t> actingset
   init_primary_up_acting(
     newup,
     newacting,
@@ -2641,13 +2652,18 @@ void PG::init(
     dout(10) << __func__ << ": Setting backfill" << dendl;
     info.set_last_backfill(hobject_t(), get_sort_bitwise());
     info.last_complete = info.last_update;
-    pg_log.mark_log_for_rewrite();
+    pg_log.mark_log_for_rewrite(); // mark to remove all old pg log entries
   }
 
+  // register the next scrub if we are primary, update the min feature set
+  // with other osd(s), then update PG::do_sort_bitwise and may update 
+  // ReplicatedPG::object_contexts if PG::do_sort_bitwise changed
   on_new_interval();
 
   dirty_info = true;
   dirty_big_info = true;
+
+  // write pg info and pg log, includes past_intervals and purged_snaps
   write_if_dirty(*t);
 }
 
@@ -3284,12 +3300,12 @@ bool PG::sched_scrub()
 
 void PG::reg_next_scrub()
 {
-  if (!is_primary())
+  if (!is_primary()) // pg_whoami == primary
     return;
 
   utime_t reg_stamp;
   if (scrubber.must_scrub ||
-      (info.stats.stats_invalid && g_conf->osd_scrub_invalid_stats)) {
+      (info.stats.stats_invalid && g_conf->osd_scrub_invalid_stats)) { // default is true
     reg_stamp = ceph_clock_now(cct);
   } else {
     reg_stamp = info.history.last_scrub_stamp;
@@ -4821,6 +4837,9 @@ void PG::start_peering_interval(
     info.history.same_primary_since = osdmap->get_epoch();
   }
 
+  // register the next scrub if we are primary, update the min feature set
+  // with other osd(s), then update PG::do_sort_bitwise and may update 
+  // ReplicatedPG::object_contexts if PG::do_sort_bitwise changed
   on_new_interval();
 
   dout(10) << " up " << oldup << " -> " << up 
@@ -4913,6 +4932,7 @@ void PG::on_new_interval()
 {
   const OSDMapRef osdmap = get_osdmap();
 
+  // if we are primary pg, register the next scrub
   reg_next_scrub();
 
   // initialize features
@@ -4931,6 +4951,7 @@ void PG::on_new_interval()
     upacting_features &= osdmap->get_xinfo(*p).features;
   }
 
+  // update PG::do_sort_bitwise
   do_sort_bitwise = get_osdmap()->test_flag(CEPH_OSDMAP_SORTBITWISE);
   if (do_sort_bitwise) {
     assert(get_min_upacting_features() & CEPH_FEATURE_OSD_BITWISE_HOBJ_SORT);
@@ -4943,6 +4964,7 @@ void PG::on_new_interval()
     }
   }
 
+  // may update ReplicatedPG::object_contexts if PG::do_sort_bitwise changed
   _on_new_interval();
 }
 
@@ -5482,9 +5504,9 @@ boost::statechart::result PG::RecoveryState::Initial::react(const Load& l)
   PG *pg = context< RecoveryMachine >().pg;
 
   // do we tell someone we're here?
-  pg->send_notify = (!pg->is_primary());
+  pg->send_notify = (!pg->is_primary()); // if we are not primary, then we need to tell someone
 
-  return transit< Reset >();
+  return transit< Reset >(); // transit to Reset
 }
 
 boost::statechart::result PG::RecoveryState::Initial::react(const MNotifyRec& notify)

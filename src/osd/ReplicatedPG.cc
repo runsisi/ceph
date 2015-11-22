@@ -9693,7 +9693,7 @@ void ReplicatedPG::on_activate()
 void ReplicatedPG::_on_new_interval()
 {
   // re-sort obc map?
-  if (object_contexts.get_comparator().bitwise != get_sort_bitwise()) {
+  if (object_contexts.get_comparator().bitwise != get_sort_bitwise()) { // PG::do_sort_bitwise changed
     dout(20) << __func__ << " resorting object_contexts" << dendl;
     object_contexts.reset_comparator(
       hobject_t::ComparatorWithDefault(get_sort_bitwise()));

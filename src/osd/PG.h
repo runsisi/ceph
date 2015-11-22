@@ -2102,7 +2102,11 @@ public:
     int new_up_primary,
     int new_acting_primary) {
     actingset.clear();
+
+    // initialize PG::acting
     acting = newacting;
+
+    // initlialize PG::actingset
     for (uint8_t i = 0; i < acting.size(); ++i) {
       if (acting[i] != CRUSH_ITEM_NONE)
 	actingset.insert(
@@ -2110,7 +2114,11 @@ public:
 	    acting[i],
 	    pool.info.ec_pool() ? shard_id_t(i) : shard_id_t::NO_SHARD));
     }
+
+    // initlialize PG::up
     up = newup;
+
+    // initlialize PG::up_primary and PG::primary
     if (!pool.info.ec_pool()) {
       up_primary = pg_shard_t(new_up_primary, shard_id_t::NO_SHARD);
       primary = pg_shard_t(new_acting_primary, shard_id_t::NO_SHARD);

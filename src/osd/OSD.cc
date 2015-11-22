@@ -1995,6 +1995,7 @@ int OSD::init()
 
   osd_lock.Unlock();
 
+  // auth ourself with mon
   r = monc->authenticate();
   if (r < 0) {
     osd_lock.Lock(); // locker is going to unlock this on function exit
@@ -2807,10 +2808,19 @@ PG *OSD::_create_lock_pg(
   assert(osd_lock.is_locked());
   dout(20) << "_create_lock_pg pgid " << pgid << dendl;
 
+  // create an instance of ReplicatedPG
   PG *pg = _open_lock_pg(createmap, pgid, true);
 
+  // if pg's map and osd's map have different pg_num, and the child
+  // pg(s) must split from us, we construct parent->children and 
+  // child->parent mappings:
+  // OSDService::pending_splits and OSDService::rev_pending_splits
   service.init_splits_between(pgid, pg->get_osdmap(), service.get_osdmap());
 
+  // initialize vector<int> up, vector<int> acting, 
+  // pg_shard_t up_primary, pg_shard_t primary, 
+  // vector<pg_shard_t> actingset
+  // initialize pg info and past_intervals, then write it to txn
   pg->init(
     role,
     up,
@@ -3008,23 +3018,34 @@ void OSD::load_pgs()
     // generate state for PG's current mapping
     int primary, up_primary;
     vector<int> acting, up;
-    // get up set, up primary, acting set and acting primary
+    // get up set, up primary, acting set and acting primary from the osdmap
+    // when we were shutdown
     pg->get_osdmap()->pg_to_up_acting_osds(
       pgid.pgid, &up, &up_primary, &acting, &primary);
 
-    // 
+    // initialize vector<int> up, vector<int> acting, 
+    // pg_shard_t up_primary, pg_shard_t primary, 
+    // vector<pg_shard_t> actingset
     pg->init_primary_up_acting(
       up,
       acting,
       up_primary,
       primary);
+
+    // check if i (osd) am in the PG::acting vector, if not then return -1, if yes,
+    // then return the index into PG::acting vector
     int role = OSDMap::calc_pg_role(whoami, pg->acting);
     pg->set_role(role);
 
+    // if we are primary pg, register next scrub
     pg->reg_next_scrub();
 
     PG::RecoveryCtx rctx(0, 0, 0, 0, 0, 0);
-    pg->handle_loaded(&rctx);
+    // RecoveryMachine has been initialized in the ctor of RecoveryState, and the 
+    // initial state is RecoveryState::Initial
+    // set pg->send_notify to true if we are primary pg, then transit state to
+    // Reset
+    pg->handle_loaded(&rctx); // handle Load event
 
     dout(10) << "load_pgs loaded " << *pg << " " << pg->pg_log.get_log() << dendl;
     pg->unlock();
@@ -3046,7 +3067,8 @@ void OSD::load_pgs()
       assert(0);
     }
   }
-  
+
+  // build past_intervals for all pg(s) on this osd
   build_past_intervals_parallel();
 }
 
@@ -3079,12 +3101,12 @@ void OSD::build_past_intervals_parallel()
     RWLock::RLocker l(pg_map_lock);
     for (ceph::unordered_map<spg_t, PG*>::iterator i = pg_map.begin();
         i != pg_map.end();
-        ++i) {
+        ++i) { // iterate each pg on this osd (only those in current/ dir)
       PG *pg = i->second;
 
       epoch_t start, end;
-      if (!pg->_calc_past_interval_range(&start, &end, superblock.oldest_map)) {
-        if (pg->info.history.same_interval_since == 0)
+      if (!pg->_calc_past_interval_range(&start, &end, superblock.oldest_map)) { // no need to calc past_intervals
+        if (pg->info.history.same_interval_since == 0) // an imported pg
           pg->info.history.same_interval_since = end;
         continue;
       }
@@ -3095,43 +3117,55 @@ void OSD::build_past_intervals_parallel()
       p.end = end;
       p.same_interval_since = 0;
 
+      // cur_epoch = min(start...) of all pgs on this osd
+      // end_epoch = max(...end) of all pgs on this osd
       if (start < cur_epoch)
         cur_epoch = start;
       if (end > end_epoch)
         end_epoch = end;
     }
   }
-  if (pis.empty()) {
+  if (pis.empty()) { // no pg on this osd need to calc past_intervals
     dout(10) << __func__ << " nothing to build" << dendl;
     return;
   }
 
+  // ok, some pg(s) on this osd need to calc past_intervals
+
   dout(1) << __func__ << " over " << cur_epoch << "-" << end_epoch << dendl;
   assert(cur_epoch <= end_epoch);
 
+  // cur_epoch .. end_epoch covers all osdmap epochs to calc the past_intervals
+  // for all pgs on this osd
+
   OSDMapRef cur_map, last_map;
-  for ( ; cur_epoch <= end_epoch; cur_epoch++) {
+  for ( ; cur_epoch <= end_epoch; cur_epoch++) { // iterate each epoch for all pg(s) that need to calc past_intervals
     dout(10) << __func__ << " epoch " << cur_epoch << dendl;
     last_map = cur_map;
     cur_map = get_map(cur_epoch);
 
-    for (map<PG*,pistate>::iterator i = pis.begin(); i != pis.end(); ++i) {
+    for (map<PG*,pistate>::iterator i = pis.begin(); i != pis.end(); ++i) { // iterate each pg that needs to calc past_intervals
       PG *pg = i->first;
       pistate& p = i->second;
 
-      if (cur_epoch < p.start || cur_epoch > p.end)
+      if (cur_epoch < p.start || cur_epoch > p.end) // this epoch is not needed by us (pg)
 	continue;
 
       vector<int> acting, up;
       int up_primary;
       int primary;
       pg_t pgid = pg->info.pgid.pgid;
-      if (p.same_interval_since && last_map->get_pools().count(pgid.pool()))
-	pgid = pgid.get_ancestor(last_map->get_pg_num(pgid.pool()));
+      if (p.same_interval_since && last_map->get_pools().count(pgid.pool())) // pool still exists for this pg
+        // the pg we are building past_intervals now may be splitted from other
+        // pg, so when iterating the old epochs, we need to convert the pgid to
+        // its parent
+        pgid = pgid.get_ancestor(last_map->get_pg_num(pgid.pool()));
+
+      // do crush rule under current osdmap
       cur_map->pg_to_up_acting_osds(
 	pgid, &up, &up_primary, &acting, &primary);
 
-      if (p.same_interval_since == 0) {
+      if (p.same_interval_since == 0) { // the first time we (pg) are iterating
 	dout(10) << __func__ << " epoch " << cur_epoch << " pg " << pg->info.pgid
 		 << " first map, acting " << acting
 		 << " up " << up << ", same_interval_since = " << cur_epoch << dendl;
@@ -3145,7 +3179,7 @@ void OSD::build_past_intervals_parallel()
       assert(last_map);
 
       boost::scoped_ptr<IsPGRecoverablePredicate> recoverable(
-        pg->get_is_recoverable_predicate());
+        pg->get_is_recoverable_predicate()); // allocate an instance of ECRecPred/RPCRecPred
       std::stringstream debug;
       bool new_interval = pg_interval_t::check_new_interval(
 	p.primary,
@@ -3159,9 +3193,11 @@ void OSD::build_past_intervals_parallel()
 	cur_map, last_map,
 	pgid,
         recoverable.get(),
-	&pg->past_intervals,
+	&pg->past_intervals, // if we are to change to a new interval, we construct a pg_interval_t and insert into pg->past_intervals
 	&debug);
       if (new_interval) {
+        // we are to change to a new interval, record things we need for
+        // the new interval
 	dout(10) << __func__ << " epoch " << cur_epoch << " pg " << pg->info.pgid
 		 << " " << debug.str() << dendl;
 	p.old_up = up;
@@ -3205,7 +3241,7 @@ void OSD::build_past_intervals_parallel()
     pg->unlock();
 
     // don't let the transaction get too big
-    if (++num >= cct->_conf->osd_target_transaction_size) {
+    if (++num >= cct->_conf->osd_target_transaction_size) { // default is 30
       store->apply_transaction(service.meta_osr.get(), t);
       t = ObjectStore::Transaction();
       num = 0;
