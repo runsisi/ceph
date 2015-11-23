@@ -6960,7 +6960,8 @@ bool OSD::advance_pg(
       &newup, &up_primary,
       &newacting, &acting_primary);
 
-    // construct an AdvMap internal event to drive the pg recovery state machine
+    // update pg's osdmap, note down the newly removed snap(s), then construct 
+    // an AdvMap internal event to drive the pg recovery state machine
     pg->handle_advance_map(
       nextmap, lastmap, newup, up_primary,
       newacting, acting_primary, rctx);

@@ -4681,7 +4681,7 @@ void PG::set_last_peering_reset()
     // of type QueuePeeringEvt<IntervalFlush> on OpSequencer::flush_commit_waiters,
     // and reset RecoveryState::rctx to buffer all outgoing recovery messages in 
     // RecoveryState::messages_pending_flush
-    // after current busy Op(s) committed i.e. journaled and applied, the callback 
+    // after current busy Op(s) committed (i.e. journaled) and applied, the callback 
     // will queue a peering event of type IntervalFlush for this pg, only after 
     // the IntervalFlush event is handled will unblock the buffering
     // if we have another peering reset before the callback is called, the callback
@@ -4758,9 +4758,10 @@ void PG::start_peering_interval(
 
   // set PG::last_peering_reset to note that we started a new peering
   // at this epoch, which can be used to block old messages/events,
-  // restart outgoing recovery messages buffering,
-  // queue a new QueuePeeringEvt<IntervalFlush> callback if needed, use 
-  // IntervalFlush to unblock recovery messages buffering
+  // restart interval flush, i.e. queue a new QueuePeeringEvt<IntervalFlush> 
+  // callback if needed, and start recovery messages buffering, then when the
+  // callback get called, it queue a IntervalFlush peering event for this pg, 
+  // use this event to unblock the recovery messages buffering
   set_last_peering_reset();
 
   vector<int> oldacting, oldup;
@@ -5437,7 +5438,10 @@ void PG::handle_advance_map(
     osdmap, lastmap, newup, up_primary,
     newacting, acting_primary);
 
-  // handle the AdvMap event
+  // handle the AdvMap event, update info.history.last_epoch_marked_full if
+  // osd or pool changed from not full to full, then if in the new map we
+  // changed to a new interval, we call pg->start_peering_interval to reset
+  // the last peering and start the new peering
   recovery_state.handle_event(evt, rctx);
   
   if (pool.info.last_change == osdmap_ref->get_epoch())
@@ -5677,6 +5681,7 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
   // and osd's capacity, if it is true, update info.history.last_epoch_marked_full
   pg->check_full_transition(advmap.lastmap, advmap.osdmap);
 
+  // check if we have to change to a new interval in the new map
   if (pg->should_restart_peering(
 	advmap.up_primary,
 	advmap.acting_primary,
@@ -5686,14 +5691,17 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
 	advmap.osdmap)) { // pg mapping changed in new map, we should restart peering
     dout(10) << "should restart peering, calling start_peering_interval again"
 	     << dendl;
+    // ok, in new map, we need to change to a new interval
 
-    // start new peering interval, may block outgoing recovery messages
+    // start new peering interval, reset last peering, restart interal flush
     pg->start_peering_interval(
       advmap.lastmap,
       advmap.newup, advmap.up_primary,
       advmap.newacting, advmap.acting_primary,
       context< RecoveryMachine >().get_cur_transaction());
   }
+
+  // 
   pg->remove_down_peer_info(advmap.osdmap);
   return discard_event();
 }
@@ -7854,6 +7862,14 @@ void PG::RecoveryState::start_handle(RecoveryCtx *new_ctx) {
 
   if (new_ctx) {
     if (messages_pending_flush) {
+      // if we are buffering, all RecoveryCtx info during this RecoveryState::start_handle
+      // and RecoveryState::end_handle pair (i.e. RecoveryState::handle_event) will
+      // be lost, so if we are processing an event with internal event(s), we may
+      // want to store the cumulated info in RecoveryCtx instance, we implement 
+      // this by using an memeber variable of RecoveryState, even if multiple
+      // internal events get processed, i.e. RecoveryState::rctx get set and reset
+      // multiple times, the member variable's info maintains
+ 
       // construct a RecoveryCtx from messages_pending_flush and new_ctx
       rctx = RecoveryCtx(*messages_pending_flush, *new_ctx);
     } else {

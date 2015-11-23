@@ -2049,11 +2049,12 @@ public:
     
     void handle_event(const boost::statechart::event_base &evt,
 		      RecoveryCtx *rctx) {
-      // 
+      // set RecoveryState::rctx
       start_handle(rctx);
       
       machine.process_event(evt);
 
+      // reset RecoveryState::rctx
       end_handle();
     }
 
