@@ -709,12 +709,19 @@ bool PG::_calc_past_interval_range(epoch_t *start, epoch_t *end, epoch_t oldest_
 void PG::generate_past_intervals()
 {
   epoch_t cur_epoch, end_epoch;
+  // roughly from info.history.last_epoch_clean to info.history.same_interval_since
   if (!_calc_past_interval_range(&cur_epoch, &end_epoch,
       osd->get_superblock().oldest_map)) {
-    if (info.history.same_interval_since == 0)
+    if (info.history.same_interval_since == 0) // PG must be imported
       info.history.same_interval_since = end_epoch;
     return;
   }
+
+  // ok, still past interval(s) to generate 
+  // between:
+  // MAX(MAX(info.history.epoch_created, info.history.last_epoch_clean), oldest_map)
+  // and:
+  // info.history.same_interval_since or past_intervals.begin()->first
 
   OSDMapRef last_map, cur_map;
   int primary = -1;
@@ -738,12 +745,15 @@ void PG::generate_past_intervals()
     cur_map = osd->get_map(cur_epoch);
     pg_t pgid = get_pgid().pgid;
     if (last_map->get_pools().count(pgid.pool()))
-      pgid = pgid.get_ancestor(last_map->get_pg_num(pgid.pool()));
+      pgid = pgid.get_ancestor(last_map->get_pg_num(pgid.pool())); // we may be a splitted pg
     cur_map->pg_to_up_acting_osds(pgid, &up, &up_primary, &acting, &primary);
 
     boost::scoped_ptr<IsPGRecoverablePredicate> recoverable(
-      get_is_recoverable_predicate());
+      get_is_recoverable_predicate()); // for replicated backend, acting size > 0 is recoverable
     std::stringstream debug;
+
+    // check if in cur_map we changed to a new interval, if it is true, we
+    // construct an interval and insert into PG::past_intervals
     bool new_interval = pg_interval_t::check_new_interval(
       old_primary,
       primary,
@@ -763,7 +773,7 @@ void PG::generate_past_intervals()
       &debug);
     if (new_interval) {
       dout(10) << debug.str() << dendl;
-      same_interval_since = cur_epoch;
+      same_interval_since = cur_epoch; // used to record the start of the next interval
     }
   }
 
@@ -4596,6 +4606,7 @@ void PG::check_full_transition(OSDMapRef lastmap, OSDMapRef osdmap)
   bool changed = false;
   if (osdmap->test_flag(CEPH_OSDMAP_FULL) &&
       !lastmap->test_flag(CEPH_OSDMAP_FULL)) {
+    // in current map, osd is full, in last map, osd is not full
     dout(10) << " cluster was marked full in " << osdmap->get_epoch() << dendl;
     changed = true;
   }
@@ -4604,6 +4615,7 @@ void PG::check_full_transition(OSDMapRef lastmap, OSDMapRef osdmap)
   if (pi->has_flag(pg_pool_t::FLAG_FULL)) {
     const pg_pool_t *opi = lastmap->get_pg_pool(info.pgid.pool());
     if (!opi || !opi->has_flag(pg_pool_t::FLAG_FULL)) {
+      // in current map pool is full, in last map, pool is not full or pool did not exist
       dout(10) << " pool was marked full in " << osdmap->get_epoch() << dendl;
       changed = true;
     }
@@ -4662,16 +4674,18 @@ void PG::set_last_peering_reset()
     // an epoch like this can be safely discarded
     last_peering_reset = get_osdmap()->get_epoch();
 
-    // restart buffering outgoing recovery messages, any buffered messages discarded
+    // restart buffering outgoing recovery messages, any buffered messages discarded,
     // queue a new QueuePeeringEvt<IntervalFlush> callback if needed, use 
     // IntervalFlush to unblock recovery messages buffering
     // if currently there are ObjectStore Op(s) inprogress, queue a callback
     // of type QueuePeeringEvt<IntervalFlush> on OpSequencer::flush_commit_waiters,
     // and reset RecoveryState::rctx to buffer all outgoing recovery messages in 
     // RecoveryState::messages_pending_flush
-    // after current busy Op(s) committed, the callback will queue a peering
-    // event of type IntervalFlush for this pg, only after the IntervalFlush 
-    // event is handled will unblock the buffering
+    // after current busy Op(s) committed i.e. journaled and applied, the callback 
+    // will queue a peering event of type IntervalFlush for this pg, only after 
+    // the IntervalFlush event is handled will unblock the buffering
+    // if we have another peering reset before the callback is called, the callback
+    // will detect this is an obsolete peering msg/event, then discard it safely
     reset_interval_flush();
   }
 }
@@ -4717,6 +4731,8 @@ void PG::reset_interval_flush()
   // is obsolete, thus will discard it silently
   Context *c = new QueuePeeringEvt<IntervalFlush>(
     this, get_osdmap()->get_epoch(), IntervalFlush());
+  // PG::osr was created by PG::PG, i.e. pg's ctor, and stored in 
+  // OSDService::osr_registry
   if (!osr->flush_commit(c)) {
     // filestore is not idle, i.e. there are inprogress ops, queue the callback
     dout(10) << "Beginning to block outgoing recovery messages" << dendl;
@@ -5405,7 +5421,7 @@ void PG::handle_advance_map(
 	   << dendl;
 
   // update PG::osdmap_ref to next map, so above assertions are always assured
-  update_osdmap_ref(osdmap);
+  update_osdmap_ref(osdmap); // update pg's osdmap
 
   // note down the newly removed snap(s)
   pool.update(osdmap);
@@ -5414,7 +5430,9 @@ void PG::handle_advance_map(
   // start_handle(rctx);
   // machine.process_event(evt);
   // end_handle();
-  
+
+  // last map -> new map, the pg has maintained its initial/last internal 
+  // states, now we push new info to it
   AdvMap evt(
     osdmap, lastmap, newup, up_primary,
     newacting, acting_primary);
@@ -5423,7 +5441,7 @@ void PG::handle_advance_map(
   recovery_state.handle_event(evt, rctx);
   
   if (pool.info.last_change == osdmap_ref->get_epoch())
-    on_pool_change();
+    on_pool_change(); // handle cache pool changes
 }
 
 void PG::handle_activate_map(RecoveryCtx *rctx)
@@ -5620,6 +5638,10 @@ PG::RecoveryState::Reset::Reset(my_context ctx)
   context< RecoveryMachine >().log_enter(state_name);
   PG *pg = context< RecoveryMachine >().pg;
 
+  // initialized in PG::PG, i.e. pg's ctor
+  // reset in PG::RecoveryState::Reset::Reset, i.e. when state transits into Reset
+  // increased by one in PG::start_flush
+  // decreased by one in ReplicatedPG::on_flushed
   pg->flushes_in_progress = 0;
   pg->set_last_peering_reset();
 }
@@ -5649,8 +5671,10 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
 
   // make sure we have past_intervals filled in.  hopefully this will happen
   // _before_ we are active.
-  pg->generate_past_intervals();
+  pg->generate_past_intervals(); // OSD::load_pgs has built a past_interals for each pg on this osd
 
+  // check if we have transitted from not full to full, includes pool quota 
+  // and osd's capacity, if it is true, update info.history.last_epoch_marked_full
   pg->check_full_transition(advmap.lastmap, advmap.osdmap);
 
   if (pg->should_restart_peering(

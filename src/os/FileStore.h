@@ -188,6 +188,9 @@ private:
     utime_t start;
     uint64_t op;
     list<Transaction*> tls;
+    // FileStore::_finish_op (called by FileStore::OpWQ::_process_finish right 
+    // after FileStore::_do_op which called by called by FileStore::OpWQ::_process) 
+    // will queue onreadable on FileStore::op_finisher
     Context *onreadable, *onreadable_sync;
     uint64_t ops, bytes;
     TrackedOpRef osd_op;
@@ -240,14 +243,15 @@ private:
     } /// @returns true if both queues are empty
 
     void _wake_flush_waiters(list<Context*> *to_queue) {
-      uint64_t seq; // FileStore::Op seq
-      if (_get_min_uncompleted(&seq)) // all ops finished and no journaled ops
-	seq = -1; // set a max value
+      uint64_t seq; // FileStore::Op seq, min seq that is currently committing/applying
+      if (_get_min_uncompleted(&seq)) // all ops applied and no journaled ops
+	seq = -1; // set to a max FileStore::Op seq
 
       for (list<pair<uint64_t, Context*> >::iterator i =
 	     flush_commit_waiters.begin();
-	   i != flush_commit_waiters.end() && i->first < seq; // filter those has completed
+	   i != flush_commit_waiters.end() && i->first < seq;
 	   flush_commit_waiters.erase(i++)) {
+        // filter those FileStore::Op(s) that have been committed and applied
 	to_queue->push_back(i->second);
       }
     }

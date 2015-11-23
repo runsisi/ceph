@@ -1844,6 +1844,10 @@ int OSD::init()
 	  << (journal_path.empty() ? "(no journal)" : journal_path) << dendl;
   assert(store);  // call pre_init() first!
 
+  // store created by ObjectStore::create in main, and used to initialize
+  // OSD::store in osd's ctor
+  // read superblock, initialize omap db, do journal replay, start OSD::osd_tp
+  // (mainly used for OSD::peering_wq), etc.
   int r = store->mount();
   if (r < 0) {
     derr << "OSD:init: unable to mount object store" << dendl;
@@ -1907,7 +1911,8 @@ int OSD::init()
       goto out;
   }
 
-  // make sure snap mapper object exists
+  // make sure snap mapper object exists, e.g.
+  // current/meta/snapmapper__0_A468EC03__none
   if (!store->exists(coll_t::meta(), OSD::make_snapmapper_oid())) {
     dout(10) << "init creating/touching snapmapper object" << dendl;
     ObjectStore::Transaction t;
@@ -1920,7 +1925,7 @@ int OSD::init()
   class_handler = new ClassHandler(cct);
   cls_initialize(class_handler);
 
-  if (cct->_conf->osd_open_classes_on_start) {
+  if (cct->_conf->osd_open_classes_on_start) { // default is true
     int r = class_handler->open_all_classes();
     if (r)
       dout(1) << "warning: got an error loading one or more classes: " << cpp_strerror(r) << dendl;
@@ -3064,7 +3069,14 @@ void OSD::load_pgs()
     // RecoveryMachine has been initialized in the ctor of RecoveryState, and the 
     // initial state is RecoveryState::Initial
     // set pg->send_notify to true if we are primary pg, then transit state to
-    // Reset
+    // Reset, in the ctor of Reset, will call call pg->set_last_peering_reset()
+    // to set PG::last_peering_reset to pg's current epoch in order to prevent 
+    // old messages, and call PG::reset_interval_flush which should do nothing
+    // because at this moment PG::osr should be idle, we need not to queue
+    // QueuePeeringEvt on PG::osr->flush_commit_waiters
+    // note: OSD::store->mount called before load_pgs, which do journal replay 
+    // when the backing store mounted, and the journal replay has nothing to do 
+    // with pg (the pg does not even exist)
     pg->handle_loaded(&rctx); // handle Load event
 
     dout(10) << "load_pgs loaded " << *pg << " " << pg->pg_log.get_log() << dendl;
@@ -3116,13 +3128,14 @@ void OSD::build_past_intervals_parallel()
   map<PG*,pistate> pis;
 
   // calculate junction of map range
-  epoch_t end_epoch = superblock.oldest_map;
+  epoch_t end_epoch = superblock.oldest_map; // firstly, set end_epoch <= cur_epoch
   epoch_t cur_epoch = superblock.newest_map;
   {
     RWLock::RLocker l(pg_map_lock);
     for (ceph::unordered_map<spg_t, PG*>::iterator i = pg_map.begin();
         i != pg_map.end();
         ++i) { // iterate each pg on this osd (only those in current/ dir)
+      // after this loop, cur_epoch <= end_epoch
       PG *pg = i->second;
 
       epoch_t start, end;
@@ -3240,7 +3253,7 @@ void OSD::build_past_intervals_parallel()
     // Verify same_interval_since is correct
     if (pg->info.history.same_interval_since) {
       assert(pg->info.history.same_interval_since == p.same_interval_since);
-    } else {
+    } else { // for imported pg, during pg->_calc_past_interval_range above we have fix some pg(s)
       assert(p.same_interval_since); // we iterated at least one epoch
       
       dout(10) << __func__ << " fix same_interval_since " << p.same_interval_since << " pg " << *pg << dendl;
@@ -6904,9 +6917,9 @@ bool OSD::advance_pg(
 {
   assert(pg->is_locked());
   epoch_t next_epoch = pg->get_osdmap()->get_epoch() + 1; // next osdmap epoch we are to consume
-  OSDMapRef lastmap = pg->get_osdmap();
+  OSDMapRef lastmap = pg->get_osdmap(); // pg's current osdmap
 
-  if (lastmap->get_epoch() == osd_epoch)
+  if (lastmap->get_epoch() == osd_epoch) // pg's osdmap epoch is the same as osdservice's
     return true;
   assert(lastmap->get_epoch() < osd_epoch);
 
@@ -6935,13 +6948,19 @@ bool OSD::advance_pg(
 
     vector<int> newup, newacting;
     int up_primary, acting_primary;
-    // get up, up_primary, acting, acting primary of next map
+    // get up, up_primary, acting, acting primary of the new map, after the
+    // pg loaded from the backing store (in OSD::load_pgs), it has set its
+    // initial:
+    // vector<int> up, vector<int> acting, 
+    // pg_shard_t up_primary, pg_shard_t primary, 
+    // vector<pg_shard_t> actingset
+    // and other fields, its state has transitted to Reset
     nextmap->pg_to_up_acting_osds(
       pg->info.pgid.pgid,
       &newup, &up_primary,
       &newacting, &acting_primary);
 
-    // construct an AdvMap event to drive the pg recovery state machine
+    // construct an AdvMap internal event to drive the pg recovery state machine
     pg->handle_advance_map(
       nextmap, lastmap, newup, up_primary,
       newacting, acting_primary, rctx);
@@ -6974,8 +6993,8 @@ bool OSD::advance_pg(
   pg->handle_activate_map(rctx);
 
   if (next_epoch <= osd_epoch) {
-    // not all map consumed yet, wait the slow pg catchs up, the caller will
-    // requeue the pg
+    // not all map consumed yet, in order to get the slow pg catchs up, the 
+    // caller will requeue the pg
     dout(10) << __func__ << " advanced to max " << max
 	     << " past min epoch " << min_epoch
 	     << " ... will requeue " << *pg << dendl;
@@ -8855,6 +8874,7 @@ void OSD::process_peering_events(
   // allocate an instance of ObjectStore::Transaction, an on_applied callback list, 
   // an on_safe callback list, a query_map, a notify_list and a info_map, then 
   // construct a RecoveryCtx with these elements
+  // all pg(s) during this processing use the same rctx
   PG::RecoveryCtx rctx = create_context();
   rctx.handle = &handle;
   for (list<PG*>::const_iterator i = pgs.begin();
@@ -8872,6 +8892,9 @@ void OSD::process_peering_events(
     // iterate each epoch of the osdmap from epoch the pg currently has to epoch
     // the OSDService has, construct an AvdMap event for each epoch to drive 
     // the pg recovery state machine
+    // handle from pg's osdmap to osdservice's osdmap, if not reached 
+    // osdservice's osdmap, requeue the pg to consume the remaining osdmap(s)
+    // next time
     if (!advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs)) {
       // there are still maps we have not consumed yet, requeue the pg to 
       // consume the remaining maps later
@@ -8879,12 +8902,15 @@ void OSD::process_peering_events(
       // handle an event
       peering_wq.queue(pg); // requeue this pg on back of peering queue
     } else {
+      // ok, internal events (AdvMap, ActMap) have processed, next we try
+      // to process the external event that queue us on the OSD::peering_wq
       assert(!pg->peering_queue.empty());
       PG::CephPeeringEvtRef evt = pg->peering_queue.front();
       pg->peering_queue.pop_front();
 
-      // for NullEvt(OSD::consume_map queue this to drive each pg on this osd
-      // to update its map), in process this event, the state machine do nothing
+      // finally, external event, for NullEvt(OSD::consume_map queue this to drive 
+      // each pg on this osd to update its map), in processing this event, the 
+      // state machine do nothing
       pg->handle_peering_event(evt, &rctx);
     }
 

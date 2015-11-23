@@ -752,6 +752,11 @@ protected:
 
 
   // pg waiters
+
+  // initialized in PG::PG, i.e. pg's ctor
+  // reset in PG::RecoveryState::Reset::Reset, i.e. when state transits into Reset
+  // increased by one in PG::start_flush
+  // decreased by one in ReplicatedPG::on_flushed
   unsigned flushes_in_progress;
 
   // ops waiting on peered

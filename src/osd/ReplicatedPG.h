@@ -701,8 +701,18 @@ public:
     
     utime_t   start;
 
-    // used to update PG::last_complete_ondisk by callback C_OSD_RepopCommit
-    eversion_t          pg_local_last_complete; // initialized in ctor to the previous op's eversion
+    // used to update PG::last_complete_ondisk by callback C_OSD_RepopCommit,
+    // i.e. when both we (primary) and replicas committed the write op, primary
+    // update PG::last_complete_ondisk to RepGather::pg_local_last_complete which 
+    // was initialized in ctor to the last info.last_complete, i.e. when our
+    // current write op committed (both we (primary) and replicas), we update 
+    // the PG::last_complete_ondisk to last info.last_complete, i.e. the
+    // last_complete updated by last write op, not by our current write op
+    
+    // note: the replica's last_complete_ondisk is always updated when it 
+    // committed its local write, while the primary's last_complete_ondisk only
+    // updated when both primary and all replicas committed their writes
+    eversion_t          pg_local_last_complete;
 
     bool queue_snap_trimmer;
 

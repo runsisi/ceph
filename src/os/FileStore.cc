@@ -1534,7 +1534,8 @@ int FileStore::mount()
     }
 
     if (superblock.omap_backend == "rocksdb")
-      omap_store->init(g_conf->filestore_rocksdb_options);
+      // 
+      omap_store->init(g_conf->filestore_rocksdb_options); // default to ""
     else
       omap_store->init();
 
@@ -1548,6 +1549,8 @@ int FileStore::mount()
     }
 
     DBObjectMap *dbomap = new DBObjectMap(omap_store);
+
+    // 
     ret = dbomap->init(do_update);
     if (ret < 0) {
       delete dbomap;
@@ -1563,7 +1566,8 @@ int FileStore::mount()
       goto close_current_fd;
     }
 
-    // omap is implemented as DBObjectMap
+    // set object_map scoped_ptr, our omap is implemented as DBObjectMap, i.e.
+    // KeyValueDB
     object_map.reset(dbomap);
   }
 
@@ -1671,7 +1675,7 @@ int FileStore::mount()
 
   journal_start(); // start JournalObjectStore::finisher
 
-  op_tp.start();
+  op_tp.start(); // OSD::peering_wq + OSDService::op_gen_wq
   op_finisher.start(); // start FileStore::op_finisher
   ondisk_finisher.start(); // start FileStore::ondisk_finisher
 
@@ -1924,7 +1928,11 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
   apply_manager.op_apply_start(o->op);
   dout(5) << "_do_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " start" << dendl;
 
-  // iterate each transaction and apply it
+  // iterate each transaction and apply it, i.e. do modifications wrapped
+  // in o->tls to backing store, but the modification may still buffered
+  // in backing store's buffer, FileStore::sync_entry will flush these
+  // changes periodically, when flush we will pause FileStore::op_tp, i.e.
+  // pause FileStore::_do_op, i.e. stop appling op, yeah, stopping us
   int r = _do_transactions(o->tls, o->op, &handle);
 
   // decrease open_ops and update max_applied_seq
@@ -1976,6 +1984,8 @@ struct C_JournaledAhead : public Context {
   C_JournaledAhead(FileStore *f, FileStore::OpSequencer *os, FileStore::Op *o, Context *ondisk):
     fs(f), osr(os), o(o), ondisk(ondisk) { }
   void finish(int r) {
+    // queue FileStore::Op on FileStore::op_wq to apply the txn, queue ondisk 
+    // (i.e. oncommit, called when the txn has been journaled) on FileStore::ondisk_finisher
     fs->_journaled_ahead(osr, o, ondisk);
   }
 };
@@ -1984,11 +1994,15 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
 				  TrackedOpRef osd_op,
 				  ThreadPool::TPHandle *handle)
 {
-  Context *onreadable; // means on data disk
-  Context *ondisk; // means on journal disk
+  Context *onreadable; // means txn applied
+  Context *ondisk; // means txn journaled
   Context *onreadable_sync;
   ObjectStore::Transaction::collect_contexts(
-    tls, &onreadable, &ondisk, &onreadable_sync);
+    tls, 
+    &onreadable, // list<Context *> ObjectStore::Transaction::on_applied
+    &ondisk, // list<Context *> ObjectStore::Transaction::on_commit
+    &onreadable_sync); // list<Context *> ObjectStore::Transaction::on_applied_sync
+  
   if (g_conf->filestore_blackhole) {
     dout(0) << "queue_transactions filestore_blackhole = TRUE, dropping transaction" << dendl;
     delete ondisk;
@@ -2022,7 +2036,9 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
   }
 
   if (journal && journal->is_writeable() && !m_filestore_journal_trailing) { // parallel or write ahead journal mode
-    // build an instance of FileStore::Op
+    // build an instance of FileStore::Op, the onreadable will be called by
+    // FileStore::OpWQ::_process_finish when the txn has been applied, i.e. 
+    // when FileStore::_do_op finished
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
     
     // wait until we can get a budget for this op from FileStore, if we can we
@@ -2068,7 +2084,9 @@ int FileStore::queue_transactions(Sequencer *posr, list<Transaction*> &tls,
 
       // if journal is full, then insert into ApplyManager::commit_waiters,
       // else inform the FileJournal::Writer to journal the transaction,
-      // and after the Writer journaled on the disk, queue_op in the callback
+      // and after the FileJournal::Writer journaled the encoded txn on the 
+      // disk, then call queue_op by callback C_JournaledAhead to queue the
+      // FileStore::Op on FileStore::op_wq to apply the txn
       _op_journal_transactions(tbl, data_align, o->op,
 			       new C_JournaledAhead(this, osr, o, ondisk),
 			       osd_op);
@@ -2162,7 +2180,9 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
 
   list<Context*> to_queue;
   // dequeue the op seq from OpSequencer::jq which queued in queue_transactions,
-  // and get a list of flush commit callbacks
+  // and get a list of flush commit callbacks, the callback mainly inserted
+  // by usr command to flush synchronously or by PG::reset_interval_flush to
+  // queue a IntervalFlush event when the callback is called
   osr->dequeue_journal(&to_queue);
 
   // do ondisk completions async, to prevent any onreadable_sync completions
@@ -3744,7 +3764,8 @@ void FileStore::sync_entry()
     fin.swap(sync_waiters);
     lock.Unlock();
 
-    // tell the thread pool to pause, and the wait the current processing items to finish
+    // tell the thread pool to pause, and the wait the current processing 
+    // items to finish
     op_tp.pause();
 
     // commit and apply must be mutual exclusive

@@ -574,8 +574,8 @@ void ReplicatedBackend::submit_transaction( // trim_to <= trim_rollback_to
       tid,
       InProgressOp(
 	tid, 
-	on_all_commit, // C_OSD_RepopCommit
-	on_all_acked, // C_OSD_RepopApplied
+	on_all_commit, // C_OSD_RepopCommit, called when primary and all replicas have applied the txn
+	on_all_acked, // C_OSD_RepopApplied, called when primary and all replicas have journaled the txn
 	orig_op, at_version)
       )
     ).first->second;
@@ -624,7 +624,7 @@ void ReplicatedBackend::submit_transaction( // trim_to <= trim_rollback_to
   // register callback contexts on op_t->on_applied list
   op_t->register_on_applied_sync(on_local_applied_sync);
   
-  // call this callback if pg's peering process never be reset since current epoch,
+  // call this callback if pg's peering process has not be reset since current epoch,
   // or do nothing except release the memory the callback occupied
 
   // when called, remove us from op->waiting_for_applied, and update 
@@ -633,6 +633,8 @@ void ReplicatedBackend::submit_transaction( // trim_to <= trim_rollback_to
   op_t->register_on_applied(
     parent->bless_context(
       new C_OSD_OnOpApplied(this, &op)));
+  // after the txn(s) are applied, whicn means FileStore::_do_op has finished, 
+  // so we can release the txn(s) safely
   op_t->register_on_applied(
     new ObjectStore::C_DeleteTransaction(op_t));
   op_t->register_on_applied(
@@ -648,12 +650,13 @@ void ReplicatedBackend::submit_transaction( // trim_to <= trim_rollback_to
   tls.push_back(local_t);
   tls.push_back(op_t);
 
+  // what will happen if a replica goes down:
   // PG::start_peering_interval will call PG::on_change, which calls ReplicatedPG::on_change
-  // for replicated pool, then to pgbackend->on_change
+  // for replicated pool, then calls to pgbackend->on_change, finally, 
+  // in_progress_ops will be cleared in ReplicatedBackend::on_change
+  
   // OSD::_remove_pg will call PG::on_removal, which calls ReplicatedPG::on_removal
   // for replicated pool, then to ReplicatedPG::on_shutdown, then to pgbackend->on_change
-  // finally, if some abnormal conditions met, in_progress_ops will be cleared
-  // in ReplicatedBackend::on_change
 
   // submit transactions to backstore
   parent->queue_transactions(tls, op.op);
@@ -1277,10 +1280,11 @@ void ReplicatedBackend::sub_op_modify_impl(OpRequestRef op)
   // op is cleaned up by oncommit/onapply when both are executed
 }
 
+// we have applied the txn
 void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
 {
   rm->op->mark_event("sub_op_applied");
-  rm->applied = true;
+  rm->applied = true; // applied
 
   dout(10) << "sub_op_modify_applied on " << rm << " op "
 	   << *rm->op->get_req() << dendl;
@@ -1310,7 +1314,7 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
     assert(0);
   }
 
-  // send ack to acker only if we haven't sent a commit already
+  // send ack to acker only if we haven't send a commit message already
   if (ack) {
     ack->set_priority(CEPH_MSG_PRIO_HIGH); // this better match commit priority!
     get_parent()->send_message_osd_cluster(
@@ -1321,10 +1325,11 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
   parent->op_applied(version);
 }
 
+// we have journaled the txn
 void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
 {
   rm->op->mark_commit_sent();
-  rm->committed = true;
+  rm->committed = true; // journaled
 
   // send commit.
   dout(10) << "sub_op_modify_commit on op " << *rm->op->get_req()

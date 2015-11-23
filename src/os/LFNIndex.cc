@@ -711,7 +711,7 @@ string LFNIndex::lfn_generate_object_name(const ghobject_t &oid)
   t = buf;
   end = t + sizeof(buf);
   if (oid.hobj.pool == -1)
-    t += snprintf(t, end - t, "none");
+    t += snprintf(t, end - t, "none"); // e.g. current/meta/snapmapper__0_A468EC03__none
   else
     t += snprintf(t, end - t, "%llx", (long long unsigned)oid.hobj.pool);
   full_name += string(buf);

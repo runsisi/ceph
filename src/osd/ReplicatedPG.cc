@@ -8320,8 +8320,10 @@ void ReplicatedPG::issue_repop(RepGather *repop)
     }
   }
 
-  Context *on_all_commit = new C_OSD_RepopCommit(this, repop);
-  Context *on_all_applied = new C_OSD_RepopApplied(this, repop);
+  // called when in progress op committed/applied, i.e. when primary and all 
+  // replicas committed or applied the client op
+  Context *on_all_commit = new C_OSD_RepopCommit(this, repop); // committed, i.e. journaled
+  Context *on_all_applied = new C_OSD_RepopApplied(this, repop); // applied
   Context *onapplied_sync = new C_OSD_OndiskWriteUnlock(
     repop->obc,
     repop->ctx->clone_obc,
