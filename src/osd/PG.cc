@@ -842,6 +842,10 @@ void PG::remove_down_peer_info(const OSDMapRef osdmap)
   // if we removed anyone, update peers (which include peer_info)
   if (removed)
     update_heartbeat_peers();
+
+  // update MissingLoc::missing_loc_sources, MissingLoc::missing_loc,
+  // ReplicatedBackend::pull_from_peer, ReplicatedBackend::pulling,
+  // ReplicatedPG::peer_log_requested, ReplicatedPG::peer_missing_requested
   check_recovery_sources(osdmap);
 }
 
@@ -2029,7 +2033,7 @@ void PG::queue_snap_trim()
   } else {
     dout(10) << "queue_snap_trim -- queuing" << dendl;
     snap_trim_queued = true;
-    osd->queue_for_snap_trim(this);
+    osd->queue_for_snap_trim(this); // queue on OSDService::op_wq
   }
 }
 
@@ -2303,7 +2307,9 @@ void PG::clear_recovery_state()
 {
   dout(10) << "clear_recovery_state" << dendl;
 
+  // set complete_to = log.end() and last_requested = 0
   pg_log.reset_recovery_pointers();
+  
   finish_sync_event = 0;
 
   hobject_t soid;
@@ -2311,6 +2317,8 @@ void PG::clear_recovery_state()
 #ifdef DEBUG_RECOVERY_OIDS
     soid = *recovering_oids.begin();
 #endif
+    // PG::recovery_ops_active--, OSDService::recovery_ops_active-- and
+    // dequeue us from OSDService::recovery_wq
     finish_recovery_op(soid, true);
   }
 
@@ -2318,6 +2326,9 @@ void PG::clear_recovery_state()
   backfill_info.clear();
   peer_backfill_info.clear();
   waiting_on_backfill.clear();
+
+  // clear missing_loc, backfills_in_flight, recovering, pending_backfill_updates
+  // for ReplicatedPG, and clear pushing/pulling maps for ReplicatedBackend
   _clear_recovery_state();  // pg impl specific hook
 }
 
@@ -2533,7 +2544,7 @@ void PG::_update_blocked_by()
 
 void PG::publish_stats_to_osd()
 {
-  if (!is_primary())
+  if (!is_primary()) // only primary can publish
     return;
 
   pg_stats_publish_lock.Lock();
@@ -2544,7 +2555,7 @@ void PG::publish_stats_to_osd()
     state_clear(PG_STATE_INCONSISTENT);
 
   utime_t now = ceph_clock_now(cct);
-  if (info.stats.state != state) {
+  if (info.stats.state != state) { // PG_STATE_XXX changed
     info.stats.state = state;
     info.stats.last_change = now;
     if ((state & PG_STATE_ACTIVE) &&
@@ -2562,7 +2573,7 @@ void PG::publish_stats_to_osd()
   utime_t cutoff = now;
   cutoff -= g_conf->osd_pg_stat_report_interval_max; // default is 500
   if (pg_stats_publish_valid && info.stats == pg_stats_publish &&
-      info.stats.last_fresh > cutoff) {
+      info.stats.last_fresh > cutoff) { // our last refresh in max interval
     dout(15) << "publish_stats_to_osd " << pg_stats_publish.reported_epoch
 	     << ": no change since" << dendl;
   } else {
@@ -2585,7 +2596,7 @@ void PG::publish_stats_to_osd()
       info.stats.last_fullsized = now;
 
     publish = true;
-    pg_stats_publish_valid = true; // resets in PG::clear_publish_stats  and PG::start_peering_interval
+    pg_stats_publish_valid = true; // resets in PG::clear_publish_stats and PG::start_peering_interval
     pg_stats_publish = info.stats;
     pg_stats_publish.stats.add(unstable_stats);
 
@@ -2595,7 +2606,7 @@ void PG::publish_stats_to_osd()
   pg_stats_publish_lock.Unlock();
 
   if (publish) // we should publish the stats
-    osd->pg_stat_queue_enqueue(this);
+    osd->pg_stat_queue_enqueue(this); // enqueue on OSD::pg_stat_queue
 }
 
 void PG::clear_publish_stats()
@@ -3495,7 +3506,7 @@ void PG::clear_scrub_reserved()
 
   if (scrubber.reserved) {
     scrubber.reserved = false;
-    osd->dec_scrubs_pending();
+    osd->dec_scrubs_pending(); // OSDService::scrubs_pending--
   }
 }
 
@@ -4145,13 +4156,15 @@ void PG::scrub_clear_state()
   state_clear(PG_STATE_SCRUBBING);
   state_clear(PG_STATE_REPAIR);
   state_clear(PG_STATE_DEEP_SCRUB);
+
+  // pg state and other stats may changed, if we are primary, we publish our stats
   publish_stats_to_osd();
 
   // active -> nothing.
   if (scrubber.active)
-    osd->dec_scrubs_active();
+    osd->dec_scrubs_active(); // OSDService::scrubs_active--
 
-  requeue_ops(waiting_for_active);
+  requeue_ops(waiting_for_active); // requeue on OSDService::op_wq
 
   if (scrubber.queue_snap_trim) {
     dout(10) << "scrub finished, requeuing snap_trimmer" << dendl;
@@ -4919,7 +4932,7 @@ void PG::start_peering_interval(
   clear_primary_state();
     
   // pg->on_*
-  on_change(t);
+  on_change(t); // handle a varity of ops requeue or clear, scrub, cache tier, etc.
 
   assert(!deleting);
 
@@ -4946,7 +4959,7 @@ void PG::start_peering_interval(
     on_role_change(); // clear hit set
 
     // take active waiters
-    requeue_ops(waiting_for_peered);
+    requeue_ops(waiting_for_peered); // ReplicatedPG::on_change above always requeue these
 
   } else {
     // no role change.
@@ -4968,7 +4981,8 @@ void PG::start_peering_interval(
     }
   }
 
-  // call clear_recovery_state
+  // call clear_recovery_state to clear a varity of states related with backfill
+  // and others
   cancel_recovery();
 
   if (acting.empty() && !up.empty() && up_primary == pg_whoami) {
@@ -5370,10 +5384,15 @@ bool PG::op_must_wait_for_map(epoch_t cur_epoch, OpRequestRef& op)
 void PG::take_waiters()
 {
   dout(10) << "take_waiters" << dendl;
+
+  // check PG::waiting_for_map op list, may queue us on OSDService::op_wq
   take_op_map_waiters();
+  
   for (list<CephPeeringEvtRef>::iterator i = peering_waiters.begin();
        i != peering_waiters.end();
-       ++i) osd->queue_for_peering(this);
+       ++i)
+    osd->queue_for_peering(this); // queue us on peering_wq
+       
   peering_queue.splice(peering_queue.begin(), peering_waiters,
 		       peering_waiters.begin(), peering_waiters.end());
 }
@@ -5499,7 +5518,9 @@ void PG::handle_activate_map(RecoveryCtx *rctx)
 	     << last_persisted_osdmap_ref->get_epoch()
 	     << " while current is " << osdmap_ref->get_epoch() << dendl;
   }
-  if (osdmap_ref->check_new_blacklist_entries()) check_blacklisted_watchers();
+  
+  if (osdmap_ref->check_new_blacklist_entries()) // new blacklist entries added
+    check_blacklisted_watchers();
 }
 
 void PG::handle_loaded(RecoveryCtx *rctx)
@@ -5640,7 +5661,7 @@ boost::statechart::result PG::RecoveryState::Started::react(const AdvMap& advmap
 	advmap.newup,
 	advmap.newacting,
 	advmap.lastmap,
-	advmap.osdmap)) {
+	advmap.osdmap)) { // if we are to enter a new interval, we reenter state Reset
     dout(10) << "should_restart_peering, transitioning to Reset" << dendl;
     post_event(advmap);
     return transit< Reset >();
@@ -5733,7 +5754,8 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
       context< RecoveryMachine >().get_cur_transaction());
   }
 
-  // 
+  // if peer any peer is down then remove it and update heartbeat peers, and
+  // all other recovery sources
   pg->remove_down_peer_info(advmap.osdmap);
   return discard_event();
 }
@@ -5753,9 +5775,12 @@ boost::statechart::result PG::RecoveryState::Reset::react(const ActMap&)
   }
 
   pg->update_heartbeat_peers();
+
+  // we updated a bunch of osdmap(s), may handle waiters (including ops and 
+  // peering events that are waiting)
   pg->take_waiters();
 
-  return transit< Started >();
+  return transit< Started >(); // finally, we are to Started
 }
 
 boost::statechart::result PG::RecoveryState::Reset::react(const QueryState& q)

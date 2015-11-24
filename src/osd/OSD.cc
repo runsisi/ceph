@@ -457,6 +457,7 @@ void OSDService::need_heartbeat_peer_update()
 
 void OSDService::pg_stat_queue_enqueue(PG *pg)
 {
+  // enqueue on OSD::pg_stat_queue
   osd->pg_stat_queue_enqueue(pg);
 }
 
@@ -6987,10 +6988,13 @@ bool OSD::advance_pg(
     handle.reset_tp_timeout();
   }
 
-  // update the epoch of the pg, and update the epoch set (OSDService::pg_epochs)
+  // ok, we have handled a bunch of osdmap(s)
+
+  // record we have reached which epoch
   service.pg_update_epoch(pg->info.pgid, lastmap->get_epoch());
 
-  // 
+  // construct an ActMap internal event and handle it, if we are in state
+  // Reset, then we will transit into state Started
   pg->handle_activate_map(rctx);
 
   if (next_epoch <= osd_epoch) {
@@ -8903,7 +8907,7 @@ void OSD::process_peering_events(
       // handle an event
       peering_wq.queue(pg); // requeue this pg on back of peering queue
     } else {
-      // ok, internal events (AdvMap, ActMap) have processed, next we try
+      // ok, internal events (AdvMap, ActMap) have been processed, next we try
       // to process the external event that queue us on the OSD::peering_wq
       assert(!pg->peering_queue.empty());
       PG::CephPeeringEvtRef evt = pg->peering_queue.front();
@@ -8930,7 +8934,7 @@ void OSD::process_peering_events(
       split_pgs.clear();
     }
 
-    // if need to do transaction for this pg, then queue the transaction to apply
+    // if rctx->transaction is not empoty, then queue the txn to execute
     dispatch_context_transaction(rctx, pg, &handle);
     pg->unlock();
     
@@ -8941,9 +8945,10 @@ void OSD::process_peering_events(
     // tell mon that i am still alive through same_interval_since
     queue_want_up_thru(same_interval_since);
 
-  // send message(s) and destory rctx
+  // we do send message(s)
   dispatch_context(rctx, 0, curmap, &handle);
 
+  // set pg_temp on OSDService::pg_temp_wanted
   service.send_pg_temp();
 }
 

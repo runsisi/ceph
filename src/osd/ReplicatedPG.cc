@@ -8465,6 +8465,8 @@ void ReplicatedPG::check_blacklisted_obc_watchers(ObjectContextRef obc)
       dout(10) << "watch: Found blacklisted watcher for " << ea << dendl;
       assert(j->second->get_pg() == this);
       j->second->unregister_cb();
+
+      // 
       handle_watch_timeout(j->second);
     }
   }
@@ -9706,6 +9708,8 @@ void ReplicatedPG::_on_new_interval()
   }
 }
 
+// only be called by PG::start_peering_interval when we need to change to
+// a new interval
 void ReplicatedPG::on_change(ObjectStore::Transaction *t)
 {
   dout(10) << "on_change" << dendl;
@@ -9717,18 +9721,19 @@ void ReplicatedPG::on_change(ObjectStore::Transaction *t)
 
   // requeue everything in the reverse order they should be
   // reexamined.
-  requeue_ops(waiting_for_peered);
+  requeue_ops(waiting_for_peered); // enqueue OSDService::op_wq, then clear waiting_for_peered
 
   clear_scrub_reserved();
 
   // requeues waiting_for_active
   scrub_clear_state();
 
-  context_registry_on_change();
+  context_registry_on_change(); // remove watcher of each ObjectContext on object_contexts
 
-  cancel_copy_ops(is_primary());
-  cancel_flush_ops(is_primary());
-  cancel_proxy_ops(is_primary());
+  // all related with cache tier
+  cancel_copy_ops(is_primary()); // cancel ReplicatedPG::copy_ops
+  cancel_flush_ops(is_primary()); // cancel ReplicatedPG::flush_ops
+  cancel_proxy_ops(is_primary()); // cancel ReplicatedPG::proxyread_ops and ReplicatedPG::proxywrite_ops
 
   // requeue object waiters
   if (is_primary()) {
@@ -9784,7 +9789,7 @@ void ReplicatedPG::on_change(ObjectStore::Transaction *t)
   // any dups
   apply_and_flush_repops(is_primary());
 
-  pgbackend->on_change_cleanup(t);
+  pgbackend->on_change_cleanup(t); // remove all objects in temp_contents
 
   // clear all in progress ops and pushing/pulling maps
   pgbackend->on_change();
@@ -9858,7 +9863,7 @@ void ReplicatedPG::_clear_recovery_state()
   assert(backfills_in_flight.empty());
   pending_backfill_updates.clear();
   assert(recovering.empty());
-  pgbackend->clear_recovery_state();
+  pgbackend->clear_recovery_state(); // clear pushing/pulling maps for ReplicatedBackend
 }
 
 void ReplicatedPG::cancel_pull(const hobject_t &soid)
@@ -9894,7 +9899,10 @@ void ReplicatedPG::check_recovery_sources(const OSDMapRef osdmap)
    * check that any peers we are planning to (or currently) pulling
    * objects from are dealt with.
    */
+  // update MissingLoc::missing_loc_sources, MissingLoc::missing_loc
   missing_loc.check_recovery_sources(osdmap);
+
+  // update ReplicatedBackend::pull_from_peer, ReplicatedBackend::pulling
   pgbackend->check_recovery_sources(osdmap);
 
   for (set<pg_shard_t>::iterator i = peer_log_requested.begin();
