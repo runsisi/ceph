@@ -2560,7 +2560,7 @@ void PG::publish_stats_to_osd()
 
   bool publish = false;
   utime_t cutoff = now;
-  cutoff -= g_conf->osd_pg_stat_report_interval_max;
+  cutoff -= g_conf->osd_pg_stat_report_interval_max; // default is 500
   if (pg_stats_publish_valid && info.stats == pg_stats_publish &&
       info.stats.last_fresh > cutoff) {
     dout(15) << "publish_stats_to_osd " << pg_stats_publish.reported_epoch
@@ -2585,7 +2585,7 @@ void PG::publish_stats_to_osd()
       info.stats.last_fullsized = now;
 
     publish = true;
-    pg_stats_publish_valid = true;
+    pg_stats_publish_valid = true; // resets in PG::clear_publish_stats  and PG::start_peering_interval
     pg_stats_publish = info.stats;
     pg_stats_publish.stats.add(unstable_stats);
 
@@ -2594,7 +2594,7 @@ void PG::publish_stats_to_osd()
   }
   pg_stats_publish_lock.Unlock();
 
-  if (publish)
+  if (publish) // we should publish the stats
     osd->pg_stat_queue_enqueue(this);
 }
 
@@ -4767,14 +4767,20 @@ void PG::start_peering_interval(
   vector<int> oldacting, oldup;
   int oldrole = get_role();
 
+  // if we are primary, unreg the next scrub
   unreg_next_scrub();
 
-  pg_shard_t old_acting_primary = get_primary();
+  // get up_primary, primary (i.e. acting primary), up, acting
+  pg_shard_t old_acting_primary = get_primary(); // PG::primary
   pg_shard_t old_up_primary = up_primary;
-  bool was_old_primary = is_primary();
+  bool was_old_primary = is_primary(); // pg_whoami == primary 
 
   acting.swap(oldacting);
   up.swap(oldup);
+
+  // initialize vector<int> up, vector<int> acting, 
+  // pg_shard_t up_primary, pg_shard_t primary, 
+  // vector<pg_shard_t> actingset
   init_primary_up_acting(
     newup,
     newacting,
@@ -4793,7 +4799,10 @@ void PG::start_peering_interval(
   }
 
   pg_stats_publish_lock.Lock();
-  pg_stats_publish_valid = false;
+  // reset, checked by OSD::send_pg_stats to determine if we have a valid 
+  // pg_stat_t, initialized to false in ctor, sets in PG::publish_stats_to_osd
+  // and resets in PG::clear_publish_stats and here
+  pg_stats_publish_valid = false; // pg stats now is invalid, PG::publish_stats_to_osd should validate it again
   pg_stats_publish_lock.Unlock();
 
   // This will now be remapped during a backfill in cases
@@ -4803,23 +4812,37 @@ void PG::start_peering_interval(
   else
     state_clear(PG_STATE_REMAPPED);
 
+  // set my current role (index in PG::acting set, -1 if the osd we are on is not
+  // in the set), for replicated pool because each shard contains the same data,
+  // change the index order is not important, so we can use the calculated role 
+  // directly, for ec pool the order can not be changed, if the calculated role
+  // is different than the previous role (i.e. index or shard), the role is reset
   int role = osdmap->calc_pg_role(osd->whoami, acting, acting.size());
-  if (pool.info.is_replicated() || role == pg_whoami.shard)
+  if (pool.info.is_replicated() || role == pg_whoami.shard) // 
     set_role(role);
   else
     set_role(-1);
 
   // did acting, up, primary|acker change?
   if (!lastmap) {
+    // we are only called by RecoveryState::Reset::react(AdvMap), which can
+    // only be called by PG::handle_advance_map, which can only be called by
+    // OSD::advance_pg further, so "lastmap" can not be NULL
     dout(10) << " no lastmap" << dendl;
     dirty_info = true;
     dirty_big_info = true;
     info.history.same_interval_since = osdmap->get_epoch();
   } else {
     std::stringstream debug;
+    // PG::generate_past_intervals in the caller always set it to non-zero 
+    // even if it was 0
     assert(info.history.same_interval_since != 0);
     boost::scoped_ptr<IsPGRecoverablePredicate> recoverable(
       get_is_recoverable_predicate());
+
+    // check if we are to change to a new interval, if it is true then construct
+    // an instance of pg_interval_t to record the info of the interval, and insert
+    // the new interval into info.past_intervals
     bool new_interval = pg_interval_t::check_new_interval(
       old_acting_primary.osd,
       new_acting_primary,
@@ -4837,20 +4860,25 @@ void PG::start_peering_interval(
       &debug);
     dout(10) << __func__ << ": check_new_interval output: "
 	     << debug.str() << dendl;
-    if (new_interval) {
+    if (new_interval) { // past_intervals an info.history.same_interval_since changed
       dout(10) << " noting past " << past_intervals.rbegin()->second << dendl;
       dirty_info = true;
       dirty_big_info = true;
+
+      // update the next interval's start epoch
       info.history.same_interval_since = osdmap->get_epoch();
     }
   }
 
   if (old_up_primary != up_primary ||
       oldup != up) {
+    // update the same up interval start epoch
     info.history.same_up_since = osdmap->get_epoch();
   }
+  
   // this comparison includes primary rank via pg_shard_t
   if (old_acting_primary != get_primary()) {
+    // update the same primary interval start epoch
     info.history.same_primary_since = osdmap->get_epoch();
   }
 
@@ -4883,10 +4911,12 @@ void PG::start_peering_interval(
 
   // reset primary state?
   if (was_old_primary || is_primary()) {
+    // remove us from OSD::pg_temp_wanted
     osd->remove_want_pg_temp(info.pgid.pgid);
   }
-  clear_primary_state();
 
+  // clear peering state, remove us from osd->recovery_wq
+  clear_primary_state();
     
   // pg->on_*
   on_change(t);
@@ -4896,10 +4926,10 @@ void PG::start_peering_interval(
   // should we tell the primary we are here?
   send_notify = !is_primary();
 
-  if (role != oldrole ||
-      was_old_primary != is_primary()) {
+  if (role != oldrole || // index of this osd in PG::acting, of type vector<int>
+      was_old_primary != is_primary()) { // PG::pg_whoami == PG::primary, of type pg_shard_t
     // did primary change?
-    if (was_old_primary != is_primary()) {
+    if (was_old_primary != is_primary()) { // non-primary -> primary or primary -> non-primary
       state_clear(PG_STATE_CLEAN);
       clear_publish_stats();
 	
@@ -4909,11 +4939,11 @@ void PG::start_peering_interval(
 	   it != replay_queue.end();
 	   ++it)
 	ls.push_back(it->second);
-      replay_queue.clear();
+      replay_queue.clear(); // TODO: ???
       requeue_ops(ls);
     }
 
-    on_role_change();
+    on_role_change(); // clear hit set
 
     // take active waiters
     requeue_ops(waiting_for_peered);
@@ -4937,6 +4967,8 @@ void PG::start_peering_interval(
       }
     }
   }
+
+  // call clear_recovery_state
   cancel_recovery();
 
   if (acting.empty() && !up.empty() && up_primary == pg_whoami) {

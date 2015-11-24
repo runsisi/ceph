@@ -417,6 +417,8 @@ bool spg_t::parse(const char *s)
   pgid.set_pool(ppool);
   pgid.set_ps(pseed);
 
+  // e.g. 1.6ep1s2_head
+
   const char *p = strchr(s, 'p');
   if (p) {
     r = sscanf(p, "p%d", &pref);
@@ -594,7 +596,7 @@ bool coll_t::parse(const std::string& s)
     return true;
   }
   if (s.find("_head") == s.length() - 5 &&
-      pgid.parse(s.substr(0, s.length() - 5))) { // 1.6e_head
+      pgid.parse(s.substr(0, s.length() - 5))) { // 1.6e_head or 1.6ep1s2_head (i.e. with preference and shard)
     type = TYPE_PG;
     removal_seq = 0;
     calc_str();

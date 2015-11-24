@@ -2948,7 +2948,7 @@ void OSD::load_pgs()
   for (vector<coll_t>::iterator it = ls.begin();
        it != ls.end();
        ++it) {
-    spg_t pgid; // coll_t::is_xxx will set the pgid as output parameter
+    spg_t pgid; // cid.parse in FileStore::list_collections has set the pgid
     if (it->is_temp(&pgid) ||
 	it->is_removal(&pgid) ||
 	(it->is_pg(&pgid) && PG::_has_removal_flag(store, pgid))) {
@@ -4948,7 +4948,7 @@ void OSD::send_pg_stats(const utime_t &now)
 	continue;
       }
       pg->pg_stats_publish_lock.Lock();
-      if (pg->pg_stats_publish_valid) {
+      if (pg->pg_stats_publish_valid) { // set by PG::publish_stats_to_osd
 	m->pg_stat[pg->info.pgid.pgid] = pg->pg_stats_publish;
 	dout(25) << " sending " << pg->info.pgid << " " << pg->pg_stats_publish.reported_epoch << ":"
 		 << pg->pg_stats_publish.reported_seq << dendl;
