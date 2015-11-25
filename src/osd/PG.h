@@ -1619,6 +1619,8 @@ public:
 
     struct Start;
 
+    // the initial inner state for Started is Start, so after we transit from
+    // state Reset into state Started, we enter state Start directly
     struct Started : boost::statechart::state< Started, RecoveryMachine, Start >, NamedState {
       Started(my_context ctx);
       void exit();
@@ -1649,6 +1651,8 @@ public:
     struct Primary;
     struct Stray;
 
+    // in ctor of state Start, we post an internal event to transit us into
+    // state Primary or Stray
     struct Start : boost::statechart::state< Start, Started >, NamedState {
       Start(my_context ctx);
       void exit();
@@ -1669,6 +1673,8 @@ public:
       IsIncomplete() : boost::statechart::event< IsIncomplete >() {}
     };
 
+    // the initial inner state for Primary is Peering, so after we transit
+    // from state Start into state Primary, we enter state Peering directly
     struct Primary : boost::statechart::state< Primary, Started, Peering >, NamedState {
       Primary(my_context ctx);
       void exit();
@@ -1703,6 +1709,8 @@ public:
     struct GetInfo;
     struct Active;
 
+    // the initial inner state for Peering is GetInfo, so after we transit
+    // from state Primary into state Peering, we enter state GetInfo directly
     struct Peering : boost::statechart::state< Peering, Primary, GetInfo >, NamedState {
       std::unique_ptr< PriorSet > prior_set;
 
@@ -1720,6 +1728,9 @@ public:
 
     struct WaitLocalRecoveryReserved;
     struct Activating;
+
+    // the initial inner state for Active is Activating, so after we transit
+    // from state Peering into state Active, we enter state Activating directly
     struct Active : boost::statechart::state< Active, Primary, Activating >, NamedState {
       Active(my_context ctx);
       void exit();

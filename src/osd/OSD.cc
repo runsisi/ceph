@@ -3309,12 +3309,12 @@ void OSD::handle_pg_peering_evt(
   bool primary,
   PG::CephPeeringEvtRef evt)
 {
-  if (service.splitting(pgid)) {
+  if (service.splitting(pgid)) { // the pgid is in OSDService::in_progress_splits or OSDService::pending_splits
     peering_wait_for_split[pgid].push_back(evt);
     return;
   }
 
-  if (!_have_pg(pgid)) {
+  if (!_have_pg(pgid)) { // the pgid is not in OSD::pg_map
     // same primary?
     if (!osdmap->have_pg_pool(pgid.pool()))
       return;
@@ -3557,7 +3557,7 @@ bool OSD::project_pg_history(spg_t pgid, pg_history_t& h, epoch_t from,
            << dendl;
 
   epoch_t e;
-  for (e = osdmap->get_epoch();
+  for (e = osdmap->get_epoch(); // current epoch of the osd
        e > from;
        e--) {
     // verify during intermediate epoch (e-1)
@@ -6994,7 +6994,12 @@ bool OSD::advance_pg(
   service.pg_update_epoch(pg->info.pgid, lastmap->get_epoch());
 
   // construct an ActMap internal event and handle it, if we are in state
-  // Reset, then we will transit into state Started
+  // Reset, then we will transit into state Started, the initial inner state 
+  // of the state Started is Start, in the ctor of RecoveryState::Start::Start,
+  // based on our role (primary or non), we post an internal event MakePrimary
+  // or MakeStray, so after exit from state Start, we transit to state Primary 
+  // or state Stray immediately, so state Start is only a temporary state, not a
+  // persist state
   pg->handle_activate_map(rctx);
 
   if (next_epoch <= osd_epoch) {
@@ -7769,10 +7774,12 @@ void OSD::handle_pg_notify(OpRequestRef op)
     handle_pg_peering_evt(
       spg_t(it->first.info.pgid.pgid, it->first.to),
       it->first.info, it->second,
-      it->first.query_epoch, pg_shard_t(from, it->first.from), true,
+      it->first.query_epoch, 
+      pg_shard_t(from, it->first.from), true,
       PG::CephPeeringEvtRef(
 	new PG::CephPeeringEvt(
-	  it->first.epoch_sent, it->first.query_epoch,
+	  it->first.epoch_sent, 
+	  it->first.query_epoch,
 	  PG::MNotifyRec(pg_shard_t(from, it->first.from), it->first,
           op->get_req()->get_connection()->get_features())))
       );
@@ -7800,11 +7807,13 @@ void OSD::handle_pg_log(OpRequestRef op)
   op->mark_started();
   handle_pg_peering_evt(
     spg_t(m->info.pgid.pgid, m->to),
-    m->info, m->past_intervals, m->get_epoch(),
+    m->info, m->past_intervals,
+    m->get_epoch(),
     pg_shard_t(from, m->from), false,
     PG::CephPeeringEvtRef(
       new PG::CephPeeringEvt(
-	m->get_epoch(), m->get_query_epoch(),
+	m->get_epoch(), 
+	m->get_query_epoch(),
 	PG::MLogRec(pg_shard_t(from, m->from), m)))
     );
 }
@@ -7834,11 +7843,13 @@ void OSD::handle_pg_info(OpRequestRef op)
 
     handle_pg_peering_evt(
       spg_t(p->first.info.pgid.pgid, p->first.to),
-      p->first.info, p->second, p->first.epoch_sent,
+      p->first.info, p->second, 
+      p->first.epoch_sent,
       pg_shard_t(from, p->first.from), false,
       PG::CephPeeringEvtRef(
 	new PG::CephPeeringEvt(
-	  p->first.epoch_sent, p->first.query_epoch,
+	  p->first.epoch_sent, 
+	  p->first.query_epoch,
 	  PG::MInfoRec(
 	    pg_shard_t(
 	      from, p->first.from), p->first.info, p->first.epoch_sent)))
@@ -8126,6 +8137,8 @@ void OSD::handle_pg_query(OpRequestRef op)
      * instead of just empty */
     if (service.deleting_pgs.lookup(pgid))
       empty.set_last_backfill(hobject_t(), true);
+
+    // pg_query_t types: INFO, LOG, MISSING, FULLLOG
     if (it->second.type == pg_query_t::LOG ||
 	it->second.type == pg_query_t::FULLLOG) {
       ConnectionRef con = service.get_con_osd_cluster(from, osdmap->get_epoch());
@@ -8148,6 +8161,7 @@ void OSD::handle_pg_query(OpRequestRef op)
 	  pg_interval_map_t()));
     }
   }
+       
   do_notifies(notify_list, osdmap);
 }
 
