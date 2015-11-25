@@ -225,6 +225,8 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
       stat_pg_sub(update_pg, t->second);
       t->second = update_stat;
     }
+    
+    // update creating_pgs
     stat_pg_add(update_pg, update_stat);
   }
   assert(osd_stat.size() == osd_epochs.size());
@@ -459,6 +461,7 @@ void PGMap::remove_osd(int osd)
   }
 }
 
+// the third and forth parameter are default to false
 void PGMap::stat_pg_add(const pg_t &pgid, const pg_stat_t &s, bool nocreating,
 			bool sameosds)
 {

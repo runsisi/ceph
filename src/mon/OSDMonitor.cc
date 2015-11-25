@@ -4882,7 +4882,7 @@ int OSDMonitor::prepare_command_pool_set(map<string,cmd_vartype> &cmdmap,
     }
     for(set<pg_t>::iterator i = mon->pgmon()->pg_map.creating_pgs.begin();
 	i != mon->pgmon()->pg_map.creating_pgs.end();
-	++i) {
+	++i) { // the pool has not finished its previous pg creating
       if (i->m_pool == static_cast<uint64_t>(pool)) {
 	ss << "currently creating pgs, wait";
 	return -EBUSY;

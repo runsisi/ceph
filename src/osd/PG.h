@@ -1523,6 +1523,8 @@ public:
 	return state->rctx->transaction;
       }
 
+      // only be called by RecoveryState::GetInfo::get_infos, 
+      // RecoveryState::GetLog::GetLog, RecoveryState::GetMissing::GetMissing     
       void send_query(pg_shard_t to, const pg_query_t &query) {
 	assert(state->rctx);
 	assert(state->rctx->query_map);
@@ -1556,6 +1558,9 @@ public:
 
       RecoveryCtx *get_recovery_ctx() { return &*(state->rctx); }
 
+      // only be called by RecoveryState::Reset::react(ActMap), 
+      // RecoveryState::ReplicaActive::react(ActMap), 
+      // RecoveryState::Stray::react(MQuery), RecoveryState::Stray::react(ActMap)
       void send_notify(pg_shard_t to,
 		       const pg_notify_t &info, const pg_interval_map_t &pi) {
 	assert(state->rctx);

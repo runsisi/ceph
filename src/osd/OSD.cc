@@ -2745,6 +2745,11 @@ void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
   pg->handle_loaded(rctx);
   pg->write_if_dirty(*(rctx->transaction));
   pg->queue_null(e, e);
+
+  // OSD::handle_pg_peering_evt, OSD::handle_pg_backfill_reserve, 
+  // OSD::handle_pg_recovery_reserve, OSD::handle_pg_query will push a
+  // CephPeeringEvtRef back of peering_wait_for_split, now we finished
+  // our splitting, so handle these deferred msg/evt
   map<spg_t, list<PG::CephPeeringEvtRef> >::iterator to_wake =
     peering_wait_for_split.find(pg->info.pgid);
   if (to_wake != peering_wait_for_split.end()) {
@@ -3545,6 +3550,8 @@ void OSD::calc_priors_during(
  * Fill in the passed history so you know same_interval_since, same_up_since,
  * and same_primary_since.
  */
+// called only by OSD::handle_pg_peering_evt, OSD::handle_pg_create,
+// OSD::handle_pg_query, OSD::handle_pg_remove
 bool OSD::project_pg_history(spg_t pgid, pg_history_t& h, epoch_t from,
 			     const vector<int>& currentup,
 			     int currentupprimary,
@@ -3559,7 +3566,7 @@ bool OSD::project_pg_history(spg_t pgid, pg_history_t& h, epoch_t from,
   epoch_t e;
   for (e = osdmap->get_epoch(); // current epoch of the osd
        e > from;
-       e--) {
+       e--) { // iterate each map in reverse order
     // verify during intermediate epoch (e-1)
     OSDMapRef oldmap = service.try_get_map(e-1);
     if (!oldmap) {
@@ -3588,13 +3595,13 @@ bool OSD::project_pg_history(spg_t pgid, pg_history_t& h, epoch_t from,
 	       << " -> " << currentacting << "/" << currentup
 	       << " " << currentactingprimary << "/" << currentupprimary 
 	       << dendl;
-      h.same_interval_since = e;
+      h.same_interval_since = e; // always point to the latest interval
     }
     // split?
     if (pgid.is_split(oldmap->get_pg_num(pgid.pool()),
 		      osdmap->get_pg_num(pgid.pool()),
 		      0)) {
-      h.same_interval_since = e;
+      h.same_interval_since = e; // TODO: no need to check previous h.same_interval_since???
     }
     // up set change?
     if ((up != currentup || upprimary != currentupprimary)
@@ -3616,6 +3623,8 @@ bool OSD::project_pg_history(spg_t pgid, pg_history_t& h, epoch_t from,
       h.same_primary_since = e;
     }
 
+    // all three same_xxx_since have been set, we alway update these to the 
+    // latest interval
     if (h.same_interval_since >= e && h.same_up_since >= e && h.same_primary_since >= e)
       break;
   }
@@ -3994,7 +4003,7 @@ void OSD::heartbeat_check()
 
   // check for incoming heartbeats (move me elsewhere?)
   utime_t cutoff = now;
-  cutoff -= cct->_conf->osd_heartbeat_grace;
+  cutoff -= cct->_conf->osd_heartbeat_grace; // default is 20
   for (map<int,HeartbeatInfo>::iterator p = heartbeat_peers.begin();
        p != heartbeat_peers.end();
        ++p) {
@@ -6036,7 +6045,7 @@ void OSD::dispatch_op(OpRequestRef op)
 {
   switch (op->get_req()->get_type()) {
 
-  case MSG_OSD_PG_CREATE:
+  case MSG_OSD_PG_CREATE: // send from PGMonitor::send_pg_creates
     handle_pg_create(op);
     break;
   case MSG_OSD_PG_NOTIFY:
@@ -7357,6 +7366,7 @@ bool OSD::can_create_pg(spg_t pgid)
   return true;
 }
 
+// OSD::advance_pg will call this
 void OSD::split_pgs(
   PG *parent,
   const set<spg_t> &childpgids, set<boost::intrusive_ptr<PG> > *out_pgs,
@@ -7376,7 +7386,7 @@ void OSD::split_pgs(
   vector<object_stat_sum_t>::iterator stat_iter = updated_stats.begin();
   for (set<spg_t>::const_iterator i = childpgids.begin();
        i != childpgids.end();
-       ++i, ++stat_iter) {
+       ++i, ++stat_iter) { // iterate each child pgid to split from the parent
     assert(stat_iter != updated_stats.end());
     dout(10) << "Splitting " << *parent << " into " << *i << dendl;
     assert(service.splitting(*i));
@@ -7440,12 +7450,12 @@ void OSD::handle_pg_create(OpRequestRef op)
    * up automatically by our OpTracker infrastructure). Otherwise,
    * we put the extra ref ourself.
    */
-  if (!require_mon_peer(op->get_req()->get())) {
+  if (!require_mon_peer(op->get_req()->get())) { // peer must be a mon
     return;
   }
   op->get_req()->put();
 
-  if (!require_same_or_newer_map(op, m->epoch, false))
+  if (!require_same_or_newer_map(op, m->epoch, false)) // our osdmap never newer than mon's?
     return;
 
   op->mark_started();
@@ -7621,6 +7631,7 @@ void OSD::dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap,
       is_active()) {
     do_notifies(*ctx.notify_list, curmap); // send MOSDPGNotify
     do_queries(*ctx.query_map, curmap); // send MOSDPGQuery
+    // RecoveryCtx::info_map only set by PG::search_for_missing
     do_infos(*ctx.info_map, curmap); // send MOSDPGInfo
   }
   delete ctx.notify_list;
@@ -7824,7 +7835,7 @@ void OSD::handle_pg_info(OpRequestRef op)
   assert(m->get_type() == MSG_OSD_PG_INFO);
   dout(7) << "handle_pg_info " << *m << " from " << m->get_source() << dendl;
 
-  if (!require_osd_peer(op->get_req()))
+  if (!require_osd_peer(op->get_req())) // peer must be osd
     return;
 
   int from = m->get_source().num();
@@ -8076,17 +8087,19 @@ void OSD::handle_pg_query(OpRequestRef op)
   
   for (map<spg_t,pg_query_t>::iterator it = m->pg_list.begin();
        it != m->pg_list.end();
-       ++it) {
+       ++it) { // iterate each pg that the peer want to query
     spg_t pgid = it->first;
 
-    if (pgid.preferred() >= 0) {
+    if (pgid.preferred() >= 0) { // TODO: what is localized pg???
       dout(10) << "ignoring localized pg " << pgid << dendl;
       continue;
     }
 
-    if (service.splitting(pgid)) {
+    if (service.splitting(pgid)) { // the pg is splitting (in progress or pending)
+      // when split finished, OSD::add_newly_split_pg will handle our deferred
+      // msg (deferred as an peering evt)
       peering_wait_for_split[pgid].push_back(
-	PG::CephPeeringEvtRef(
+	PG::CephPeeringEvtRef( // wrap a MQuery as a peering evt
 	  new PG::CephPeeringEvt(
 	    it->second.epoch_sent, it->second.epoch_sent,
 	    PG::MQuery(pg_shard_t(from, it->second.from),
@@ -8096,10 +8109,10 @@ void OSD::handle_pg_query(OpRequestRef op)
 
     {
       RWLock::RLocker l(pg_map_lock);
-      if (pg_map.count(pgid)) {
+      if (pg_map.count(pgid)) { // pg exists
         PG *pg = 0;
         pg = _lookup_lock_pg_with_map_lock_held(pgid);
-        pg->queue_query(
+        pg->queue_query( // queue a peering evt which wraps an inner evt MQuery
             it->second.epoch_sent, it->second.epoch_sent,
             pg_shard_t(from, it->second.from), it->second);
         pg->unlock();
@@ -8110,6 +8123,8 @@ void OSD::handle_pg_query(OpRequestRef op)
     if (!osdmap->have_pg_pool(pgid.pool()))
       continue;
 
+    // pg does not exist
+
     // get active crush mapping
     int up_primary, acting_primary;
     vector<int> up, acting;
@@ -8117,12 +8132,12 @@ void OSD::handle_pg_query(OpRequestRef op)
       pgid.pgid, &up, &up_primary, &acting, &acting_primary);
 
     // same primary?
-    pg_history_t history = it->second.history;
+    pg_history_t history = it->second.history; // pg_history_t::history from peer
     bool valid_history = project_pg_history(
       pgid, history, it->second.epoch_sent,
       up, up_primary, acting, acting_primary);
 
-    if (!valid_history ||
+    if (!valid_history || // has osdmap gap between query msg sent and current osdmap
         it->second.epoch_sent < history.same_interval_since) {
       dout(10) << " pg " << pgid << " dne, and pg has changed in "
 	       << history.same_interval_since

@@ -2082,12 +2082,18 @@ protected:
                         ThreadPool::TPHandle *handle = NULL);
   void dispatch_context_transaction(PG::RecoveryCtx &ctx, PG *pg,
                                     ThreadPool::TPHandle *handle = NULL);
+
+  // only be called by OSD::dispatch_context, OSD::handle_pg_query
   void do_notifies(map<int,
 		       vector<pair<pg_notify_t, pg_interval_map_t> > >&
 		       notify_list,
 		   OSDMapRef map);
+  
+  // only be called by OSD::dispatch_context
   void do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
 		  OSDMapRef map);
+
+  // only be called by OSD::dispatch_context
   void do_infos(map<int,
 		    vector<pair<pg_notify_t, pg_interval_map_t> > >& info_map,
 		OSDMapRef map);

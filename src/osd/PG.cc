@@ -7082,6 +7082,8 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
   }
 }
 
+// only be called by RecoveryState::GetInfo::GetInfo and 
+// RecoveryState::GetInfo::react(MNotifyRec)
 void PG::RecoveryState::GetInfo::get_infos()
 {
   PG *pg = context< RecoveryMachine >().pg;

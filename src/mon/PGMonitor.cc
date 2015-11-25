@@ -277,7 +277,7 @@ void PGMonitor::update_from_paxos(bool *need_bootstrap)
 
   if (mon->osdmon()->osdmap.get_epoch()) {
     map_pg_creates();
-    send_pg_creates();
+    send_pg_creates(); // send MOSDPGCreate for each pg to be created in pg_map.creating_pgs
   }
 
   update_logger();
@@ -968,14 +968,14 @@ void PGMonitor::register_pg(pg_pool_t& pool, pg_t pgid, epoch_t epoch, bool new_
   pg_t parent;
   int split_bits = 0;
   bool parent_found = false;
-  if (!new_pool) {
+  if (!new_pool) { // we are splitting, i.e. not the initial pgs when the pool got created
     parent = pgid;
     while (1) {
       // remove most significant bit
       int msb = pool.calc_bits_of(parent.ps());
       if (!msb) break;
       parent.set_ps(parent.ps() & ~(1<<(msb-1)));
-      split_bits++;
+      split_bits++; // we are splitting from parent with extending # bits from msb
       dout(10) << " is " << pgid << " parent " << parent << " ?" << dendl;
       //if (parent.u.pg.ps < mon->osdmon->osdmap.get_pgp_num()) {
       if (pg_map.pg_stat.count(parent) &&
@@ -993,7 +993,7 @@ void PGMonitor::register_pg(pg_pool_t& pool, pg_t pgid, epoch_t epoch, bool new_
   stats.parent = parent;
   stats.parent_split_bits = split_bits;
 
-  if (parent_found) {
+  if (parent_found) { // update time stamp as parent pg
     stats.last_scrub_stamp = pg_map.pg_stat[parent].last_scrub_stamp;
     stats.last_deep_scrub_stamp = pg_map.pg_stat[parent].last_deep_scrub_stamp;
     stats.last_clean_scrub_stamp = pg_map.pg_stat[parent].last_clean_scrub_stamp;
@@ -1044,13 +1044,16 @@ bool PGMonitor::register_new_pgs()
 
     bool new_pool = pg_map.pg_pool_sum.count(poolid) == 0;  // first pgs in this pool
 
-    for (ps_t ps = 0; ps < pool.get_pg_num(); ps++) {
+    for (ps_t ps = 0; ps < pool.get_pg_num(); ps++) { // iterate each pgid, i.e. [0, pg_num)
       pg_t pgid(ps, poolid, -1);
-      if (pg_map.pg_stat.count(pgid)) {
+      if (pg_map.pg_stat.count(pgid)) { // every pg has a slot in pg_map.pg_stat
 	dout(20) << "register_new_pgs  have " << pgid << dendl;
 	continue;
       }
       created++;
+
+      // creating initial pgs or splitting from exsiting pgs, i.e. register
+      // new pgs in pending_inc.pg_stat_updates
       register_pg(pool, pgid, pool.get_last_change(), new_pool);
     }
   }
@@ -1178,7 +1181,7 @@ void PGMonitor::send_pg_creates()
 
     // throttle?
     if (last_sent_pg_create.count(osd) &&
-	now - g_conf->mon_pg_create_interval < last_sent_pg_create[osd]) 
+	now - g_conf->mon_pg_create_interval < last_sent_pg_create[osd]) // default is 30.0
       continue;
       
     if (mon->osdmon()->osdmap.is_up(osd))
