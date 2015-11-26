@@ -1514,13 +1514,19 @@ public:
     int seed,
     const pg_pool_t *pool,
     ObjectStore::Transaction *t) {
-    coll_t target = coll_t(child);
+    coll_t target = coll_t(child); // child coll
+    
+    // create child coll
     PG::_create(*t, child, split_bits);
+    
+    // split child coll from parent
     t->split_collection(
       coll,
       split_bits,
       seed,
       target);
+
+    // set coll hint and create pg meta object
     PG::_init(*t, child, pool);
   }
 private:

@@ -2660,7 +2660,8 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
   int up_primary, acting_primary;
   vector<int> up, acting;
 
-  // map pgid (may be raw pg) to osd(s)
+  // map pgid (may be raw pg) to osd(s), pgid won't be changed by this call, coz 
+  // it's a const paramter
   osdmap->pg_to_up_acting_osds(pgid, &up, &up_primary,
 			       &acting, &acting_primary);
 
@@ -3560,7 +3561,7 @@ void Objecter::list_objects(ListContext *list_context, Context *onfinish)
 
   ObjectOperation op;
   op.pg_ls(list_context->max_entries, list_context->filter, list_context->cookie,
-	   list_context->current_pg_epoch);
+	   list_context->current_pg_epoch); // op will have flag CEPH_OSD_FLAG_PGOP, but not used
   list_context->bl.clear();
   C_List *onack = new C_List(list_context, onfinish, this);
   object_locator_t oloc(list_context->pool_id, list_context->nspace);

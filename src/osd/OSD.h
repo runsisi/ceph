@@ -1261,12 +1261,12 @@ public:
   static void split_list(
     list<OpRequestRef> *from,
     list<OpRequestRef> *to,
-    unsigned match,
+    unsigned match, // child pg's seed
     unsigned bits) {
     for (list<OpRequestRef>::iterator i = from->begin();
 	 i != from->end();
       ) {
-      if (split_request(*i, match, bits)) {
+      if (split_request(*i, match, bits)) { // the requested pg's seed vs child pg's seed
 	to->push_back(*i);
 	from->erase(i++);
       } else {
@@ -1359,7 +1359,7 @@ public:
     get_sessions_waiting_for_map(&sessions_to_check);
     for (set<Session*>::iterator i = sessions_to_check.begin();
 	 i != sessions_to_check.end();
-	 sessions_to_check.erase(i++)) {
+	 sessions_to_check.erase(i++)) { // iterate each session that is waiting for new map
       (*i)->session_dispatch_lock.Lock();
       update_waiting_for_pg(*i, osdmap);
       dispatch_session_waiting(*i, osdmap);

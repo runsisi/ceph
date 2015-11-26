@@ -485,8 +485,8 @@ bool pg_t::is_split(unsigned old_pg_num, unsigned new_pg_num, set<pg_t> *childre
 	continue;
       if (s >= new_pg_num)
 	break;
-      // ensure pg s is splitting from us, if this test is removed, then the same pg
-      // s may be splitted from multiple parent pgs
+      // ensure pg s is splitting from us, if this test is removed, then the same 
+      // child pg s may be splitted from multiple parent pgs
       if ((unsigned)ceph_stable_mod(s, old_pg_num, old_mask) == m_seed) {
 	split = true;
 	if (children)
@@ -1152,7 +1152,7 @@ ps_t pg_pool_t::raw_pg_to_pps(pg_t pg) const
     // Hash the pool id so that pool PGs do not overlap.
     return
       crush_hash32_2(CRUSH_HASH_RJENKINS1,
-		     ceph_stable_mod(pg.ps(), pgp_num, pgp_num_mask),
+		     ceph_stable_mod(pg.ps(), pgp_num, pgp_num_mask), // an integer between 0 ~ pgp_num
 		     pg.pool());
   } else {
     // Legacy behavior; add ps and pool together.  This is not a great

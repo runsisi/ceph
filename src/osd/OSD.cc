@@ -2879,7 +2879,10 @@ PG *OSD::get_pg_or_queue_for_pg(const spg_t& pgid, OpRequestRef& op)
   RWLock::RLocker l(pg_map_lock);
 
   ceph::unordered_map<spg_t, PG*>::iterator i = pg_map.find(pgid);
-  if (i == pg_map.end())
+  if (i == pg_map.end()) // PG instance currently not created
+    // we have same or newer map than client, so we definitely know that at
+    // this moment (epoch) we must hold the pg, or we will refuse the client
+    // op, now the requested pg may be still in creating/splitting
     session->waiting_for_pg[pgid];
 
   map<spg_t, list<OpRequestRef> >::iterator wlistiter =
@@ -5689,7 +5692,8 @@ void OSD::dispatch_session_waiting(Session *session, OSDMapRef osdmap)
   }
 }
 
-
+// when pg is splitting, i.e. pg_num increased, the child pgs must hold some
+// objects from the parent, so does the waiting ops
 void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
 {
   assert(session->session_dispatch_lock.is_locked());
@@ -5710,8 +5714,12 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
   for (map<spg_t, list<OpRequestRef> >::iterator i = from.begin();
        i != from.end();
        from.erase(i++)) {
+    // iterate each pg that has deferred ops because of the requested pg 
+    // was creating/splitting when handling the op, in new map, we may 
+    // split those pg further, so we need to split some deferred ops to
+    // children
     set<spg_t> children;
-    if (!newmap->have_pg_pool(i->first.pool())) {
+    if (!newmap->have_pg_pool(i->first.pool())) { // pool has been removed
       // drop this wait list on the ground
       i->second.clear();
     } else {
@@ -5719,17 +5727,20 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
       if (i->first.is_split(
 	    session->osdmap->get_pg_num(i->first.pool()),
 	    newmap->get_pg_num(i->first.pool()),
-	    &children)) {
-	// pg is splitting
+	    &children)) { 
+	// the pg is splitting splits further, i.e. blocks the ops not coz of 
+	// creating, some pending ops targeting parent pg need to change to its 
+	// children
 	for (set<spg_t>::iterator child = children.begin();
 	     child != children.end();
-	     ++child) {
+	     ++child) { // iterate each child pg we are to split
 	  unsigned split_bits = child->get_split_bits(
 	    newmap->get_pg_num(child->pool()));
 
           // some ops may need to be redirected to child pg
 	  list<OpRequestRef> child_ops;
-          // each op may keep on parent pg or move to child pg (only op of CEPH_MSG_OSD_OP)
+          // each op may keep on parent pg or move to child pg (only ops of type 
+          // CEPH_MSG_OSD_OP)
 	  OSD::split_list(&i->second, &child_ops, child->ps(), split_bits);
 	  if (!child_ops.empty()) {
 	    session->waiting_for_pg[*child].swap(child_ops);
@@ -5738,6 +5749,7 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
 	}
       }
     }
+    
     // if parent pg has no op left, then remove session from OSD::session_waiting_on_pg,
     // else add remaining ops onto session->waiting_for_pg
     if (i->second.empty()) {
@@ -8552,7 +8564,7 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 
   if ((m->get_flags() & CEPH_OSD_FLAG_PGOP) == 0 &&
       osdmap->have_pg_pool(pool))
-    _pgid = osdmap->raw_pg_to_pg(_pgid);
+    _pgid = osdmap->raw_pg_to_pg(_pgid); // use pg_num to do modulo for object storage
 
   spg_t pgid;
   if (!osdmap->get_primary_shard(_pgid, &pgid)) {
