@@ -458,6 +458,10 @@ pg_t pg_t::get_ancestor(unsigned old_pg_num) const
   return ret;
 }
 
+// check if pg number increased from old_pg_num to new_pg_num, should any child 
+// pg splits from us, if new_pg_num is kind of large, i.e. we need to extend more
+// than one bit to hold all pgs, we may split more than one child pg from the
+// parent
 bool pg_t::is_split(unsigned old_pg_num, unsigned new_pg_num, set<pg_t> *children) const
 {
   assert(m_seed < old_pg_num);
@@ -481,12 +485,15 @@ bool pg_t::is_split(unsigned old_pg_num, unsigned new_pg_num, set<pg_t> *childre
       // s = (1,2,3,4...) << 3 | m_seed      
       unsigned s = next_bit | m_seed;
 
+      // ensure old_pg_num <= s < new_pg_num
       if (s < old_pg_num || s == m_seed)
 	continue;
       if (s >= new_pg_num)
 	break;
-      // ensure pg s is splitting from us, if this test is removed, then the same 
-      // child pg s may be splitted from multiple parent pgs
+      // ensure pg s is extending from us, if this test is removed, then the same 
+      // child pg s may be splitted from multiple parent pgs, e.g.
+      // old_pg_num = 4, new_pg_num = 8, then s = 111 can be both extended 
+      // from m_seed = 1, or m_seed = 11, we need to exclude the former
       if ((unsigned)ceph_stable_mod(s, old_pg_num, old_mask) == m_seed) {
 	split = true;
 	if (children)

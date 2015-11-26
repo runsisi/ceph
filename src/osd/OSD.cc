@@ -5739,7 +5739,7 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
 
           // some ops may need to be redirected to child pg
 	  list<OpRequestRef> child_ops;
-          // each op may keep on parent pg or move to child pg (only ops of type 
+          // op may keep on parent pg or move to child pg (only ops of type 
           // CEPH_MSG_OSD_OP)
 	  OSD::split_list(&i->second, &child_ops, child->ps(), split_bits);
 	  if (!child_ops.empty()) {

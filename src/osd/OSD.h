@@ -1266,7 +1266,8 @@ public:
     for (list<OpRequestRef>::iterator i = from->begin();
 	 i != from->end();
       ) {
-      if (split_request(*i, match, bits)) { // the requested pg's seed vs child pg's seed
+      // the requested pg's seed (raw seed, i.e. raw oid hash) vs child pg's seed        
+      if (split_request(*i, match, bits)) {
 	to->push_back(*i);
 	from->erase(i++);
       } else {
