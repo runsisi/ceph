@@ -1362,7 +1362,11 @@ public:
 	 i != sessions_to_check.end();
 	 sessions_to_check.erase(i++)) { // iterate each session that is waiting for new map
       (*i)->session_dispatch_lock.Lock();
+      // we got new map, update pending ops that waiting for pg creating/splitting,
+      // i.e. split pending ops to child pgs, then update session's osdmap
       update_waiting_for_pg(*i, osdmap);
+
+      // 
       dispatch_session_waiting(*i, osdmap);
       (*i)->session_dispatch_lock.Unlock();
       (*i)->put();

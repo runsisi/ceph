@@ -3308,6 +3308,8 @@ void OSD::build_past_intervals_parallel()
  * look up a pg.  if we have it, great.  if not, consider creating it IF the pg mapping
  * hasn't changed since the given epoch and we are the primary.
  */
+
+// only be called by OSD::handle_pg_notify, OSD::handle_pg_log, OSD::handle_pg_info
 void OSD::handle_pg_peering_evt(
   spg_t pgid,
   const pg_info_t& info,
@@ -5711,6 +5713,8 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
   map<spg_t, list<OpRequestRef> > from;
   from.swap(session->waiting_for_pg);
 
+  // the pending list is constructed in OSD::get_pg_or_queue_for_pg which called 
+  // by OSD::handle_op
   for (map<spg_t, list<OpRequestRef> >::iterator i = from.begin();
        i != from.end();
        from.erase(i++)) {
@@ -5734,14 +5738,19 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
 	for (set<spg_t>::iterator child = children.begin();
 	     child != children.end();
 	     ++child) { // iterate each child pg we are to split
+	  // misnormer? actually this denotes how many mask bits to represent
+	  // the child pg, i.e. the seed
 	  unsigned split_bits = child->get_split_bits(
 	    newmap->get_pg_num(child->pool()));
 
           // some ops may need to be redirected to child pg
 	  list<OpRequestRef> child_ops;
           // op may keep on parent pg or move to child pg (only ops of type 
-          // CEPH_MSG_OSD_OP)
+          // CEPH_MSG_OSD_OP need to be splitted)
 	  OSD::split_list(&i->second, &child_ops, child->ps(), split_bits);
+
+          // some ops moved to children, these children need to register waiting
+          // list
 	  if (!child_ops.empty()) {
 	    session->waiting_for_pg[*child].swap(child_ops);
 	    register_session_waiting_on_pg(session, *child);
@@ -5750,8 +5759,9 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
       }
     }
     
-    // if parent pg has no op left, then remove session from OSD::session_waiting_on_pg,
-    // else add remaining ops onto session->waiting_for_pg
+    // if parent pg has no op left, i.e. all ops splitted to children, then 
+    // remove session from OSD::session_waiting_on_pg, else add remaining ops 
+    // onto session->waiting_for_pg
     if (i->second.empty()) {
       clear_session_waiting_on_pg(session, i->first);
     } else {
@@ -5843,9 +5853,9 @@ void OSD::ms_fast_dispatch(Message *m)
   if (session) {
     {
       Mutex::Locker l(session->session_dispatch_lock);
-      // if pg splits on this new map, then old ops may move from parent pg to
-      // child pg (only op of CEPH_MSG_OSD_OP), so we need to update
-      // session->waiting_for_pg and OSD::session_waiting_on_pg
+      // got a new map (i.e. nextmap), then some old waiting ops need move from 
+      // parent pg to child pg (only op of type CEPH_MSG_OSD_OP), so we need to 
+      // update session->waiting_for_pg and OSD::session_waiting_on_pg
       update_waiting_for_pg(session, nextmap);
       
       // append this newly accepted op to list<OpRequestRef>
@@ -7678,7 +7688,7 @@ void OSD::do_notifies(
 	   vector<pair<pg_notify_t,pg_interval_map_t> > >::iterator it =
 	 notify_list.begin();
        it != notify_list.end();
-       ++it) {
+       ++it) { // iterate each osd we want to notify
     if (!curmap->is_up(it->first)) {
       dout(20) << __func__ << " skipping down osd." << it->first << dendl;
       continue;
@@ -7692,9 +7702,9 @@ void OSD::do_notifies(
     }
     service.share_map_peer(it->first, con.get(), curmap);
     dout(7) << __func__ << " osd " << it->first
-	    << " on " << it->second.size() << " PGs" << dendl;
-    MOSDPGNotify *m = new MOSDPGNotify(curmap->get_epoch(),
-				       it->second);
+	    << " on " << it->second.size() << " PGs" << dendl;    
+    MOSDPGNotify *m = new MOSDPGNotify(curmap->get_epoch(), 
+        it->second); // vector<pair<pg_notify_t,pg_interval_map_t> >
     con->send_message(m);
   }
 }
@@ -7708,7 +7718,7 @@ void OSD::do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
 {
   for (map<int, map<spg_t,pg_query_t> >::iterator pit = query_map.begin();
        pit != query_map.end();
-       ++pit) {
+       ++pit) { // iterate each osd we want to query
     if (!curmap->is_up(pit->first)) {
       dout(20) << __func__ << " skipping down osd." << pit->first << dendl;
       continue;
@@ -7723,7 +7733,8 @@ void OSD::do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
     service.share_map_peer(who, con.get(), curmap);
     dout(7) << __func__ << " querying osd." << who
 	    << " on " << pit->second.size() << " PGs" << dendl;
-    MOSDPGQuery *m = new MOSDPGQuery(curmap->get_epoch(), pit->second);
+    MOSDPGQuery *m = new MOSDPGQuery(curmap->get_epoch(), 
+        pit->second); // map<spg_t,pg_query_t>
     con->send_message(m);
   }
 }
@@ -7737,7 +7748,7 @@ void OSD::do_infos(map<int,
 	   vector<pair<pg_notify_t, pg_interval_map_t> > >::iterator p =
 	 info_map.begin();
        p != info_map.end();
-       ++p) { 
+       ++p) { // iterate each osd we want to notify
     if (!curmap->is_up(p->first)) {
       dout(20) << __func__ << " skipping down osd." << p->first << dendl;
       continue;
@@ -7757,7 +7768,7 @@ void OSD::do_infos(map<int,
     }
     service.share_map_peer(p->first, con.get(), curmap);
     MOSDPGInfo *m = new MOSDPGInfo(curmap->get_epoch());
-    m->pg_list = p->second;
+    m->pg_list = p->second; // vector<pair<pg_notify_t, pg_interval_map_t> >
     con->send_message(m);
   }
   info_map.clear();
@@ -7769,6 +7780,7 @@ void OSD::do_infos(map<int,
  * includes pg_info_t.
  * NOTE: called with opqueue active.
  */
+// MNotifyRec
 void OSD::handle_pg_notify(OpRequestRef op)
 {
   MOSDPGNotify *m = (MOSDPGNotify*)op->get_req();
@@ -7796,7 +7808,8 @@ void OSD::handle_pg_notify(OpRequestRef op)
 
     handle_pg_peering_evt(
       spg_t(it->first.info.pgid.pgid, it->first.to),
-      it->first.info, it->second,
+      it->first.info, // pg_info_t
+      it->second, // pg_interval_map_t
       it->first.query_epoch, 
       pg_shard_t(from, it->first.from), true,
       PG::CephPeeringEvtRef(
@@ -7809,6 +7822,7 @@ void OSD::handle_pg_notify(OpRequestRef op)
   }
 }
 
+// MLogRec
 void OSD::handle_pg_log(OpRequestRef op)
 {
   MOSDPGLog *m = (MOSDPGLog*) op->get_req();
@@ -7841,6 +7855,7 @@ void OSD::handle_pg_log(OpRequestRef op)
     );
 }
 
+// MInfoRec
 void OSD::handle_pg_info(OpRequestRef op)
 {
   MOSDPGInfo *m = static_cast<MOSDPGInfo *>(op->get_req());
@@ -7866,7 +7881,8 @@ void OSD::handle_pg_info(OpRequestRef op)
 
     handle_pg_peering_evt(
       spg_t(p->first.info.pgid.pgid, p->first.to),
-      p->first.info, p->second, 
+      p->first.info, // pg_info_t
+      p->second, // pg_interval_map_t
       p->first.epoch_sent,
       pg_shard_t(from, p->first.from), false,
       PG::CephPeeringEvtRef(
@@ -7874,8 +7890,8 @@ void OSD::handle_pg_info(OpRequestRef op)
 	  p->first.epoch_sent, 
 	  p->first.query_epoch,
 	  PG::MInfoRec(
-	    pg_shard_t(
-	      from, p->first.from), p->first.info, p->first.epoch_sent)))
+	    pg_shard_t(from, p->first.from), 
+	    p->first.info, p->first.epoch_sent)))
       );
   }
 }
@@ -8109,7 +8125,8 @@ void OSD::handle_pg_query(OpRequestRef op)
 
     if (service.splitting(pgid)) { // the pg is splitting (in progress or pending)
       // when split finished, OSD::add_newly_split_pg will handle our deferred
-      // msg (deferred as an peering evt)
+      // msg (deferred as an peering evt), like session->waiting_for_pg in 
+      // OSD::get_pg_or_queue_for_pg called by OSD::handle_op
       peering_wait_for_split[pgid].push_back(
 	PG::CephPeeringEvtRef( // wrap a MQuery as a peering evt
 	  new PG::CephPeeringEvt(
@@ -8564,7 +8581,9 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 
   if ((m->get_flags() & CEPH_OSD_FLAG_PGOP) == 0 &&
       osdmap->have_pg_pool(pool))
-    _pgid = osdmap->raw_pg_to_pg(_pgid); // use pg_num to do modulo for object storage
+    // use pg_num to do modulo for object storage, i.e. which pg we are to store 
+    // the object, 
+    _pgid = osdmap->raw_pg_to_pg(_pgid);
 
   spg_t pgid;
   if (!osdmap->get_primary_shard(_pgid, &pgid)) {
@@ -8612,6 +8631,9 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
     return;
   }
 
+  // if PG instance currently not created, then queue this op on 
+  // session->waiting_for_pg to defer this op, OSD::wake_pg_waiters called by
+  // OSD::handle_pg_peering_evt will handle these pending ops
   PG *pg = get_pg_or_queue_for_pg(pgid, op);
   if (pg) {
     // when the op is dequeued in OSD::dequeue_op, we send the map directly, while
@@ -8975,7 +8997,8 @@ void OSD::process_peering_events(
       split_pgs.clear();
     }
 
-    // if rctx->transaction is not empoty, then queue the txn to execute
+    // if rctx->transaction is not empty, i.e. pg info, past_intervals may
+    // modified, then queue the txn to execute
     dispatch_context_transaction(rctx, pg, &handle);
     pg->unlock();
     

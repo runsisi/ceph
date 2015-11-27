@@ -916,6 +916,8 @@ void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
 	     << ", all is well" << dendl;
     need_up_thru = false;
   }
+
+  // set PG::probe_targets, i.e. osds we are to probe
   set_probe_targets(prior_set->probe);
 }
 
