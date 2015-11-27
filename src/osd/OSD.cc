@@ -3309,14 +3309,17 @@ void OSD::build_past_intervals_parallel()
  * hasn't changed since the given epoch and we are the primary.
  */
 
-// only be called by OSD::handle_pg_notify, OSD::handle_pg_log, OSD::handle_pg_info
+// only be called by OSD::handle_pg_notify, OSD::handle_pg_log, OSD::handle_pg_info,
+// pay attention to the difference between this interface and PG::handle_peering_event, 
+// the former is called by front end dispatch handler, and the later is pg specific,
+// and is used to handle external evt of pg recovery state machine
 void OSD::handle_pg_peering_evt(
   spg_t pgid,
   const pg_info_t& info,
   pg_interval_map_t& pi,
   epoch_t epoch,
   pg_shard_t from,
-  bool primary,
+  bool primary, // only OSD::handle_pg_notify will set this to true
   PG::CephPeeringEvtRef evt)
 {
   if (service.splitting(pgid)) { // the pgid is in OSDService::in_progress_splits or OSDService::pending_splits
@@ -3334,7 +3337,10 @@ void OSD::handle_pg_peering_evt(
       pgid.pgid, &up, &up_primary, &acting, &acting_primary);
     int role = osdmap->calc_pg_role(whoami, acting, acting.size());
 
-    pg_history_t history = info.history;
+    pg_history_t history = info.history; // the history the peer carried along
+    // extend the history up to current epoch we have, if there is any osdmap
+    // gap between the epoch the history is built and current epoch we have, 
+    // then the carried history is considered invalid
     bool valid_history = project_pg_history(
       pgid, history, epoch, up, up_primary, acting, acting_primary);
 
@@ -6051,7 +6057,7 @@ epoch_t op_required_epoch(OpRequestRef op)
   }
 }
 
-/*
+/* slow dispath:
  * case MSG_OSD_PG_CREATE:
  * case MSG_OSD_PG_NOTIFY:
  * case MSG_OSD_PG_QUERY:
@@ -6102,7 +6108,7 @@ void OSD::dispatch_op(OpRequestRef op)
   }
 }
 
-/*
+/* fast dispath:
  * case CEPH_MSG_OSD_OP:
  * case MSG_OSD_SUBOP:
  * case MSG_OSD_REPOP:
@@ -6689,7 +6695,7 @@ void OSD::handle_osd_map(MOSDMap *m)
       t.remove(coll_t::meta(), get_inc_osdmap_pobject_name(e));
       superblock.oldest_map = e+1;
       num++;
-      if (num >= cct->_conf->osd_target_transaction_size &&
+      if (num >= cct->_conf->osd_target_transaction_size && // default is 30
 	  (uint64_t)num > (last - first))  // make sure we at least keep pace with incoming maps
 	break;
     }
@@ -6731,6 +6737,9 @@ void OSD::handle_osd_map(MOSDMap *m)
     osdmap = newmap;
 
     superblock.current_epoch = cur;
+
+    // check pg creations, i.e. check OSD::creating_pgs which was constructed 
+    // in OSD::handle_pg_create
     advance_map();
     had_map_since = ceph_clock_now(cct);
   }

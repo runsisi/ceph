@@ -2836,8 +2836,8 @@ bool pg_interval_t::check_new_interval(
     // record all things needed for an pg_interval_t
 
     // the interval starts from same_interval_since and end to last osdmap epoch 
-    i.first = same_interval_since; // start interval
-    i.last = osdmap->get_epoch() - 1; // end interval
+    i.first = same_interval_since; // start epoch of previous interval
+    i.last = osdmap->get_epoch() - 1; // end epoch of previous interval
     assert(i.first <= i.last);
     i.acting = old_acting;
     i.up = old_up;

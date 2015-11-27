@@ -898,7 +898,7 @@ void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
       up,
       acting,
       info,
-      this));
+      this)); // build prior set by iterating past intervals
   PriorSet &prior(*prior_set.get());
 				 
   if (prior.pg_down) {
@@ -4875,12 +4875,14 @@ void PG::start_peering_interval(
       &debug);
     dout(10) << __func__ << ": check_new_interval output: "
 	     << debug.str() << dendl;
-    if (new_interval) { // past_intervals an info.history.same_interval_since changed
+    if (new_interval) {
+      // we generate a new interval, so past_intervals and 
+      // info.history.same_interval_since both changed
       dout(10) << " noting past " << past_intervals.rbegin()->second << dendl;
       dirty_info = true;
       dirty_big_info = true;
 
-      // update the next interval's start epoch
+      // prepare for the next interval's start epoch
       info.history.same_interval_since = osdmap->get_epoch();
     }
   }
@@ -4939,7 +4941,7 @@ void PG::start_peering_interval(
   assert(!deleting);
 
   // should we tell the primary we are here?
-  send_notify = !is_primary();
+  send_notify = !is_primary(); // primary was set in init_primary_up_acting called above
 
   if (role != oldrole || // index of this osd in PG::acting, of type vector<int>
       was_old_primary != is_primary()) { // PG::pg_whoami == PG::primary, of type pg_shard_t
@@ -5766,6 +5768,8 @@ boost::statechart::result PG::RecoveryState::Reset::react(const ActMap&)
 {
   PG *pg = context< RecoveryMachine >().pg;
   if (pg->should_send_notify() && pg->get_primary().osd >= 0) {
+    // we are not primary pg and new primary pg's osd exists, we need to send
+    // notify to primary pg
     context< RecoveryMachine >().send_notify(
       pg->get_primary(),
       pg_notify_t(
@@ -5811,6 +5815,8 @@ PG::RecoveryState::Start::Start(my_context ctx)
 
   PG *pg = context< RecoveryMachine >().pg;
   if (pg->is_primary()) {
+    // primary resets in PG::start_peering_interval whenever we change to a 
+    // new interval
     dout(1) << "transitioning to Primary" << dendl;
     post_event(MakePrimary());
   } else { //is_stray
@@ -5897,6 +5903,15 @@ boost::statechart::result PG::RecoveryState::Peering::react(const AdvMap& advmap
   if (prior_set.get()->affected_by_map(advmap.osdmap, pg)) {
     dout(1) << "Peering, affected_by_map, going to Reset" << dendl;
     post_event(advmap);
+    // prior set need to be rebuild, transit into state Reset directly, 
+    // Peering::prior_set is released thereafter, after handle this osdmap 
+    // or more, 1) we may still the primary pg of current interval, then after
+    // handle the ActMap evt, we will eventually transit into state GetInfo and
+    // rebuild the prior set, 2) we are no longer the primary pg of current interval,
+    // i.e. the peering is restarted (PG::start_peering_interval), all previous 
+    // peering states cleared, and we changed to state Stray, the new primary
+    // pg (may not be on the same osd as the old primary pg) will do the rebuilding
+    // thing
     return transit< Reset >();
   }
   
@@ -7075,7 +7090,7 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
   assert(pg->blocked_by.empty());
 
   if (!prior_set.get())
-    pg->build_prior(prior_set);
+    pg->build_prior(prior_set); // build prior set by past intervals
 
   pg->reset_min_peer_features();
   get_infos();
@@ -7094,7 +7109,7 @@ void PG::RecoveryState::GetInfo::get_infos()
   pg->blocked_by.clear();
   for (set<pg_shard_t>::const_iterator it = prior_set->probe.begin();
        it != prior_set->probe.end();
-       ++it) {
+       ++it) { // iterate each probe target
     pg_shard_t peer = *it;
     if (peer == pg->pg_whoami) {
       continue;
@@ -7786,19 +7801,23 @@ PG::PriorSet::PriorSet(bool ec_pool,
       probe.insert(pg_shard_t(up[i], ec_pool ? shard_id_t(i) : shard_id_t::NO_SHARD));
   }
 
+  // ok, now probe contains union of osds of current interval's acting set and up set
+  
   for (map<epoch_t,pg_interval_t>::const_reverse_iterator p = past_intervals.rbegin();
        p != past_intervals.rend();
-       ++p) {
+       ++p) { // iterate past_intervals in reverse order
     const pg_interval_t &interval = p->second;
     dout(10) << "build_prior " << interval << dendl;
 
     if (interval.last < info.history.last_epoch_started)
+      // we have iterated back to info.history.last_epoch_started, i.e. the 
+      // epoch that we finished previous peering process
       break;  // we don't care
 
-    if (interval.acting.empty())
+    if (interval.acting.empty()) // no write occurred in this interval
       continue;
 
-    if (!interval.maybe_went_rw)
+    if (!interval.maybe_went_rw) // no write occurred in this interval
       continue;
 
     // look at candidate osds during this interval.  each falls into
@@ -7808,7 +7827,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
     bool any_down_now = false;  // any candidates down now (that might have useful data)
 
     // consider ACTING osds
-    for (unsigned i=0; i<interval.acting.size(); i++) {
+    for (unsigned i=0; i<interval.acting.size(); i++) { // iterate acting set of this interval
       int o = interval.acting[i];
       if (o == CRUSH_ITEM_NONE)
 	continue;
