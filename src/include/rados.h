@@ -81,6 +81,11 @@ struct ceph_pg {
  * b <= bmask and bmask=(2**n)-1
  * e.g., b=12 -> bmask=15, b=123 -> bmask=127
  */
+
+// refer to: pg_pool_t::calc_pg_masks, i.e.
+// pg_num_mask = (1 << calc_bits_of(pg_num-1)) - 1;
+// pgp_num_mask = (1 << calc_bits_of(pgp_num-1)) - 1;
+// x is hash of oid, b is pg_num/pgp_num, bmask is pg_num_mask/pgp_mask
 static inline int ceph_stable_mod(int x, int b, int bmask)
 {
 	if ((x & bmask) < b)

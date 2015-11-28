@@ -7407,7 +7407,8 @@ bool OSD::can_create_pg(spg_t pgid)
   return true;
 }
 
-// OSD::advance_pg will call this
+// if the pg are to split in nextmap, then OSD::advance_pg will call this to
+// allocate child pg instance(s)
 void OSD::split_pgs(
   PG *parent,
   const set<spg_t> &childpgids, set<boost::intrusive_ptr<PG> > *out_pgs,
@@ -7416,7 +7417,7 @@ void OSD::split_pgs(
   PG::RecoveryCtx *rctx)
 {
   unsigned pg_num = nextmap->get_pg_num(
-    parent->pool.id);
+    parent->pool.id); // pg number in next osdmap
   parent->update_snap_mapper_bits(
     parent->info.pgid.get_split_bits(pg_num)
     );
@@ -7437,15 +7438,17 @@ void OSD::split_pgs(
     child->lock(true);
     out_pgs->insert(child);
 
+    // to get how many bits we are to use to do ceph_stable_mod for redistributing
+    // objects in parent pg
     unsigned split_bits = i->get_split_bits(pg_num);
     dout(10) << "pg_num is " << pg_num << dendl;
     dout(10) << "m_seed " << i->ps() << dendl;
     dout(10) << "split_bits is " << split_bits << dendl;
 
     parent->split_colls(
-      *i,
+      *i, // child pgid
       split_bits,
-      i->ps(),
+      i->ps(), // child seed
       &child->pool.info,
       rctx->transaction);
     

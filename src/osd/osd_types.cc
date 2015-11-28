@@ -516,6 +516,8 @@ bool pg_t::is_split(unsigned old_pg_num, unsigned new_pg_num, set<pg_t> *childre
   return split;
 }
 
+// to get how many bits we are to use to do ceph_stable_mod for storing objects 
+// in this pg
 unsigned pg_t::get_split_bits(unsigned pg_num) const {
   if (pg_num == 1)
     return 0;
@@ -525,6 +527,16 @@ unsigned pg_t::get_split_bits(unsigned pg_num) const {
   unsigned p = pg_pool_t::calc_bits_of(pg_num);
   assert(p); // silence coverity #751330 
 
+  // when pg_num increases, we need to redistribute the objects in parent's pg to
+  // both parent and children, normally we use object.hash & pg_num_mask or
+  // object.hash & (pg_num_mask >> 1) to distribute objects (see ceph_stable_mod), 
+  // here we do the reverse, i.e. now we know the pg_num, what we want to know is
+  // should we use pg_num_mask or (pg_num_mask >> 1) to do the modulo
+  
+  // seed(s) of both parent and child pg have common suffix, so do the hash(es) of 
+  // the objects resident in them, here we check the last (p-1) bits to check if we 
+  // could extend one bit to the common suffix, so maybe 
+  // (m_seed & ((1<<(p-1))-1)) < (pg_num & ((1<<(p-1))-1)) is more understandable
   if ((m_seed % (1<<(p-1))) < (pg_num % (1<<(p-1))))
     return p;
   else

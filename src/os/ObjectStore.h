@@ -1407,10 +1407,10 @@ public:
     /// Split collection based on given prefixes, objects matching the specified bits/rem are
     /// moved to the new collection
     void split_collection(
-      coll_t cid,
+      coll_t cid, // parent coll
       uint32_t bits,
-      uint32_t rem,
-      coll_t destination) {
+      uint32_t rem, // child seed
+      coll_t destination) { // child coll
       if (use_tbl) {
         __u32 op = OP_SPLIT_COLLECTION2;
         ::encode(op, tbl);

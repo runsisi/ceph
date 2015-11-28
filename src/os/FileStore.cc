@@ -5314,10 +5314,10 @@ int FileStore::_omap_setheader(coll_t cid, const ghobject_t &hoid,
   return object_map->set_header(hoid, bl, &spos);
 }
 
-int FileStore::_split_collection(coll_t cid,
+int FileStore::_split_collection(coll_t cid, // parent coll
 				 uint32_t bits,
-				 uint32_t rem,
-				 coll_t dest,
+				 uint32_t rem, // child seed
+				 coll_t dest, // child coll
 				 const SequencerPosition &spos)
 {
   int r;

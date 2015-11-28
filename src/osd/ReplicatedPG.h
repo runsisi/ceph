@@ -1516,15 +1516,15 @@ public:
     ObjectStore::Transaction *t) {
     coll_t target = coll_t(child); // child coll
     
-    // create child coll
+    // create child coll, before splitting, the child coll must has created
     PG::_create(*t, child, split_bits);
     
-    // split child coll from parent
+    // split objects from parent coll to child coll
     t->split_collection(
-      coll,
+      coll, // parent coll
       split_bits,
-      seed,
-      target);
+      seed, // child seed
+      target); // child coll
 
     // set coll hint and create pg meta object
     PG::_init(*t, child, pool);
