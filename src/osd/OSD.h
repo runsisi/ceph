@@ -1438,9 +1438,11 @@ public:
       if (pgid.pgid.ps() == 0) {
 	break;
       } else {
-	pgid = pgid.get_parent();
+	pgid = pgid.get_parent(); // the direct parent pg may also has some pending ops
       }
     }
+
+    // increase a ref, so will not be released when we are using it
     for (set<Session*>::iterator i = sessions->begin();
 	 i != sessions->end();
 	 ++i) {
@@ -1940,6 +1942,9 @@ protected:
     assert(osd_lock.is_locked());
     // Need write lock on pg_map_lock
     set<Session*> concerned_sessions;
+
+    // get those sessions that may have pending ops waiting for this pg or its
+    // direct parent
     get_sessions_possibly_interested_in_pg(pgid, &concerned_sessions);
 
     for (set<Session*>::iterator i = concerned_sessions.begin();
@@ -1947,7 +1952,12 @@ protected:
 	 ++i) {
       {
 	Mutex::Locker l((*i)->session_dispatch_lock);
+
+        // move ops waiting for pg to ops waiting for map, i.e.
+        // session.waiting_on_pg -> session.waiting_on_map
 	session_notify_pg_create(*i, osdmap, pgid);
+
+        // dispatch the pending ops
 	dispatch_session_waiting(*i, osdmap);
       }
       (*i)->put();

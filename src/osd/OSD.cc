@@ -3406,6 +3406,8 @@ void OSD::handle_pg_peering_evt(
 
       dout(10) << *pg << " is new" << dendl;
 
+      // queue an external evt for this pg to drive the pg recovery state machine,
+      // and queue this pg onto OSD::peering_wq
       pg->queue_peering_event(evt);
       pg->unlock();
       wake_pg_waiters(pg, pgid);
@@ -3442,6 +3444,8 @@ void OSD::handle_pg_peering_evt(
 
       dout(10) << *pg << " is new (resurrected)" << dendl;
 
+      // queue an external evt for this pg to drive the pg recovery state machine,
+      // and queue this pg onto OSD::peering_wq
       pg->queue_peering_event(evt);
       pg->unlock();
       wake_pg_waiters(pg, resurrected);
@@ -3527,7 +3531,7 @@ void OSD::calc_priors_during(
     int actual_osds = 0;
     for (unsigned i=0; i<acting.size(); i++) {
       if (acting[i] != CRUSH_ITEM_NONE) {
-	if (osdmap->is_up(acting[i])) {
+	if (osdmap->is_up(acting[i])) { // only to probe those osds currently are up
 	  if (acting[i] != whoami) {
 	    pset.insert(
 	      pg_shard_t(
@@ -4536,6 +4540,9 @@ void OSD::do_mon_report()
   send_alive();
   service.send_pg_temp();
   send_failures();
+
+  // iterate each pg in OSD::pg_stat_queue (enqueued by PG::publish_stats_to_osd), 
+  // and send MPGStats for this pg to mon
   send_pg_stats(now);
 }
 
@@ -5690,7 +5697,7 @@ void OSD::dispatch_session_waiting(Session *session, OSDMapRef osdmap)
   // then we can handle this op
   for (list<OpRequestRef>::iterator i = session->waiting_on_map.begin();
        i != session->waiting_on_map.end() && dispatch_op_fast(*i, osdmap);
-       session->waiting_on_map.erase(i++));
+       session->waiting_on_map.erase(i++)); // the op has dispatched
 
   // update OSD::session_waiting_for_map, remove or register the session
   if (session->waiting_on_map.empty()) {
@@ -5717,6 +5724,9 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
   assert(newmap->get_epoch() > session->osdmap->get_epoch());
 
   map<spg_t, list<OpRequestRef> > from;
+  // those ops belong to this session are currently waiting for pg, they are 
+  // inserted by OSD::get_pg_or_queue_for_pg when the PG instance has not
+  // been created on this osd when the op was requested
   from.swap(session->waiting_for_pg);
 
   // the pending list is constructed in OSD::get_pg_or_queue_for_pg which called 
@@ -7018,7 +7028,7 @@ bool OSD::advance_pg(
       // and insert children into in_progress_splits
       service.mark_split_in_progress(pg->info.pgid, children);
       
-      // allocate child PG(s)
+      // call _make_pg to allocate child PG(s)
       split_pgs(
 	pg, children, new_pgs, lastmap, nextmap,
 	rctx);
@@ -7421,6 +7431,8 @@ void OSD::split_pgs(
     assert(stat_iter != updated_stats.end());
     dout(10) << "Splitting " << *parent << " into " << *i << dendl;
     assert(service.splitting(*i));
+
+    // allocate an instance of ReplicatedPG
     PG* child = _make_pg(nextmap, *i);
     child->lock(true);
     out_pgs->insert(child);
@@ -7436,6 +7448,7 @@ void OSD::split_pgs(
       i->ps(),
       &child->pool.info,
       rctx->transaction);
+    
     parent->split_into(
       i->pgid,
       child,
@@ -7453,6 +7466,7 @@ void OSD::split_pgs(
 /*
  * holding osd_lock
  */
+// handle MSG_OSD_PG_CREATE msg from mon
 void OSD::handle_pg_create(OpRequestRef op)
 {
   MOSDPGCreate *m = (MOSDPGCreate*)op->get_req();
@@ -7523,7 +7537,7 @@ void OSD::handle_pg_create(OpRequestRef op)
     osdmap->pg_to_up_acting_osds(on, &up, &up_primary, &acting, &acting_primary);
     int role = osdmap->calc_pg_role(whoami, acting, acting.size());
 
-    if (up_primary != whoami) {
+    if (up_primary != whoami) { // we are not primary osd
       dout(10) << "mkpg " << on << "  not primary (role="
 	       << role << "), skipping" << dendl;
       continue;
@@ -7535,6 +7549,8 @@ void OSD::handle_pg_create(OpRequestRef op)
       // must exist. we can ignore this.
       continue;
     }
+
+    // ok, we are primary pg
 
     spg_t pgid;
     bool mapped = osdmap->get_primary_shard(on, &pgid);
@@ -7562,17 +7578,30 @@ void OSD::handle_pg_create(OpRequestRef op)
       history.last_scrub_stamp = ci->second;
       history.last_deep_scrub_stamp = ci->second;
     }
+
+    // extend pg history to epoch the osd currently has
     bool valid_history = project_pg_history(
       pgid, history, created, up, up_primary, acting, acting_primary);
     /* the pg creation message must have come from a mon and therefore
      * cannot be on the other side of a map gap
      */
     assert(valid_history);
+
+    /*
+     * struct create_pg_info {
+     *     pg_history_t history;
+     *     vector<int> acting;
+     *     set<pg_shard_t> prior;
+     *     pg_t parent;
+     * };
+     */
     
     // register.
     creating_pgs[pgid].history = history;
     creating_pgs[pgid].parent = parent;
     creating_pgs[pgid].acting.swap(acting);
+
+    // build prior set back to created epoch
     calc_priors_during(pgid, created, history.same_interval_since, 
 		       creating_pgs[pgid].prior);
 
@@ -7582,8 +7611,10 @@ void OSD::handle_pg_create(OpRequestRef op)
     dout(10) << "mkpg " << pgid << " e" << created
 	     << " h " << history
 	     << " : querying priors " << pset << dendl;
+
+    // prepare query msgs for prior set
     for (set<pg_shard_t>::iterator p = pset.begin(); p != pset.end(); ++p)
-      if (osdmap->is_up(p->osd))
+      if (osdmap->is_up(p->osd)) // we are to query those pgs on this osd
 	(*rctx.query_map)[p->osd][spg_t(pgid.pgid, p->shard)] =
 	  pg_query_t(
 	    pg_query_t::INFO,
@@ -7592,12 +7623,20 @@ void OSD::handle_pg_create(OpRequestRef op)
 	    osdmap->get_epoch());
 
     PG *pg = NULL;
-    if (can_create_pg(pgid)) {
+    if (can_create_pg(pgid)) { // can create the PG instance now
+      // no prior set to query, i.e. created == history.same_interval_since, so
+      // create the instance now, or will be created later in OSD::handle_pg_peering_evt
+      // by msg of type MSG_OSD_PG_NOTIFY, MSG_OSD_PG_LOG, MSG_OSD_PG_INFO
       const pg_pool_t* pp = osdmap->get_pg_pool(pgid.pool());
+      
+      // create a coll on backing store for this pg
       PG::_create(*rctx.transaction, pgid, pgid.get_split_bits(pp->get_pg_num()));
+      // create a meta object for this pg
       PG::_init(*rctx.transaction, pgid, pp);
 
       pg_interval_map_t pi;
+      // create an instance of PG and initialize it, the recovery machine
+      // will be initialized to state Initial
       pg = _create_lock_pg(
 	osdmap, pgid, true, false, false,
 	0, creating_pgs[pgid].acting, whoami,
@@ -7606,13 +7645,26 @@ void OSD::handle_pg_create(OpRequestRef op)
 	*rctx.transaction);
       pg->info.last_epoch_started = pg->info.history.last_epoch_started;
       creating_pgs.erase(pgid);
+
+      // handle internal evt Initialize and ActMap, finally the pg will
+      // transit into state Initial->Reset->Started->Start->Primary->Peering->GetInfo 
+      // or Initial->Reset->Started->Start->Stray according we are currently primary
+      // pg or not
       pg->handle_create(&rctx);
+
+      // update pg info and others
       pg->write_if_dirty(*rctx.transaction);
+
+      // publish pg stats, i.e. queue this pg on OSD::pg_stat_queue
       pg->publish_stats_to_osd();
       pg->unlock();
       num_created++;
+
+      // dispatch pending ops that are waiting for us
       wake_pg_waiters(pg, pgid);
     }
+
+    // do notify, query and info, and queue the txn to execute for this pg
     dispatch_context(rctx, pg, osdmap);
   }
 

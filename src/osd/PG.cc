@@ -7089,7 +7089,7 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
 
   assert(pg->blocked_by.empty());
 
-  if (!prior_set.get())
+  if (!prior_set.get()) // the first time we transit into
     pg->build_prior(prior_set); // build prior set by past intervals
 
   pg->reset_min_peer_features();
