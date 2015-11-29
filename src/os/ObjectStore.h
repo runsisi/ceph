@@ -1408,7 +1408,7 @@ public:
     /// moved to the new collection
     void split_collection(
       coll_t cid, // parent coll
-      uint32_t bits,
+      uint32_t bits, // how many bits to use to and (&) the object.hash
       uint32_t rem, // child seed
       coll_t destination) { // child coll
       if (use_tbl) {

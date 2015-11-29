@@ -153,8 +153,8 @@ int HashIndex::col_split_level(
   HashIndex &from,
   HashIndex &to,
   const vector<string> &path,
-  uint32_t inbits,
-  uint32_t match,
+  uint32_t inbits, // bits to and (&) object.hash for storing the object
+  uint32_t match, // child seed
   unsigned *mkdirred)
 {
   /* For each subdir, move, recurse, or ignore based on comparing the low order
@@ -162,10 +162,11 @@ int HashIndex::col_split_level(
    * in.
    */
   vector<string> subdirs;
-  int r = from.list_subdirs(path, &subdirs);
+  int r = from.list_subdirs(path, &subdirs); // get all nibble char(s) for subdir(s) under path
   if (r < 0)
     return r;
   map<string, ghobject_t> objects;
+  // list all ghobjects under path
   r = from.list_objects(path, 0, 0, &objects);
   if (r < 0)
     return r;
@@ -173,11 +174,13 @@ int HashIndex::col_split_level(
   set<string> to_move;
   for (vector<string>::iterator i = subdirs.begin();
        i != subdirs.end();
-       ++i) {
+       ++i) { // iterate each subdir
     uint32_t bits = 0;
     uint32_t hash = 0;
     vector<string> sub_path(path.begin(), path.end());
     sub_path.push_back(*i);
+    
+    // reverse nibble char(s) to construct a object hash
     path_to_hobject_hash_prefix(sub_path, &bits, &hash);
     if (bits < inbits) {
       if (hobject_t::match_hash(hash, bits, match)) {
@@ -289,8 +292,8 @@ int HashIndex::col_split_level(
 }
 
 int HashIndex::_split(
-  uint32_t match,
-  uint32_t bits,
+  uint32_t match, // child seed
+  uint32_t bits, // bits to and (&) object.hash
   CollectionIndex* dest) {
   assert(collection_version() == dest->collection_version());
   unsigned mkdirred = 0;
@@ -306,6 +309,7 @@ int HashIndex::_split(
 int HashIndex::_init() {
   subdir_info_s info;
   vector<string> path;
+  // set coll attr "user.cephos.phash.contents" to info
   return set_info(path, info);
 }
 
@@ -636,7 +640,7 @@ int HashIndex::set_info(const vector<string> &path, const subdir_info_s &info) {
   bufferlist buf;
   assert(path.size() == (unsigned)info.hash_level);
   info.encode(buf);
-  return add_attr_path(path, SUBDIR_ATTR, buf);
+  return add_attr_path(path, SUBDIR_ATTR, buf); // set attr "user.cephos.phash.contents" to info
 }
 
 bool HashIndex::must_merge(const subdir_info_s &info) {
@@ -647,7 +651,7 @@ bool HashIndex::must_merge(const subdir_info_s &info) {
 }
 
 bool HashIndex::must_split(const subdir_info_s &info) {
-  return (info.hash_level < (unsigned)MAX_HASH_LEVEL &&
+  return (info.hash_level < (unsigned)MAX_HASH_LEVEL && // max level is PATH_HASH_LEN/4 => 32/4 => 8
 	  info.objs > ((unsigned)(abs(merge_threshold)) * 16 * split_multiplier));
 			    
 }

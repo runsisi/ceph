@@ -78,6 +78,7 @@ struct FDCloser {
 
 int LFNIndex::init()
 {
+  // set coll attr "user.cephos.phash.contents"
   return _init();
 }
 
@@ -429,19 +430,22 @@ int LFNIndex::list_objects(const vector<string> &to_list, int max_objs,
       continue;
     string short_name(de->d_name);
     ghobject_t obj;
-    if (lfn_is_object(short_name)) {
+    if (lfn_is_object(short_name)) { // it's a name of object
+      // parse the filename and construct a ghobject instance from the filename
       r = lfn_translate(to_list, short_name, &obj);
       if (r < 0) {
 	r = -errno;
 	goto cleanup;
       } else if (r > 0) {
-	string long_name = lfn_generate_object_name(obj);
+	string long_name = lfn_generate_object_name(obj); // from ghobject to filename used for assert
 	if (!lfn_must_hash(long_name)) {
 	  assert(long_name == short_name);
 	}
-	if (index_version == HASH_INDEX_TAG)
+	if (index_version == HASH_INDEX_TAG) // TODO: ignore ghobject instance get from lfn_translate???
+          // construct ghobject instance from attr "user.ceph._"
 	  get_hobject_from_oinfo(to_list_path.c_str(), short_name.c_str(), &obj);
-	  
+
+        // insert constructed ghobject 
 	out->insert(pair<string, ghobject_t>(short_name, obj));
 	++listed;
       } else {
@@ -463,22 +467,22 @@ int LFNIndex::list_objects(const vector<string> &to_list, int max_objs,
 int LFNIndex::list_subdirs(const vector<string> &to_list,
 			   vector<string> *out)
 {
-  string to_list_path = get_full_path_subdir(to_list);
+  string to_list_path = get_full_path_subdir(to_list); // full path name of current dir to list
   DIR *dir = ::opendir(to_list_path.c_str());
   char buf[offsetof(struct dirent, d_name) + PATH_MAX + 1];
   if (!dir)
     return -errno;
 
   struct dirent *de;
-  while (!::readdir_r(dir, reinterpret_cast<struct dirent*>(buf), &de)) {
+  while (!::readdir_r(dir, reinterpret_cast<struct dirent*>(buf), &de)) { // iterate subdirs under current dir
     if (!de) {
       break;
     }
     string short_name(de->d_name);
     string demangled_name;
     ghobject_t obj;
-    if (lfn_is_subdir(short_name, &demangled_name)) {
-      out->push_back(demangled_name);
+    if (lfn_is_subdir(short_name, &demangled_name)) { // subdir name start from "DIR_"
+      out->push_back(demangled_name); // get nibble char
     }
   }
 
@@ -1009,12 +1013,14 @@ int LFNIndex::lfn_translate(const vector<string> &path,
 			    const string &short_name,
 			    ghobject_t *out)
 {
-  if (!lfn_is_hashed_filename(short_name)) {
+  if (!lfn_is_hashed_filename(short_name)) { // not a hashed filename, parse it directly
+    // parse the filename and return a constructed ghobject
     return lfn_parse_object_name(short_name, out);
   }
   // Get lfn_attr
   string full_path = get_full_path(path, short_name);
   char attr[PATH_MAX];
+  // long filename is store in attr "user.cephos.lfn3"
   int r = chain_getxattr(full_path.c_str(), get_lfn_attr().c_str(), attr, sizeof(attr) - 1);
   if (r < 0)
     return -errno;
@@ -1027,14 +1033,16 @@ int LFNIndex::lfn_translate(const vector<string> &path,
 
 bool LFNIndex::lfn_is_object(const string &short_name)
 {
+  // 1) filename length >= 255 and end with suffix "long" or
+  // 2) filename not with prefix "DIR_"
   return lfn_is_hashed_filename(short_name) || !lfn_is_subdir(short_name, 0);
 }
 
 bool LFNIndex::lfn_is_subdir(const string &name, string *demangled)
 {
-  if (name.substr(0, SUBDIR_PREFIX.size()) == SUBDIR_PREFIX) {
+  if (name.substr(0, SUBDIR_PREFIX.size()) == SUBDIR_PREFIX) { // "DIR_"
     if (demangled)
-      *demangled = demangle_path_component(name);
+      *demangled = demangle_path_component(name); // "DIR_xxx" => "xxx"
     return 1;
   }
   return 0;
@@ -1098,7 +1106,7 @@ bool LFNIndex::lfn_parse_object_name_keyless(const string &long_name, ghobject_t
   bool r = parse_object(long_name.c_str(), *out);
   int64_t pool = -1;
   spg_t pg;
-  if (coll().is_pg_prefix(&pg))
+  if (coll().is_pg_prefix(&pg)) // it's a pg coll
     pool = (int64_t)pg.pgid.pool();
   out->hobj.pool = pool;
   if (!r) return r;
@@ -1191,7 +1199,7 @@ bool LFNIndex::lfn_parse_object_name_poolless(const string &long_name,
 
   int64_t pool = -1;
   spg_t pg;
-  if (coll().is_pg_prefix(&pg))
+  if (coll().is_pg_prefix(&pg)) // it's a pg coll
     pool = (int64_t)pg.pgid.pool();
   (*out) = ghobject_t(hobject_t(name, key, snap, hash, pool, ""));
   return true;
@@ -1214,7 +1222,19 @@ bool LFNIndex::lfn_parse_object_name(const string &long_name, ghobject_t *out)
   if (index_version == HASH_INDEX_TAG_2)
     return lfn_parse_object_name_poolless(long_name, out);
 
+  // 0) escaped prefix + 1) oid.hobj.oid.name + 2) oid.hobj.key + 3) oid.hobj.snap
+  // + 4) oid.hobj.hash + 5) oid.hobj.nspace + 6) oid.hobj.pool + 7) oid.generation
+  // + 8) oid.shard_id, except the prefix, all other fields are separated by an 
+  // underline ('_'), e.g.
+  //
+  // DIR_1234abcd => \d1234abcd__head_7D4FDE61__5
+  // .1234abcd => \.1234abcd__head_9EC52B9C__5
+  // rbd\udata.1f61d2ae8944a.0000000000000000__head_206BD98B__5
+  // rbd\udata.1f61d2ae8944a.0000000000000000__2_206BD98B__5
+
   string::const_iterator current = long_name.begin();
+
+  // 0) escaped prefix
   if (*current == '\\') {
     ++current;
     if (current == long_name.end()) {
@@ -1230,13 +1250,15 @@ bool LFNIndex::lfn_parse_object_name(const string &long_name, ghobject_t *out)
     }
   }
 
+  // 1) oid.hobj.oid.name
   string::const_iterator end = current;
   for ( ; end != long_name.end() && *end != '_'; ++end) ;
   if (end == long_name.end())
     return false;
-  if (!append_unescaped(current, end, &name))
+  if (!append_unescaped(current, end, &name)) // unescape char(s) in [current, end)
     return false;
 
+  // 2) oid.hobj.key
   current = ++end;
   for ( ; end != long_name.end() && *end != '_'; ++end) ;
   if (end == long_name.end())
@@ -1244,18 +1266,21 @@ bool LFNIndex::lfn_parse_object_name(const string &long_name, ghobject_t *out)
   if (!append_unescaped(current, end, &key))
     return false;
 
+  // 3) oid.hobj.snap
   current = ++end;
   for ( ; end != long_name.end() && *end != '_'; ++end) ;
   if (end == long_name.end())
     return false;
   string snap_str(current, end);
 
+  // 4) oid.hobj.hash
   current = ++end;
   for ( ; end != long_name.end() && *end != '_'; ++end) ;
   if (end == long_name.end())
     return false;
   string hash_str(current, end);
 
+  // 5) oid.hobj.nspace
   current = ++end;
   for ( ; end != long_name.end() && *end != '_'; ++end) ;
   if (end == long_name.end())
@@ -1263,6 +1288,7 @@ bool LFNIndex::lfn_parse_object_name(const string &long_name, ghobject_t *out)
   if (!append_unescaped(current, end, &ns))
     return false;
 
+  // 6) oid.hobj.pool
   current = ++end;
   for ( ; end != long_name.end() && *end != '_'; ++end) ;
   string pstring(current, end);
@@ -1270,6 +1296,7 @@ bool LFNIndex::lfn_parse_object_name(const string &long_name, ghobject_t *out)
   // Optional generation/shard_id
   string genstring, shardstring;
   if (end != long_name.end()) {
+    // 7) oid.generation
     current = ++end;
     for ( ; end != long_name.end() && *end != '_'; ++end) ;
     if (end == long_name.end())
@@ -1278,6 +1305,7 @@ bool LFNIndex::lfn_parse_object_name(const string &long_name, ghobject_t *out)
 
     generation = (gen_t)strtoull(genstring.c_str(), NULL, 16);
 
+    // 8) oid.shard_id
     current = ++end;
     for ( ; end != long_name.end() && *end != '_'; ++end) ;
     if (end != long_name.end())
@@ -1300,17 +1328,18 @@ bool LFNIndex::lfn_parse_object_name(const string &long_name, ghobject_t *out)
   else
     pool = strtoull(pstring.c_str(), NULL, 16);
 
+  // construct a ghobject on stack
   (*out) = ghobject_t(hobject_t(name, key, snap, hash, (int64_t)pool, ns), generation, shard_id);
   return true;
 }
 
 bool LFNIndex::lfn_is_hashed_filename(const string &name)
 {
-  if (name.size() < (unsigned)FILENAME_SHORT_LEN) {
+  if (name.size() < (unsigned)FILENAME_SHORT_LEN) { // 255
     return 0;
   }
   if (name.substr(name.size() - FILENAME_COOKIE.size(), FILENAME_COOKIE.size())
-      == FILENAME_COOKIE) {
+      == FILENAME_COOKIE) { // "long"
     return 1;
   } else {
     return 0;
@@ -1449,5 +1478,5 @@ int LFNIndex::decompose_full_path(const char *in, vector<string> *out,
 
 string LFNIndex::mangle_attr_name(const string &attr)
 {
-  return PHASH_ATTR_PREFIX + attr;
+  return PHASH_ATTR_PREFIX + attr; // "user.cephos.phash." + attr
 }

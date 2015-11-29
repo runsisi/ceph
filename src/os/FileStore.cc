@@ -2883,10 +2883,10 @@ unsigned FileStore::_do_transaction(
       break;
     case Transaction::OP_SPLIT_COLLECTION2:
       {
-        coll_t cid = i.get_cid(op->cid);
-        uint32_t bits = op->split_bits;
-        uint32_t rem = op->split_rem;
-        coll_t dest = i.get_cid(op->dest_cid);
+        coll_t cid = i.get_cid(op->cid); // parent coll
+        uint32_t bits = op->split_bits; // bits to and (&) the object.hash
+        uint32_t rem = op->split_rem; // child seed
+        coll_t dest = i.get_cid(op->dest_cid); // child coll
         tracepoint(objectstore, split_coll2_enter, osr_name);
         r = _split_collection(cid, bits, rem, dest, spos);
         tracepoint(objectstore, split_coll2_exit, r);
@@ -5315,7 +5315,7 @@ int FileStore::_omap_setheader(coll_t cid, const ghobject_t &hoid,
 }
 
 int FileStore::_split_collection(coll_t cid, // parent coll
-				 uint32_t bits,
+				 uint32_t bits, // bits to and (&) object.hash
 				 uint32_t rem, // child seed
 				 coll_t dest, // child coll
 				 const SequencerPosition &spos)

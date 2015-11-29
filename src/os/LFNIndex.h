@@ -202,8 +202,8 @@ public:
   
   /// @see CollectionIndex
   int split(
-    uint32_t match,
-    uint32_t bits,
+    uint32_t match, // child seed
+    uint32_t bits, // bits to and (&) object.hash
     CollectionIndex* dest
     ) {
     WRAP_RETRY(

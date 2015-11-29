@@ -323,8 +323,11 @@ private:
     for (vector<string>::const_iterator i = path.begin();
 	 i != path.end();
 	 ++i) {
-      hash_str.push_back(*i->begin());
+      hash_str.push_back(*i->begin()); // nibble char(s)
     }
+
+    // reverse nibble char(s) to construct a object hash, e.g.
+    // [1,A,2,B] => [1,A,2,B,0,0,0,0] => 0x0000B2A1
     uint32_t rev_hash = hash_prefix_to_hash(hash_str);
     if (hash)
       *hash = rev_hash;
