@@ -3355,7 +3355,7 @@ void OSD::handle_pg_peering_evt(
     }
 
     bool create = false;
-    if (primary) {
+    if (primary) { // we are primary
       // DNE on source?
       if (info.dne()) {
 	// is there a creation pending on this pg?
@@ -3400,6 +3400,7 @@ void OSD::handle_pg_peering_evt(
 	acting, acting_primary,
 	history, pi,
 	*rctx.transaction);
+      // handle internal evt Initialize and ActMap
       pg->handle_create(&rctx);
       pg->write_if_dirty(*rctx.transaction);
       dispatch_context(rctx, pg, osdmap);
@@ -7438,8 +7439,8 @@ void OSD::split_pgs(
     child->lock(true);
     out_pgs->insert(child);
 
-    // to get how many bits we are to use to do ceph_stable_mod for redistributing
-    // objects in parent pg
+    // to get how many bits we are to use to do ceph_stable_mod, i.e. mask 
+    // object.hash, for redistributing objects in parent pg
     unsigned split_bits = i->get_split_bits(pg_num);
     dout(10) << "pg_num is " << pg_num << dendl;
     dout(10) << "m_seed " << i->ps() << dendl;
@@ -7517,10 +7518,14 @@ void OSD::handle_pg_create(OpRequestRef op)
     assert(ci != m->ctimes.end() && ci->first == p->first);
     epoch_t created = p->second.created;
     pg_t parent = p->second.parent;
+
+    // PGMonitor never send MOSDPGCreate for splitted pgs
     if (p->second.split_bits) // Skip split pgs
       continue;
+    
     pg_t on = p->first;
 
+    // PGMonitor never send MOSDPGCreate for localized pgs
     if (on.preferred() >= 0) {
       dout(20) << "ignoring localized pg " << on << dendl;
       continue;
@@ -8231,12 +8236,14 @@ void OSD::handle_pg_query(OpRequestRef op)
       up, up_primary, acting, acting_primary);
 
     if (!valid_history || // has osdmap gap between query msg sent and current osdmap
-        it->second.epoch_sent < history.same_interval_since) {
+        it->second.epoch_sent < history.same_interval_since) { // changed to a new interval, the msg is obsolete
       dout(10) << " pg " << pgid << " dne, and pg has changed in "
 	       << history.same_interval_since
 	       << " (msg from " << it->second.epoch_sent << ")" << dendl;
       continue;
     }
+
+    // ok, same interval, so we are still in acting set
 
     dout(10) << " pg " << pgid << " dne" << dendl;
     pg_info_t empty(spg_t(pgid.pgid, it->second.to));
@@ -9055,7 +9062,7 @@ void OSD::process_peering_events(
     // prepare a transaction to update the pg log
     pg->write_if_dirty(*rctx.transaction);
     
-    if (!split_pgs.empty()) { // new pg(s) splitted
+    if (!split_pgs.empty()) { // new pg(s) splitted, i.e. PG instance created
       // when finished, the newly splitted pg will be added to osd.pg_map
       rctx.on_applied->add(new C_CompleteSplits(this, split_pgs));
       split_pgs.clear();

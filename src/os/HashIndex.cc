@@ -180,24 +180,41 @@ int HashIndex::col_split_level(
     vector<string> sub_path(path.begin(), path.end());
     sub_path.push_back(*i);
     
-    // reverse nibble char(s) to construct a object hash
+    // reverse nibble char(s) to construct a hash
     path_to_hobject_hash_prefix(sub_path, &bits, &hash);
     if (bits < inbits) {
-      if (hobject_t::match_hash(hash, bits, match)) {
+      // we use more bits to mask the object.hash than the subdir name(s) can 
+      // tell, e.g. objects in subdir has one level must have a mask equal to 
+      // or more than 4 * 1 = 4 bits, and our mask has more than 4 bits too, 
+      // we may need to recurse in to check if subdir(s) or object(s) need to 
+      // move new coll
+      if (hobject_t::match_hash(hash, bits, match)) { // need to mask more bits
+        // we never recurse down from more than one parent dir, coz different
+        // parent dirs construct different hash, they could not match to the 
+        // same child seed, e.g.
+        // our recursive call stack could be: [1 -> A -> 2]
+        // but never more than one recursive call stacks: [1 -> A -> 2], [1 -> B -> 2]  
 	r = col_split_level(
 	  from,
 	  to,
-	  sub_path,
+	  sub_path, // use subdir to recurse
 	  inbits,
 	  match,
 	  mkdirred);
 	if (r < 0)
 	  return r;
+
+        // we only create intermediate dirs, i.e. recursively called subdirs, at
+        // the last recursive call, after the last recursive call is called, all
+        // intermediate dirs will have been created, so we do not need to use
+        // a variable, i.e. mkdirred, to note down some thing
+
+        // TODO: remove mkdirred ???
 	if (*mkdirred > path.size())
 	  *mkdirred = path.size();
       } // else, skip, doesn't need to be moved or recursed into
     } else {
-      if (hobject_t::match_hash(hash, inbits, match)) {
+      if (hobject_t::match_hash(hash, inbits, match)) { // move the whole subdir
 	to_move.insert(*i);
       }
     } // else, skip, doesn't need to be moved or recursed into
@@ -208,15 +225,15 @@ int HashIndex::col_split_level(
   for (map<string, ghobject_t>::iterator i = objects.begin();
        i != objects.end();
        ++i) {
-    if (i->second.match(inbits, match)) {
+    if (i->second.match(inbits, match)) { // object.hash & mask == child seed
       objs_to_move.insert(*i);
     }
   }
 
-  if (objs_to_move.empty() && to_move.empty())
+  if (objs_to_move.empty() && to_move.empty()) // this is true for recursively called subdirs
     return 0;
 
-  // Make parent directories as needed
+  // Make parent directories as needed, we had a recursive all
   while (*mkdirred < path.size()) {
     ++*mkdirred;
     int exists = 0;
@@ -224,23 +241,28 @@ int HashIndex::col_split_level(
     r = to.path_exists(creating_path, &exists);
     if (r < 0)
       return r;
-    if (exists)
+    if (exists) // dest path exists
       continue;
     subdir_info_s info;
     info.objs = 0;
     info.subdirs = 0;
-    info.hash_level = creating_path.size();
-    if (*mkdirred < path.size() - 1)
+    info.hash_level = creating_path.size(); // subdir depth
+    if (*mkdirred < path.size() - 1) // TODO: if (*mkdirred < path.size()) ???
       info.subdirs = 1;
+
+    // set attr "in_progress_op" on dest coll dir
     r = to.start_col_split(creating_path);
     if (r < 0)
       return r;
+    // make subdir
     r = to.create_path(creating_path);
     if (r < 0)
       return r;
+    // set attr "user.cephos.phash.contents" on newly created subdir
     r = to.set_info(creating_path, info);
     if (r < 0)
       return r;
+    // clear attr "in_progress_op" on dest coll dir
     r = to.end_split_or_merge(creating_path);
     if (r < 0)
       return r;
@@ -251,11 +273,15 @@ int HashIndex::col_split_level(
   r = from.get_info(path, &from_info);
   if (r < 0)
     return r;
+  // get attr "user.cephos.phash.contents"
   r = to.get_info(path, &to_info);
   if (r < 0)
     return r;
 
+  // set attr "in_progress_op" on src coll dir
   from.start_col_split(path);
+  // set attr "in_progress_op" on dest coll dir, note: the top most dir, i.e. the 
+  // dest coll dir, has been created in PG::_create
   to.start_col_split(path);
 
   // Do subdir moves
@@ -269,6 +295,7 @@ int HashIndex::col_split_level(
       return r;
   }
 
+  // move objects
   for (map<string, ghobject_t>::iterator i = objs_to_move.begin();
        i != objs_to_move.end();
        ++i) {
@@ -279,13 +306,15 @@ int HashIndex::col_split_level(
       return r;
   }
        
-
+  // update attr "user.cephos.phash.contents" on coll dir/subdir
   r = to.set_info(path, to_info);
   if (r < 0)
     return r;
   r = from.set_info(path, from_info);
   if (r < 0)
     return r;
+
+  // clear attr "in_progress_op" on coll dir
   from.end_split_or_merge(path);
   to.end_split_or_merge(path);
   return 0;
@@ -595,10 +624,11 @@ int HashIndex::start_col_split(const vector<string> &path) {
   bufferlist bl;
   InProgressOp op_tag(InProgressOp::COL_SPLIT, path);
   op_tag.encode(bl);
+  // set attr "in_progress_op" on coll dir
   int r = add_attr_path(vector<string>(), IN_PROGRESS_OP_TAG, bl);
   if (r < 0)
     return r;
-  return fsync_dir(vector<string>());
+  return fsync_dir(vector<string>()); // sync coll dir
 }
 
 int HashIndex::start_split(const vector<string> &path) {
@@ -622,12 +652,13 @@ int HashIndex::start_merge(const vector<string> &path) {
 }
 
 int HashIndex::end_split_or_merge(const vector<string> &path) {
+  // clear attr "in_progress_op" on coll dir
   return remove_attr_path(vector<string>(), IN_PROGRESS_OP_TAG);
 }
 
 int HashIndex::get_info(const vector<string> &path, subdir_info_s *info) {
   bufferlist buf;
-  int r = get_attr_path(path, SUBDIR_ATTR, buf);
+  int r = get_attr_path(path, SUBDIR_ATTR, buf); // get attr "user.cephos.phash.contents"
   if (r < 0)
     return r;
   bufferlist::iterator bufiter = buf.begin();
@@ -640,7 +671,7 @@ int HashIndex::set_info(const vector<string> &path, const subdir_info_s &info) {
   bufferlist buf;
   assert(path.size() == (unsigned)info.hash_level);
   info.encode(buf);
-  return add_attr_path(path, SUBDIR_ATTR, buf); // set attr "user.cephos.phash.contents" to info
+  return add_attr_path(path, SUBDIR_ATTR, buf); // set attr "user.cephos.phash.contents"
 }
 
 bool HashIndex::must_merge(const subdir_info_s &info) {

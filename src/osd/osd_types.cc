@@ -516,8 +516,8 @@ bool pg_t::is_split(unsigned old_pg_num, unsigned new_pg_num, set<pg_t> *childre
   return split;
 }
 
-// to get how many bits we are to use to do ceph_stable_mod for storing objects 
-// in this pg
+// to get how many bits we are to use to do ceph_stable_mod, i.e. mask object.hash,
+// for storing objects in this pg
 unsigned pg_t::get_split_bits(unsigned pg_num) const {
   if (pg_num == 1)
     return 0;

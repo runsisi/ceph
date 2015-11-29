@@ -991,7 +991,7 @@ void PGMonitor::register_pg(pg_pool_t& pool, pg_t pgid, epoch_t epoch, bool new_
   stats.state = PG_STATE_CREATING;
   stats.created = epoch;
   stats.parent = parent;
-  stats.parent_split_bits = split_bits;
+  stats.parent_split_bits = split_bits; // if this is non-zero, we are splitting from parent
 
   if (parent_found) { // update time stamp as parent pg
     stats.last_scrub_stamp = pg_map.pg_stat[parent].last_scrub_stamp;
@@ -1151,11 +1151,11 @@ void PGMonitor::map_pg_creates()
       continue;
 
     // don't send creates for splits
-    if (s->parent_split_bits)
+    if (s->parent_split_bits) // we only send MOSDPGCreate for initial pgs, i.e. those pgs when the pool is created
       continue;
 
     if (acting_primary != -1) {
-      pg_map.creating_pgs_by_osd[acting_primary].insert(pgid);
+      pg_map.creating_pgs_by_osd[acting_primary].insert(pgid); // only acting primary will receive this msg
     } else {
       dout(20) << "map_pg_creates  " << pgid << " -> no osds in epoch "
 	       << mon->osdmon()->osdmap.get_epoch() << ", skipping" << dendl;
@@ -1177,7 +1177,7 @@ void PGMonitor::send_pg_creates()
   for (map<int, set<pg_t> >::iterator p = pg_map.creating_pgs_by_osd.begin();
        p != pg_map.creating_pgs_by_osd.end();
        ++p) {
-    int osd = p->first;
+    int osd = p->first; // acting primary
 
     // throttle?
     if (last_sent_pg_create.count(osd) &&
