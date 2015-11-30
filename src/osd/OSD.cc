@@ -1384,6 +1384,7 @@ int OSD::mkfs(CephContext *cct, ObjectStore *store, const string &dev,
 
     OSDSuperblock sb;
     bufferlist sbbl;
+    // e.g. current/meta/osd\usuperblock__0_23C2FCDE__none
     ret = store->read(coll_t::meta(), OSD_SUPERBLOCK_POBJECT, 0, 0, sbbl);
     if (ret >= 0) {
       dout(0) << " have superblock" << dendl;
@@ -1857,8 +1858,9 @@ int OSD::init()
 
   dout(2) << "boot" << dendl;
 
-  // read superblock
-  r = read_superblock(); // read OSD::superblock from "current/meta/osd_superblock"
+  // read superblock from "osd_superblock" object, e.g. 
+  // current/meta/osd\usuperblock__0_23C2FCDE__none
+  r = read_superblock();
   if (r < 0) {
     derr << "OSD::init() : unable to read osd superblock" << dendl;
     r = -EINVAL;
@@ -1906,6 +1908,8 @@ int OSD::init()
     // do anything else
     dout(5) << "Upgrading superblock adding: " << diff << dendl;
     ObjectStore::Transaction t;
+    // write superblock to "osd_superblock" object, e.g. 
+    // current/meta/osd\usuperblock__0_23C2FCDE__none
     write_superblock(t);
     r = store->apply_transaction(service.meta_osr.get(), t);
     if (r < 0)
@@ -1939,6 +1943,10 @@ int OSD::init()
     r = -EINVAL;
     goto out;
   }
+
+  // for a newly create osd, the superblock has nothing, so supperblock.current_epoch
+  // is 0, for this circumstance, OSDService::try_get_map will return a newly 
+  // allocated instance of OSDMap which has an epoch of 0
   osdmap = get_map(superblock.current_epoch);
   check_osdmap_features(store);
 
@@ -2555,6 +2563,8 @@ void OSD::write_superblock(ObjectStore::Transaction& t)
 int OSD::read_superblock()
 {
   bufferlist bl;
+  // read encoded superblock from "osd_superblock" object, e.g. 
+  // current/meta/osd\usuperblock__0_23C2FCDE__none
   int r = store->read(coll_t::meta(), OSD_SUPERBLOCK_POBJECT, 0, 0, bl);
   if (r < 0)
     return r;
@@ -3517,6 +3527,7 @@ void OSD::handle_pg_peering_evt(
  *  - from each epoch, include all osds up then AND now
  *  - if no osds from then are up now, include them all, even tho they're not reachable now
  */
+// refer to PG::PriorSet::PriorSet to see more details
 void OSD::calc_priors_during(
   spg_t pgid, epoch_t start, epoch_t end, set<pg_shard_t>& pset)
 {
@@ -3526,13 +3537,19 @@ void OSD::calc_priors_during(
   for (epoch_t e = start; e < end; e++) {
     OSDMapRef oldmap = get_map(e);
     vector<int> acting;
+    // get acting set of past intervals (actual we have not generated the 
+    // past_interals yet, so we iterate each epoch)
     oldmap->pg_to_acting_osds(pgid.pgid, acting);
     dout(20) << "  " << pgid << " in epoch " << e << " was " << acting << dendl;
     int up = 0;
     int actual_osds = 0;
     for (unsigned i=0; i<acting.size(); i++) {
       if (acting[i] != CRUSH_ITEM_NONE) {
-	if (osdmap->is_up(acting[i])) { // only to probe those osds currently are up
+        // only to probe those osds currently are up, if we receive a new map 
+        // afterward that will affect the prior set, we will rebuild the prior
+        // set and transit us into state Reset, refer to PG::PriorSet::affected_by_map
+        // and RecoveryState::Peering::react(AdvMap)
+	if (osdmap->is_up(acting[i])) {
 	  if (acting[i] != whoami) {
 	    pset.insert(
 	      pg_shard_t(
@@ -4200,6 +4217,9 @@ void OSD::tick()
   }
 
   if (is_waiting_for_healthy()) {
+    // we were not healthy, retry to start booting process, if in OSD::_maybe_boot
+    // we can not mark us up, i.e. send MOSDBoot, coz we were not healthy, we will
+    // defer and try to restart booting process again here
     if (_is_healthy()) {
       dout(1) << "healthy again, booting" << dendl;
       set_state(STATE_BOOTING);
@@ -4660,6 +4680,8 @@ void OSD::_maybe_boot(epoch_t oldest, epoch_t newest)
   dout(10) << "_maybe_boot mon has osdmaps " << oldest << ".." << newest << dendl;
 
   if (is_initializing()) {
+    // STATE_INITIALIZING can only be set in OSD's ctor, and set to STATE_BOOTING 
+    // at the end of OSD::init
     dout(10) << "still initializing" << dendl;
     return;
   }
@@ -4675,14 +4697,16 @@ void OSD::_maybe_boot(epoch_t oldest, epoch_t newest)
     dout(1) << "osdmap indicates one or more pre-v0.94.4 hammer OSDs is running"
 	    << dendl;
   } else if (is_waiting_for_healthy() || !_is_healthy()) {
-    // if we are not healthy, do not mark ourselves up (yet)
+    // if we are not healthy, do not mark ourselves up (yet), we will retry
+    // in OSD::tick
     dout(1) << "not healthy; waiting to boot" << dendl;
     if (!is_waiting_for_healthy())
       start_waiting_for_healthy();
     // send pings sooner rather than later
     heartbeat_kick();
   } else if (osdmap->get_epoch() >= oldest - 1 &&
-	     osdmap->get_epoch() + cct->_conf->osd_map_message_max > newest) {
+	     osdmap->get_epoch() + cct->_conf->osd_map_message_max > newest) { // default is 100
+    // send MOSDBoot to mon
     _send_boot();
     return;
   }
@@ -4789,6 +4813,8 @@ void OSD::_send_boot()
 	   << ", hb_back_addr " << hb_back_addr
 	   << ", hb_front_addr " << hb_front_addr
 	   << dendl;
+
+  // collect varies osd info and sys info
   _collect_metadata(&mboot->metadata);
   monc->send_mon_message(mboot);
 }
@@ -6541,7 +6567,7 @@ void OSD::handle_osd_map(MOSDMap *m)
     m->put();
     return;
   }
-  if (is_initializing()) {
+  if (is_initializing()) { // set to STATE_BOOTING at the end of OSD::init
     dout(0) << "ignoring osdmap until we have initialized" << dendl;
     m->put();
     return;
@@ -6618,7 +6644,7 @@ void OSD::handle_osd_map(MOSDMap *m)
       
       o->decode(bl);
 
-      ghobject_t fulloid = get_osdmap_pobject_name(e);
+      ghobject_t fulloid = get_osdmap_pobject_name(e); // e.g. current/meta/osdmap.3__0_FD6E4E11__none
       t.write(coll_t::meta(), fulloid, 0, bl.length(), bl);
       pin_map_bl(e, bl);
       pinned_maps.push_back(add_map(o));
@@ -6631,7 +6657,7 @@ void OSD::handle_osd_map(MOSDMap *m)
     if (p != m->incremental_maps.end()) {
       dout(10) << "handle_osd_map  got inc map for epoch " << e << dendl;
       bufferlist& bl = p->second;
-      ghobject_t oid = get_inc_osdmap_pobject_name(e);
+      ghobject_t oid = get_inc_osdmap_pobject_name(e); // e.g. current/meta/incuosdmap.4__0_B65F4136__none
       t.write(coll_t::meta(), oid, 0, bl.length(), bl);
       pin_map_inc_bl(e, bl);
 
@@ -6675,7 +6701,7 @@ void OSD::handle_osd_map(MOSDMap *m)
       }
       got_full_map(e);
 
-      ghobject_t fulloid = get_osdmap_pobject_name(e);
+      ghobject_t fulloid = get_osdmap_pobject_name(e); // e.g. current/meta/osdmap.3__0_FD6E4E11__none
       t.write(coll_t::meta(), fulloid, 0, fbl.length(), fbl);
       pin_map_bl(e, fbl);
       pinned_maps.push_back(add_map(o));
@@ -6751,6 +6777,7 @@ void OSD::handle_osd_map(MOSDMap *m)
 
     // check pg creations, i.e. check OSD::creating_pgs which was constructed 
     // in OSD::handle_pg_create
+    // may set OSDService::boot_epoch or update OSDService::up_epoch
     advance_map();
     had_map_since = ceph_clock_now(cct);
   }
@@ -6847,6 +6874,8 @@ void OSD::handle_osd_map(MOSDMap *m)
 
 
   // note in the superblock that we were clean thru the prior epoch
+  // OSDService::boot_epoch was set in OSD::advance_map when osd is first marked up
+  // and will not change afterward
   epoch_t boot_epoch = service.get_boot_epoch();
   if (boot_epoch && boot_epoch >= superblock.mounted) {
     superblock.mounted = boot_epoch;
@@ -6854,6 +6883,8 @@ void OSD::handle_osd_map(MOSDMap *m)
   }
 
   // superblock and commit
+  // superblock has been updated, write updated superblock to "osd_superblock" 
+  // object, e.g. current/meta/osd\usuperblock__0_23C2FCDE__none
   write_superblock(t);
   store->queue_transaction(
     service.meta_osr.get(),
@@ -6953,9 +6984,13 @@ void OSD::check_osdmap_features(ObjectStore *fs)
       dout(0) << __func__ << " enabling on-disk ERASURE CODES compat feature" << dendl;
       superblock.compat_features.incompat.insert(CEPH_OSD_FEATURE_INCOMPAT_SHARDS);
       ObjectStore::Transaction *t = new ObjectStore::Transaction;
+      // write superblock to "osd_superblock" object, e.g. 
+      // current/meta/osd\usuperblock__0_23C2FCDE__none
       write_superblock(*t);
       int err = store->queue_transaction_and_cleanup(service.meta_osr.get(), t);
       assert(err == 0);
+      
+      // write superblock to "(root)/superblock"
       fs->set_allow_sharded_objects();
     }
   }
@@ -7094,6 +7129,13 @@ void OSD::advance_map()
       boot_epoch = osdmap->get_epoch();
       dout(10) << "boot_epoch is " << boot_epoch << dendl;
     }
+
+    // if boot_epoch has been set, then keep it, but we always update our
+    // up_epoch whenever we restart booting process, i.e. newly started osd
+    // process or we were marked down by the mon then we have to restart the 
+    // booting process, if we find that we are marked down, we reset up_epoch
+    // and bind_epoch to 0, on the other hand, for boot_epoch we only set 
+    // boot_epoch for newly started osd process
     service.set_epochs(&boot_epoch, &up_epoch, NULL);
   }
 
@@ -7587,7 +7629,8 @@ void OSD::handle_pg_create(OpRequestRef op)
       history.last_deep_scrub_stamp = ci->second;
     }
 
-    // extend pg history to epoch the osd currently has
+    // extend pg history from the epoch the pg was created to the epoch the 
+    // osd currently has
     bool valid_history = project_pg_history(
       pgid, history, created, up, up_primary, acting, acting_primary);
     /* the pg creation message must have come from a mon and therefore
@@ -7609,9 +7652,10 @@ void OSD::handle_pg_create(OpRequestRef op)
     creating_pgs[pgid].parent = parent;
     creating_pgs[pgid].acting.swap(acting);
 
-    // build prior set back to created epoch
+    // build prior set from recent interval start and back to the epoch the 
+    // pg was created
     calc_priors_during(pgid, created, history.same_interval_since, 
-		       creating_pgs[pgid].prior);
+		       creating_pgs[pgid].prior); // prior is of type set<pg_shard_t>, the same as PriorSet::probe
 
     PG::RecoveryCtx rctx = create_context();
     // poll priors
@@ -7620,7 +7664,8 @@ void OSD::handle_pg_create(OpRequestRef op)
 	     << " h " << history
 	     << " : querying priors " << pset << dendl;
 
-    // prepare query msgs for prior set
+    // prepare query msgs for prior set, we will do the queries in dispatch_context
+    // below
     for (set<pg_shard_t>::iterator p = pset.begin(); p != pset.end(); ++p)
       if (osdmap->is_up(p->osd)) // we are to query those pgs on this osd
 	(*rctx.query_map)[p->osd][spg_t(pgid.pgid, p->shard)] =
@@ -7632,9 +7677,12 @@ void OSD::handle_pg_create(OpRequestRef op)
 
     PG *pg = NULL;
     if (can_create_pg(pgid)) { // can create the PG instance now
-      // no prior set to query, i.e. created == history.same_interval_since, so
-      // create the instance now, or will be created later in OSD::handle_pg_peering_evt
-      // by msg of type MSG_OSD_PG_NOTIFY, MSG_OSD_PG_LOG, MSG_OSD_PG_INFO
+      // no prior set to query, i.e. created == history.same_interval_since, 
+      // pg interval has not changed since the pg was created, so create the 
+      // instance now, or we defer the creation later in OSD::handle_pg_peering_evt
+      // by msg of type MSG_OSD_PG_NOTIFY, MSG_OSD_PG_LOG, MSG_OSD_PG_INFO (we
+      // have prior set to query, so in dispatch_context below, we will do the
+      // queries)
       const pg_pool_t* pp = osdmap->get_pg_pool(pgid.pool());
       
       // create a coll on backing store for this pg
@@ -7656,14 +7704,15 @@ void OSD::handle_pg_create(OpRequestRef op)
 
       // handle internal evt Initialize and ActMap, finally the pg will
       // transit into state Initial->Reset->Started->Start->Primary->Peering->GetInfo 
-      // or Initial->Reset->Started->Start->Stray according we are currently primary
-      // pg or not
+      // or Initial->Reset->Started->Start->Stray according to whether currently we 
+      // are primary pg or not
       pg->handle_create(&rctx);
 
       // update pg info and others
       pg->write_if_dirty(*rctx.transaction);
 
-      // publish pg stats, i.e. queue this pg on OSD::pg_stat_queue
+      // publish pg stats, i.e. queue this pg on OSD::pg_stat_queue, the PGMonitor
+      // will know the pg's creation eventually
       pg->publish_stats_to_osd();
       pg->unlock();
       num_created++;
@@ -7672,7 +7721,11 @@ void OSD::handle_pg_create(OpRequestRef op)
       wake_pg_waiters(pg, pgid);
     }
 
-    // do notify, query and info, and queue the txn to execute for this pg
+    // 1)if we have prior set to query, we have not created the PG instance yet,
+    // so we do queries (of type pg_query_t::INFO, queries constructed above according
+    // to prior set), or 2)if we have created the PG instance, we do queries (of 
+    // type pg_query_t::INFO, those queries were constructed in RecoveryState::GetInfo::get_infos) 
+    // too, and queue txn to execute for updating pg info (i.e. pg history)
     dispatch_context(rctx, pg, osdmap);
   }
 

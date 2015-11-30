@@ -846,7 +846,8 @@ int FileStore::mkfs()
   }
 
   // superblock
-  superblock.omap_backend = g_conf->filestore_omap_backend;
+  superblock.omap_backend = g_conf->filestore_omap_backend; // default is leveldb
+  // write to (root)/superblock
   ret = write_superblock();
   if (ret < 0) {
     derr << "mkfs: write_superblock() failed: "
@@ -1170,6 +1171,7 @@ void FileStore::set_allow_sharded_objects()
 {
   if (!get_allow_sharded_objects()) {
     superblock.compat_features.incompat.insert(CEPH_FS_FEATURE_INCOMPAT_SHARDS);
+    // write superblock to "(root)/superblock"
     int ret = write_superblock();
     assert(ret == 0);	//Should we return error and make caller handle it?
   }

@@ -5903,7 +5903,7 @@ boost::statechart::result PG::RecoveryState::Peering::react(const AdvMap& advmap
   if (prior_set.get()->affected_by_map(advmap.osdmap, pg)) {
     dout(1) << "Peering, affected_by_map, going to Reset" << dendl;
     post_event(advmap);
-    // prior set need to be rebuild, transit into state Reset directly, 
+    // PriorSet need to be rebuild, transit into state Reset directly, 
     // Peering::prior_set is released thereafter, after handle this osdmap 
     // or more, 1) we may still the primary pg of current interval, then after
     // handle the ActMap evt, we will eventually transit into state GetInfo and
@@ -7093,8 +7093,17 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
     pg->build_prior(prior_set); // build prior set by past intervals
 
   pg->reset_min_peer_features();
+
+  // iterate prior set to prepare queries
   get_infos();
+
+  // PriorSet::pg_down is set when there is not enough osds survived the 
+  // interval, and we may have gone rw, refer to PriorSet::PriorSet,
+  // PriorSet::pg_down never reset to false explicitly, we can only
+  // set it to false by rebuilding the PriorSet (refer to RecoveryState::Peering::react(AdvMap))
   if (peer_info_requested.empty() && !prior_set->pg_down) {
+    // newly created PG instance or we got all queries replied (refer to
+    // RecoveryState::GetInfo::react(MNotifyRec))
     post_event(GotInfo());
   }
 }
@@ -7104,12 +7113,13 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
 void PG::RecoveryState::GetInfo::get_infos()
 {
   PG *pg = context< RecoveryMachine >().pg;
+  // we have built the prior set in RecoveryState::GetInfo::GetInfo
   unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
 
   pg->blocked_by.clear();
   for (set<pg_shard_t>::const_iterator it = prior_set->probe.begin();
        it != prior_set->probe.end();
-       ++it) { // iterate each probe target
+       ++it) { // iterate each probe target (pg shard, i.e. osd + shard id)
     pg_shard_t peer = *it;
     if (peer == pg->pg_whoami) {
       continue;
@@ -7118,19 +7128,20 @@ void PG::RecoveryState::GetInfo::get_infos()
       dout(10) << " have osd." << peer << " info " << pg->peer_info[peer] << dendl;
       continue;
     }
-    if (peer_info_requested.count(peer)) {
+    if (peer_info_requested.count(peer)) { // have queried
       dout(10) << " already requested info from osd." << peer << dendl;
       pg->blocked_by.insert(peer.osd);
-    } else if (!pg->get_osdmap()->is_up(peer.osd)) {
+    } else if (!pg->get_osdmap()->is_up(peer.osd)) { // peer is down
       dout(10) << " not querying info from down osd." << peer << dendl;
-    } else {
+    } else { // prepare to query
       dout(10) << " querying info from osd." << peer << dendl;
       context< RecoveryMachine >().send_query(
-	peer, pg_query_t(pg_query_t::INFO,
-			 it->shard, pg->pg_whoami.shard,
+	peer, pg_query_t(pg_query_t::INFO, // type
+			 it->shard, // to
+			 pg->pg_whoami.shard, // from
 			 pg->info.history,
-			 pg->get_osdmap()->get_epoch()));
-      peer_info_requested.insert(peer);
+			 pg->get_osdmap()->get_epoch())); // epoch_sent
+      peer_info_requested.insert(peer); // mark we have queried
       pg->blocked_by.insert(peer.osd);
     }
   }
@@ -7801,7 +7812,13 @@ PG::PriorSet::PriorSet(bool ec_pool,
       probe.insert(pg_shard_t(up[i], ec_pool ? shard_id_t(i) : shard_id_t::NO_SHARD));
   }
 
-  // ok, now probe contains union of osds of current interval's acting set and up set
+  // ok, now "probe" contains all osds in current interval's acting set and 
+  // up set, now we want to search back if we can probe more osds to query
+
+  // search back according past_intervals of this pg, for newly created PG
+  // instance, its past_interals is empty, so the newly created PG always
+  // contains acting set and up set
+  // TODO: acting == up ??? refer to OSD::handle_pg_create
   
   for (map<epoch_t,pg_interval_t>::const_reverse_iterator p = past_intervals.rbegin();
        p != past_intervals.rend();
@@ -7820,6 +7837,8 @@ PG::PriorSet::PriorSet(bool ec_pool,
     if (!interval.maybe_went_rw) // no write occurred in this interval
       continue;
 
+    // during this interval we may have done some writes to this pg
+
     // look at candidate osds during this interval.  each falls into
     // one of three categories: up, down (but potentially
     // interesting), or lost (down, but we won't wait for it).
@@ -7833,22 +7852,25 @@ PG::PriorSet::PriorSet(bool ec_pool,
 	continue;
       pg_shard_t so(o, ec_pool ? shard_id_t(i) : shard_id_t::NO_SHARD);
 
-      const osd_info_t *pinfo = 0;
+      const osd_info_t *pinfo = 0; // osd info in current osdmap
       if (osdmap.exists(o))
 	pinfo = &osdmap.get_info(o);
 
-      if (osdmap.is_up(o)) {
+      if (osdmap.is_up(o)) { // exists and up
 	// include past acting osds if they are up.
 	probe.insert(so);
 	up_now.insert(so);
-      } else if (!pinfo) {
+      } else if (!pinfo) { // does not exist
+        // osd does not exist in osdmap, probably has been removed
 	dout(10) << "build_prior  prior osd." << o << " no longer exists" << dendl;
 	down.insert(o);
-      } else if (pinfo->lost_at > interval.first) {
+      } else if (pinfo->lost_at > interval.first) { // exists and down, and marked lost (the same effect as up)
+        // we marked the osd as lost, i.e. we don't care whether the osd held our 
+        // modified data or not during this interval
 	dout(10) << "build_prior  prior osd." << o << " is down, but lost_at " << pinfo->lost_at << dendl;
 	up_now.insert(so);
 	down.insert(o);
-      } else {
+      } else { // exists and down, and did not mark lost
 	dout(10) << "build_prior  prior osd." << o << " is down" << dendl;
 	down.insert(o);
 	any_down_now = true;
@@ -7858,7 +7880,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
     // if not enough osds survived this interval, and we may have gone rw,
     // then we need to wait for one of those osds to recover to
     // ensure that we haven't lost any information.
-    if (!(*pcontdec)(up_now) && any_down_now) {
+    if (!(*pcontdec)(up_now) && any_down_now) { // we have to wait for some other osds to survive the pg
       // fixme: how do we identify a "clean" shutdown anyway?
       dout(10) << "build_prior  possibly went active+rw, insufficient up;"
 	       << " including down osds" << dendl;
@@ -7866,7 +7888,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
 	   i != interval.acting.end();
 	   ++i) {
 	if (osdmap.exists(*i) &&   // if it doesn't exist, we already consider it lost.
-	    osdmap.is_down(*i)) {
+	    osdmap.is_down(*i)) { // osd exists and down, maybe marked lost
 	  pg_down = true;
 
 	  // make note of when any down osd in the cur set was lost, so that
@@ -7889,11 +7911,11 @@ bool PG::PriorSet::affected_by_map(const OSDMapRef osdmap, const PG *debug_pg) c
 {
   for (set<pg_shard_t>::iterator p = probe.begin();
        p != probe.end();
-       ++p) {
+       ++p) { // iterate each probe target
     int o = p->osd;
 
     // did someone in the prior set go down?
-    if (osdmap->is_down(o) && down.count(o) == 0) {
+    if (osdmap->is_down(o) && down.count(o) == 0) { // up -> down
       dout(10) << "affected_by_map osd." << o << " now down" << dendl;
       return true;
     }
@@ -7901,11 +7923,14 @@ bool PG::PriorSet::affected_by_map(const OSDMapRef osdmap, const PG *debug_pg) c
     // did a down osd in cur get (re)marked as lost?
     map<int, epoch_t>::const_iterator r = blocked_by.find(o);
     if (r != blocked_by.end()) {
-      if (!osdmap->exists(o)) {
+      if (!osdmap->exists(o)) { // exists -> does not exist
 	dout(10) << "affected_by_map osd." << o << " no longer exists" << dendl;
 	return true;
       }
-      if (osdmap->get_info(o).lost_at != r->second) {
+
+      // if we have never mark the osd as lost, then r->second is 0, refer to 
+      // PG::PriorSet::PriorSet
+      if (osdmap->get_info(o).lost_at != r->second) { // may marked lost -> marked lost
 	dout(10) << "affected_by_map osd." << o << " (re)marked as lost" << dendl;
 	return true;
       }
