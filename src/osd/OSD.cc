@@ -2752,8 +2752,15 @@ void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
   int role = OSDMap::calc_pg_role(service.whoami, acting);
   pg->set_role(role);
   pg->reg_next_scrub();
+  // handle Load evt, currently in state Initial (by RecoveryState::RecoveryMachine::initiate, 
+  // refer to RecoveryState::RecoveryState), will transit into state Reset after 
+  // Load evt handled
   pg->handle_loaded(rctx);
+
+  // TODO: any pg info or log or past_intervals changed ???
   pg->write_if_dirty(*(rctx->transaction));
+
+  // queue an external peering evt (NullEvt) on OSD::peering_wq
   pg->queue_null(e, e);
 
   // OSD::handle_pg_peering_evt, OSD::handle_pg_backfill_reserve, 
@@ -7064,7 +7071,7 @@ bool OSD::advance_pg(
       // and insert children into in_progress_splits
       service.mark_split_in_progress(pg->info.pgid, children);
       
-      // call _make_pg to allocate child PG(s)
+      // call _make_pg to allocate child PG, create child coll
       split_pgs(
 	pg, children, new_pgs, lastmap, nextmap,
 	rctx);
@@ -7488,13 +7495,15 @@ void OSD::split_pgs(
     dout(10) << "m_seed " << i->ps() << dendl;
     dout(10) << "split_bits is " << split_bits << dendl;
 
+    // create child coll and move some objects from parent coll to child coll
     parent->split_colls(
       *i, // child pgid
       split_bits,
       i->ps(), // child seed
       &child->pool.info,
       rctx->transaction);
-    
+
+    // 
     parent->split_into(
       i->pgid,
       child,
@@ -7838,6 +7847,15 @@ void OSD::do_notifies(
 void OSD::do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
 		     OSDMapRef curmap)
 {
+  /*
+   * pg_query_t:
+   *   __s32 type;
+   *   eversion_t since;
+   *   pg_history_t history;
+   *   epoch_t epoch_sent;
+   *   shard_id_t to;
+   *   shard_id_t from;
+   */
   for (map<int, map<spg_t,pg_query_t> >::iterator pit = query_map.begin();
        pit != query_map.end();
        ++pit) { // iterate each osd we want to query
@@ -7936,8 +7954,8 @@ void OSD::handle_pg_notify(OpRequestRef op)
       pg_shard_t(from, it->first.from), true,
       PG::CephPeeringEvtRef(
 	new PG::CephPeeringEvt(
-	  it->first.epoch_sent, 
-	  it->first.query_epoch,
+	  it->first.epoch_sent, // the epoch the notify send
+	  it->first.query_epoch, // the epoch our query sent
 	  PG::MNotifyRec(pg_shard_t(from, it->first.from), it->first,
           op->get_req()->get_connection()->get_features())))
       );
@@ -8234,6 +8252,16 @@ void OSD::handle_pg_query(OpRequestRef op)
   op->mark_started();
 
   map< int, vector<pair<pg_notify_t, pg_interval_map_t> > > notify_list;
+
+  /*
+   * pg_query_t:
+   *   __s32 type;
+   *   eversion_t since;
+   *   pg_history_t history;
+   *   epoch_t epoch_sent;
+   *   shard_id_t to;
+   *   shard_id_t from;
+   */
   
   for (map<spg_t,pg_query_t>::iterator it = m->pg_list.begin();
        it != m->pg_list.end();
@@ -8263,6 +8291,9 @@ void OSD::handle_pg_query(OpRequestRef op)
       if (pg_map.count(pgid)) { // pg exists
         PG *pg = 0;
         pg = _lookup_lock_pg_with_map_lock_held(pgid);
+
+        // currently we are in dispatch thread's context, queue this pg on 
+        // OSD::peering_wq
         pg->queue_query( // queue a peering evt which wraps an inner evt MQuery
             it->second.epoch_sent, it->second.epoch_sent,
             pg_shard_t(from, it->second.from), it->second);
@@ -8296,7 +8327,9 @@ void OSD::handle_pg_query(OpRequestRef op)
       continue;
     }
 
-    // ok, same interval, so we are still in acting set
+    // ok, same interval, so we are still in acting set, but note that we do not 
+    // have the PG instance, the case that we have the PG instance is handled 
+    // above by queuing a MQuery peering evt on OSD::peering_wq
 
     dout(10) << " pg " << pgid << " dne" << dendl;
     pg_info_t empty(spg_t(pgid.pgid, it->second.to));
@@ -8306,14 +8339,25 @@ void OSD::handle_pg_query(OpRequestRef op)
     if (service.deleting_pgs.lookup(pgid))
       empty.set_last_backfill(hobject_t(), true);
 
+    /*
+     * pg_notify_t:
+     * epoch_t query_epoch;
+     * epoch_t epoch_sent;
+     * pg_info_t info;
+     * shard_id_t to;
+     * shard_id_t from;
+     */
+
     // pg_query_t types: INFO, LOG, MISSING, FULLLOG
     if (it->second.type == pg_query_t::LOG ||
 	it->second.type == pg_query_t::FULLLOG) {
       ConnectionRef con = service.get_con_osd_cluster(from, osdmap->get_epoch());
       if (con) {
 	MOSDPGLog *mlog = new MOSDPGLog(
-	  it->second.from, it->second.to,
-	  osdmap->get_epoch(), empty,
+	  it->second.from, 
+	  it->second.to,
+	  osdmap->get_epoch(), 
+	  empty,
 	  it->second.epoch_sent);
 	service.share_map_peer(from, con.get(), osdmap);
 	con->send_message(mlog);
@@ -8322,10 +8366,11 @@ void OSD::handle_pg_query(OpRequestRef op)
       notify_list[from].push_back(
 	make_pair(
 	  pg_notify_t(
-	    it->second.from, it->second.to,
-	    it->second.epoch_sent,
-	    osdmap->get_epoch(),
-	    empty),
+	    it->second.from, // to, reverse of pg_query_t
+	    it->second.to, // from
+	    it->second.epoch_sent, // query_epoch, the epoch when the query sent
+	    osdmap->get_epoch(), // epoch_sent
+	    empty), // info
 	  pg_interval_map_t()));
     }
   }
@@ -9034,18 +9079,28 @@ struct C_CompleteSplits : public Context {
     set<spg_t> to_complete;
     for (set<boost::intrusive_ptr<PG> >::iterator i = pgs.begin();
 	 i != pgs.end();
-	 ++i) {
+	 ++i) { // iterate each newly splitted PG instance
       osd->pg_map_lock.get_write();
       (*i)->lock();
+
+      // insert the pg into OSD::pg_map, drive the pg transit into state Reset,
+      // queue an external peering evt (NullEvt) on OSD::peering_wq, and queue
+      // other pending peering evt(s)
       osd->add_newly_split_pg(&**i, &rctx);
+      
       if (!((*i)->deleting)) {
         to_complete.insert((*i)->info.pgid);
+        // remove from OSDService::in_progress_splits
         osd->service.complete_split(to_complete);
       }
       osd->pg_map_lock.put_write();
+
+      // if has txn to execute for this pg, then queue it
       osd->dispatch_context_transaction(rctx, &**i);
 	to_complete.insert((*i)->info.pgid);
       (*i)->unlock();
+
+      // handle pending ops
       osd->wake_pg_waiters(&**i, (*i)->info.pgid);
       to_complete.clear();
     }
@@ -9054,6 +9109,11 @@ struct C_CompleteSplits : public Context {
   }
 };
 
+// process external peering evts for a batch of pgs, for each pg always advance_pg
+// first, i.e. consume new osdmaps received from front end (dispatcher, i.e. OSD),
+// after each advance_pg call we may not consume all new maps, we will requeue this 
+// pg on OSD::peering_wq again, we can handle the external peering evt only after 
+// all maps have been consumed
 void OSD::process_peering_events(
   const list<PG*> &pgs,
   ThreadPool::TPHandle &handle
@@ -9084,7 +9144,7 @@ void OSD::process_peering_events(
     // iterate each epoch of the osdmap from epoch the pg currently has to epoch
     // the OSDService has, construct an AvdMap event for each epoch to drive 
     // the pg recovery state machine
-    // handle from pg's osdmap to osdservice's osdmap, if not reached 
+    // start from pg's current osdmap to osdservice's osdmap, if not reached 
     // osdservice's osdmap, requeue the pg to consume the remaining osdmap(s)
     // next time
     if (!advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs)) {
@@ -9111,12 +9171,17 @@ void OSD::process_peering_events(
     same_interval_since = MAX(pg->info.history.same_interval_since,
 			      same_interval_since);
 
-    // if we need to modify the pg, record those modifications in pg log, then 
-    // prepare a transaction to update the pg log
+    // we may updated the pg info, past_intervals, e.g. OSD::split_pgs in advance_pg
+    // or after handled the inner AdvMap evt we may need to change to a new interval, 
+    // etc.
     pg->write_if_dirty(*rctx.transaction);
-    
-    if (!split_pgs.empty()) { // new pg(s) splitted, i.e. PG instance created
-      // when finished, the newly splitted pg will be added to osd.pg_map
+
+    // we check if any pg needs to split on each epoch, if it does, we create
+    // child PG instance and create child coll in OSD::split_pgs
+    if (!split_pgs.empty()) { // new pg(s) splitted, i.e. PG instance created but not on OSD::pg_map yet
+      // after finished, the newly splitted pg will be inserted into osd.pg_map, and
+      // the child pg is in state Reset, pending peering evt(s) will be queued and 
+      // pending ops will be dispatched
       rctx.on_applied->add(new C_CompleteSplits(this, split_pgs));
       split_pgs.clear();
     }
