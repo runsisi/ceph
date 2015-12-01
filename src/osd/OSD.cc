@@ -410,8 +410,9 @@ void OSDService::expand_pg_num(OSDMapRef old_map,
        i != in_progress_splits.end();
     ) {
     if (!new_map->have_pg_pool(i->pool())) { // pool deleted, stop split
-      in_progress_splits.erase(i++); // TODO: the next iterator is valid?
+      in_progress_splits.erase(i++);
     } else {
+      // update OSDService::pending_splits and OSDService::rev_pending_splits
       _maybe_split_pgid(old_map, new_map, *i); // split even more
       ++i;
     }
@@ -423,7 +424,8 @@ void OSDService::expand_pg_num(OSDMapRef old_map,
       rev_pending_splits.erase(i->second);
       pending_splits.erase(i++);
     } else {
-      // child.m_seed < old_pg_num ???
+      // TODO: child.m_seed < old_pg_num ???
+      // update OSDService::pending_splits and OSDService::rev_pending_splits
       _maybe_split_pgid(old_map, new_map, i->first);
       ++i;
     }
@@ -2742,7 +2744,7 @@ PG* OSD::_make_pg(
 void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
 {
   epoch_t e(service.get_osdmap()->get_epoch());
-  pg->get("PGMap");  // For pg_map
+  pg->get("PGMap");  // increase ref, now ref is 1, For pg_map
   pg_map[pg->info.pgid] = pg;
   service.pg_add_epoch(pg->info.pgid, pg->get_osdmap()->get_epoch());
 
@@ -5685,6 +5687,27 @@ bool OSD::heartbeat_dispatch(Message *m)
   return true;
 }
 
+// slow dispatch, i.e. dispatch with holding OSD::osd_lock
+/**** ms_dispatch:
+ *      case CEPH_MSG_PING:
+ *      case CEPH_MSG_OSD_MAP:
+ *      case MSG_PGSTATSACK:
+ *      case MSG_MON_COMMAND:
+ *      case MSG_COMMAND:
+ *      case MSG_OSD_SCRUB:
+ *
+ **** dispatch_op:
+ *      case MSG_OSD_PG_CREATE:
+ *      case MSG_OSD_PG_NOTIFY:
+ *      case MSG_OSD_PG_QUERY:
+ *      case MSG_OSD_PG_LOG:
+ *      case MSG_OSD_PG_REMOVE:
+ *      case MSG_OSD_PG_INFO:
+ *      case MSG_OSD_PG_TRIM:
+ *      case MSG_OSD_PG_MISSING:
+ *      case MSG_OSD_BACKFILL_RESERVE:
+ *      case MSG_OSD_RECOVERY_RESERVE:
+ */
 bool OSD::ms_dispatch(Message *m)
 {
   if (m->get_type() == MSG_OSD_MARK_ME_DOWN) {
@@ -5799,8 +5822,8 @@ void OSD::update_waiting_for_pg(Session *session, OSDMapRef newmap)
           // CEPH_MSG_OSD_OP need to be splitted)
 	  OSD::split_list(&i->second, &child_ops, child->ps(), split_bits);
 
-          // some ops moved to children, these children need to register waiting
-          // list
+          // some ops need to move to children, these children pg need to be 
+          // registered in session's waiting list
 	  if (!child_ops.empty()) {
 	    session->waiting_for_pg[*child].swap(child_ops);
 	    register_session_waiting_on_pg(session, *child);
@@ -5848,24 +5871,24 @@ void OSD::session_notify_pg_cleared(
   clear_session_waiting_on_pg(session, pgid);
 }
 
-// for OSD, only those messages below are fast dispatch allowed:
-/*
-        case CEPH_MSG_OSD_OP:
-        case MSG_OSD_SUBOP:
-        case MSG_OSD_REPOP:
-        case MSG_OSD_SUBOPREPLY:
-        case MSG_OSD_REPOPREPLY:
-        case MSG_OSD_PG_PUSH:
-        case MSG_OSD_PG_PULL:
-        case MSG_OSD_PG_PUSH_REPLY:
-        case MSG_OSD_PG_SCAN:
-        case MSG_OSD_PG_BACKFILL:
-        case MSG_OSD_EC_WRITE:
-        case MSG_OSD_EC_WRITE_REPLY:
-        case MSG_OSD_EC_READ:
-        case MSG_OSD_EC_READ_REPLY:
-        case MSG_OSD_REP_SCRUB:
-*/
+// fast dispatch, i.e. dispatch without holding OSD::osd_lock
+/**** ms_fast_dispatch:
+ *      case CEPH_MSG_OSD_OP:
+ *      case MSG_OSD_SUBOP:
+ *      case MSG_OSD_REPOP:
+ *      case MSG_OSD_SUBOPREPLY:
+ *      case MSG_OSD_REPOPREPLY:
+ *      case MSG_OSD_PG_PUSH:
+ *      case MSG_OSD_PG_PULL:
+ *      case MSG_OSD_PG_PUSH_REPLY:
+ *      case MSG_OSD_PG_SCAN:
+ *      case MSG_OSD_PG_BACKFILL:
+ *      case MSG_OSD_EC_WRITE:
+ *      case MSG_OSD_EC_WRITE_REPLY:
+ *      case MSG_OSD_EC_READ:
+ *      case MSG_OSD_EC_READ_REPLY:
+ *      case MSG_OSD_REP_SCRUB:
+ */
 void OSD::ms_fast_dispatch(Message *m)
 {
   if (service.is_stopping()) {
@@ -5891,7 +5914,7 @@ void OSD::ms_fast_dispatch(Message *m)
   // address will fail to connect to us until they get the new osdmap),
   // (osd can be transit to STATE_ACTIVE only after handled the 
   // first osdmap)
-  OSDMapRef nextmap = service.get_nextmap_reserved();
+  OSDMapRef nextmap = service.get_nextmap_reserved(); // dispatch using OSDService::next_osdmap
 
   // get session connected with this connection
   // osd sessions are set to con->priv in ms_handle_fast_connect and ms_handle_fast_accept
@@ -5906,7 +5929,7 @@ void OSD::ms_fast_dispatch(Message *m)
       // got a new map (i.e. nextmap), then some old waiting ops need move from 
       // parent pg to child pg (only op of type CEPH_MSG_OSD_OP), so we need to 
       // update session->waiting_for_pg and OSD::session_waiting_on_pg
-      update_waiting_for_pg(session, nextmap);
+      update_waiting_for_pg(session, nextmap); // update Session::osdmap to nextmap in the end
       
       // append this newly accepted op to list<OpRequestRef>
       session->waiting_on_map.push_back(op);
@@ -6759,7 +6782,7 @@ void OSD::handle_osd_map(MOSDMap *m)
     assert(newmap);  // we just cached it above!
 
     // start blacklisting messages sent to peers that go down.
-    service.pre_publish_map(newmap);
+    service.pre_publish_map(newmap); // update OSDService::next_osdmap to new map
 
     // kill connections to newly down osds
     bool waited_for_reservations = false;
@@ -6770,24 +6793,30 @@ void OSD::handle_osd_map(MOSDMap *m)
 	  osdmap->have_inst(*p) &&                        // in old map
 	  (!newmap->exists(*p) || !newmap->is_up(*p))) {  // but not the new one
         if (!waited_for_reservations) {
+          // wait and obsolete previously reserved osdmaps up to 
+          // OSDService::next_osdmap, i.e. new map
           service.await_reserved_maps();
           waited_for_reservations = true;
         }
-	note_down_osd(*p);
+	note_down_osd(*p); // remove heartbeat peers that are down in new map
       }
     }
 
-    // finially, this will be the newest osdmap
-    osdmap = newmap;
+    // iterate each new map, and eventually, this will be the newest osdmap
+    osdmap = newmap; // update OSD::osdmap to new map, advance_map will use it below
 
     superblock.current_epoch = cur;
 
     // check pg creations, i.e. check OSD::creating_pgs which was constructed 
-    // in OSD::handle_pg_create
-    // may set OSDService::boot_epoch or update OSDService::up_epoch
+    // in OSD::handle_pg_create, 
+    // during this call, we may set OSDService::boot_epoch and update 
+    // OSDService::up_epoch
     advance_map();
+    
     had_map_since = ceph_clock_now(cct);
   }
+
+  // ok, now OSD::osdmap is the newest map
 
   epoch_t _bind_epoch = service.get_bind_epoch();
   if (osdmap->is_up(whoami) &&
@@ -6907,7 +6936,6 @@ void OSD::handle_osd_map(MOSDMap *m)
   check_osdmap_features(store);
 
   // yay!
-  // we only consume the map of the last epoch
   consume_map();
 
   if (is_active() || is_waiting_for_healthy())
@@ -7156,10 +7184,12 @@ void OSD::advance_map()
     vector<int> acting;
     int primary;
     osdmap->pg_to_acting_osds(pgid.pgid, &acting, &primary);
-    if (primary != whoami) {
+    
+    // check if we are still the primary osd to holding the pg to create
+    if (primary != whoami) { // no need to create on us (osd) anymore
       dout(10) << " no longer primary for " << pgid << ", stopping creation" << dendl;
       creating_pgs.erase(p);
-    } else {
+    } else { // update acting set
       /*
        * adding new ppl to our pg has no effect, since we're still primary,
        * and obviously haven't given the new nodes any data.
@@ -7199,6 +7229,7 @@ void OSD::consume_map()
       // do not generate split info for pgs to be deleted
       if (!osdmap->have_pg_pool(pg->info.pgid.pool())) {
         //pool is deleted!
+        // inc ref for "to_remove", OSD::pg_map has already held one ref
         to_remove.push_back(PGRef(pg));
       } else {
         // if new map have a larger pg_num than old map, then pg split may
@@ -7221,32 +7252,37 @@ void OSD::consume_map()
   // remove pgs that the pool has been deleted
   for (list<PGRef>::iterator i = to_remove.begin();
        i != to_remove.end();
-       to_remove.erase(i++)) {
+       to_remove.erase(i++)) { // dec ref for "to_remove"
     RWLock::WLocker locker(pg_map_lock);
     (*i)->lock();
-    _remove_pg(&**i);
+    // cancel pending splits, queue this pg on OSD::remove_wq, and remove
+    // from OSD::pg_map
+    _remove_pg(&**i); // inc ref for OSD::remove_wq, dec ref for OSD::pg_map
     (*i)->unlock();
   }
   to_remove.clear();
 
-  // add new splits that parent pg is also on its own splitting, note:
-  // service.init_splits_between called previously only generate pending_splits
-  // (and rev_pending_splits) for those pgs that are already on OSD::pg_map
+  // OSDService::init_splits_between called above only generate pending_splits
+  // (and rev_pending_splits) for those parent pgs that are already on OSD::pg_map,
+  // here we split even more for those pgs pending/in-progress for splitting but 
+  // have no PG instances associated with yet
   service.expand_pg_num(service.get_osdmap(), osdmap);
 
-  // update next_osdmap in service
+  // update OSDService::next_osdmap to the newest map, i.e. the same as OSD::osdmap
   service.pre_publish_map(osdmap);
 
-  // wait until no one reserves a map before next_osdmap's epoch,
+  // wait until no one reserves a map before current newest map, i.e. OSD::osdmap
   // OSD::ms_fast_dispatch, OSDService::send_message_osd_cluster,
   // OSDService::get_con_osd_cluster and OSDService::get_con_osd_hb all call
   // OSDService::get_nextmap_reserved to reserve service.next_osdmap, but
   // they all release their reservation every quickly before they return
   service.await_reserved_maps();
 
-  // update osdmap in service
+  // update OSDService::osdmap to the newest map, i.e. the same as OSD::osdmap
   service.publish_map(osdmap);
 
+  // check sessions that are waiting for new map, i.e. OSD::session_waiting_for_map,
+  // dispatch pending ops that are waiting for new map
   dispatch_sessions_waiting_on_map();
 
   // remove any PGs which we no longer host from the session waiting_for_pg lists
@@ -7503,7 +7539,7 @@ void OSD::split_pgs(
       &child->pool.info,
       rctx->transaction);
 
-    // 
+    // split pg log, update pg info and set other child pg fields 
     parent->split_into(
       i->pgid,
       child,
@@ -7656,7 +7692,7 @@ void OSD::handle_pg_create(OpRequestRef op)
      * };
      */
     
-    // register.
+    // register. osd_lock held, 
     creating_pgs[pgid].history = history;
     creating_pgs[pgid].parent = parent;
     creating_pgs[pgid].acting.swap(acting);
@@ -7951,13 +7987,15 @@ void OSD::handle_pg_notify(OpRequestRef op)
       it->first.info, // pg_info_t
       it->second, // pg_interval_map_t
       it->first.query_epoch, 
-      pg_shard_t(from, it->first.from), true,
+      pg_shard_t(from, it->first.from), // from
+      true,
       PG::CephPeeringEvtRef(
 	new PG::CephPeeringEvt(
 	  it->first.epoch_sent, // the epoch the notify send
 	  it->first.query_epoch, // the epoch our query sent
-	  PG::MNotifyRec(pg_shard_t(from, it->first.from), it->first,
-          op->get_req()->get_connection()->get_features())))
+	  PG::MNotifyRec(pg_shard_t(from, it->first.from), // from
+	        it->first, // notify
+                op->get_req()->get_connection()->get_features()))) // features
       );
   }
 }

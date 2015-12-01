@@ -1357,16 +1357,21 @@ public:
   }
   void dispatch_sessions_waiting_on_map() {
     set<Session*> sessions_to_check;
+    // get sessions that are waiting for new map, i.e. OSD::session_waiting_for_map
     get_sessions_waiting_for_map(&sessions_to_check);
+    
     for (set<Session*>::iterator i = sessions_to_check.begin();
 	 i != sessions_to_check.end();
 	 sessions_to_check.erase(i++)) { // iterate each session that is waiting for new map
       (*i)->session_dispatch_lock.Lock();
-      // we got new map, update pending ops that waiting for pg creating/splitting,
-      // i.e. split pending ops to child pgs, then update session's osdmap
-      update_waiting_for_pg(*i, osdmap);
+      
+      // if in new map the pg_num increased, then some pending ops that waiting for 
+      // pg creating/splitting must be splitted into child pgs, thus register these 
+      // child pgs in Session::waiting_for_pg  
+      update_waiting_for_pg(*i, osdmap); // update Session::osdmap to OSD::osdmap at the end
 
-      // 
+      // dispatch pending ops that are waiting for new map (we received the op with
+      // holding older map than the op required)
       dispatch_session_waiting(*i, osdmap);
       (*i)->session_dispatch_lock.Unlock();
       (*i)->put();

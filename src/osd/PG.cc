@@ -327,11 +327,14 @@ bool PG::proc_replica_info(
   pg_shard_t from, const pg_info_t &oinfo, epoch_t send_epoch)
 {
   map<pg_shard_t, pg_info_t>::iterator p = peer_info.find(from);
-  if (p != peer_info.end() && p->second.last_update == oinfo.last_update) {
+  if (p != peer_info.end() && p->second.last_update == oinfo.last_update) { // got already
     dout(10) << " got dup osd." << from << " info " << oinfo << ", identical to ours" << dendl;
     return false;
   }
 
+  // the peer must be up and up from at least the msg sent off, i.e.
+  // it's up in current map, and up_from <= send_epoch, i.e. the peer must
+  // live the same as or longer than the received msg
   if (!get_osdmap()->has_been_up_since(from.osd, send_epoch)) {
     dout(10) << " got info " << oinfo << " from down osd." << from
 	     << " discarding" << dendl;
@@ -340,25 +343,33 @@ bool PG::proc_replica_info(
 
   dout(10) << " got osd." << from << " " << oinfo << dendl;
   assert(is_primary());
-  peer_info[from] = oinfo;
-  might_have_unfound.insert(from);
+  peer_info[from] = oinfo; // update peer info
   
+  might_have_unfound.insert(from); // we may have objects on them
+
+  // remove last scrub job from OSDService::sched_scrub_pg
   unreg_next_scrub();
-  if (info.history.merge(oinfo.history))
+  
+  if (info.history.merge(oinfo.history)) // update primary pg info (every fields) to the latest
     dirty_info = true;
+
+  // reg a scrub job in OSDService::sched_scrub_pg
   reg_next_scrub();
   
   // stray?
-  if (!is_up(from) && !is_acting(from)) {
+  if (!is_up(from) && !is_acting(from)) { // not in up set and acting set, we are stray
     dout(10) << " osd." << from << " has stray content: " << oinfo << dendl;
+
+    // stray set that may holding our pg's data
     stray_set.insert(from);
+    
     if (is_clean()) {
-      purge_strays();
+      purge_strays(); // we are clean, purge the stray set
     }
   }
 
   // was this a new info?  if so, update peers!
-  if (p == peer_info.end())
+  if (p == peer_info.end()) // new peer info, may from stray peer
     update_heartbeat_peers();
 
   return true;
@@ -3335,6 +3346,7 @@ void PG::reg_next_scrub()
   }
   // note down the sched_time, so we can locate this scrub, and remove it
   // later on.
+  // reg a scrub job in OSDService::sched_scrub_pg
   scrubber.scrub_reg_stamp = osd->reg_pg_scrub(info.pgid,
 					       reg_stamp,
 					       scrubber.must_scrub);
@@ -3342,7 +3354,7 @@ void PG::reg_next_scrub()
 
 void PG::unreg_next_scrub()
 {
-  if (is_primary())
+  if (is_primary()) // remove last scrub job from OSDService::sched_scrub_pg
     osd->unreg_pg_scrub(info.pgid, scrubber.scrub_reg_stamp);
 }
 
@@ -7102,8 +7114,8 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
   // PriorSet::pg_down never reset to false explicitly, we can only
   // set it to false by rebuilding the PriorSet (refer to RecoveryState::Peering::react(AdvMap))
   if (peer_info_requested.empty() && !prior_set->pg_down) {
-    // newly created PG instance or we got all queries replied (refer to
-    // RecoveryState::GetInfo::react(MNotifyRec))
+    // newly created PG instance with pool size set to 1 or we got all queries 
+    // replied (refer to RecoveryState::GetInfo::react(MNotifyRec))
     post_event(GotInfo());
   }
 }
@@ -7121,7 +7133,7 @@ void PG::RecoveryState::GetInfo::get_infos()
        it != prior_set->probe.end();
        ++it) { // iterate each probe target (pg shard, i.e. osd + shard id)
     pg_shard_t peer = *it;
-    if (peer == pg->pg_whoami) {
+    if (peer == pg->pg_whoami) { // skip myself
       continue;
     }
     if (pg->peer_info.count(peer)) {
@@ -7141,7 +7153,9 @@ void PG::RecoveryState::GetInfo::get_infos()
 			 pg->pg_whoami.shard, // from
 			 pg->info.history,
 			 pg->get_osdmap()->get_epoch())); // epoch_sent
-      peer_info_requested.insert(peer); // mark we have queried
+			 
+      // mark we have prepared the query for this peer
+      peer_info_requested.insert(peer);
       pg->blocked_by.insert(peer.osd);
     }
   }
@@ -7154,18 +7168,21 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
   PG *pg = context< RecoveryMachine >().pg;
 
   set<pg_shard_t>::iterator p = peer_info_requested.find(infoevt.from);
-  if (p != peer_info_requested.end()) {
+  if (p != peer_info_requested.end()) { // ok we got this peer's info, remove it from requested set
     peer_info_requested.erase(p);
     pg->blocked_by.erase(infoevt.from.osd);
   }
 
   epoch_t old_start = pg->info.history.last_epoch_started;
   if (pg->proc_replica_info(
-	infoevt.from, infoevt.notify.info, infoevt.notify.epoch_sent)) {
+	infoevt.from, infoevt.notify.info, infoevt.notify.epoch_sent)) { // got a new peer or old peer's new info
     // we got something new ...
     unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
-    if (old_start < pg->info.history.last_epoch_started) {
+    
+    if (old_start < pg->info.history.last_epoch_started) { // peer has updated pg history
       dout(10) << " last_epoch_started moved forward, rebuilding prior" << dendl;
+
+      // rebuild prior set
       pg->build_prior(prior_set);
 
       // filter out any osds that got dropped from the probe set from
@@ -7173,21 +7190,26 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
       // peering (which would re-probe everyone).
       set<pg_shard_t>::iterator p = peer_info_requested.begin();
       while (p != peer_info_requested.end()) {
-	if (prior_set->probe.count(*p) == 0) {
+	if (prior_set->probe.count(*p) == 0) { // we need not to probe this peer anymore
 	  dout(20) << " dropping osd." << *p << " from info_requested, no longer in probe set" << dendl;
 	  peer_info_requested.erase(p++);
 	} else {
 	  ++p;
 	}
       }
+
+      // prepare to query info for pgs in PriorSet::probe set
       get_infos();
     }
+
     dout(20) << "Adding osd: " << infoevt.from.osd << " peer features: "
       << hex << infoevt.features << dec << dendl;
     pg->apply_peer_features(infoevt.features);
 
     // are we done getting everything?
     if (peer_info_requested.empty() && !prior_set->pg_down) {
+      // ok, we got replied for all previous queries and we can survive every 
+      // interval of PG::past_intervals
       /*
        * make sure we have at least one !incomplete() osd from the
        * last rw interval.  the incomplete (backfilling) replicas
@@ -7195,14 +7217,17 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
        * updates, so they are insufficient to recover changes during
        * that interval.
        */
-      if (pg->info.history.last_epoch_started) {
+      if (pg->info.history.last_epoch_started) { // last peering process finished
 	for (map<epoch_t,pg_interval_t>::reverse_iterator p = pg->past_intervals.rbegin();
 	     p != pg->past_intervals.rend();
-	     ++p) {
-	  if (p->first < pg->info.history.last_epoch_started)
+	     ++p) { // ietarate past_intervals in reverse order
+	  if (p->first < pg->info.history.last_epoch_started) // ok, have peered already
 	    break;
-	  if (!p->second.maybe_went_rw)
+	  if (!p->second.maybe_went_rw) // no write during this interval
 	    continue;
+
+          // ok, we have gone write during this interval
+          
 	  pg_interval_t& interval = p->second;
 	  dout(10) << " last maybe_went_rw interval was " << interval << dendl;
 	  OSDMapRef osdmap = pg->get_osdmap();
@@ -7218,28 +7243,38 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 	    int o = interval.acting[i];
 	    if (o == CRUSH_ITEM_NONE)
 	      continue;
+            
 	    pg_shard_t so(o, pg->pool.info.ec_pool() ? shard_id_t(i) : shard_id_t::NO_SHARD);
 	    if (!osdmap->exists(o) || osdmap->get_info(o).lost_at > interval.first)
-	      continue;  // dne or lost
-	    if (osdmap->is_up(o)) {
+	      continue;  // dne or lost, we let the peering process continue
+	      
+	    if (osdmap->is_up(o)) { // up
 	      pg_info_t *pinfo;
 	      if (so == pg->pg_whoami) {
 		pinfo = &pg->info;
 	      } else {
 		assert(pg->peer_info.count(so));
-		pinfo = &pg->peer_info[so];
+		pinfo = &pg->peer_info[so]; // peer info updated in PG::proc_replica_info
 	      }
+
+              // check if any peer is backfilling
 	      if (!pinfo->is_incomplete())
-		any_up_complete_now = true;
-	    } else {
+		any_up_complete_now = true; // not backfilling, we are complete
+	    } else { // peer is down
 	      any_down_now = true;
 	    }
 	  }
+          
 	  if (!any_up_complete_now && any_down_now) {
+            // during this interval we have no complete replicas (primary included),
+            // and any useful osd in this interval currently is down, so we can not
+            // continue the peering process
 	    dout(10) << " no osds up+complete from interval " << interval << dendl;
 	    pg->state_set(PG_STATE_DOWN);
 	    return discard_event();
 	  }
+
+          // TODO: ???
 	  break;
 	}
       }
@@ -7888,7 +7923,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
 	   i != interval.acting.end();
 	   ++i) {
 	if (osdmap.exists(*i) &&   // if it doesn't exist, we already consider it lost.
-	    osdmap.is_down(*i)) { // osd exists and down, maybe marked lost
+	    osdmap.is_down(*i)) { // osd exists and down
 	  pg_down = true;
 
 	  // make note of when any down osd in the cur set was lost, so that
