@@ -5429,7 +5429,7 @@ void PG::handle_peering_event(CephPeeringEvtRef evt, RecoveryCtx *rctx)
   if (old_peering_evt(evt)) // evt sent before last_peering_reset, we have started a new interval
     return;
 
-  // ok, drive the state machine
+  // ok, use the external peering evt to drive the state machine
   recovery_state.handle_event(evt, rctx);
 }
 
@@ -7274,7 +7274,9 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 	    return discard_event();
 	  }
 
-          // TODO: ???
+          // we can survive the latest interval that we have written something to,
+          // so we can survive any interval, coz we can write to a pg only after
+          // it has finished its previous peering process
 	  break;
 	}
       }
@@ -7319,7 +7321,7 @@ void PG::RecoveryState::GetInfo::exit()
   PG *pg = context< RecoveryMachine >().pg;
   utime_t dur = ceph_clock_now(pg->cct) - enter_time;
   pg->osd->recoverystate_perf->tinc(rs_getinfo_latency, dur);
-  pg->blocked_by.clear();
+  pg->blocked_by.clear(); // ok, no blocker
 }
 
 /*------GetLog------------*/

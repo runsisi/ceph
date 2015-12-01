@@ -9185,7 +9185,7 @@ void OSD::process_peering_events(
     // start from pg's current osdmap to osdservice's osdmap, if not reached 
     // osdservice's osdmap, requeue the pg to consume the remaining osdmap(s)
     // next time
-    if (!advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs)) {
+    if (!advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs)) { // iterate each map up to OSDService::osdmap
       // there are still maps we have not consumed yet, requeue the pg to 
       // consume the remaining maps later
       // we need to requeue the PG explicitly since we didn't actually
@@ -9201,6 +9201,8 @@ void OSD::process_peering_events(
       // finally, external event, for NullEvt(OSD::consume_map queue this to drive 
       // each pg on this osd to update its map), in processing this event, the 
       // state machine do nothing
+      // the most important peering evt(s) are: PG::MQuery, PG::MNotifyRec, 
+      // PG::MLogRec, PG::MInfoRec
       pg->handle_peering_event(evt, &rctx);
     }
 
