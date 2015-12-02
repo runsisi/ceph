@@ -745,6 +745,7 @@ protected:
   friend class OSD;
 
 public:
+  // set in PG::choose_acting and reset to empty in PG::clear_recovery_state
   set<pg_shard_t> backfill_targets;
 
   bool is_backfill_targets(pg_shard_t osd) {

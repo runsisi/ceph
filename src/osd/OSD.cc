@@ -763,13 +763,17 @@ pair<ConnectionRef,ConnectionRef> OSDService::get_con_osd_hb(int peer, epoch_t f
   return ret;
 }
 
-
+// called by PG::choose_acting to set/reset OSDService::pg_temp_wanted and called by
+// PG::start_peering_interval to reset OSDService::pg_temp_wanted to empty, the
+// MOSDPGTemp will be sent by OSDService::send_pg_temp below
 void OSDService::queue_want_pg_temp(pg_t pgid, vector<int>& want)
 {
   Mutex::Locker l(pg_temp_lock);
   pg_temp_wanted[pgid] = want;
 }
 
+// called by OSD::do_mon_report, OSD::ms_handle_connect, OSD::process_peering_events
+// to send MOSDPGTemp to mon to change the OSDMap::pg_temp
 void OSDService::send_pg_temp()
 {
   Mutex::Locker l(pg_temp_lock);
@@ -9241,7 +9245,7 @@ void OSD::process_peering_events(
   // we do send message(s)
   dispatch_context(rctx, 0, curmap, &handle);
 
-  // set pg_temp on OSDService::pg_temp_wanted
+  // send MOSDPGTemp to mon to set pg_temp for OSDService::pg_temp_wanted
   service.send_pg_temp();
 }
 

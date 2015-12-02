@@ -984,28 +984,35 @@ map<pg_shard_t, pg_info_t>::const_iterator PG::find_best_info(
    * when you find bugs! */
   eversion_t min_last_update_acceptable = eversion_t::max();
   epoch_t max_last_epoch_started_found = 0;
+
+  // iterate each pg info for all peers (including myself) to find the max 
+  // pg_info_t::last_epoch_started
   for (map<pg_shard_t, pg_info_t>::const_iterator i = infos.begin();
        i != infos.end();
        ++i) {
-    if (!cct->_conf->osd_find_best_info_ignore_history_les &&
+    if (!cct->_conf->osd_find_best_info_ignore_history_les && // default is false
 	max_last_epoch_started_found < i->second.history.last_epoch_started) {
       min_last_update_acceptable = eversion_t::max();
-      max_last_epoch_started_found = i->second.history.last_epoch_started;
+      max_last_epoch_started_found = i->second.history.last_epoch_started; // from info.history.last_epoch_started
     }
-    if (!i->second.is_incomplete() &&
+    if (!i->second.is_incomplete() && // not backfilling, i.e. last_backfill == MAX
 	max_last_epoch_started_found < i->second.last_epoch_started) {
       min_last_update_acceptable = eversion_t::max();
-      max_last_epoch_started_found = i->second.last_epoch_started;
+      max_last_epoch_started_found = i->second.last_epoch_started; // from info.last_epoch_started
     }
   }
+
+  // iterate each pg info for all peers (including myself) to find the min
+  // pg_info_t::last_update
   for (map<pg_shard_t, pg_info_t>::const_iterator i = infos.begin();
        i != infos.end();
        ++i) {
-    if (max_last_epoch_started_found <= i->second.last_epoch_started) {
+    if (max_last_epoch_started_found <= i->second.last_epoch_started) { // max got by applied filter of (!info.is_incomplete)
       if (min_last_update_acceptable > i->second.last_update)
 	min_last_update_acceptable = i->second.last_update;
     }
   }
+       
   if (min_last_update_acceptable == eversion_t::max())
     return infos.end();
 
@@ -1026,19 +1033,20 @@ map<pg_shard_t, pg_info_t>::const_iterator PG::find_best_info(
     // Disquality anyone who is incomplete (not fully backfilled)
     if (p->second.is_incomplete())
       continue;
-    if (best == infos.end()) {
+    if (best == infos.end()) { // set the initial best info
       best = p;
       continue;
     }
+    
     // Prefer newer last_update
-    if (pool.info.require_rollback()) {
+    if (pool.info.require_rollback()) { // ec pool
       if (p->second.last_update > best->second.last_update)
 	continue;
       if (p->second.last_update < best->second.last_update) {
 	best = p;
 	continue;
       }
-    } else {
+    } else { // replicated pool
       if (p->second.last_update < best->second.last_update)
 	continue;
       if (p->second.last_update > best->second.last_update) {
@@ -1179,7 +1187,7 @@ void PG::calc_replicated_acting(
         auth_log_shard->second.log_tail) {
     ss << "up_primary: " << up_primary << ") selected as primary" << std::endl;
     primary = all_info.find(up_primary); // prefer up[0], all thing being equal
-  } else {
+  } else { // choose a temp primary
     assert(!auth_log_shard->second.is_incomplete());
     ss << "up[0] needs backfill, osd." << auth_log_shard_id
        << " selected as primary instead" << std::endl;
@@ -1188,19 +1196,24 @@ void PG::calc_replicated_acting(
 
   ss << "calc_acting primary is osd." << primary->first
      << " with " << primary->second << std::endl;
+  
   *want_primary = primary->first;
   want->push_back(primary->first.osd);
   acting_backfill->insert(primary->first);
+  
   unsigned usable = 1;
 
   // select replicas that have log contiguity with primary.
-  // prefer up, then acting, then any peer_info osds 
+  // prefer up, then acting, then any peer_info osds
+
+  // 1) choose replicas from up set
   for (vector<int>::const_iterator i = up.begin();
        i != up.end();
-       ++i) {
+       ++i) { // iterate each osd of crush calculated up set
     pg_shard_t up_cand = pg_shard_t(*i, shard_id_t::NO_SHARD);
     if (up_cand == primary->first)
       continue;
+    
     const pg_info_t &cur_info = all_info.find(up_cand)->second;
     if (cur_info.is_incomplete() ||
       cur_info.last_update < MIN(
@@ -1230,12 +1243,13 @@ void PG::calc_replicated_acting(
     }
   }
 
+  // 2) choose replicas from acting set
   // This no longer has backfill OSDs, but they are covered above.
   for (vector<int>::const_iterator i = acting.begin();
        i != acting.end();
        ++i) {
     pg_shard_t acting_cand(*i, shard_id_t::NO_SHARD);
-    if (usable >= size)
+    if (usable >= size) // already got enough candidates, i.e. >= pool size required
       break;
 
     // skip up osds we already considered above
@@ -1259,6 +1273,7 @@ void PG::calc_replicated_acting(
     }
   }
 
+  // 3) choose replicas from any peer_info osds
   for (map<pg_shard_t,pg_info_t>::const_iterator i = all_info.begin();
        i != all_info.end();
        ++i) {
@@ -1298,8 +1313,8 @@ void PG::calc_replicated_acting(
  */
 bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
 {
-  map<pg_shard_t, pg_info_t> all_info(peer_info.begin(), peer_info.end());
-  all_info[pg_whoami] = info;
+  map<pg_shard_t, pg_info_t> all_info(peer_info.begin(), peer_info.end()); // all pg info from peers (not including myself)
+  all_info[pg_whoami] = info; // ok, add myself
 
   for (map<pg_shard_t, pg_info_t>::iterator p = all_info.begin();
        p != all_info.end();
@@ -1307,23 +1322,26 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
     dout(10) << "calc_acting osd." << p->first << " " << p->second << dendl;
   }
 
-  map<pg_shard_t, pg_info_t>::const_iterator auth_log_shard =
-    find_best_info(all_info);
+  // ok, first we need to find the best pg info
+  map<pg_shard_t, pg_info_t>::const_iterator auth_log_shard = find_best_info(all_info);
 
-  if (auth_log_shard == all_info.end()) {
+  if (auth_log_shard == all_info.end()) { // no valid pg info found
     if (up != acting) {
       dout(10) << "choose_acting no suitable info found (incomplete backfills?),"
 	       << " reverting to up" << dendl;
       want_acting = up;
+      
       vector<int> empty;
-      osd->queue_want_pg_temp(info.pgid.pgid, empty);
+      osd->queue_want_pg_temp(info.pgid.pgid, empty); // clear OSD::pg_temp_wanted for this pg
     } else {
       dout(10) << "choose_acting failed" << dendl;
       assert(want_acting.empty());
     }
+    
     return false;
   }
 
+  // recalc best pg info
   if ((up.size() &&
       !all_info.find(up_primary)->second.is_incomplete() &&
       all_info.find(up_primary)->second.last_update >=
@@ -1346,7 +1364,7 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
   auth_log_shard_id = auth_log_shard->first;
 
   // Determine if compatibility needed
-  bool compat_mode = !cct->_conf->osd_debug_override_acting_compat;
+  bool compat_mode = !cct->_conf->osd_debug_override_acting_compat; // default is false
   if (compat_mode) {
     bool all_support = true;
     OSDMapRef osdmap = get_osdmap();
@@ -1362,7 +1380,7 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
 	break;
       }
     }
-    if (all_support)
+    if (all_support) // support all features, compatibility not needed
       compat_mode = false;
   }
 
@@ -1370,22 +1388,22 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
   vector<int> want;
   pg_shard_t want_primary;
   stringstream ss;
-  if (!pool.info.ec_pool())
+  if (!pool.info.ec_pool()) // replicated pool
     calc_replicated_acting(
       auth_log_shard,
-      get_osdmap()->get_pg_size(info.pgid.pgid),
+      get_osdmap()->get_pg_size(info.pgid.pgid), // pool size
       acting,
       primary,
       up,
       up_primary,
       all_info,
       compat_mode,
-      &want,
-      &want_backfill,
-      &want_acting_backfill,
+      &want, // want_acting
+      &want_backfill, // backfill_targets
+      &want_acting_backfill, // actingbackfill
       &want_primary,
       ss);
-  else
+  else // ec pool
     calc_ec_acting(
       auth_log_shard,
       get_osdmap()->get_pg_size(info.pgid.pgid),
@@ -1416,9 +1434,10 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
   if (num_want_acting < pool.info.min_size &&
       (pool.info.ec_pool() ||
        (!(get_min_peer_features() & CEPH_FEATURE_OSD_MIN_SIZE_RECOVERY)) ||
-       !cct->_conf->osd_allow_recovery_below_min_size)) {
+       !cct->_conf->osd_allow_recovery_below_min_size)) { // default is true
     want_acting.clear();
     dout(10) << "choose_acting failed, below min size" << dendl;
+    
     return false;
   }
 
@@ -1439,26 +1458,37 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
     return false;
   }
 
-  if (want != acting) {
+  if (want != acting) { // our wanted acting set is not the same as current acting set
     dout(10) << "choose_acting want " << want << " != acting " << acting
 	     << ", requesting pg_temp change" << dendl;
-    want_acting = want;
+
+    want_acting = want; // set wanted acting set
 
     if (want_acting == up) {
       // There can't be any pending backfill if
       // want is the same as crush map up OSDs.
       assert(compat_mode || want_backfill.empty());
       vector<int> empty;
-      osd->queue_want_pg_temp(info.pgid.pgid, empty);
-    } else
+      osd->queue_want_pg_temp(info.pgid.pgid, empty); // clear OSDService::pg_temp_wanted
+    } else // wanted acting set != up set, request mon to set pg_temp
       osd->queue_want_pg_temp(info.pgid.pgid, want);
+    
     return false;
   }
+
+  // ok, wanted acting set is the same as current acting set, no need to request
+  // mon to set pg_temp
+
+  // if we need to request mon to set pg_temp, then we have called 
+  // OSDService::queue_want_pg_temp to queue this request on OSDService::pg_temp_wanted
   want_acting.clear();
+  
   actingbackfill = want_acting_backfill;
   dout(10) << "actingbackfill is " << actingbackfill << dendl;
+  
   assert(backfill_targets.empty() || backfill_targets == want_backfill);
-  if (backfill_targets.empty()) {
+  
+  if (backfill_targets.empty()) { // backfill_targets is empty, set it
     // Caller is GetInfo
     backfill_targets = want_backfill;
     for (set<pg_shard_t>::iterator i = backfill_targets.begin();
@@ -1466,9 +1496,10 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
 	 ++i) {
       assert(!stray_set.count(*i));
     }
-  } else {
+  } else { // not empty, asserts it has not changed
     // Will not change if already set because up would have had to change
     assert(backfill_targets == want_backfill);
+    
     // Verify that nothing in backfill is in stray_set
     for (set<pg_shard_t>::iterator i = want_backfill.begin();
 	 i != want_backfill.end();
@@ -2335,7 +2366,7 @@ void PG::clear_recovery_state()
     finish_recovery_op(soid, true);
   }
 
-  backfill_targets.clear();
+  backfill_targets.clear(); // set in PG::choose_acting
   backfill_info.clear();
   peer_backfill_info.clear();
   waiting_on_backfill.clear();
@@ -4934,7 +4965,7 @@ void PG::start_peering_interval(
 
   peer_missing.clear();
   peer_purged.clear();
-  actingbackfill.clear();
+  actingbackfill.clear(); // set in PG::choose_acting
   snap_trim_queued = false;
   scrub_queued = false;
 
@@ -5003,6 +5034,7 @@ void PG::start_peering_interval(
 
   if (acting.empty() && !up.empty() && up_primary == pg_whoami) {
     dout(10) << " acting empty, but i am up[0], clearing pg_temp" << dendl;
+    // clear OSD::pg_temp_wanted
     osd->queue_want_pg_temp(info.pgid.pgid, acting);
   }
 }
@@ -7257,7 +7289,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 		pinfo = &pg->peer_info[so]; // peer info updated in PG::proc_replica_info
 	      }
 
-              // check if any peer is backfilling
+              // check if any peer has backfilled, i.e. not backfilling
 	      if (!pinfo->is_incomplete())
 		any_up_complete_now = true; // not backfilling, we are complete
 	    } else { // peer is down
@@ -7336,22 +7368,24 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
   PG *pg = context< RecoveryMachine >().pg;
 
   // adjust acting?
-  if (!pg->choose_acting(auth_log_shard)) {
-    if (!pg->want_acting.empty()) {
-      post_event(NeedActingChange());
+  if (!pg->choose_acting(auth_log_shard)) { // we need to adjust the acting set or the wanted acting set is not recoverable
+    if (!pg->want_acting.empty()) { // we want to change acting set, so wait new map
+      post_event(NeedActingChange()); // transit into state WaitActingChange
     } else {
-      post_event(IsIncomplete());
+      post_event(IsIncomplete()); // transit into state Incomplete
     }
     return;
   }
 
+  // wanted acting set is the same as current acting set
+
   // am i the best?
-  if (auth_log_shard == pg->pg_whoami) {
+  if (auth_log_shard == pg->pg_whoami) { // i am the authority
     post_event(GotLog());
     return;
   }
 
-  const pg_info_t& best = pg->peer_info[auth_log_shard];
+  const pg_info_t& best = pg->peer_info[auth_log_shard]; // this peer has the best pg info
 
   // am i broken?
   if (pg->info.last_update < best.log_tail) {

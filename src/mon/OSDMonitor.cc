@@ -1022,7 +1022,7 @@ void OSDMonitor::maybe_prime_pg_temp()
   PGMap *pg_map = &mon->pgmon()->pg_map;
 
   utime_t stop = ceph_clock_now(NULL);
-  stop += g_conf->mon_osd_prime_pg_temp_max_time;
+  stop += g_conf->mon_osd_prime_pg_temp_max_time; // default is 0.5
   int chunk = 1000;
   int n = chunk;
 
@@ -1124,7 +1124,7 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
   int r = pending_inc.propagate_snaps_to_tiers(g_ceph_context, osdmap);
   assert(r == 0);
 
-  if (g_conf->mon_osd_prime_pg_temp)
+  if (g_conf->mon_osd_prime_pg_temp) // default is false
     maybe_prime_pg_temp();
 
   bufferlist bl;
@@ -2610,7 +2610,7 @@ void OSDMonitor::tick()
 	utime_t grace = orig_grace;
 	double my_grace = 0.0;
 
-	if (g_conf->mon_osd_adjust_down_out_interval) {
+	if (g_conf->mon_osd_adjust_down_out_interval) { // default is true
 	  // scale grace period the same way we do the heartbeat grace.
 	  const osd_xinfo_t& xi = osdmap.get_xinfo(o);
 	  double halflife = (double)g_conf->mon_osd_laggy_halflife;
@@ -2623,7 +2623,7 @@ void OSDMonitor::tick()
 	}
 
 	// is this an entire large subtree down?
-	if (g_conf->mon_osd_down_out_subtree_limit.length()) {
+	if (g_conf->mon_osd_down_out_subtree_limit.length()) { // default is "rack"
 	  int type = osdmap.crush->get_type_id(g_conf->mon_osd_down_out_subtree_limit);
 	  if (type > 0) {
 	    if (osdmap.containing_subtree_is_down(g_ceph_context, o, type, &down_cache)) {
