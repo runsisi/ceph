@@ -1458,11 +1458,11 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
     return false;
   }
 
-  if (want != acting) { // our wanted acting set is not the same as current acting set
+  if (want != acting) { // our want_acting set is not the same as current acting set
     dout(10) << "choose_acting want " << want << " != acting " << acting
 	     << ", requesting pg_temp change" << dendl;
 
-    want_acting = want; // set wanted acting set
+    want_acting = want; // set want_acting set
 
     if (want_acting == up) {
       // There can't be any pending backfill if
@@ -1476,7 +1476,7 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
     return false;
   }
 
-  // ok, wanted acting set is the same as current acting set, no need to request
+  // ok, want_acting set is the same as current acting set, no need to request
   // mon to set pg_temp
 
   // if we need to request mon to set pg_temp, then we have called 
@@ -2569,7 +2569,7 @@ void PG::_update_blocked_by()
 {
   // set a max on the number of blocking peers we report. if we go
   // over, report a random subset.  keep the result sorted.
-  unsigned keep = MIN(blocked_by.size(), g_conf->osd_max_pg_blocked_by);
+  unsigned keep = MIN(blocked_by.size(), g_conf->osd_max_pg_blocked_by); // default is 16
   unsigned skip = blocked_by.size() - keep;
   info.stats.blocked_by.clear();
   info.stats.blocked_by.resize(keep);
@@ -7081,6 +7081,8 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MQuery& query)
     pair<pg_shard_t, pg_info_t> notify_info;
     pg->update_history_from_master(query.query.history);
     pg->fulfill_info(query.from, query.query, notify_info);
+
+    // prepare notify
     context< RecoveryMachine >().send_notify(
       notify_info.first,
       pg_notify_t(
@@ -7361,14 +7363,14 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
   : my_base(ctx),
     NamedState(
       context< RecoveryMachine >().pg->cct, "Started/Primary/Peering/GetLog"),
-    msg(0)
+    msg(0) // boost::intrusive_ptr<MOSDPGLog>
 {
   context< RecoveryMachine >().log_enter(state_name);
 
   PG *pg = context< RecoveryMachine >().pg;
 
   // adjust acting?
-  if (!pg->choose_acting(auth_log_shard)) { // we need to adjust the acting set or the wanted acting set is not recoverable
+  if (!pg->choose_acting(auth_log_shard)) { // we need to adjust the acting set or the want_acting set is not recoverable
     if (!pg->want_acting.empty()) { // we want to change acting set, so wait new map
       post_event(NeedActingChange()); // transit into state WaitActingChange
     } else {
@@ -7377,13 +7379,16 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
     return;
   }
 
-  // wanted acting set is the same as current acting set
+  // want_acting set is the same as current acting set
 
   // am i the best?
   if (auth_log_shard == pg->pg_whoami) { // i am the authority
-    post_event(GotLog());
+    post_event(GotLog()); // we will transit into GetMissing
     return;
   }
+
+  // ok, i am not the best pg that has the best pg info, we will request pg
+  // log from peer
 
   const pg_info_t& best = pg->peer_info[auth_log_shard]; // this peer has the best pg info
 
@@ -7396,17 +7401,17 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
 
   // how much log to request?
   eversion_t request_log_from = pg->info.last_update;
-  assert(!pg->actingbackfill.empty());
+  assert(!pg->actingbackfill.empty()); // set in PG::choose_acting
   for (set<pg_shard_t>::iterator p = pg->actingbackfill.begin();
        p != pg->actingbackfill.end();
        ++p) {
     if (*p == pg->pg_whoami) continue;
     pg_info_t& ri = pg->peer_info[*p];
     if (ri.last_update >= best.log_tail && ri.last_update < request_log_from)
-      request_log_from = ri.last_update;
+      request_log_from = ri.last_update; // the min info.last_update
   }
 
-  // how much?
+  // prepare request pg log
   dout(10) << " requesting log from osd." << auth_log_shard << dendl;
   context<RecoveryMachine>().send_query(
     auth_log_shard,
@@ -7418,7 +7423,7 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
 
   assert(pg->blocked_by.empty());
   pg->blocked_by.insert(auth_log_shard.osd);
-  pg->publish_stats_to_osd();
+  pg->publish_stats_to_osd(); // blocked_by changed
 }
 
 boost::statechart::result PG::RecoveryState::GetLog::react(const AdvMap& advmap)

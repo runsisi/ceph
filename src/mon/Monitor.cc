@@ -4135,14 +4135,16 @@ void Monitor::handle_subscribe(MonOpRequestRef op)
   assert(s);
 
   s->until = ceph_clock_now(g_ceph_context);
-  s->until += g_conf->mon_subscribe_interval;
+  s->until += g_conf->mon_subscribe_interval; // default is 300
+  
   for (map<string,ceph_mon_subscribe_item>::iterator p = m->what.begin();
        p != m->what.end();
        ++p) {
     // if there are any non-onetime subscriptions, we need to reply to start the resubscribe timer
-    if ((p->second.flags & CEPH_SUBSCRIBE_ONETIME) == 0)
+    if ((p->second.flags & CEPH_SUBSCRIBE_ONETIME) == 0) // non-onetime
       reply = true;
 
+    // register or update subscription
     session_map.add_update_sub(s, p->first, p->second.start, 
 			       p->second.flags & CEPH_SUBSCRIBE_ONETIME,
 			       m->get_connection()->has_feature(CEPH_FEATURE_INCSUBOSDMAP));

@@ -2696,13 +2696,14 @@ PGPool OSD::_get_pool(int id, OSDMapRef createmap)
   return p;
 }
 
+// only called by OSD::_create_lock_pg, OSD::load_pgs
 PG *OSD::_open_lock_pg(
   OSDMapRef createmap,
   spg_t pgid, bool no_lockdep_check)
 {
   assert(osd_lock.is_locked());
 
-  // create an instance of ReplicatedPG
+  // allocate an instance of ReplicatedPG
   PG* pg = _make_pg(createmap, pgid);
   {
     RWLock::WLocker l(pg_map_lock);
@@ -2715,6 +2716,7 @@ PG *OSD::_open_lock_pg(
   return pg;
 }
 
+// only called by OSD::_open_lock_pg, OSD::split_pgs (which only called by OSD::advance_pg)
 PG* OSD::_make_pg(
   OSDMapRef createmap,
   spg_t pgid)
@@ -2802,7 +2804,7 @@ OSD::res_result OSD::_try_resurrect_pg(
       break;
     if (!cur.ps())
       break;
-    cur = cur.get_parent();
+    cur = cur.get_parent(); // up to direct parent
   }
   if (!df)
     return RES_NONE; // good to go
@@ -2846,6 +2848,7 @@ OSD::res_result OSD::_try_resurrect_pg(
   return RES_NONE;
 }
 
+// only called by OSD::handle_pg_create and OSD::handle_pg_peering_evt
 PG *OSD::_create_lock_pg(
   OSDMapRef createmap,
   spg_t pgid,
@@ -2862,7 +2865,7 @@ PG *OSD::_create_lock_pg(
   assert(osd_lock.is_locked());
   dout(20) << "_create_lock_pg pgid " << pgid << dendl;
 
-  // create an instance of ReplicatedPG
+  // call _make_pg to create an instance of ReplicatedPG and insert in OSD::pg_map
   PG *pg = _open_lock_pg(createmap, pgid, true);
 
   // if pg's map and osd's map have different pg_num, and the child
@@ -3340,9 +3343,9 @@ void OSD::handle_pg_peering_evt(
   spg_t pgid,
   const pg_info_t& info,
   pg_interval_map_t& pi,
-  epoch_t epoch,
+  epoch_t epoch, // for notify this is epoch we queried, for log and info this is epoch peer sent
   pg_shard_t from,
-  bool primary, // only OSD::handle_pg_notify will set this to true
+  bool primary, // only OSD::handle_pg_notify will set this to true, in new code, this is obsolete (refer to 53f2c7f291d94)
   PG::CephPeeringEvtRef evt)
 {
   if (service.splitting(pgid)) { // the pgid is in OSDService::in_progress_splits or OSDService::pending_splits
@@ -3350,8 +3353,7 @@ void OSD::handle_pg_peering_evt(
     return;
   }
 
-  if (!_have_pg(pgid)) { // the pgid is not in OSD::pg_map
-    // same primary?
+  if (!_have_pg(pgid)) { // no PG instance found in OSD::pg_map, we need to create one
     if (!osdmap->have_pg_pool(pgid.pool()))
       return;
     int up_primary, acting_primary;
@@ -3374,18 +3376,52 @@ void OSD::handle_pg_peering_evt(
     }
 
     if (service.splitting(pgid)) {
+      // ok, we have checked this condition previously
       assert(0);
     }
 
+    /* the PG creating process has simplified a lot in new version (see below),
+       each OSD will subscribe "osd_pg_creates" in OSD::init, and renew the 
+       subscription in MonClient::tick
+       
+       commit 53f2c7f291d94774dda7182d00fd26af4ee65f6f
+       Author: Sage Weil <sage@redhat.com>
+       Date:   Fri Nov 13 22:11:17 2015 -0500
+    
+       osd: simplify pg creation
+    
+       We used to have a complicated pg creation process in which we
+       would query any previous mappings for the pg before we created the
+       new 'empty' pg locally.  The tracking of the prior mappings was
+       very simple (and broken), but it didn't really matter because the
+       mon would resend pg create messages periodically.  Now it doesn't,
+       so that broke.
+    
+       However, none of this is necessary: the PG peering process does
+       all of the same things.  Namely, it
+    
+       - enumerates past intervals
+       - determines which ones may have been rw
+       - queries OSDs from each one to gather any potential changes
+    
+       This is a more robust version of what the creation code was (or
+       should have been doing).  So, let's rip it all out and let
+       peering handle it.  As long as the newly instantiated PG sets
+       last_epoch_started and _clean to the created epoch we will probe
+       and consider all of these prior mappings and find any previous
+       instance of the PG (if one existed).
+    */
+
     bool create = false;
-    if (primary) { // we are primary
+    if (primary) { // we are primary, called by OSD::handle_pg_notify
       // DNE on source?
-      if (info.dne()) {
+      if (info.dne()) { // no pg info from peer
 	// is there a creation pending on this pg?
 	if (creating_pgs.count(pgid)) {
 	  creating_pgs[pgid].prior.erase(from);
-	  if (!can_create_pg(pgid))
+	  if (!can_create_pg(pgid)) // prior probe set is not empty
 	    return;
+          
 	  history = creating_pgs[pgid].history;
 	  create = true;
 	} else {
@@ -3398,6 +3434,8 @@ void OSD::handle_pg_peering_evt(
     } else {
       assert(!info.dne());  // pg exists if we are hearing about it
     }
+
+    // ok, now we need to create a PG instance
 
     // do we need to resurrect a deleting pg?
     spg_t resurrected;
@@ -3412,17 +3450,22 @@ void OSD::handle_pg_peering_evt(
     switch (result) {
     case RES_NONE: {
       const pg_pool_t* pp = osdmap->get_pg_pool(pgid.pool());
+
+      // create pg coll
       PG::_create(*rctx.transaction, pgid, pgid.get_split_bits(pp->get_pg_num()));
+      // create pg meta object
       PG::_init(*rctx.transaction, pgid, pp);
 
+      // create PG instance and insert in OSD::pg_map
       PG *pg = _create_lock_pg(
-	get_map(epoch),
+	get_map(epoch), // create map
 	pgid, create, false, result == RES_SELF,
 	role,
 	up, up_primary,
 	acting, acting_primary,
 	history, pi,
 	*rctx.transaction);
+      
       // handle internal evt Initialize and ActMap
       pg->handle_create(&rctx);
       pg->write_if_dirty(*rctx.transaction);
@@ -3430,8 +3473,7 @@ void OSD::handle_pg_peering_evt(
 
       dout(10) << *pg << " is new" << dendl;
 
-      // queue an external evt for this pg to drive the pg recovery state machine,
-      // and queue this pg onto OSD::peering_wq
+      // queue an external peering evt for this newly create PG
       pg->queue_peering_event(evt);
       pg->unlock();
       wake_pg_waiters(pg, pgid);
@@ -7220,7 +7262,7 @@ void OSD::consume_map()
     // service.expand_pg_num below will add these new splits
     for (ceph::unordered_map<spg_t,PG*>::iterator it = pg_map.begin();
         it != pg_map.end();
-        ++it) { // iterate each pg on this osd
+        ++it) { // iterate each PG instance on OSD::pg_map
       PG *pg = it->second;
       pg->lock();
       if (pg->is_primary())
@@ -7498,7 +7540,8 @@ bool OSD::can_create_pg(spg_t pgid)
 }
 
 // if the pg are to split in nextmap, then OSD::advance_pg will call this to
-// allocate child pg instance(s)
+// allocate child pg instance(s), the newly created will not be inserted into
+// OSD::pg_map until C_CompleteSplits is called
 void OSD::split_pgs(
   PG *parent,
   const set<spg_t> &childpgids, set<boost::intrusive_ptr<PG> > *out_pgs,
@@ -7523,7 +7566,8 @@ void OSD::split_pgs(
     dout(10) << "Splitting " << *parent << " into " << *i << dendl;
     assert(service.splitting(*i));
 
-    // allocate an instance of ReplicatedPG
+    // allocate an instance of ReplicatedPG, will not be inserted in OSD::pg_map
+    // until C_CompleteSplits callback is called
     PG* child = _make_pg(nextmap, *i);
     child->lock(true);
     out_pgs->insert(child);
@@ -8024,6 +8068,8 @@ void OSD::handle_pg_log(OpRequestRef op)
   }
 
   op->mark_started();
+
+  // queue a external peering evt on OSD::peering_wq
   handle_pg_peering_evt(
     spg_t(m->info.pgid.pgid, m->to),
     m->info, m->past_intervals,
@@ -8347,7 +8393,7 @@ void OSD::handle_pg_query(OpRequestRef op)
     if (!osdmap->have_pg_pool(pgid.pool()))
       continue;
 
-    // pg does not exist
+    // PG instance does not exist, send empty pg info/log
 
     // get active crush mapping
     int up_primary, acting_primary;

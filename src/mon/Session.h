@@ -183,17 +183,19 @@ struct MonSessionMap {
   void add_update_sub(MonSession *s, const string& what, version_t start, bool onetime, bool incremental_onetime) {
     Subscription *sub = 0;
     if (s->sub_map.count(what)) {
-      sub = s->sub_map[what];
+      sub = s->sub_map[what]; // already in MonSession::sub_map
     } else {
       sub = new Subscription(s, what);
-      s->sub_map[what] = sub;
+      s->sub_map[what] = sub; // register in MonSession::sub_map
       
       if (!subs.count(what))
 	subs[what] = new xlist<Subscription*>;
-      subs[what]->push_back(&sub->type_item);
+      subs[what]->push_back(&sub->type_item); // register in MonSessionMap::subs
     }
+
+    // update subscription
     sub->next = start;
-    sub->onetime = onetime;
+    sub->onetime = onetime; // used by XXXMonitor::check_sub to check if we should remove the sub or not
     sub->incremental_onetime = onetime && incremental_onetime;
   }
 
