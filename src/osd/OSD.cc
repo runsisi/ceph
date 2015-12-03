@@ -2803,10 +2803,11 @@ OSD::res_result OSD::_try_resurrect_pg(
   spg_t cur(pgid);
   while (true) {
     df = service.deleting_pgs.lookup(cur);
-    if (df)
+    if (df) // found, we are deleting it
       break;
-    if (!cur.ps())
+    if (!cur.ps()) // reached the seed 0
       break;
+    
     cur = cur.get_parent(); // up to direct parent
   }
   
@@ -2815,13 +2816,14 @@ OSD::res_result OSD::_try_resurrect_pg(
 
   // ok, previous deleting is currently in progress
 
-  df->old_pg_state->lock();
-  OSDMapRef create_map = df->old_pg_state->get_osdmap();
+  df->old_pg_state->lock(); // DeletingState holds a PG ref
+  OSDMapRef create_map = df->old_pg_state->get_osdmap(); // the osdmap the PG had when we try to remove it 
   df->old_pg_state->unlock();
 
   set<spg_t> children;
   if (cur == pgid) {
     if (df->try_stop_deletion()) {
+      // not in state DELETED_DIR, i.e. we are still in deleting progress
       dout(10) << __func__ << ": halted deletion on pg " << pgid << dendl;
       *resurrected = cur;
       *old_pg_state = df->old_pg_state;
@@ -2829,7 +2831,9 @@ OSD::res_result OSD::_try_resurrect_pg(
       return RES_SELF;
     } else {
       // raced, ensure we don't see DeletingStateRef when we try to
-      // delete this pg
+      // delete this pg, i.e. ensure when we delete the newly created PG
+      // OSDService::deleting_pgs.lookup_or_create will not find the previous
+      // deleting PG
       service.deleting_pgs.remove(pgid);
       return RES_NONE;
     }
@@ -2838,6 +2842,7 @@ OSD::res_result OSD::_try_resurrect_pg(
 			  &children) &&
 	     children.count(pgid)) {
     if (df->try_stop_deletion()) {
+      // not in state DELETED_DIR, i.e. we are still in deleting progress
       dout(10) << __func__ << ": halted deletion on ancestor pg " << pgid
 	       << dendl;
       *resurrected = cur;
@@ -4536,35 +4541,48 @@ bool remove_dir(
   ObjectStore::Transaction *t = new ObjectStore::Transaction;
   ghobject_t next;
   handle.reset_tp_timeout();
+
+  // get objects in this coll
   store->collection_list(
     coll,
-    next,
-    ghobject_t::get_max(),
-    true,
-    store->get_ideal_list_max(),
-    &olist,
-    &next);
+    next, // start
+    ghobject_t::get_max(), // end
+    true, // sort_bitwise
+    store->get_ideal_list_max(), // max
+    &olist, // [out] ls
+    &next); // [out] next
+    
   for (vector<ghobject_t>::iterator i = olist.begin();
        i != olist.end();
-       ++i, ++num) {
-    if (i->is_pgmeta())
+       ++i, ++num) { // iterate each object in this coll to remove
+    if (i->is_pgmeta()) // skip pg meta object
       continue;
+    
     OSDriver::OSTransaction _t(osdriver->get_transaction(t));
+
+    // 
     int r = mapper->remove_oid(i->hobj, &_t);
     if (r != 0 && r != -ENOENT) {
       assert(0);
     }
+
+    // remove coll
     t->remove(coll, *i);
-    if (num >= cct->_conf->osd_target_transaction_size) {
+    if (num >= cct->_conf->osd_target_transaction_size) { // default is 30
       C_SaferCond waiter;
       store->queue_transaction(osr, t, &waiter);
-      bool cont = dstate->pause_clearing();
+      // return false if we should cancel the deletion
+      bool cont = dstate->pause_clearing(); // CLEARING_WAITING
+      
       handle.suspend_tp_timeout();
+      // wait until txn applied
       waiter.wait();
       handle.reset_tp_timeout();
-      if (cont)
-        cont = dstate->resume_clearing();
+      
+      if (cont) // return false if we should cancel the deletion
+        cont = dstate->resume_clearing(); // CLEARING_DIR
       delete t;
+      
       if (!cont)
 	return false;
       t = new ObjectStore::Transaction;
@@ -4574,13 +4592,18 @@ bool remove_dir(
 
   C_SaferCond waiter;
   store->queue_transaction(osr, t, &waiter);
-  bool cont = dstate->pause_clearing();
+  // return false if we should cancel the deletion
+  bool cont = dstate->pause_clearing(); // CLEARING_WAITING
+  
   handle.suspend_tp_timeout();
+  // wait until txn applied
   waiter.wait();
   handle.reset_tp_timeout();
-  if (cont)
-    cont = dstate->resume_clearing();
+  
+  if (cont) // return false if we should cancel the deletion
+    cont = dstate->resume_clearing(); // CLEARING_DIR
   delete t;
+  
   // whether there are more objects to remove in the collection
   *finished = next.is_max();
   return cont;
@@ -4593,34 +4616,46 @@ void OSD::RemoveWQ::_process(
   PGRef pg(item.first);
   SnapMapper &mapper = pg->snap_mapper;
   OSDriver &driver = pg->osdriver;
-  coll_t coll = coll_t(pg->info.pgid);
-  pg->osr->flush();
+  coll_t coll = coll_t(pg->info.pgid);  
+  pg->osr->flush(); // flush all current Op(s)
   bool finished = false;
 
-  if (!item.second->start_or_resume_clearing())
+  // return false we should cancel the deletion
+  if (!item.second->start_or_resume_clearing()) // CLEARING_DIR
     return;
 
+  // remove objects from coll
   bool cont = remove_dir(
     pg->cct, store, &mapper, &driver, pg->osr.get(), coll, item.second,
     &finished, handle);
-  if (!cont)
+  
+  if (!cont) // cancelled, CANCELED
     return;
-  if (!finished) {
-    if (item.second->pause_clearing())
-      queue_front(item);
+  
+  if (!finished) { // still objects need to be removed
+    // return false we should cancel the deletion
+    if (item.second->pause_clearing()) // CLEARING_DIR
+      queue_front(item); // continue, requeue
     return;
   }
 
-  if (!item.second->start_deleting())
+  // finished all objects clearing
+
+  // return false we should cancel the deletion
+  if (!item.second->start_deleting()) // DELETING_DIR
     return;
 
   ObjectStore::Transaction *t = new ObjectStore::Transaction;
+
+  // remove pg meta object
   PGLog::clear_info_log(pg->info.pgid, t);
 
   if (g_conf->osd_inject_failure_on_pg_removal) {
     generic_derr << "osd_inject_failure_on_pg_removal" << dendl;
     exit(1);
   }
+
+  // remove coll, the coll must be empty
   t->remove_collection(coll);
 
   // We need the sequencer to stick around until the op is complete
@@ -4630,10 +4665,11 @@ void OSD::RemoveWQ::_process(
     0, // onapplied
     0, // oncommit
     0, // onreadable sync
-    new ObjectStore::C_DeleteTransactionHolder<PGRef>(
+    new ObjectStore::C_DeleteTransactionHolder<PGRef>( // hold a ref to PG
       t, pg), // oncomplete
     TrackedOpRef());
 
+  // we finished the deletion, set state to DELETED_DIR and notify the waitings
   item.second->finish_deleting();
 }
 // =========================================
@@ -8584,21 +8620,25 @@ void OSD::_remove_pg(PG *pg)
   store->queue_transaction(
     pg->osr.get(), rmt,
     new ObjectStore::C_DeleteTransactionHolder<
-      SequencerRef>(rmt, pg->osr),
+      SequencerRef>(rmt, pg->osr), // onreadable
     new ContainerContext<
-      SequencerRef>(pg->osr));
+      SequencerRef>(pg->osr)); // ondisk
 
+  // insert into OSDService::deleting_pgs, the initial state is QUEUED
   DeletingStateRef deleting = service.deleting_pgs.lookup_or_create(
-    pg->info.pgid,
+    pg->info.pgid, // K (i.e. spg_t)
     make_pair(
       pg->info.pgid,
-      PGRef(pg))
+      PGRef(pg)) // args to ctor of V (i.e. DeletingState)
     );
+
+  // and enqueue on OSD::remove_wq
   remove_wq.queue(make_pair(PGRef(pg), deleting));
 
+  // remove from OSDService::pg_epoch and OSDService::pg_epochs
   service.pg_remove_epoch(pg->info.pgid);
 
-  // remove from map
+  // remove from OSDService::pg_map
   pg_map.erase(pg->info.pgid);
   pg->put("PGMap"); // since we've taken it out of map
 }

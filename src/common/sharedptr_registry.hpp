@@ -49,7 +49,9 @@ private:
 	if (i != parent->contents.end() &&
 	    i->second.second == to_remove) {
 	  parent->contents.erase(i);
-	  parent->cond.Signal();
+
+          // notify those are waiting for us to be removed from contents
+	  parent->cond.Signal(); 
 	}
       }
       delete to_remove;
@@ -108,21 +110,23 @@ public:
     Mutex::Locker l(lock);
     waiting++;
     while (1) {
-      typename map<K, pair<WeakVPtr, V*>, C>::iterator i =
-	contents.find(key);
-      if (i != contents.end()) {
-	VPtr retval = i->second.first.lock();
-	if (retval) {
+      typename map<K, pair<WeakVPtr, V*>, C>::iterator i = contents.find(key);
+      if (i != contents.end()) { // ok, find the key
+	VPtr retval = i->second.first.lock(); // promote this weak_ptr to shared_ptr
+	if (retval) { // promotion ok, raw pointer has not been released
 	  waiting--;
 	  return retval;
 	}
-      } else {
+
+        // raw pointer has been released, but the weak_ptr has not been 
+        // removed from contents, we will wait someone to remove it
+      } else { // key does not exist
 	break;
       }
-      cond.Wait(lock);
+      cond.Wait(lock); // wait someone to remove the weak_ptr from contents
     }
     waiting--;
-    return VPtr();
+    return VPtr(); // ok, raw pointer has been released
   }
 
   VPtr lookup_or_create(const K &key) {
@@ -131,19 +135,40 @@ public:
     while (1) {
       typename map<K, pair<WeakVPtr, V*>, C>::iterator i =
 	contents.find(key);
-      if (i != contents.end()) {
-	VPtr retval = i->second.first.lock();
-	if (retval) {
+      if (i != contents.end()) { // ok, find the key
+	VPtr retval = i->second.first.lock(); // promote this weak_ptr to shared_ptr
+	if (retval) { // promotion ok, raw pointer has not been released
 	  waiting--;
 	  return retval;
 	}
-      } else {
+
+        // raw pointer has been released, but the weak_ptr has not been 
+        // removed from contents, we will wait someone to remove it       
+      } else { // key does not exist
 	break;
       }
-      cond.Wait(lock);
+      cond.Wait(lock); // wait someone to remove the weak_ptr from contents
     }
+
+    // ok, the specified key does not exist, so we alloc an new item
     V *ptr = new V();
     VPtr retval(ptr, OnRemoval(this, key));
+    // weak_ptr is always constructed from shared_ptr or other weak_ptr, it is an
+    // observer of a exsiting shared_ptr
+    
+    /* refer to: http://en.cppreference.com/w/cpp/memory/weak_ptr
+     * 
+     * std::weak_ptr is a smart pointer that holds a non-owning ("weak") reference 
+     * to an object that is managed by std::shared_ptr. It must be converted to 
+     * std::shared_ptr in order to access the referenced object.
+     * std::weak_ptr models temporary ownership: when an object needs to be 
+     * accessed only if it exists, and it may be deleted at any time by someone 
+     * else, std::weak_ptr is used to track the object, and it is converted to 
+     * std::shared_ptr to assume temporary ownership. If the original std::shared_ptr 
+     * is destroyed at this time, the object's lifetime is extended until the 
+     * temporary std::shared_ptr is destroyed as well.
+     * In addition, std::weak_ptr is used to break circular references of std::shared_ptr. 
+     */
     contents.insert(make_pair(key, make_pair(retval, ptr)));
     waiting--;
     return retval;

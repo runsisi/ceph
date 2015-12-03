@@ -115,11 +115,13 @@ int ObjectStore::queue_transactions(
   Context *oncomplete,
   TrackedOpRef op = TrackedOpRef())
 {
+  // when both _onreadable and _oncommit are destroyed, the _complete will be
+  // destroyed, then the oncomplete will be called
   RunOnDeleteRef _complete(new RunOnDelete(oncomplete));
   Context *_onreadable = new Wrapper<RunOnDeleteRef>(
-    onreadable, _complete);
+    onreadable, _complete); // hold a ref to _complete
   Context *_oncommit = new Wrapper<RunOnDeleteRef>(
-    oncommit, _complete);
+    oncommit, _complete); // hold another ref to _complete
   return queue_transactions(osr, tls, _onreadable, _oncommit,
 			    onreadable_sync, op);
 }
