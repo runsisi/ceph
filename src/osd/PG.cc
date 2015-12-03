@@ -691,7 +691,7 @@ bool PG::_calc_past_interval_range(epoch_t *start, epoch_t *end, epoch_t oldest_
 
   // Do we already have the intervals we want?
   map<epoch_t,pg_interval_t>::const_iterator pif = past_intervals.begin();
-  if (pif != past_intervals.end()) { // we have past_intervals
+  if (pif != past_intervals.end()) { // we have built a past_intervals previously
     if (pif->first <= info.history.last_epoch_clean) {
       // our existing past_intervals has covered the interval we want
       dout(10) << __func__ << ": already have past intervals back to "
@@ -4678,7 +4678,8 @@ void PG::check_full_transition(OSDMapRef lastmap, OSDMapRef osdmap)
       changed = true;
     }
   }
-  if (changed) {
+  
+  if (changed) { // osd -> full, or pool -> full
     info.history.last_epoch_marked_full = osdmap->get_epoch();
     dirty_info = true;
   }
@@ -5702,19 +5703,32 @@ boost::statechart::result PG::RecoveryState::Started::react(const AdvMap& advmap
 {
   dout(10) << "Started advmap" << dendl;
   PG *pg = context< RecoveryMachine >().pg;
+
+  // if osd -> full, or pool -> full, change info.history.last_epoch_marked_full
+  // to current map's epoch
   pg->check_full_transition(advmap.lastmap, advmap.osdmap);
+  
   if (pg->should_restart_peering(
 	advmap.up_primary,
 	advmap.acting_primary,
 	advmap.newup,
 	advmap.newacting,
 	advmap.lastmap,
-	advmap.osdmap)) { // if we are to enter a new interval, we reenter state Reset
+	advmap.osdmap)) { // we are to change into a new interval
     dout(10) << "should_restart_peering, transitioning to Reset" << dendl;
+
+    // transit into state Reset and continue to handle evt AdvMap which restarts
+    // peering process, i.e. start_peering_interval
     post_event(advmap);
     return transit< Reset >();
   }
+
+  // ok, no need to restart peering process
+
+  // iterate each peer in peer_info, and remove down peers from peer_missing, 
+  // peer_log_requested, peer_missing_requested, and finally itself from peer_info
   pg->remove_down_peer_info(advmap.osdmap);
+  
   return discard_event();
 }
 
@@ -5748,6 +5762,7 @@ PG::RecoveryState::Reset::Reset(my_context ctx)
   // increased by one in PG::start_flush
   // decreased by one in ReplicatedPG::on_flushed
   pg->flushes_in_progress = 0;
+  
   pg->set_last_peering_reset();
 }
 
@@ -5794,7 +5809,8 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
 	     << dendl;
     // ok, in new map, we need to change to a new interval
 
-    // start new peering interval, reset last peering, restart interal flush
+    // start new peering interval, reset last peering, restart interal flush,
+    // reset all pg internal states and peering, recovery states
     pg->start_peering_interval(
       advmap.lastmap,
       advmap.newup, advmap.up_primary,
@@ -5805,6 +5821,11 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
   // if peer any peer is down then remove it and update heartbeat peers, and
   // all other recovery sources
   pg->remove_down_peer_info(advmap.osdmap);
+
+  // remains in state Reset, ActMap will drive us into state Started and its 
+  // substates, i.e. Reset -> Started -> Start -> Primary -> Peering -> GetInfo,
+  // or Reset -> Started -> Start -> Stray (then continue to transit by evt 
+  // MLogRec/MInfoRec)
   return discard_event();
 }
 
@@ -5812,8 +5833,8 @@ boost::statechart::result PG::RecoveryState::Reset::react(const ActMap&)
 {
   PG *pg = context< RecoveryMachine >().pg;
   if (pg->should_send_notify() && pg->get_primary().osd >= 0) {
-    // we are not primary pg and new primary pg's osd exists, we need to send
-    // notify to primary pg
+    // we are not primary pg(stray or replica) and new primary pg's osd exists, 
+    // we need to notify the primary pg
     context< RecoveryMachine >().send_notify(
       pg->get_primary(),
       pg_notify_t(
@@ -5958,7 +5979,9 @@ boost::statechart::result PG::RecoveryState::Peering::react(const AdvMap& advmap
     // thing
     return transit< Reset >();
   }
-  
+
+  // reset need_up_thru if up_thru changed to >= info.history.same_interval_since 
+  // in new map
   pg->adjust_need_up_thru(advmap.osdmap);
   
   return forward_event();
@@ -7111,6 +7134,8 @@ boost::statechart::result PG::RecoveryState::Stray::react(const ActMap&)
       pg->past_intervals);
   }
   pg->take_waiters();
+
+  // remain in state Stray, can only be changed by evt MLogRec/MInfoRec
   return discard_event();
 }
 
@@ -7130,7 +7155,9 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
   context< RecoveryMachine >().log_enter(state_name);
 
   PG *pg = context< RecoveryMachine >().pg;
+  
   pg->generate_past_intervals();
+  
   unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
 
   assert(pg->blocked_by.empty());

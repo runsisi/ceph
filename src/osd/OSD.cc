@@ -2760,8 +2760,9 @@ void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
   int role = OSDMap::calc_pg_role(service.whoami, acting);
   pg->set_role(role);
   pg->reg_next_scrub();
-  // handle Load evt, currently in state Initial (by RecoveryState::RecoveryMachine::initiate, 
-  // refer to RecoveryState::RecoveryState), will transit into state Reset after 
+  
+  // handle Load evt locally, i.e. we are currently in backing store's finisher
+  // thread and not OSD::peering_wq, we will transit into state Reset after 
   // Load evt handled
   pg->handle_loaded(rctx);
 
@@ -2769,7 +2770,7 @@ void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
   pg->write_if_dirty(*(rctx->transaction));
 
   // queue an external peering evt (NullEvt) on OSD::peering_wq
-  pg->queue_null(e, e);
+  pg->queue_null(e, e); // to advance_pg
 
   // OSD::handle_pg_peering_evt, OSD::handle_pg_backfill_reserve, 
   // OSD::handle_pg_recovery_reserve, OSD::handle_pg_query will push a
@@ -2777,7 +2778,7 @@ void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
   // our splitting, so handle these deferred msg/evt
   map<spg_t, list<PG::CephPeeringEvtRef> >::iterator to_wake =
     peering_wait_for_split.find(pg->info.pgid);
-  if (to_wake != peering_wait_for_split.end()) {
+  if (to_wake != peering_wait_for_split.end()) { // handle pending peering evts waiting for this child PG instance
     for (list<PG::CephPeeringEvtRef>::iterator i =
 	   to_wake->second.begin();
 	 i != to_wake->second.end();
@@ -2786,6 +2787,8 @@ void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
     }
     peering_wait_for_split.erase(to_wake);
   }
+
+  // we want to reuse _remove_pg to clean all related info
   if (!service.get_osdmap()->have_pg_pool(pg->info.pgid.pool()))
     _remove_pg(pg);
 }
@@ -2806,8 +2809,11 @@ OSD::res_result OSD::_try_resurrect_pg(
       break;
     cur = cur.get_parent(); // up to direct parent
   }
-  if (!df)
+  
+  if (!df) // no previous deleting
     return RES_NONE; // good to go
+
+  // ok, previous deleting is currently in progress
 
   df->old_pg_state->lock();
   OSDMapRef create_map = df->old_pg_state->get_osdmap();
@@ -2852,7 +2858,7 @@ OSD::res_result OSD::_try_resurrect_pg(
 PG *OSD::_create_lock_pg(
   OSDMapRef createmap,
   spg_t pgid,
-  bool newly_created,
+  bool newly_created, // not used
   bool hold_map_lock,
   bool backfill,
   int role,
@@ -3335,6 +3341,22 @@ void OSD::build_past_intervals_parallel()
  * hasn't changed since the given epoch and we are the primary.
  */
 
+/*
+ * MOSDPGNotify:
+ *      vector<pair<pg_notify_t,pg_interval_map_t> > pg_list;
+ *
+ * MOSDPGLog:
+ *      shard_id_t to;
+ *      shard_id_t from;
+ *      pg_info_t info;
+ *      pg_log_t log;
+ *      pg_missing_t missing;
+ *      pg_interval_map_t past_intervals;
+ *
+ * MOSDPGInfo:
+ *      vector<pair<pg_notify_t,pg_interval_map_t> > pg_list;
+ */
+
 // only be called by OSD::handle_pg_notify, OSD::handle_pg_log, OSD::handle_pg_info,
 // pay attention to the difference between this interface and PG::handle_peering_event, 
 // the former is called by front end dispatch handler, and the later is pg specific,
@@ -3435,8 +3457,6 @@ void OSD::handle_pg_peering_evt(
       assert(!info.dne());  // pg exists if we are hearing about it
     }
 
-    // ok, now we need to create a PG instance
-
     // do we need to resurrect a deleting pg?
     spg_t resurrected;
     PGRef old_pg_state;
@@ -3444,11 +3464,13 @@ void OSD::handle_pg_peering_evt(
       service.get_osdmap(),
       pgid,
       &resurrected,
-      &old_pg_state);
+      &old_pg_state); // the pg to alloc PG instance may be being deleted
+
+    // ok, now we need to create the PG instance
 
     PG::RecoveryCtx rctx = create_context();
     switch (result) {
-    case RES_NONE: {
+    case RES_NONE: { // has nothing to do with previous deleting or we can deem it to
       const pg_pool_t* pp = osdmap->get_pg_pool(pgid.pool());
 
       // create pg coll
@@ -3458,22 +3480,31 @@ void OSD::handle_pg_peering_evt(
 
       // create PG instance and insert in OSD::pg_map
       PG *pg = _create_lock_pg(
-	get_map(epoch), // create map
-	pgid, create, false, result == RES_SELF,
+	get_map(epoch), // epoch the pg creation first initiated
+	pgid, 
+	create, // not used
+	false, // not used
+	result == RES_SELF, // backfill
 	role,
 	up, up_primary,
 	acting, acting_primary,
 	history, pi,
 	*rctx.transaction);
       
-      // handle internal evt Initialize and ActMap
+      // handle internal evt Initialize and ActMap locally, i.e. not in the 
+      // context of OSD::peering_wq, i.e. in the context of msgr's dispatch 
+      // queue thread
       pg->handle_create(&rctx);
+      
       pg->write_if_dirty(*rctx.transaction);
+
+      // do pg notify, query and info, and queue txn to execute
       dispatch_context(rctx, pg, osdmap);
 
       dout(10) << *pg << " is new" << dendl;
 
-      // queue an external peering evt for this newly create PG
+      // queue an external peering evt for this newly create PG instance to 
+      // advance_pg
       pg->queue_peering_event(evt);
       pg->unlock();
       wake_pg_waiters(pg, pgid);
@@ -3495,7 +3526,7 @@ void OSD::handle_pg_peering_evt(
 	resurrected,
 	false,
 	false,
-	true,
+	true, // backfill
 	old_role,
 	old_up,
 	old_up_primary,
@@ -3534,7 +3565,7 @@ void OSD::handle_pg_peering_evt(
 	resurrected,
 	false,
 	false,
-	true,
+	true, // backfill
 	old_role,
 	old_up,
 	old_up_primary,
@@ -3605,7 +3636,7 @@ void OSD::calc_priors_during(
         // set and transit us into state Reset, refer to PG::PriorSet::affected_by_map
         // and RecoveryState::Peering::react(AdvMap)
 	if (osdmap->is_up(acting[i])) {
-	  if (acting[i] != whoami) {
+	  if (acting[i] != whoami) { // add the peer that is up
 	    pset.insert(
 	      pg_shard_t(
 		acting[i],
@@ -3616,6 +3647,8 @@ void OSD::calc_priors_during(
 	actual_osds++;
       }
     }
+
+    // no osds in this epoch is up, so we add them all
     if (!up && actual_osds) {
       // sucky.  add down osds, even tho we can't reach them right now.
       for (unsigned i=0; i<acting.size(); i++) {
@@ -6198,7 +6231,7 @@ void OSD::dispatch_op(OpRequestRef op)
   case MSG_OSD_PG_LOG:
     handle_pg_log(op);
     break;
-  case MSG_OSD_PG_REMOVE:
+  case MSG_OSD_PG_REMOVE: // PG::purge_strays will send us MOSDPGRemove
     handle_pg_remove(op);
     break;
   case MSG_OSD_PG_INFO:
@@ -7087,8 +7120,10 @@ bool OSD::advance_pg(
   epoch_t next_epoch = pg->get_osdmap()->get_epoch() + 1; // next osdmap epoch we are to consume
   OSDMapRef lastmap = pg->get_osdmap(); // pg's current osdmap
 
-  if (lastmap->get_epoch() == osd_epoch) // pg's osdmap epoch is the same as osdservice's
+  // pg's osdmap epoch is the same as osdservice's, nothing to advance
+  if (lastmap->get_epoch() == osd_epoch)
     return true;
+  
   assert(lastmap->get_epoch() < osd_epoch);
 
   epoch_t min_epoch = service.get_min_pg_epoch(); // get the slowest pg epoch
@@ -7288,6 +7323,9 @@ void OSD::consume_map()
         // OSD::osdmap are at the same epoch, so we do nothing here, but load_pgs 
         // which called before us in OSD::init will call this with the second 
         // parameter set to pg's osdmap, so they do the real thing there
+        // we generate OSDService::pending_splits and OSDService::rev_pending_splits
+        // mapping, but do not alloc child PG instances, which is allocated in
+        // advance_pg
         service.init_splits_between(it->first, service.get_osdmap(), osdmap);
       }
 
@@ -7745,8 +7783,8 @@ void OSD::handle_pg_create(OpRequestRef op)
     creating_pgs[pgid].parent = parent;
     creating_pgs[pgid].acting.swap(acting);
 
-    // build prior set from recent interval start and back to the epoch the 
-    // pg was created
+    // build prior set from current interval start and back to the epoch the 
+    // pg creation is initiated from the PGMonitor
     calc_priors_during(pgid, created, history.same_interval_since, 
 		       creating_pgs[pgid].prior); // prior is of type set<pg_shard_t>, the same as PriorSet::probe
 
@@ -7758,7 +7796,7 @@ void OSD::handle_pg_create(OpRequestRef op)
 	     << " : querying priors " << pset << dendl;
 
     // prepare query msgs for prior set, we will do the queries in dispatch_context
-    // below
+    // below, if no 
     for (set<pg_shard_t>::iterator p = pset.begin(); p != pset.end(); ++p)
       if (osdmap->is_up(p->osd)) // we are to query those pgs on this osd
 	(*rctx.query_map)[p->osd][spg_t(pgid.pgid, p->shard)] =
@@ -8004,7 +8042,13 @@ void OSD::do_infos(map<int,
  * includes pg_info_t.
  * NOTE: called with opqueue active.
  */
-// MNotifyRec
+// MNotifyRec, may send 
+// 1) with reponse to primary's active query
+// RecoveryState::Stray::react(MQuery) 
+// 2) by non-primary actively 
+// RecoveryState::Reset::react(ActMap),
+// RecoveryState::Stray::react(ActMap),
+// RecoveryState::ReplicaActive::react(ActMap)
 void OSD::handle_pg_notify(OpRequestRef op)
 {
   MOSDPGNotify *m = (MOSDPGNotify*)op->get_req();
@@ -8531,7 +8575,7 @@ void OSD::_remove_pg(PG *pg)
   // the pg_map must be done together without unlocking the pg lock,
   // to avoid racing with watcher cleanup in ms_handle_reset
   // and handle_notify_timeout
-  pg->on_removal(rmt);
+  pg->on_removal(rmt); // clear pg log, and call ReplicatedPG::on_shutdown
 
   // remove all (parent, children)s from rev_pending_splits and 
   // remove all (child, parent)s from pending_splits
@@ -9153,7 +9197,7 @@ void OSD::dequeue_op(
   dout(10) << "dequeue_op " << op << " finish" << dendl;
 }
 
-
+// called in context of backing store's finisher thread
 struct C_CompleteSplits : public Context {
   OSD *osd;
   set<boost::intrusive_ptr<PG> > pgs;
@@ -9183,7 +9227,8 @@ struct C_CompleteSplits : public Context {
       }
       osd->pg_map_lock.put_write();
 
-      // if has txn to execute for this pg, then queue it
+      // if has txn to execute for this newly created PG instance (may have been 
+      // deleted in OSD::add_newly_split_pg called above), then queue it
       osd->dispatch_context_transaction(rctx, &**i);
 	to_complete.insert((*i)->info.pgid);
       (*i)->unlock();
