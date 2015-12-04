@@ -311,6 +311,8 @@ void OSDService::mark_split_in_progress(spg_t parent, const set<spg_t> &children
 
     pending_splits.erase(*i); // remove from pending map
     piter->second.erase(*i); // remove from pending map
+
+    // OSDService::complete_split will remove us(child) from the in progress set
     in_progress_splits.insert(*i); // insert into in progress set
   }
   if (piter->second.empty())
@@ -406,6 +408,8 @@ void OSDService::expand_pg_num(OSDMapRef old_map,
 			       OSDMapRef new_map)
 {
   Mutex::Locker l(in_progress_split_lock);
+
+  // clear/update in progress splits
   for (set<spg_t>::iterator i = in_progress_splits.begin();
        i != in_progress_splits.end();
     ) {
@@ -417,6 +421,8 @@ void OSDService::expand_pg_num(OSDMapRef old_map,
       ++i;
     }
   }
+
+  // clear/update pending splits
   for (map<spg_t, spg_t>::iterator i = pending_splits.begin();
        i != pending_splits.end();
     ) {
@@ -3567,9 +3573,10 @@ void OSD::handle_pg_peering_evt(
       wake_pg_waiters(pg, resurrected);
       return;
     }
-    case RES_PARENT: {
+    case RES_PARENT: { // the parent pg is being purged, we stop the purging and split from it
       assert(old_pg_state);
       old_pg_state->lock();
+      // recreate the parent PG instance
       OSDMapRef old_osd_map = old_pg_state->get_osdmap();
       int old_role = old_pg_state->role;
       vector<int> old_up = old_pg_state->up;
@@ -3579,6 +3586,8 @@ void OSD::handle_pg_peering_evt(
       pg_history_t old_history = old_pg_state->info.history;
       pg_interval_map_t old_past_intervals = old_pg_state->past_intervals;
       old_pg_state->unlock();
+      // we create a parent PG instance, and let the advance_pg to create the 
+      // child PG instance
       PG *parent = _create_lock_pg(
 	old_osd_map,
 	resurrected,
@@ -7675,7 +7684,8 @@ void OSD::split_pgs(
       &child->pool.info,
       rctx->transaction);
 
-    // split pg log, update pg info and set other child pg fields 
+    // split pg log, update pg info and set other child pg fields, all histories
+    // are inherted from the parent
     parent->split_into(
       i->pgid,
       child,
@@ -8622,6 +8632,18 @@ void OSD::handle_pg_remove(OpRequestRef op)
   }
 }
 
+/*
+  OSD::_remove_pg
+    ReplicatedPG::on_removal
+      ReplicatedPG::on_shutdown
+        ReplicatedBackend::on_change
+          ReplicatedBackend::clear_recovery_state // clear pushing/pulling maps
+        PG::clear_primary_state
+        PG::cancel_recovery
+          PG::clear_recovery_state
+            ReplicatedPG::_clear_recovery_state
+              ReplicatedBackend::clear_recovery_state // clear pushing/pulling maps
+ */
 void OSD::_remove_pg(PG *pg)
 {
   ObjectStore::Transaction *rmt = new ObjectStore::Transaction;
@@ -8632,6 +8654,7 @@ void OSD::_remove_pg(PG *pg)
   // and handle_notify_timeout
   pg->on_removal(rmt); // clear pg log, and call ReplicatedPG::on_shutdown
 
+  // cancel pending (not in-progress) splits
   // remove all (parent, children)s from rev_pending_splits and 
   // remove all (child, parent)s from pending_splits
   service.cancel_pending_splits_for_parent(pg->info.pgid);
@@ -9263,14 +9286,14 @@ struct C_CompleteSplits : public Context {
   C_CompleteSplits(OSD *osd, const set<boost::intrusive_ptr<PG> > &in)
     : osd(osd), pgs(in) {}
   void finish(int r) {
-    Mutex::Locker l(osd->osd_lock);
+    Mutex::Locker l(osd->osd_lock); // get osd_lock
     if (osd->is_stopping())
       return;
     PG::RecoveryCtx rctx = osd->create_context();
     set<spg_t> to_complete;
     for (set<boost::intrusive_ptr<PG> >::iterator i = pgs.begin();
 	 i != pgs.end();
-	 ++i) { // iterate each newly splitted PG instance
+	 ++i) { // iterate each newly splitted PG instance(created in OSD::split_pgs called by OSD::advance_pg)
       osd->pg_map_lock.get_write();
       (*i)->lock();
 
@@ -9278,11 +9301,15 @@ struct C_CompleteSplits : public Context {
       // queue an external peering evt (NullEvt) on OSD::peering_wq, and queue
       // other pending peering evt(s)
       osd->add_newly_split_pg(&**i, &rctx);
-      
-      if (!((*i)->deleting)) {
+
+      // OSDService::add_newly_split_pg called above may remove this newly created 
+      // PG if the pool has been deleted, and ReplicatedPG::on_shutdown will set 
+      // PG::deleting to true
+      if (!((*i)->deleting)) { // if the pool has been deleted, then OSDService::expand_pg_num 
+                                // will remove the pending and in-progress splits
         to_complete.insert((*i)->info.pgid);
         // remove from OSDService::in_progress_splits
-        osd->service.complete_split(to_complete);
+        osd->service.complete_split(to_complete); // OSDService::mark_split_in_progress marked us(child) in progress
       }
       osd->pg_map_lock.put_write();
 
