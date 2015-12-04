@@ -8684,13 +8684,14 @@ ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
 void ReplicatedPG::context_registry_on_change()
 {
   pair<hobject_t, ObjectContextRef> i;
-  while (object_contexts.get_next(i.first, &i)) {
+  while (object_contexts.get_next(i.first, &i)) { // iterate each ObjectContext in ReplicatedPG::object_contexts
     ObjectContextRef obc(i.second);
     if (obc) {
       for (map<pair<uint64_t, entity_name_t>, WatchRef>::iterator j =
 	     obc->watchers.begin();
 	   j != obc->watchers.end();
-	   obc->watchers.erase(j++)) {
+	   obc->watchers.erase(j++)) { // remove each watcher on this ObjectContext
+	// 
 	j->second->discard();
       }
     }
@@ -9597,6 +9598,19 @@ void ReplicatedPG::on_flushed()
   pgbackend->on_flushed();
 }
 
+
+/*
+  OSD::_remove_pg
+    ReplicatedPG::on_removal
+      ReplicatedPG::on_shutdown
+        ReplicatedBackend::on_change
+          ReplicatedBackend::clear_recovery_state // clear pushing/pulling maps
+        PG::clear_primary_state
+        PG::cancel_recovery
+          PG::clear_recovery_state
+            ReplicatedPG::_clear_recovery_state
+              ReplicatedBackend::clear_recovery_state // clear pushing/pulling maps
+ */
 void ReplicatedPG::on_removal(ObjectStore::Transaction *t)
 {
   dout(10) << "on_removal" << dendl;
@@ -9613,6 +9627,7 @@ void ReplicatedPG::on_removal(ObjectStore::Transaction *t)
 
   write_if_dirty(*t);
 
+  // remove this PG instance on varies of queues
   on_shutdown();
 }
 
@@ -9636,15 +9651,20 @@ void ReplicatedPG::on_shutdown()
   cancel_proxy_ops(false);
   apply_and_flush_repops(false);
 
+  // remove all in progress ops and clear pushing/pulling maps
   pgbackend->on_change();
 
+  // handle watchers
   context_registry_on_change();
   object_contexts.clear();
 
   osd->remote_reserver.cancel_reservation(info.pgid);
   osd->local_reserver.cancel_reservation(info.pgid);
 
+  // 
   clear_primary_state();
+
+  // 
   cancel_recovery();
 }
 
@@ -9863,7 +9883,10 @@ void ReplicatedPG::_clear_recovery_state()
   assert(backfills_in_flight.empty());
   pending_backfill_updates.clear();
   assert(recovering.empty());
-  pgbackend->clear_recovery_state(); // clear pushing/pulling maps for ReplicatedBackend
+
+  // clear pushing/pulling maps, actually this has been called by 
+  // ReplicatedBackend.on_change which eventually called by ReplicatedPG.on_shutdown
+  pgbackend->clear_recovery_state();
 }
 
 void ReplicatedPG::cancel_pull(const hobject_t &soid)

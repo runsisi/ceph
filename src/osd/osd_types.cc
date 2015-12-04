@@ -521,7 +521,7 @@ bool pg_t::is_split(unsigned old_pg_num, unsigned new_pg_num, set<pg_t> *childre
 unsigned pg_t::get_split_bits(unsigned pg_num) const {
   if (pg_num == 1)
     return 0;
-  assert(pg_num > 1);
+  assert(pg_num > 1); // pg_num in next osdmap
 
   // Find unique p such that pg_num \in [2^(p-1), 2^p)
   unsigned p = pg_pool_t::calc_bits_of(pg_num);
@@ -548,7 +548,7 @@ pg_t pg_t::get_parent() const
   unsigned bits = pg_pool_t::calc_bits_of(m_seed);
   assert(bits);
   pg_t retval = *this;
-  retval.m_seed &= ~((~0)<<(bits - 1));
+  retval.m_seed &= ~((~0)<<(bits - 1)); // minus one bit
   return retval;
 }
 

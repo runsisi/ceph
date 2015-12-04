@@ -2817,19 +2817,21 @@ OSD::res_result OSD::_try_resurrect_pg(
   // ok, previous deleting is currently in progress
 
   df->old_pg_state->lock(); // DeletingState holds a PG ref
-  OSDMapRef create_map = df->old_pg_state->get_osdmap(); // the osdmap the PG had when we try to remove it 
+  OSDMapRef create_map = df->old_pg_state->get_osdmap(); // the map the PG had when we were to delete it
   df->old_pg_state->unlock();
 
   set<spg_t> children;
   if (cur == pgid) {
-    if (df->try_stop_deletion()) {
+    // PG::purge_strays told us to delete the pg, but now we find we have
+    // to resurrect, i.e. we are to continue to hold this pg
+    if (df->try_stop_deletion()) { // stop deletion succeeded
       // not in state DELETED_DIR, i.e. we are still in deleting progress
       dout(10) << __func__ << ": halted deletion on pg " << pgid << dendl;
       *resurrected = cur;
       *old_pg_state = df->old_pg_state;
       service.deleting_pgs.remove(pgid); // PG is no longer being removed!
       return RES_SELF;
-    } else {
+    } else { // has already deleted
       // raced, ensure we don't see DeletingStateRef when we try to
       // delete this pg, i.e. ensure when we delete the newly created PG
       // OSDService::deleting_pgs.lookup_or_create will not find the previous
@@ -2837,11 +2839,12 @@ OSD::res_result OSD::_try_resurrect_pg(
       service.deleting_pgs.remove(pgid);
       return RES_NONE;
     }
-  } else if (cur.is_split(create_map->get_pg_num(cur.pool()),
-			  curmap->get_pg_num(cur.pool()),
-			  &children) &&
-	     children.count(pgid)) {
-    if (df->try_stop_deletion()) {
+  } else if (cur.is_split(create_map->get_pg_num(cur.pool()), // create_map: map the PG had when we were to remove it
+			  curmap->get_pg_num(cur.pool()), // curmap: current map the OSDService has
+			  &children) && // in current OSDService::osdmap, the PG must split
+	     children.count(pgid)) { // check if we are one of the children, why need this check???
+    // we are to split from a previously deleting pg
+    if (df->try_stop_deletion()) { // stop parent's deletion succeeded
       // not in state DELETED_DIR, i.e. we are still in deleting progress
       dout(10) << __func__ << ": halted deletion on ancestor pg " << pgid
 	       << dendl;
@@ -3390,9 +3393,10 @@ void OSD::handle_pg_peering_evt(
     int role = osdmap->calc_pg_role(whoami, acting, acting.size());
 
     pg_history_t history = info.history; // the history the peer carried along
+    
     // extend the history up to current epoch we have, if there is any osdmap
     // gap between the epoch the history is built and current epoch we have, 
-    // then the carried history is considered invalid
+    // then the carried history is considered invalid, i.e. an obsolete msg
     bool valid_history = project_pg_history(
       pgid, history, epoch, up, up_primary, acting, acting_primary);
 
@@ -3465,17 +3469,22 @@ void OSD::handle_pg_peering_evt(
     // do we need to resurrect a deleting pg?
     spg_t resurrected;
     PGRef old_pg_state;
+    
+    // 1) PG::purge_strays told us to delete the pg, but now we find we have
+    // to continue to hold this pg, or 
+    // 2) PG::purge_strays told us to delete a pg, but now we find we have to
+    // hold a PG that is to split from the deleting pg
     res_result result = _try_resurrect_pg(
       service.get_osdmap(),
       pgid,
       &resurrected,
-      &old_pg_state); // the pg to alloc PG instance may be being deleted
+      &old_pg_state); // the pg coll may be being purged
 
     // ok, now we need to create the PG instance
 
     PG::RecoveryCtx rctx = create_context();
     switch (result) {
-    case RES_NONE: { // has nothing to do with previous deleting or we can deem it to
+    case RES_NONE: { // no previous deletion or we have finished the deletion
       const pg_pool_t* pp = osdmap->get_pg_pool(pgid.pool());
 
       // create pg coll
@@ -3515,7 +3524,7 @@ void OSD::handle_pg_peering_evt(
       wake_pg_waiters(pg, pgid);
       return;
     }
-    case RES_SELF: {
+    case RES_SELF: { // we were told to purge the pg coll, but now we have to continue to hold it
       old_pg_state->lock();
       OSDMapRef old_osd_map = old_pg_state->get_osdmap();
       int old_role = old_pg_state->role;
@@ -3540,7 +3549,12 @@ void OSD::handle_pg_peering_evt(
 	old_history,
 	old_past_intervals,
 	*rctx.transaction);
+
+      // handle internal evt Initialize and ActMap locally, i.e. not in the 
+      // context of OSD::peering_wq, i.e. in the context of msgr's dispatch 
+      // queue thread
       pg->handle_create(&rctx);
+      
       pg->write_if_dirty(*rctx.transaction);
       dispatch_context(rctx, pg, osdmap);
 
@@ -6866,7 +6880,7 @@ void OSD::handle_osd_map(MOSDMap *m)
     return;
   }
 
-  if (superblock.oldest_map) {
+  if (superblock.oldest_map) { // purge osdmap on disk, the mon know which we can purge to
     int num = 0;
     epoch_t min(
       MIN(m->oldest_map,
@@ -7624,7 +7638,7 @@ void OSD::split_pgs(
   PG::RecoveryCtx *rctx)
 {
   unsigned pg_num = nextmap->get_pg_num(
-    parent->pool.id); // pg number in next osdmap
+    parent->pool.id); // pg_num in next osdmap
   parent->update_snap_mapper_bits(
     parent->info.pgid.get_split_bits(pg_num)
     );
@@ -8585,6 +8599,9 @@ void OSD::handle_pg_remove(OpRequestRef op)
     vector<int> up, acting;
     osdmap->pg_to_up_acting_osds(
       pgid.pgid, &up, &up_primary, &acting, &acting_primary);
+
+    // extend the history the peer has to the epoch we are at to check if this 
+    // is an obsolete msg
     bool valid_history = project_pg_history(
       pg->info.pgid, history, pg->get_osdmap()->get_epoch(),
       up, up_primary, acting, acting_primary);
@@ -8592,6 +8609,8 @@ void OSD::handle_pg_remove(OpRequestRef op)
         history.same_interval_since <= m->get_epoch()) {
       assert(pg->get_primary().osd == m->get_source().num());
       PGRef _pg(pg);
+      
+      // queue deletion on OSD::remove_wq, remove from OSD::pg_map and other cleanup
       _remove_pg(pg);
       pg->unlock();
     } else {
