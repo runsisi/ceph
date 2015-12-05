@@ -3384,14 +3384,15 @@ void OSD::handle_pg_peering_evt(
   bool primary, // only OSD::handle_pg_notify will set this to true, in new code, this is obsolete (refer to 53f2c7f291d94)
   PG::CephPeeringEvtRef evt)
 {
-  if (service.splitting(pgid)) { // the pgid is in OSDService::in_progress_splits or OSDService::pending_splits
+  if (service.splitting(pgid)) { // the requested PG is in pending/in-progress split
     peering_wait_for_split[pgid].push_back(evt);
     return;
   }
 
   if (!_have_pg(pgid)) { // no PG instance found in OSD::pg_map, we need to create one
-    if (!osdmap->have_pg_pool(pgid.pool()))
+    if (!osdmap->have_pg_pool(pgid.pool())) // pool has been deleted, no need to handle anymore
       return;
+    
     int up_primary, acting_primary;
     vector<int> up, acting;
     osdmap->pg_to_up_acting_osds(
@@ -3407,6 +3408,8 @@ void OSD::handle_pg_peering_evt(
       pgid, history, epoch, up, up_primary, acting, acting_primary);
 
     if (!valid_history || epoch < history.same_interval_since) {
+      // an obsolete msg, we may or may not be the right target, the peer will 
+      // resend it if needed
       dout(10) << "get_or_create_pg " << pgid << " acting changed in "
 	       << history.same_interval_since << " (msg from " << epoch << ")" << dendl;
       return;
@@ -3603,6 +3606,9 @@ void OSD::handle_pg_peering_evt(
 	old_past_intervals,
 	*rctx.transaction
 	);
+
+      // if the resurrected parent PG intance will not hold on this osd, then
+      // PG::proc_replica_info will purge the parent PG instance
       parent->handle_create(&rctx);
       parent->write_if_dirty(*rctx.transaction);
       dispatch_context(rctx, parent, osdmap);
@@ -3613,6 +3619,12 @@ void OSD::handle_pg_peering_evt(
       peering_wait_for_split[pgid].push_back(evt);
 
       //parent->queue_peering_event(evt);
+      
+      // ok, we know we are the right target to handle the peering msg, but at
+      // this moment i cannot handle it, because the PG instance is not available,
+      // i want the previous deleting parent to split the PG instance for us in 
+      // OSD::split_pgs (called by OSD::advance_pg), so the peering evt is not
+      // queued for parent PG, but queue on OSD::peering_wait_for_split
       parent->queue_null(osdmap->get_epoch(), osdmap->get_epoch());
       parent->unlock();
       wake_pg_waiters(parent, resurrected);
@@ -6276,6 +6288,8 @@ epoch_t op_required_epoch(OpRequestRef op)
  */
 void OSD::dispatch_op(OpRequestRef op)
 {
+  // dispatch with holding the OSD::osd_lock
+
   switch (op->get_req()->get_type()) {
 
   case MSG_OSD_PG_CREATE: // send from PGMonitor::send_pg_creates
@@ -8563,7 +8577,7 @@ void OSD::handle_pg_query(OpRequestRef op)
 	    it->second.epoch_sent, // query_epoch, the epoch when the query sent
 	    osdmap->get_epoch(), // epoch_sent
 	    empty), // info
-	  pg_interval_map_t()));
+	  pg_interval_map_t())); // empty past_intervals, pg_interval_map_t is a typedef of map<epoch_t, pg_interval_t>
     }
   }
        

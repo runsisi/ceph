@@ -357,14 +357,16 @@ bool PG::proc_replica_info(
   reg_next_scrub();
   
   // stray?
-  if (!is_up(from) && !is_acting(from)) { // not in up set and acting set, we are stray
+  if (!is_up(from) && !is_acting(from)) { // the src is not in up set and acting set, it's a stray
     dout(10) << " osd." << from << " has stray content: " << oinfo << dendl;
 
     // stray set that may holding our pg's data
     stray_set.insert(from);
-    
+
+    // the MNotifyRec may come from a resurrected parent PG instance, refer to
+    // OSD::handle_pg_peering_evt
     if (is_clean()) {
-      purge_strays(); // we are clean, purge the stray set
+      purge_strays(); // we are clean, can purge the stray set safely
     }
   }
 
