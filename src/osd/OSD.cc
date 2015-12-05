@@ -6057,13 +6057,24 @@ void OSD::ms_fast_dispatch(Message *m)
         reqid.name._num, reqid.tid, reqid.inc);
   }
   
-  // register reservation in service.map_reservations
   // service.next_osdmap is first initialized in service.pre_publish_map 
   // in OSD::handle_osd_map (before consume_map), client will not know our
   // address until we appeared in the osdmap (old clients with our old
   // address will fail to connect to us until they get the new osdmap),
   // (osd can be transit to STATE_ACTIVE only after handled the 
   // first osdmap)
+  // inc a ref to this osdmap (i.e. OSDService::next_osdmap), in this function 
+  // we try to grab the OSDService::pre_publish_lock first, so if we are to 
+  // deprecate all previous osdmaps (e.g. pool may has been deleted in new map, 
+  // we don't want the new ops targeting the old PGs get handled), we grab the 
+  // same lock in OSDService::await_reserved_maps then wait all current ops get 
+  // dispatched and all previous reserved maps released, so the new ops are 
+  // prevented from dispatching, all fast dispatch threads (i.e. pipe writer 
+  // threads for SimpleMessenger) wait at here, after the deprecation finishes,
+  // the new ops will dispatched with the newest osdmap, then the op's target pg
+  // will be calculated by OSDMap::get_primary_shard if the pool has been deleted
+  // or acting set is empty in the new map, then the op will be discarded silently,
+  // i.e. no new ops will reference the deleted (or being deleted) PG instance
   OSDMapRef nextmap = service.get_nextmap_reserved(); // dispatch using OSDService::next_osdmap
 
   // get session connected with this connection
@@ -6092,7 +6103,7 @@ void OSD::ms_fast_dispatch(Message *m)
     session->put();
   }
 
-  // release reservation from service.map_reservations 
+  // dec a ref to this osdmap (i.e. OSDService::next_osdmap)
   service.release_map(nextmap);
 }
 
@@ -8983,7 +8994,7 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
     _pgid = osdmap->raw_pg_to_pg(_pgid);
 
   spg_t pgid;
-  if (!osdmap->get_primary_shard(_pgid, &pgid)) {
+  if (!osdmap->get_primary_shard(_pgid, &pgid)) { // pool has been deleted or acting set is empty
     // missing pool or acting set empty -- drop
     return;
   }
@@ -9022,7 +9033,7 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 
   // check against current map too
   if (!osdmap->have_pg_pool(pgid.pool()) ||
-      !osdmap->osd_is_valid_op_target(pgid.pgid, whoami)) {
+      !osdmap->osd_is_valid_op_target(pgid.pgid, whoami)) { // if we are replica, it is ok
     dout(7) << "dropping; no longer have PG (or pool); client will retarget"
 	    << dendl;
     return;

@@ -1365,9 +1365,10 @@ void ReplicatedPG::do_request(
   ThreadPool::TPHandle &handle)
 {
   assert(!op_must_wait_for_map(get_osdmap()->get_epoch(), op));
-  if (can_discard_request(op)) {
+  if (can_discard_request(op)) { // misdirected op, discard it silently
     return;
   }
+  
   if (flushes_in_progress > 0) {
     dout(20) << flushes_in_progress
 	     << " flushes_in_progress pending "

@@ -2688,6 +2688,8 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
 	  t->sort_bitwise,
 	  sort_bitwise,
 	  pg_t(prev_seed, pgid.pool(), pgid.preferred()))) {
+    // pg changed to a new interval or the first time send, we need to resend 
+    // (or try the first send)
     force_resend = true;
   }
 
@@ -2707,11 +2709,13 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
     need_resend = true;
   }
 
+  // to check if pgid -> target osd has changed
   if (t->pgid != pgid ||
-      // pgid -> target osd has changed
-      is_pg_changed( // check if the primary has changed, and if we need to check any changes then we also check if acting set has also been changed
-	t->acting_primary, t->acting, acting_primary, acting,
-	t->used_replica || any_change) || // only if we are re-calculating that t->used_replica may be true
+      // check if the primary has changed, and if we need to check any_change or
+      // our previous try was target to a replica then we also check if the acting 
+      // set has also been changed
+      // note: only if we are re-calculating that t->used_replica may be true
+      is_pg_changed(t->acting_primary, t->acting, acting_primary, acting, t->used_replica || any_change) ||
       force_resend) {
     t->pgid = pgid;
     t->acting = acting;
@@ -2725,7 +2729,11 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,  bool any
     t->sort_bitwise = sort_bitwise;
     ldout(cct, 10) << __func__ << " "
 		   << " pgid " << pgid << " acting " << acting << dendl;
-    t->used_replica = false; // only set to true in this interface, so if this field is true, we are definitely re-calculating
+
+    // only set to true in this interface, so if this field is true, we are 
+    // definitely re-calculating
+    t->used_replica = false;
+    
     if (acting_primary == -1) {
       // no acting primary osd to send
       t->osd = -1;
@@ -3169,7 +3177,7 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   Op *op = iter->second;
 
   if (m->get_retry_attempt() >= 0) {
-    if (m->get_retry_attempt() != (op->attempts - 1)) {
+    if (m->get_retry_attempt() != (op->attempts - 1)) { // a reply from previous try
       ldout(cct, 7) << " ignoring reply from attempt " << m->get_retry_attempt()
 		    << " from " << m->get_source_inst()
 		    << "; last attempt " << (op->attempts - 1) << " sent to "
@@ -4241,7 +4249,7 @@ bool Objecter::ms_handle_reset(Connection *con)
 	rwlock.put_write();
 	return false;
       }
-      map<int,OSDSession*>::iterator p = osd_sessions.find(osd);
+      map<int,OSDSession*>::iterator p = osd_sessions.find(osd); // find the session associated with the conn
       if (p != osd_sessions.end()) {
 	OSDSession *session = p->second;
         map<uint64_t, LingerOp *> lresend;

@@ -5213,19 +5213,20 @@ bool PG::can_discard_op(OpRequestRef& op)
 {
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
 
-  if (OSD::op_is_discardable(m)) {
+  if (OSD::op_is_discardable(m)) { // conn has been disconnected and this is not a replay op
     dout(20) << " discard " << *m << dendl;
     return true;
   }
 
-  if (m->get_map_epoch() < info.history.same_primary_since) {
+  // Objecter always resend their op whenever the primary changed
+  if (m->get_map_epoch() < info.history.same_primary_since) { // primary changed
     dout(7) << " changed after " << m->get_map_epoch()
 	    << ", dropping " << *m << dendl;
     return true;
   }
 
   if (m->get_map_epoch() < pool.info.last_force_op_resend &&
-      m->get_connection()->has_feature(CEPH_FEATURE_OSD_POOLRESEND)) {
+      m->get_connection()->has_feature(CEPH_FEATURE_OSD_POOLRESEND)) { // cache pool's setting changed
     dout(7) << __func__ << " sent before last_force_op_resend "
 	    << pool.info.last_force_op_resend << ", dropping" << *m << dendl;
     return true;
@@ -5234,9 +5235,11 @@ bool PG::can_discard_op(OpRequestRef& op)
   if ((m->get_flags() & (CEPH_OSD_FLAG_BALANCE_READS |
 			 CEPH_OSD_FLAG_LOCALIZE_READS)) &&
       op->may_read() &&
-      !(op->may_write() || op->may_cache())) {
+      !(op->may_write() || op->may_cache())) { // read op and client allows to read from replicas
     // balanced reads; any replica will do
     if (!(is_primary() || is_replica())) {
+      // reply with ENXIO, the client has the correct map, they must calc the
+      // right target
       osd->handle_misdirected_op(this, op);
       return true;
     }
@@ -5247,7 +5250,8 @@ bool PG::can_discard_op(OpRequestRef& op)
       return true;
     }
   }
-  if (is_replay()) {
+  
+  if (is_replay()) { // PG_STATE_REPLAY
     if (m->get_version().version > 0) {
       dout(7) << " queueing replay at " << m->get_version()
 	      << " for " << *m << dendl;
@@ -5315,7 +5319,7 @@ bool PG::can_discard_request(OpRequestRef& op)
 {
   switch (op->get_req()->get_type()) {
   case CEPH_MSG_OSD_OP:
-    return can_discard_op(op);
+    return can_discard_op(op); // misdirected op
   case MSG_OSD_SUBOP:
     return can_discard_replica_op<MOSDSubOp, MSG_OSD_SUBOP>(op);
   case MSG_OSD_REPOP:
