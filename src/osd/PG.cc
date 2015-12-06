@@ -2274,6 +2274,8 @@ void PG::split_ops(PG *child, unsigned split_bits) {
   split_replay_queue(&replay_queue, &(child->replay_queue), match, split_bits);
 
   snap_trim_queued = false;
+  // dequeue pg from OSD::op_shardedwq and get a list of OpRequestRef that are
+  // pending for handling (push back of PG::waiting_for_peered)
   osd->dequeue_pg(this, &waiting_for_peered);
 
   OSD::split_list(
@@ -4771,8 +4773,14 @@ void PG::start_flush(ObjectStore::Transaction *t,
   // flush in progress ops
   FlushStateRef flush_trigger(
     new FlushState(this, get_osdmap()->get_epoch()));
-  t->nop();
+  
+  t->nop(); // in case no pending/previous txn
+
+  // block ReplicatedPG::do_request, will be unblocked the ReplicatedPG::on_flushed
+  // which triggered by the callback flush_trigger
   flushes_in_progress++;
+
+  // will trigger when both on_applied and on_safe destroyed
   on_applied->push_back(new ContainerContext<FlushStateRef>(flush_trigger));
   on_safe->push_back(new ContainerContext<FlushStateRef>(flush_trigger));
 }
@@ -7215,10 +7223,10 @@ void PG::RecoveryState::GetInfo::get_infos()
     } else { // prepare to query
       dout(10) << " querying info from osd." << peer << dendl;
       context< RecoveryMachine >().send_query(
-	peer, pg_query_t(pg_query_t::INFO, // type
+	peer, pg_query_t(pg_query_t::INFO, // request pg info
 			 it->shard, // to
 			 pg->pg_whoami.shard, // from
-			 pg->info.history,
+			 pg->info.history, // our history
 			 pg->get_osdmap()->get_epoch())); // epoch_sent
 			 
       // mark we have prepared the query for this peer
@@ -7241,6 +7249,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
   }
 
   epoch_t old_start = pg->info.history.last_epoch_started;
+  // check if we can get something new from peers or prior set
   if (pg->proc_replica_info(
 	infoevt.from, infoevt.notify.info, infoevt.notify.epoch_sent)) { // got a new peer or old peer's new info
     // we got something new ...
@@ -7412,10 +7421,11 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
     return;
   }
 
-  // want_acting set is the same as current acting set
+  // want_acting set is the same as current acting set, no need to wait mon
+  // to change the acting set
 
   // am i the best?
-  if (auth_log_shard == pg->pg_whoami) { // i am the authority
+  if (auth_log_shard == pg->pg_whoami) { // i has the authority log, no need to request from others
     post_event(GotLog()); // we will transit into GetMissing
     return;
   }
@@ -7449,7 +7459,7 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
   context<RecoveryMachine>().send_query(
     auth_log_shard,
     pg_query_t(
-      pg_query_t::LOG,
+      pg_query_t::LOG, // request pg log instead of pg info
       auth_log_shard.shard, pg->pg_whoami.shard,
       request_log_from, pg->info.history,
       pg->get_osdmap()->get_epoch()));
@@ -7464,7 +7474,7 @@ boost::statechart::result PG::RecoveryState::GetLog::react(const AdvMap& advmap)
   // make sure our log source didn't go down.  we need to check
   // explicitly because it may not be part of the prior set, which
   // means the Peering state check won't catch it going down.
-  if (!advmap.osdmap->is_up(auth_log_shard.osd)) {
+  if (!advmap.osdmap->is_up(auth_log_shard.osd)) { // TODO: why we need to check explictily ???
     dout(10) << "GetLog: auth_log_shard osd."
 	     << auth_log_shard.osd << " went down" << dendl;
     post_event(advmap);
@@ -7477,7 +7487,8 @@ boost::statechart::result PG::RecoveryState::GetLog::react(const AdvMap& advmap)
 
 boost::statechart::result PG::RecoveryState::GetLog::react(const MLogRec& logevt)
 {
-  assert(!msg);
+  assert(!msg); // boost::intrusive_ptr<MOSDPGLog>, a member variable of GetLog
+  
   if (logevt.from != auth_log_shard) {
     dout(10) << "GetLog: discarding log from "
 	     << "non-auth_log_shard osd." << logevt.from << dendl;
@@ -7485,7 +7496,9 @@ boost::statechart::result PG::RecoveryState::GetLog::react(const MLogRec& logevt
   }
   dout(10) << "GetLog: received master log from osd"
 	   << logevt.from << dendl;
-  msg = logevt.msg;
+  
+  msg = logevt.msg; // got authority pg log
+  
   post_event(GotLog());
   return discard_event();
 }
@@ -7494,14 +7507,21 @@ boost::statechart::result PG::RecoveryState::GetLog::react(const GotLog&)
 {
   dout(10) << "leaving GetLog" << dendl;
   PG *pg = context< RecoveryMachine >().pg;
+
+  // if us, i.e. primary, has the authority pg log, RecoveryState::GetLog::GetLog 
+  // will post a GotLog evt without having a MLogRec evt
   if (msg) {
     dout(10) << "processing master log" << dendl;
+
+    // ok, we handle the authority log
     pg->proc_master_log(*context<RecoveryMachine>().get_cur_transaction(),
 			msg->info, msg->log, msg->missing, 
 			auth_log_shard);
   }
+
+  // flush current pending and all previous txn(s)
   pg->start_flush(
-    context< RecoveryMachine >().get_cur_transaction(),
+    context< RecoveryMachine >().get_cur_transaction(), // RecoveryState::rctx->transaction
     context< RecoveryMachine >().get_on_applied_context_list(),
     context< RecoveryMachine >().get_on_safe_context_list());
   return transit< GetMissing >();

@@ -1590,6 +1590,7 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
   osd_compat(get_osd_compat_set()),
   state(STATE_INITIALIZING),
   osd_tp(cct, "OSD::osd_tp", cct->_conf->osd_op_threads, "osd_op_threads"), // default is 2
+  // total 2 * 5 = 10 threads
   osd_op_tp(cct, "OSD::osd_op_tp", 
     cct->_conf->osd_op_num_threads_per_shard /* default is 2 */ * cct->_conf->osd_op_num_shards), // default is 5
   recovery_tp(cct, "OSD::recovery_tp", cct->_conf->osd_recovery_threads, "osd_recovery_threads"), // default is 1
@@ -9145,19 +9146,28 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
   pair<PGRef, PGQueueable> item = sdata->pqueue.dequeue();
   sdata->pg_for_processing[&*(item.first)].push_back(item.second);
   sdata->sdata_op_ordering_lock.Unlock();
+  
   ThreadPool::TPHandle tp_handle(osd->cct, hb, timeout_interval, 
     suicide_interval);
 
+  // lock PG, thus no other worker thread will contend with us, i.e. a PG 
+  // can only be handled by one worker thread, so the client's rd/wr seq is
+  // kept
   (item.first)->lock_suspend_timeout(tp_handle);
 
   boost::optional<PGQueueable> op;
   {
     Mutex::Locker l(sdata->sdata_op_ordering_lock);
+    // during the PG locking phase the PG may has been dequeued, refer to 
+    // OSDService::dequeue_pg
     if (!sdata->pg_for_processing.count(&*(item.first))) {
       (item.first)->unlock();
       return;
     }
+    
     assert(sdata->pg_for_processing[&*(item.first)].size());
+    
+    // we handle one op at a time
     op = sdata->pg_for_processing[&*(item.first)].front();
     sdata->pg_for_processing[&*(item.first)].pop_front();
     if (!(sdata->pg_for_processing[&*(item.first)].size()))
@@ -9186,6 +9196,8 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
   delete f;
   *_dout << dendl;
 
+  // osd->dequeue_op / pg->snap_trimmer / pg->scrub depends on the type of
+  // PGQueueable
   op->run(osd, item.first, tp_handle);
 
   {
@@ -9199,6 +9211,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
         reqid.name._num, reqid.tid, reqid.inc);
   }
 
+  // unlock PG
   (item.first)->unlock();
 }
 

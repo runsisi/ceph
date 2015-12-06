@@ -1637,7 +1637,7 @@ private:
     ShardedOpWQ(uint32_t pnum_shards, OSD *o, time_t ti, time_t si, ShardedThreadPool* tp):
       ShardedThreadPool::ShardedWQ < pair <PGRef, PGQueueable> >(ti, si, tp),
       osd(o), num_shards(pnum_shards) {
-      for(uint32_t i = 0; i < num_shards; i++) {
+      for(uint32_t i = 0; i < num_shards; i++) { // default is 5 shards
 	char lock_name[32] = {0};
 	snprintf(lock_name, sizeof(lock_name), "%s.%d", "OSD:ShardedOpWQ:", i);
 	char order_lock[32] = {0};
@@ -1716,13 +1716,16 @@ private:
       assert(dequeued);
       list<pair<PGRef, PGQueueable> > _dequeued;
       sdata->sdata_op_ordering_lock.Lock();
+      
+      // get all queued pair<PGRef, PGQueueable> items
       sdata->pqueue.remove_by_filter(Pred(pg), &_dequeued);
       for (list<pair<PGRef, PGQueueable> >::iterator i = _dequeued.begin();
 	   i != _dequeued.end(); ++i) {
 	boost::optional<OpRequestRef> mop = i->second.maybe_get_op();
-	if (mop)
+	if (mop) // the queued item is an OpRequestRef
 	  dequeued->push_back(*mop);
       }
+           
       map<PG *, list<PGQueueable> >::iterator iter =
 	sdata->pg_for_processing.find(pg);
       if (iter != sdata->pg_for_processing.end()) {

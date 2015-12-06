@@ -9585,10 +9585,14 @@ void ReplicatedPG::apply_and_flush_repops(bool requeue)
 void ReplicatedPG::on_flushed()
 {
   assert(flushes_in_progress > 0);
-  flushes_in_progress--;
+  flushes_in_progress--; // PG::start_flush increases it
+  
   if (flushes_in_progress == 0) {
+    // when we are waiting for flush to finish, the client ops are queued on 
+    // PG::waiting_for_peered, refer to ReplicatedPG::do_request
     requeue_ops(waiting_for_peered);
   }
+  
   if (!is_peered() || !is_primary()) {
     pair<hobject_t, ObjectContextRef> i;
     while (object_contexts.get_next(i.first, &i)) {
@@ -9596,7 +9600,8 @@ void ReplicatedPG::on_flushed()
     }
     assert(object_contexts.empty());
   }
-  pgbackend->on_flushed();
+  
+  pgbackend->on_flushed(); // do nothing for both EC and Replicated pg
 }
 
 
