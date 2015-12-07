@@ -222,6 +222,8 @@ void PGLog::proc_replica_log(
 	     << "for divergent objects" << dendl;
     return;
   }
+
+  // no missing map and pg info to update for this peer
   if (olog.head == log.head) {
     dout(10) << __func__ << ": osd." << from << " same log head, not looking "
 	     << "for divergent objects" << dendl;
@@ -246,12 +248,12 @@ void PGLog::proc_replica_log(
 	     << " have " << i->second.have << dendl;
   }
 
-  list<pg_log_entry_t>::const_reverse_iterator first_non_divergent =
-    log.log.rbegin();
-  while (1) {
+  list<pg_log_entry_t>::const_reverse_iterator first_non_divergent = log.log.rbegin();
+  while (1) { // iterate our pg log entries in reverse order
     if (first_non_divergent == log.log.rend())
       break;
-    if (first_non_divergent->version <= olog.head) {
+    
+    if (first_non_divergent->version <= olog.head) { // reached peer's head 
       dout(20) << "merge_log point (usually last shared) is "
 	       << *first_non_divergent << dendl;
       break;
@@ -267,16 +269,14 @@ void PGLog::proc_replica_log(
    * the last_update must actually be log.tail.
    */
   eversion_t lu =
-    (first_non_divergent == log.log.rend() ||
-     first_non_divergent->version < log.tail) ?
-    log.tail :
-    first_non_divergent->version;
+    (first_non_divergent == log.log.rend() || first_non_divergent->version < log.tail) ?
+        log.tail : first_non_divergent->version; // TODO: ???
 
   list<pg_log_entry_t> divergent;
   list<pg_log_entry_t>::const_iterator pp = olog.log.end();
-  while (true) {
+  while (true) { // iterate peer's log in reverse order
     if (pp == olog.log.begin())
-      break;
+      break; // finished iterating
 
     --pp;
     const pg_log_entry_t& oe = *pp;
@@ -287,21 +287,22 @@ void PGLog::proc_replica_log(
       break;
     }
 
-    if (oe.version <= lu) {
+    if (oe.version <= lu) { // ok, back to both we logged
       ++pp;
       break;
     }
 
-    divergent.push_front(oe);
+    divergent.push_front(oe); // we have, they do not have
   }
 
-
   IndexedLog folog;
-  folog.log.insert(folog.log.begin(), olog.log.begin(), pp);
+  folog.log.insert(folog.log.begin(), olog.log.begin(), pp); // filled with they have
   folog.index();
+
+  // merge divergent log entries to update peer's missing map
   _merge_divergent_entries(
-    folog,
-    divergent,
+    folog, // log entries the peer will have
+    divergent, // divergent log entries we have but the peer does not have
     oinfo,
     olog.can_rollback_to,
     omissing,
@@ -313,15 +314,15 @@ void PGLog::proc_replica_log(
     oinfo.last_update = lu;
   }
 
-  if (omissing.have_missing()) {
+  if (omissing.have_missing()) { // pg_missing_t::missing is not empty
     eversion_t first_missing =
       omissing.missing[omissing.rmissing.begin()->second].need;
     oinfo.last_complete = eversion_t();
     list<pg_log_entry_t>::const_iterator i = olog.log.begin();
     for (;
 	 i != olog.log.end();
-	 ++i) {
-      if (i->version < first_missing)
+	 ++i) { // iterate each log entry the peer has
+      if (i->version < first_missing) // TODO: ???
 	oinfo.last_complete = i->version;
       else
 	break;
@@ -371,12 +372,12 @@ void PGLog::_merge_object_divergent_entries(
     return;
   }
 
-  // entries is non-empty
+  // divergent log entries is non-empty
   assert(!entries.empty());
   eversion_t last;
   for (list<pg_log_entry_t>::const_iterator i = entries.begin();
        i != entries.end();
-       ++i) { // iterate each log entry of this object
+       ++i) { // iterate each divergent log entry of this object
     // all entries are on hoid
     assert(i->soid == hoid);
     if (i != entries.begin() && i->prior_version != eversion_t()) {
@@ -402,7 +403,7 @@ void PGLog::_merge_object_divergent_entries(
 	   << " last_divergent_update: " << last_divergent_update
 	   << dendl;
 
-  // find the object's latest log entry
+  // find the object's latest log entry in non-divergent log entries
   ceph::unordered_map<hobject_t, pg_log_entry_t*>::const_iterator objiter = log.objects.find(hoid);
   
   if (objiter != log.objects.end() &&
@@ -413,7 +414,8 @@ void PGLog::_merge_object_divergent_entries(
     dout(10) << __func__ << ": more recent entry found: "
 	     << *objiter->second << ", already merged" << dendl;
 
-    // ensure missing has been updated appropriately
+    // ensure missing has been updated appropriately, PGLog::merge_log has
+    // updated the missing for us
     if (objiter->second->is_update()) {
       assert(missing.is_missing(hoid) &&
 	     missing.missing[hoid].need == objiter->second->version);
@@ -514,7 +516,7 @@ void PGLog::_merge_object_divergent_entries(
     if (rollbacker && !object_not_in_store)
       rollbacker->remove(hoid);
     
-    missing.add(hoid, prior_version, eversion_t());
+    missing.add(hoid, prior_version, eversion_t()); // add a missing entry
     
     if (prior_version <= info.log_tail) {
       dout(10) << __func__ << ": hoid " << hoid
@@ -564,7 +566,7 @@ void PGLog::rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead
     dout(10) << "rewind_divergent_log future divergent " << *p << dendl;
   }
 
-  log.head = newhead;
+  log.head = newhead; // truncate our log on head
   info.last_update = newhead;
   if (info.last_complete > newhead)
     info.last_complete = newhead;
@@ -572,10 +574,10 @@ void PGLog::rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead
   log.index(); // reindex pg log
 
   map<eversion_t, hobject_t> new_priors;
-  // merge divergent pg log entries
+  // merge divergent pg log entries to update our missing map
   _merge_divergent_entries(
-    log,
-    divergent, // divergent log entries differ from the authority
+    log, // trunctated log entries
+    divergent, // divergent log entries we have but the authority does not have
     info,
     log.can_rollback_to,
     missing,
@@ -597,6 +599,8 @@ void PGLog::rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead
   dirty_big_info = true;
 }
 
+// 1) extend on tail, 
+// 2) truncate on head/extend on head
 void PGLog::merge_log(ObjectStore::Transaction& t,
                       pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
                       pg_info_t &info, LogEntryHandler *rollbacker,
@@ -646,7 +650,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     log.log.splice(log.log.begin(),
 		   olog.log, from, to);
       
-    info.log_tail = log.tail = olog.tail;
+    info.log_tail = log.tail = olog.tail; // extend out log on the tail
     changed = true;
   }
 
@@ -655,13 +659,14 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     oinfo.stats.reported_seq = info.stats.reported_seq;
     oinfo.stats.reported_epoch = info.stats.reported_epoch;
   }
+  
   if (info.last_backfill.is_max())
     info.stats = oinfo.stats;
   info.hit_set = oinfo.hit_set;
 
   // do we have divergent entries to throw out?
   if (olog.head < log.head) { // our log are ahead of authority log
-    // throw out the divergent pg log entries
+    // throw out the divergent pg log entries (we have, peer does not)
     rewind_divergent_log(t, olog.head, info, rollbacker, dirty_info, dirty_big_info);
     changed = true;
   }
@@ -674,13 +679,13 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     list<pg_log_entry_t>::iterator to = olog.log.end();
     list<pg_log_entry_t>::iterator from = olog.log.end();
     eversion_t lower_bound = olog.tail;
-    while (1) { // iterate each log entry in reverse order to find our start point
+    while (1) { // iterate each log entry in reverse order back to our head
       if (from == olog.log.begin())
 	break;
       --from;
       dout(20) << "  ? " << *from << dendl;
       
-      if (from->version <= log.head) { // ok, found our start point in the authority log
+      if (from->version <= log.head) { // ok, reached my head
 	dout(20) << "merge_log cut point (usually last shared) is " << *from << dendl;
 	lower_bound = from->version;
 	++from;
@@ -690,17 +695,22 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     mark_dirty_from(lower_bound);
 
     // index, update missing, delete deleted
-    for (list<pg_log_entry_t>::iterator p = from; p != to; ++p) { // iterate each log entry
+    for (list<pg_log_entry_t>::iterator p = from; p != to; ++p) {
+      // iterate each log entry diverges from the authority log
       pg_log_entry_t &ne = *p;
       dout(20) << "merge_log " << ne << dendl;
       
-      log.index(ne);
+      log.index(ne); // index the new log entry
+      
       if (cmp(ne.soid, info.last_backfill, info.last_backfill_bitwise) <= 0) {
-	missing.add_next_event(ne);
-	if (ne.is_delete())
+	missing.add_next_event(ne); // update our pg_missing_t::missing for this object
+	
+	if (ne.is_delete()) // delete deleted
 	  rollbacker->remove(ne.soid);
       }
     }
+
+    // ok, now we prepare to merge the divergent pg log entries (peer has, we do not)
       
     // move aside divergent items
     list<pg_log_entry_t> divergent;
@@ -723,19 +733,19 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
 
     // splice
     log.log.splice(log.log.end(), 
-		   olog.log, from, to); // concat our log and authority log
+		   olog.log, from, to); // merge authority log with us
     log.index(); // reindex 
 
-    info.last_update = log.head = olog.head;
+    info.last_update = log.head = olog.head; // extend our log on head
 
     info.last_user_version = oinfo.last_user_version;
     info.purged_snaps = oinfo.purged_snaps;
 
     map<eversion_t, hobject_t> new_priors;
-    // rewind_divergent_log called above also calls the _merge_divergent_entries
+    // merge divergent log entries to update our missing map
     _merge_divergent_entries(
-      log,
-      divergent, // divergent log entries differ from the authority
+      log, // extended log entries
+      divergent, // divergent log entries we do not have but the authority does have
       info,
       log.can_rollback_to,
       missing,

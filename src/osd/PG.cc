@@ -302,7 +302,9 @@ void PG::proc_master_log(
 
   peer_missing[from].swap(omissing);
 }
-    
+
+// only called by RecoveryState::Active::react(MLogRec) or 
+// RecoveryState::GetMissing::react(MLogRec)
 void PG::proc_replica_log(
   ObjectStore::Transaction& t,
   pg_info_t &oinfo, pg_log_t &olog, pg_missing_t& omissing,

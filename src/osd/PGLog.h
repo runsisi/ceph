@@ -602,8 +602,8 @@ protected:
     LogEntryHandler *rollbacker          ///< [in] optional rollbacker object
     ) {
     map<hobject_t, list<pg_log_entry_t>, hobject_t::BitwiseComparator > split;
-    // construct a map of log entries classified by the object from the original 
-    // divergent log entries
+    // construct a map of divergent log entries classified by the object from 
+    // the original divergent log entries
     split_by_object(entries, &split);
     
     for (map<hobject_t, list<pg_log_entry_t>, hobject_t::BitwiseComparator>::iterator i = split.begin();

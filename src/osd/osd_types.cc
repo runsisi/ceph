@@ -3655,7 +3655,7 @@ void pg_missing_t::add_next_event(const pg_log_entry_t& e)
     bool is_missing_divergent_item = missing_it != missing.end();
     if (e.prior_version == eversion_t() || e.is_clone()) {
       // new object.
-      if (is_missing_divergent_item) {  // use iterator
+      if (is_missing_divergent_item) {  // use iterator, already in missing map
         rmissing.erase((missing_it->second).need.version);
         missing_it->second = item(e.version, eversion_t());  // .have = nil
       } else  // create new element in missing map
@@ -3664,13 +3664,13 @@ void pg_missing_t::add_next_event(const pg_log_entry_t& e)
       // already missing (prior).
       rmissing.erase((missing_it->second).need.version);
       (missing_it->second).need = e.version;  // leave .have unchanged.
-    } else if (e.is_backlog()) {
+    } else if (e.is_backlog()) { // deprecated
       // May not have prior version
       assert(0 == "these don't exist anymore");
     } else {
       // not missing, we must have prior_version (if any)
       assert(!is_missing_divergent_item);
-      missing[e.soid] = item(e.version, e.prior_version);
+      missing[e.soid] = item(e.version, e.prior_version); // (need, have)
     }
     rmissing[e.version.version] = e.soid;
   } else
