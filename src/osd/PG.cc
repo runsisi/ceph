@@ -286,7 +286,8 @@ void PG::proc_master_log(
   // make any adjustments to their missing map; we are taking their
   // log to be authoritative (i.e., their entries are by definitely
   // non-divergent).
-  merge_log(t, oinfo, olog, from);
+  merge_log(t, oinfo, olog, from); // merge authority pg log with ours
+  
   peer_info[from] = oinfo;
   dout(10) << " peer osd." << from << " now " << oinfo << " " << omissing << dendl;
   might_have_unfound.insert(from);
@@ -294,6 +295,8 @@ void PG::proc_master_log(
   // See doc/dev/osd_internals/last_epoch_started
   if (oinfo.last_epoch_started > info.last_epoch_started)
     info.last_epoch_started = oinfo.last_epoch_started;
+
+  // merge pg info with the info the authority pg has
   info.history.merge(oinfo.history);
   assert(info.last_epoch_started >= info.history.last_epoch_started);
 
@@ -423,8 +426,10 @@ void PG::merge_log(
   ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog, pg_shard_t from)
 {
   PGLogEntryHandler rollbacker;
-  pg_log.merge_log(
-    t, oinfo, olog, from, info, &rollbacker, dirty_info, dirty_big_info);
+  
+  // merge authority log with ours
+  pg_log.merge_log(t, oinfo, olog, from, info, &rollbacker, dirty_info, dirty_big_info);
+  
   rollbacker.apply(this, &t);
 }
 
@@ -6792,7 +6797,9 @@ boost::statechart::result PG::RecoveryState::Active::react(const MNotifyRec& not
 	     << dendl;
     pg->proc_replica_info(
       notevt.from, notevt.notify.info, notevt.notify.epoch_sent);
+    
     if (pg->have_unfound()) {
+      // 
       pg->discover_all_missing(*context< RecoveryMachine >().get_query_map());
     }
   }
@@ -7191,7 +7198,7 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
   if (peer_info_requested.empty() && !prior_set->pg_down) {
     // newly created PG instance with pool size set to 1 or we got all queries 
     // replied (refer to RecoveryState::GetInfo::react(MNotifyRec))
-    post_event(GotInfo());
+    post_event(GotInfo()); // silently transit into state GetLog
   }
 }
 
@@ -7359,6 +7366,8 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
       dout(20) << "Common peer features: " << hex << pg->get_min_peer_features() << dec << dendl;
       dout(20) << "Common acting features: " << hex << pg->get_min_acting_features() << dec << dendl;
       dout(20) << "Common upacting features: " << hex << pg->get_min_upacting_features() << dec << dendl;
+
+      // silently transit into state GetLog
       post_event(GotInfo());
     }
   }
@@ -7412,10 +7421,11 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
   PG *pg = context< RecoveryMachine >().pg;
 
   // adjust acting?
-  if (!pg->choose_acting(auth_log_shard)) { // we need to adjust the acting set or the want_acting set is not recoverable
+  if (!pg->choose_acting(auth_log_shard)) {
+    // we need to adjust the acting set or the want_acting set is not recoverable
     if (!pg->want_acting.empty()) { // we want to change acting set, so wait new map
       post_event(NeedActingChange()); // transit into state WaitActingChange
-    } else {
+    } else { // the want_acting set is not recoverable
       post_event(IsIncomplete()); // transit into state Incomplete
     }
     return;
@@ -7438,7 +7448,7 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
   // am i broken?
   if (pg->info.last_update < best.log_tail) {
     dout(10) << " not contiguous with osd." << auth_log_shard << ", down" << dendl;
-    post_event(IsIncomplete());
+    post_event(IsIncomplete()); // transit into state InComplete
     return;
   }
 
@@ -7454,7 +7464,7 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
       request_log_from = ri.last_update; // the min info.last_update
   }
 
-  // prepare request pg log
+  // prepare to request authority pg log
   dout(10) << " requesting log from osd." << auth_log_shard << dendl;
   context<RecoveryMachine>().send_query(
     auth_log_shard,
@@ -7513,17 +7523,20 @@ boost::statechart::result PG::RecoveryState::GetLog::react(const GotLog&)
   if (msg) {
     dout(10) << "processing master log" << dendl;
 
-    // ok, we handle the authority log
+    // ok, we are to handle the authority log
     pg->proc_master_log(*context<RecoveryMachine>().get_cur_transaction(),
-			msg->info, msg->log, msg->missing, 
+			msg->info, msg->log, 
+			msg->missing, // used read only
 			auth_log_shard);
   }
 
-  // flush current pending and all previous txn(s)
+  // flush current pending and all previous txn(s) to prevent OSD::osd_op_tp from
+  // handling client I/O
   pg->start_flush(
     context< RecoveryMachine >().get_cur_transaction(), // RecoveryState::rctx->transaction
     context< RecoveryMachine >().get_on_applied_context_list(),
     context< RecoveryMachine >().get_on_safe_context_list());
+  
   return transit< GetMissing >();
 }
 
@@ -7649,7 +7662,10 @@ boost::statechart::result PG::RecoveryState::Incomplete::react(const MNotifyRec&
   } else {
     pg->proc_replica_info(
       notevt.from, notevt.notify.info, notevt.notify.epoch_sent);
+    
     // try again!
+    // we can only transit into state Incomplete from RecoveryState::GetLog::GetLog,
+    // now we transit back to state GetLog to choose_acting again
     return transit< GetLog >();
   }
 }
@@ -7675,14 +7691,17 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
 
   PG *pg = context< RecoveryMachine >().pg;
   assert(!pg->actingbackfill.empty());
+
+  // PG::choose_acting will set the PG::actingbackfill
   for (set<pg_shard_t>::iterator i = pg->actingbackfill.begin();
        i != pg->actingbackfill.end();
-       ++i) {
+       ++i) { // iterate each actingbackfill
     if (*i == pg->get_primary()) continue;
+    
     const pg_info_t& pi = pg->peer_info[*i];
 
-    if (pi.is_empty())
-      continue;                                // no pg data, nothing divergent
+    if (pi.is_empty()) // OSD::handle_pg_query may reply us with empty pg info
+      continue; // no pg data, nothing divergent
 
     if (pi.last_update < pg->pg_log.get_tail()) {
       dout(10) << " osd." << *i << " is not contiguous, will restart backfill" << dendl;
@@ -7724,7 +7743,8 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
 	       << " (want since " << since << " < log.tail " << pi.log_tail << ")"
 	       << dendl;
       context< RecoveryMachine >().send_query(
-	*i, pg_query_t(
+	*i, 
+	pg_query_t(
 	  pg_query_t::FULLLOG,
 	  i->shard, pg->pg_whoami.shard,
 	  pg->info.history, pg->get_osdmap()->get_epoch()));
@@ -7736,12 +7756,12 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
   if (peer_missing_requested.empty()) {
     if (pg->need_up_thru) {
       dout(10) << " still need up_thru update before going active" << dendl;
-      post_event(NeedUpThru());
+      post_event(NeedUpThru()); // transit into state WaitUpThru
       return;
     }
 
     // all good!
-    post_event(Activate(pg->get_osdmap()->get_epoch()));
+    post_event(Activate(pg->get_osdmap()->get_epoch())); // transit into state Active
   } else {
     pg->publish_stats_to_osd();
   }
@@ -7751,7 +7771,9 @@ boost::statechart::result PG::RecoveryState::GetMissing::react(const MLogRec& lo
 {
   PG *pg = context< RecoveryMachine >().pg;
 
-  peer_missing_requested.erase(logevt.from);
+  peer_missing_requested.erase(logevt.from); // got a MLogRec from peer
+
+  // 
   pg->proc_replica_log(*context<RecoveryMachine>().get_cur_transaction(),
 		       logevt.msg->info, logevt.msg->log, logevt.msg->missing, logevt.from);
   

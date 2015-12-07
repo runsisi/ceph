@@ -192,10 +192,12 @@ struct PGLog {
            i != log.end();
            ++i) { // iterate each log entry
         objects[i->soid] = &(*i);
+        
 	if (i->reqid_is_indexed()) { // reqid != osd_reqid_t() && (op == MODIFY || op == DELETE)
 	  //assert(caller_ops.count(i->reqid) == 0);  // divergent merge_log indexes new before unindexing old
 	  caller_ops[i->reqid] = &(*i);
 	}
+        
 	for (vector<pair<osd_reqid_t, version_t> >::const_iterator j =
 	       i->extra_reqids.begin();
 	     j != i->extra_reqids.end();
@@ -218,16 +220,19 @@ struct PGLog {
 
     void index(pg_log_entry_t& e) { // add the specified log entry to the index
       if (objects.count(e.soid) == 0 || 
-          objects[e.soid]->version < e.version)
+          objects[e.soid]->version < e.version) // always replace with the newer version
         objects[e.soid] = &e;
-      if (e.reqid_is_indexed()) {
+      
+      if (e.reqid_is_indexed()) { // reqid != osd_reqid_t() && (op == MODIFY || op == DELETE)
 	//assert(caller_ops.count(i->reqid) == 0);  // divergent merge_log indexes new before unindexing old
 	caller_ops[e.reqid] = &e;
       }
+      
       for (vector<pair<osd_reqid_t, version_t> >::const_iterator j =
 	     e.extra_reqids.begin();
 	   j != e.extra_reqids.end();
 	   ++j) {
+        // this is an unordered_multimap
 	extra_caller_ops.insert(make_pair(j->first, &e));
       }
     }
@@ -562,7 +567,7 @@ protected:
   static void split_by_object(
     list<pg_log_entry_t> &entries,
     map<hobject_t, list<pg_log_entry_t>, hobject_t::BitwiseComparator> *out_entries) {
-    while (!entries.empty()) {
+    while (!entries.empty()) { // construct the map from the log entries
       list<pg_log_entry_t> &out_list = (*out_entries)[entries.front().soid];
       out_list.splice(out_list.end(), entries, entries.begin());
     }
@@ -587,29 +592,37 @@ protected:
   /// Merge all entries using above
   static void _merge_divergent_entries(
     const IndexedLog &log,               ///< [in] log to merge against
-    list<pg_log_entry_t> &entries,       ///< [in] entries to merge
+    list<pg_log_entry_t> &entries,       ///< [in] divergent entries to merge
     const pg_info_t &oinfo,              ///< [in] info for merging entries
     eversion_t olog_can_rollback_to,     ///< [in] rollback boundary
+    // the "omissing" is our own's PGLog::missing if we are called in PG::proc_master_log,
+    // is peer's PGLog::missings if we are called in PG::proc_replica_log
     pg_missing_t &omissing,              ///< [in,out] missing to adjust, use
     map<eversion_t, hobject_t> *priors,  ///< [out] target for new priors
     LogEntryHandler *rollbacker          ///< [in] optional rollbacker object
     ) {
     map<hobject_t, list<pg_log_entry_t>, hobject_t::BitwiseComparator > split;
+    // construct a map of log entries classified by the object from the original 
+    // divergent log entries
     split_by_object(entries, &split);
+    
     for (map<hobject_t, list<pg_log_entry_t>, hobject_t::BitwiseComparator>::iterator i = split.begin();
 	 i != split.end();
-	 ++i) {
+	 ++i) { // iterate each object's divergent log entries
       boost::optional<pair<eversion_t, hobject_t> > new_divergent_prior;
+      
+      // merge divergent pg log entries for an object
       _merge_object_divergent_entries(
-	log,
-	i->first,
-	i->second,
-	oinfo,
-	olog_can_rollback_to,
-	omissing,
-	&new_divergent_prior,
+	log, // const IndexedLog
+	i->first, // const hobject_t
+	i->second, // const list<pg_log_entry_t>
+	oinfo, // const pg_info_t
+	olog_can_rollback_to, // eversion_t, passed by value
+	omissing, // pg_missing_t
+	&new_divergent_prior, // boost::optional<pair<eversion_t, hobject_t> >
 	rollbacker);
-      if (priors && new_divergent_prior) {
+      
+      if (priors && new_divergent_prior) { // set output parameters
 	(*priors)[new_divergent_prior->first] = new_divergent_prior->second;
       }
     }

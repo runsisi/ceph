@@ -376,7 +376,7 @@ void PGLog::_merge_object_divergent_entries(
   eversion_t last;
   for (list<pg_log_entry_t>::const_iterator i = entries.begin();
        i != entries.end();
-       ++i) {
+       ++i) { // iterate each log entry of this object
     // all entries are on hoid
     assert(i->soid == hoid);
     if (i != entries.begin() && i->prior_version != eversion_t()) {
@@ -386,25 +386,25 @@ void PGLog::_merge_object_divergent_entries(
       assert(i->prior_version == last);
     }
     last = i->version;
-
+    
     if (rollbacker)
-      rollbacker->trim(*i);
+      rollbacker->trim(*i); // trim this log entry
   }
 
   const eversion_t prior_version = entries.begin()->prior_version;
   const eversion_t first_divergent_update = entries.begin()->version;
   const eversion_t last_divergent_update = entries.rbegin()->version;
-  const bool object_not_in_store =
-    !missing.is_missing(hoid) &&
-    entries.rbegin()->is_delete();
+  const bool object_not_in_store = !missing.is_missing(hoid) 
+        && entries.rbegin()->is_delete(); // op == DELETE || op == LOST_DELETE
   dout(10) << __func__ << ": hoid " << hoid
 	   << " prior_version: " << prior_version
 	   << " first_divergent_update: " << first_divergent_update
 	   << " last_divergent_update: " << last_divergent_update
 	   << dendl;
 
-  ceph::unordered_map<hobject_t, pg_log_entry_t*>::const_iterator objiter =
-    log.objects.find(hoid);
+  // find the object's latest log entry
+  ceph::unordered_map<hobject_t, pg_log_entry_t*>::const_iterator objiter = log.objects.find(hoid);
+  
   if (objiter != log.objects.end() &&
       objiter->second->version >= first_divergent_update) {
     /// Case 1)
@@ -420,7 +420,9 @@ void PGLog::_merge_object_divergent_entries(
     } else {
       assert(!missing.is_missing(hoid));
     }
+    
     missing.revise_have(hoid, eversion_t());
+    
     if (rollbacker && !object_not_in_store)
       rollbacker->remove(hoid);
     return;
@@ -433,8 +435,10 @@ void PGLog::_merge_object_divergent_entries(
     dout(10) << __func__ << ": hoid " << hoid
 	     << " prior_version or op type indicates creation, deleting"
 	     << dendl;
+    
     if (missing.is_missing(hoid))
       missing.rm(missing.missing.find(hoid));
+    
     if (rollbacker && !object_not_in_store)
       rollbacker->remove(hoid);
     return;
@@ -450,16 +454,20 @@ void PGLog::_merge_object_divergent_entries(
       dout(10) << __func__ << ": hoid " << hoid
 	       << " missing.have is prior_version " << prior_version
 	       << " removing from missing" << dendl;
+      
       missing.rm(missing.missing.find(hoid));
     } else {
       dout(10) << __func__ << ": hoid " << hoid
 	       << " missing.have is " << missing.missing[hoid].have
 	       << ", adjusting" << dendl;
+      
       missing.revise_need(hoid, prior_version);
+      
       if (prior_version <= info.log_tail) {
 	dout(10) << __func__ << ": hoid " << hoid
 		 << " prior_version " << prior_version << " <= info.log_tail "
 		 << info.log_tail << dendl;
+        
 	if (new_divergent_prior)
 	  *new_divergent_prior = make_pair(prior_version, hoid);
       }
@@ -470,6 +478,7 @@ void PGLog::_merge_object_divergent_entries(
   dout(10) << __func__ << ": hoid " << hoid
 	   << " must be rolled back or recovered, attempting to rollback"
 	   << dendl;
+  
   bool can_rollback = true;
   /// Distinguish between 4) and 5)
   for (list<pg_log_entry_t>::const_reverse_iterator i = entries.rbegin();
@@ -491,6 +500,7 @@ void PGLog::_merge_object_divergent_entries(
       assert(i->mod_desc.can_rollback() && i->version > olog_can_rollback_to);
       dout(10) << __func__ << ": hoid " << hoid
 	       << " rolling back " << *i << dendl;
+      
       if (rollbacker)
 	rollbacker->rollback(*i);
     }
@@ -500,13 +510,17 @@ void PGLog::_merge_object_divergent_entries(
     /// Case 5)
     dout(10) << __func__ << ": hoid " << hoid << " cannot roll back, "
 	     << "removing and adding to missing" << dendl;
+    
     if (rollbacker && !object_not_in_store)
       rollbacker->remove(hoid);
+    
     missing.add(hoid, prior_version, eversion_t());
+    
     if (prior_version <= info.log_tail) {
       dout(10) << __func__ << ": hoid " << hoid
 	       << " prior_version " << prior_version << " <= info.log_tail "
 	       << info.log_tail << dendl;
+      
       if (new_divergent_prior)
 	*new_divergent_prior = make_pair(prior_version, hoid);
     }
@@ -532,14 +546,16 @@ void PGLog::rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead
   list<pg_log_entry_t>::iterator p = log.log.end();
   list<pg_log_entry_t> divergent;
   while (true) {
-    if (p == log.log.begin()) {
+    if (p == log.log.begin()) { // reached the back of our tail 
       // yikes, the whole thing is divergent!
       divergent.swap(log.log);
       break;
     }
     --p;
-    mark_dirty_from(p->version);
+    mark_dirty_from(p->version); // mark PGLog::dirty_from to p->version
+    
     if (p->version <= newhead) {
+      // ok, reached back of the head of authority log's head
       ++p;
       divergent.splice(divergent.begin(), log.log, p, log.log.end());
       break;
@@ -553,23 +569,25 @@ void PGLog::rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead
   if (info.last_complete > newhead)
     info.last_complete = newhead;
 
-  log.index();
+  log.index(); // reindex pg log
 
   map<eversion_t, hobject_t> new_priors;
+  // merge divergent pg log entries
   _merge_divergent_entries(
     log,
-    divergent,
+    divergent, // divergent log entries differ from the authority
     info,
     log.can_rollback_to,
     missing,
     &new_priors,
     rollbacker);
+  
   for (map<eversion_t, hobject_t>::iterator i = new_priors.begin();
        i != new_priors.end();
        ++i) {
     add_divergent_prior(
       i->first,
-      i->second);
+      i->second); // add this to PGLog::divergent_priors
   }
 
   if (info.last_update < log.can_rollback_to)
@@ -613,13 +631,15 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     eversion_t last;
     for (to = from;
 	 to != olog.log.end();
-	 ++to) {
+	 ++to) { // iterate each authority log entry up to our log's tail
       if (to->version > log.tail)
 	break;
-      log.index(*to);
+      log.index(*to); // add the log entry to the index
       dout(15) << *to << dendl;
       last = to->version;
     }
+
+    // mark PGLog::dirty_to to last
     mark_dirty_to(last);
 
     // splice into our log.
@@ -640,7 +660,8 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
   info.hit_set = oinfo.hit_set;
 
   // do we have divergent entries to throw out?
-  if (olog.head < log.head) {
+  if (olog.head < log.head) { // our log are ahead of authority log
+    // throw out the divergent pg log entries
     rewind_divergent_log(t, olog.head, info, rollbacker, dirty_info, dirty_big_info);
     changed = true;
   }
@@ -653,12 +674,13 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     list<pg_log_entry_t>::iterator to = olog.log.end();
     list<pg_log_entry_t>::iterator from = olog.log.end();
     eversion_t lower_bound = olog.tail;
-    while (1) {
+    while (1) { // iterate each log entry in reverse order to find our start point
       if (from == olog.log.begin())
 	break;
       --from;
       dout(20) << "  ? " << *from << dendl;
-      if (from->version <= log.head) {
+      
+      if (from->version <= log.head) { // ok, found our start point in the authority log
 	dout(20) << "merge_log cut point (usually last shared) is " << *from << dendl;
 	lower_bound = from->version;
 	++from;
@@ -668,9 +690,10 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     mark_dirty_from(lower_bound);
 
     // index, update missing, delete deleted
-    for (list<pg_log_entry_t>::iterator p = from; p != to; ++p) {
+    for (list<pg_log_entry_t>::iterator p = from; p != to; ++p) { // iterate each log entry
       pg_log_entry_t &ne = *p;
       dout(20) << "merge_log " << ne << dendl;
+      
       log.index(ne);
       if (cmp(ne.soid, info.last_backfill, info.last_backfill_bitwise) <= 0) {
 	missing.add_next_event(ne);
@@ -681,7 +704,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
       
     // move aside divergent items
     list<pg_log_entry_t> divergent;
-    while (!log.empty()) {
+    while (!log.empty()) { // may still have log entries that are divergent
       pg_log_entry_t &oe = *log.log.rbegin();
       /*
        * look at eversion.version here.  we want to avoid a situation like:
@@ -689,7 +712,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
        *  new log: 122'10 (0'0) m 10000004d3a.00000000/head by client4225.1:18529
        *  lower_bound = 100'9
        * i.e, same request, different version.  If the eversion.version is > the
-       * lower_bound, we it is divergent.
+       * lower_bound, we take it is divergent.
        */
       if (oe.version.version <= lower_bound.version)
 	break;
@@ -700,8 +723,8 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
 
     // splice
     log.log.splice(log.log.end(), 
-		   olog.log, from, to);
-    log.index();   
+		   olog.log, from, to); // concat our log and authority log
+    log.index(); // reindex 
 
     info.last_update = log.head = olog.head;
 
@@ -709,9 +732,10 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     info.purged_snaps = oinfo.purged_snaps;
 
     map<eversion_t, hobject_t> new_priors;
+    // rewind_divergent_log called above also calls the _merge_divergent_entries
     _merge_divergent_entries(
       log,
-      divergent,
+      divergent, // divergent log entries differ from the authority
       info,
       log.can_rollback_to,
       missing,
