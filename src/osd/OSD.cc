@@ -4360,6 +4360,7 @@ void OSD::tick()
     // periodically kick recovery work queue
     recovery_tp.wake();
 
+    // requeue ops on PG::repaly_queue onto OSDService::op_wq
     check_replay_queue();
   }
 
@@ -8726,7 +8727,7 @@ void OSD::check_replay_queue()
   list< pair<spg_t,utime_t> > pgids;
   replay_queue_lock.Lock();
   while (!replay_queue.empty() &&
-	 replay_queue.front().second <= now) {
+	 replay_queue.front().second <= now) { // get a list of pgs to replay
     pgids.push_back(replay_queue.front());
     replay_queue.pop_front();
   }
@@ -8736,13 +8737,14 @@ void OSD::check_replay_queue()
     spg_t pgid = p->first;
     pg_map_lock.get_read();
     if (pg_map.count(pgid)) {
-      PG *pg = _lookup_lock_pg_with_map_lock_held(pgid);
+      PG *pg = _lookup_lock_pg_with_map_lock_held(pgid); // get PG instance by pgid
       pg_map_lock.unlock();
       dout(10) << "check_replay_queue " << *pg << dendl;
       if ((pg->is_active() || pg->is_activating()) &&
 	  pg->is_replay() &&
           pg->is_primary() &&
           pg->replay_until == p->second) {
+        // requeue ops on PG::repaly_queue onto OSDService::op_wq
 	pg->replay_queued_ops();
       }
       pg->unlock();

@@ -253,7 +253,8 @@ void PGLog::proc_replica_log(
     if (first_non_divergent == log.log.rend())
       break;
     
-    if (first_non_divergent->version <= olog.head) { // reached peer's head 
+    if (first_non_divergent->version <= olog.head) {
+      // 1) reached peer's head or 2) log.head < olog.head
       dout(20) << "merge_log point (usually last shared) is "
 	       << *first_non_divergent << dendl;
       break;
@@ -292,7 +293,8 @@ void PGLog::proc_replica_log(
       break;
     }
 
-    divergent.push_front(oe); // we have, they do not have
+    // 1) we have, they do not have or 2) we do not have, they do have
+    divergent.push_front(oe);
   }
 
   IndexedLog folog;
@@ -301,7 +303,7 @@ void PGLog::proc_replica_log(
 
   // merge divergent log entries to update peer's missing map
   _merge_divergent_entries(
-    folog, // log entries the peer will have
+    folog, // log entries both of us have the same head
     divergent, // divergent log entries we have but the peer does not have
     oinfo,
     olog.can_rollback_to,

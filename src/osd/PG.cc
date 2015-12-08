@@ -313,10 +313,12 @@ void PG::proc_replica_log(
   dout(10) << "proc_replica_log for osd." << from << ": "
 	   << oinfo << " " << olog << " " << omissing << dendl;
 
+  // process the peer's log and update the peer's missing and info
   pg_log.proc_replica_log(t, oinfo, olog, omissing, from);
 
-  peer_info[from] = oinfo;
+  peer_info[from] = oinfo; // note down peer's info
   dout(10) << " peer osd." << from << " now " << oinfo << " " << omissing << dendl;
+  
   might_have_unfound.insert(from);
 
   for (map<hobject_t, pg_missing_t::item, hobject_t::ComparatorWithDefault>::iterator i = omissing.missing.begin();
@@ -325,7 +327,8 @@ void PG::proc_replica_log(
     dout(20) << " after missing " << i->first << " need " << i->second.need
 	     << " have " << i->second.have << dendl;
   }
-  peer_missing[from].swap(omissing);
+       
+  peer_missing[from].swap(omissing); // note down peer's missing
 }
 
 bool PG::proc_replica_info(
@@ -1587,10 +1590,7 @@ void PG::activate(ObjectStore::Transaction& t,
 		  epoch_t activation_epoch,
 		  list<Context*>& tfin,
 		  map<int, map<spg_t,pg_query_t> >& query_map,
-		  map<int,
-		      vector<
-			pair<pg_notify_t,
-			     pg_interval_map_t> > > *activator_map,
+		  map<int, vector<pair<pg_notify_t, pg_interval_map_t> > > *activator_map,
                   RecoveryCtx *ctx)
 {
   assert(!is_peered());
@@ -1984,7 +1984,7 @@ void PG::replay_queued_ops()
 
   for (map<eversion_t,OpRequestRef>::iterator p = replay_queue.begin();
        p != replay_queue.end();
-       ++p) {
+       ++p) { // iterate each op
     if (p->first.version != c.version+1) {
       dout(10) << "activate replay " << p->first
 	       << " skipping " << c.version+1 - p->first.version 
@@ -1994,14 +1994,16 @@ void PG::replay_queued_ops()
     }
     dout(10) << "activate replay " << p->first << " "
              << *p->second->get_req() << dendl;
-    replay.push_back(p->second);
+    replay.push_back(p->second); // need to replay
   }
   replay_queue.clear();
+  
   if (is_active()) {
-    requeue_ops(replay);
-    requeue_ops(waiting_for_active);
+    requeue_ops(replay); // queue on OSDService::op_wq
+    requeue_ops(waiting_for_active); // TODO: requeue this list before replay ???
     assert(waiting_for_peered.empty());
   } else {
+    // splice with previous pending ops
     waiting_for_active.splice(waiting_for_active.begin(), replay);
   }
 
@@ -6653,13 +6655,13 @@ set<pg_shard_t> unique_osd_shard_set(const pg_shard_t & skip, const T &in)
 PG::RecoveryState::Active::Active(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg->cct, "Started/Primary/Active"),
-    remote_shards_to_reserve_recovery(
+    remote_shards_to_reserve_recovery( // const set<pg_shard_t>
       unique_osd_shard_set(
-	context< RecoveryMachine >().pg->pg_whoami,
+	context< RecoveryMachine >().pg->pg_whoami, // skip
 	context< RecoveryMachine >().pg->actingbackfill)),
-    remote_shards_to_reserve_backfill(
+    remote_shards_to_reserve_backfill( // const set<pg_shard_t>
       unique_osd_shard_set(
-	context< RecoveryMachine >().pg->pg_whoami,
+	context< RecoveryMachine >().pg->pg_whoami, // skip
 	context< RecoveryMachine >().pg->backfill_targets)),
     all_replicas_activated(false)
 {
@@ -6671,10 +6673,15 @@ PG::RecoveryState::Active::Active(my_context ctx)
   assert(!pg->backfill_reserved);
   assert(pg->is_primary());
   dout(10) << "In Active, about to call activate" << dendl;
+
+  // flush current pending and all previous txn(s) and prevent OSD::osd_op_tp from
+  // handling client I/O
   pg->start_flush(
     context< RecoveryMachine >().get_cur_transaction(),
     context< RecoveryMachine >().get_on_applied_context_list(),
     context< RecoveryMachine >().get_on_safe_context_list());
+
+  // 
   pg->activate(*context< RecoveryMachine >().get_cur_transaction(),
 	       pg->get_osdmap()->get_epoch(),
 	       *context< RecoveryMachine >().get_on_safe_context_list(),
@@ -7264,7 +7271,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
     // we got something new ...
     unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
     
-    if (old_start < pg->info.history.last_epoch_started) { // peer has updated pg history
+    if (old_start < pg->info.history.last_epoch_started) { // peer has a updated pg history
       dout(10) << " last_epoch_started moved forward, rebuilding prior" << dendl;
 
       // rebuild prior set
@@ -7438,7 +7445,7 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
 
   // am i the best?
   if (auth_log_shard == pg->pg_whoami) { // i has the authority log, no need to request from others
-    post_event(GotLog()); // we will transit into GetMissing
+    post_event(GotLog()); // got the authority pg log (we are the authority)
     return;
   }
 
@@ -7471,7 +7478,7 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
   context<RecoveryMachine>().send_query(
     auth_log_shard,
     pg_query_t(
-      pg_query_t::LOG, // request pg log instead of pg info
+      pg_query_t::LOG, // request authority pg log from the peer
       auth_log_shard.shard, pg->pg_whoami.shard,
       request_log_from, pg->info.history,
       pg->get_osdmap()->get_epoch()));
@@ -7511,10 +7518,11 @@ boost::statechart::result PG::RecoveryState::GetLog::react(const MLogRec& logevt
   
   msg = logevt.msg; // got authority pg log
   
-  post_event(GotLog());
+  post_event(GotLog()); // actually, GotAuthorityLog is more accurate
   return discard_event();
 }
 
+// got pg authority log
 boost::statechart::result PG::RecoveryState::GetLog::react(const GotLog&)
 {
   dout(10) << "leaving GetLog" << dendl;
@@ -7525,14 +7533,15 @@ boost::statechart::result PG::RecoveryState::GetLog::react(const GotLog&)
   if (msg) {
     dout(10) << "processing master log" << dendl;
 
-    // ok, we are to handle the authority log
+    // ok, we are to handle the authority log, merge the authority log into
+    // us, update our missing and info
     pg->proc_master_log(*context<RecoveryMachine>().get_cur_transaction(),
 			msg->info, msg->log, 
-			msg->missing, // used read only
+			msg->missing, // read only use
 			auth_log_shard);
   }
 
-  // flush current pending and all previous txn(s) to prevent OSD::osd_op_tp from
+  // flush current pending and all previous txn(s) and prevent OSD::osd_op_tp from
   // handling client I/O
   pg->start_flush(
     context< RecoveryMachine >().get_cur_transaction(), // RecoveryState::rctx->transaction
@@ -7577,12 +7586,17 @@ boost::statechart::result PG::RecoveryState::WaitActingChange::react(const AdvMa
 
   dout(10) << "verifying no want_acting " << pg->want_acting << " targets didn't go down" << dendl;
   for (vector<int>::iterator p = pg->want_acting.begin(); p != pg->want_acting.end(); ++p) {
-    if (!osdmap->is_up(*p)) {
+    if (!osdmap->is_up(*p)) { // osd in want_acting changed to down
       dout(10) << " want_acting target osd." << *p << " went down, resetting" << dendl;
       post_event(advmap);
       return transit< Reset >();
     }
   }
+
+  // handle AdvMap in state Peering and may up to Started, after all these handling
+  // we may transit into state Reset to start a new peering interval (we are waiting
+  // the acting set to change, i.e. we are waiting for a new interval) or remains in 
+  // state WaitActingChange
   return forward_event();
 }
 
@@ -7662,10 +7676,12 @@ boost::statechart::result PG::RecoveryState::Incomplete::react(const MNotifyRec&
 	     << ", identical to ours" << dendl;
     return discard_event();
   } else {
+    // update peer's pg info and merge their pg history into us
     pg->proc_replica_info(
       notevt.from, notevt.notify.info, notevt.notify.epoch_sent);
     
     // try again!
+    
     // we can only transit into state Incomplete from RecoveryState::GetLog::GetLog,
     // now we transit back to state GetLog to choose_acting again
     return transit< GetLog >();
@@ -7698,7 +7714,7 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
   for (set<pg_shard_t>::iterator i = pg->actingbackfill.begin();
        i != pg->actingbackfill.end();
        ++i) { // iterate each actingbackfill
-    if (*i == pg->get_primary()) continue;
+    if (*i == pg->get_primary()) continue; // if want_acting is not empty, we may be a temp primary
     
     const pg_info_t& pi = pg->peer_info[*i];
 
@@ -7727,6 +7743,8 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
       continue;
     }
 
+    // ok, now we prepare to request pg log from peer
+
     // We pull the log from the peer's last_epoch_started to ensure we
     // get enough log to detect divergent updates.
     eversion_t since(pi.last_epoch_started, 0);
@@ -7751,12 +7769,13 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
 	  i->shard, pg->pg_whoami.shard,
 	  pg->info.history, pg->get_osdmap()->get_epoch()));
     }
+    
     peer_missing_requested.insert(*i);
     pg->blocked_by.insert(i->osd);
   }
 
   if (peer_missing_requested.empty()) {
-    if (pg->need_up_thru) {
+    if (pg->need_up_thru) { // PG::need_up_thru is set in PG::build_prior
       dout(10) << " still need up_thru update before going active" << dendl;
       post_event(NeedUpThru()); // transit into state WaitUpThru
       return;
@@ -7775,20 +7794,24 @@ boost::statechart::result PG::RecoveryState::GetMissing::react(const MLogRec& lo
 
   peer_missing_requested.erase(logevt.from); // got a MLogRec from peer
 
-  // 
+  // process the MLogRec the peer sent to us (we sent they queries for their pg
+  // log to construct their missing map in RecoveryState::GetMissing::GetMissing) 
+  // to update their missing map and pg info
   pg->proc_replica_log(*context<RecoveryMachine>().get_cur_transaction(),
 		       logevt.msg->info, logevt.msg->log, logevt.msg->missing, logevt.from);
   
   if (peer_missing_requested.empty()) {
-    if (pg->need_up_thru) {
+    if (pg->need_up_thru) { // need to inform mon about our aliveness in OSDMap
       dout(10) << " still need up_thru update before going active" << dendl;
-      post_event(NeedUpThru());
+      post_event(NeedUpThru()); // transit into state WaitUpThru
     } else {
       dout(10) << "Got last missing, don't need missing "
 	       << "posting CheckRepops" << dendl;
-      post_event(Activate(pg->get_osdmap()->get_epoch()));
+      post_event(Activate(pg->get_osdmap()->get_epoch())); // transit into state Active
     }
   }
+
+  // still more MLogRec to wait from peers
   return discard_event();
 }
 
@@ -7839,12 +7862,18 @@ PG::RecoveryState::WaitUpThru::WaitUpThru(my_context ctx)
 boost::statechart::result PG::RecoveryState::WaitUpThru::react(const ActMap& am)
 {
   PG *pg = context< RecoveryMachine >().pg;
-  if (!pg->need_up_thru) {
-    post_event(Activate(pg->get_osdmap()->get_epoch()));
+  if (!pg->need_up_thru) { // our OSDMap::up_thru passed info.history.same_interval_since
+    // ok, 1) OSD::queue_want_up_thru has sent the MOSDAlive to mon (called in 
+    // OSD::process_peering_events) and PG::adjust_need_up_thru has set
+    // PG::need_up_thru to false or
+    // 2) PG::build_prior did not set PG::need_up_thru to true
+    post_event(Activate(pg->get_osdmap()->get_epoch())); // transit into state Active
   }
   return forward_event();
 }
 
+// TODO: why we can receive the MLogRec, we have handled all the requested 
+// MLogRec in RecoveryState::GetMissing::react(MLogRec) ???
 boost::statechart::result PG::RecoveryState::WaitUpThru::react(const MLogRec& logevt)
 {
   dout(10) << "Noting missing from osd." << logevt.from << dendl;
