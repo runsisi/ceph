@@ -1610,6 +1610,8 @@ void PG::activate(ObjectStore::Transaction& t,
 
     // TODOSAM: osd->osd-> is no good
     osd->osd->replay_queue_lock.Lock();
+    // push this pg on OSDService::replay_queue, OSD::tick will check the replay_queue
+    // periodically
     osd->osd->replay_queue.push_back(pair<spg_t,utime_t>(
 	info.pgid, replay_until));
     osd->osd->replay_queue_lock.Unlock();
