@@ -336,24 +336,27 @@ public:
       if (i == needs_recovery_map.end())
 	return false;
       if (v)
-	*v = i->second.need;
+	*v = i->second.need; // which version we need to recovery
       return true;
     }
+    
     bool is_unfound(const hobject_t &hoid) const {
-      return needs_recovery(hoid) && (
-	!missing_loc.count(hoid) ||
-	!(*is_recoverable)(missing_loc.find(hoid)->second));
+      return needs_recovery(hoid) && ( // in MissingLoc::needs_recovery_map
+	!missing_loc.count(hoid) || // no shard to recover the missing object
+	!(*is_recoverable)(missing_loc.find(hoid)->second)); // the exsiting shards can not recover the missing object
     }
+    
     bool readable_with_acting(
       const hobject_t &hoid,
       const set<pg_shard_t> &acting) const;
+    
     uint64_t num_unfound() const {
       uint64_t ret = 0;
       for (map<hobject_t, pg_missing_t::item, hobject_t::BitwiseComparator>::const_iterator i =
 	     needs_recovery_map.begin();
 	   i != needs_recovery_map.end();
 	   ++i) {
-	if (is_unfound(i->first))
+	if (is_unfound(i->first)) // only include those can not recovered
 	  ++ret;
       }
       return ret;
@@ -371,6 +374,8 @@ public:
     void remove_location(const hobject_t &hoid, pg_shard_t location) {
       missing_loc[hoid].erase(location);
     }
+
+    // add a batch of missing objects with duplication check
     void add_active_missing(const pg_missing_t &missing) {
       for (map<hobject_t, pg_missing_t::item, hobject_t::BitwiseComparator>::const_iterator i =
 	     missing.missing.begin();
