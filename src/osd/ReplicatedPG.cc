@@ -782,7 +782,7 @@ int ReplicatedPG::do_command(cmdmap_t cmdmap, ostream& ss,
       return 0;  // make command idempotent
     }
 
-    if (!all_unfound_are_queried_or_lost(get_osdmap())) {
+    if (!all_unfound_are_queried_or_lost(get_osdmap())) { // we have not try all possible recovery sources
       ss << "pg has " << unfound
 	 << " unfound objects but we haven't probed all sources, not marking lost";
       return -EINVAL;
@@ -11030,7 +11030,7 @@ void ReplicatedPG::check_local()
 
   assert(info.last_update >= pg_log.get_tail());  // otherwise we need some help!
 
-  if (!cct->_conf->osd_debug_verify_stray_on_activate)
+  if (!cct->_conf->osd_debug_verify_stray_on_activate) // default is false
     return;
 
   // just scan the log.

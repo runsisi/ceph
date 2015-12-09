@@ -1053,6 +1053,8 @@ public:
   void proc_primary_info(ObjectStore::Transaction &t, const pg_info_t &info);
 
   bool have_unfound() const { 
+    // we have some objects that have no recovery source or exsiting shards are 
+    // not enough to recover those objects
     return missing_loc.num_unfound();
   }
   int get_num_unfound() const {

@@ -8566,7 +8566,9 @@ void OSD::handle_pg_query(OpRequestRef op)
 
         // currently we are in dispatch thread's context, queue this pg on 
         // OSD::peering_wq
-        pg->queue_query( // queue a peering evt which wraps an inner evt MQuery
+        // RecoveryState::Stray::react(MQuery) and RecoveryState::Stray::react(MQuery) 
+        // will handle the MQuery peering evt, so we must be a replica/stray
+        pg->queue_query( // queue a peering evt MQuery
             it->second.epoch_sent, it->second.epoch_sent,
             pg_shard_t(from, it->second.from), it->second);
         pg->unlock();
@@ -8620,12 +8622,12 @@ void OSD::handle_pg_query(OpRequestRef op)
      * shard_id_t from;
      */
 
-    // pg_query_t types: INFO, LOG, MISSING, FULLLOG
+    // pg_query_t types: INFO, MISSING, LOG, FULLLOG
     if (it->second.type == pg_query_t::LOG ||
 	it->second.type == pg_query_t::FULLLOG) {
       ConnectionRef con = service.get_con_osd_cluster(from, osdmap->get_epoch());
       if (con) {
-	MOSDPGLog *mlog = new MOSDPGLog(
+	MOSDPGLog *mlog = new MOSDPGLog( // each pg shard needs a MOSDPGLog msg
 	  it->second.from, 
 	  it->second.to,
 	  osdmap->get_epoch(), 
@@ -8635,6 +8637,8 @@ void OSD::handle_pg_query(OpRequestRef op)
 	con->send_message(mlog);
       }
     } else {
+      // multiple pg shards on the same OSD (may belong to different pgs) can be 
+      // sent bundled with only one MOSDPGNotify msg
       notify_list[from].push_back(
 	make_pair(
 	  pg_notify_t(
@@ -8825,7 +8829,7 @@ bool OSD::_recover_now()
 
 void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
 {
-  if (g_conf->osd_recovery_sleep > 0) {
+  if (g_conf->osd_recovery_sleep > 0) { // default is 0
     utime_t t;
     t.set_from_double(g_conf->osd_recovery_sleep);
     t.sleep();
@@ -8834,8 +8838,8 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
 
   // see how many we should try to start.  note that this is a bit racy.
   recovery_wq.lock();
-  int max = MIN(cct->_conf->osd_recovery_max_active - recovery_ops_active,
-      cct->_conf->osd_recovery_max_single_start);
+  int max = MIN(cct->_conf->osd_recovery_max_active - recovery_ops_active, // default is 3
+      cct->_conf->osd_recovery_max_single_start); // default is 1
   if (max > 0) {
     dout(10) << "do_recovery can start " << max << " (" << recovery_ops_active << "/" << cct->_conf->osd_recovery_max_active
 	     << " rops)" << dendl;
@@ -8846,12 +8850,14 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
   }
   recovery_wq.unlock();
 
-  if (max <= 0) {
+  if (max <= 0) { // we have reached the max of allowed active recovery ops, requeue
     dout(10) << "do_recovery raced and failed to start anything; requeuing " << *pg << dendl;
     recovery_wq.queue(pg);
     return;
   } else {
     pg->lock_suspend_timeout(handle);
+
+    // PG::deleting set by ReplicatedPG::on_shutdown
     if (pg->deleting || !(pg->is_peered() && pg->is_primary())) {
       pg->unlock();
       goto out;
@@ -8863,7 +8869,10 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
 #endif
     
     int started = 0;
+
+    // 
     bool more = pg->start_recovery_ops(max, handle, &started);
+    
     dout(10) << "do_recovery started " << started << "/" << max << " on " << *pg << dendl;
     // If no recovery op is started, don't bother to manipulate the RecoveryCtx
     if (!started && (more || !pg->have_unfound())) {
@@ -9816,12 +9825,14 @@ bool OSD::RecoveryWQ::_enqueue(PG *pg) {
     pg->get("RecoveryWQ");
     osd->recovery_queue.push_back(&pg->recovery_item);
 
-    if (osd->cct->_conf->osd_recovery_delay_start > 0) {
+    if (osd->cct->_conf->osd_recovery_delay_start > 0) { // default is 0
       osd->defer_recovery_until = ceph_clock_now(osd->cct);
       osd->defer_recovery_until += osd->cct->_conf->osd_recovery_delay_start;
     }
     return true;
   }
+
+  // ok, the pg has been on the queue
   return false;
 }
 

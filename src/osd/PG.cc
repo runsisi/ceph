@@ -578,6 +578,7 @@ bool PG::MissingLoc::add_source_info(
   return found_missing;
 }
 
+// try to query FULLLOG from all shards in PG::might_have_unfound
 void PG::discover_all_missing(map<int, map<spg_t,pg_query_t> > &query_map)
 {
   const pg_missing_t &missing = pg_log.get_missing();
@@ -590,7 +591,8 @@ void PG::discover_all_missing(map<int, map<spg_t,pg_query_t> > &query_map)
 
   std::set<pg_shard_t>::const_iterator m = might_have_unfound.begin();
   std::set<pg_shard_t>::const_iterator mend = might_have_unfound.end();
-  for (; m != mend; ++m) {
+  
+  for (; m != mend; ++m) { // iterate PG::might_have_unfound
     pg_shard_t peer(*m);
     
     if (!get_osdmap()->is_up(peer.osd)) {
@@ -601,6 +603,7 @@ void PG::discover_all_missing(map<int, map<spg_t,pg_query_t> > &query_map)
     map<pg_shard_t, pg_info_t>::const_iterator iter = peer_info.find(peer);
     if (iter != peer_info.end() &&
         (iter->second.is_empty() || iter->second.dne())) {
+      // we have a record of this shard, it has nothing to provide, so ignore it
       // ignore empty peers
       continue;
     }
@@ -624,6 +627,8 @@ void PG::discover_all_missing(map<int, map<spg_t,pg_query_t> > &query_map)
       continue;
     }
 
+    // ok, we have never tried to recover from this peer, now try it
+
     // Request missing
     dout(10) << __func__ << ": osd." << peer << ": requesting pg_missing_t"
 	     << dendl;
@@ -643,7 +648,7 @@ bool PG::needs_recovery() const
 
   const pg_missing_t &missing = pg_log.get_missing();
 
-  if (missing.num_missing()) {
+  if (missing.num_missing()) { // the primary shard has missing objects
     dout(10) << __func__ << " primary has " << missing.num_missing()
       << " missing" << dendl;
     return true;
@@ -652,7 +657,7 @@ bool PG::needs_recovery() const
   assert(!actingbackfill.empty());
   set<pg_shard_t>::const_iterator end = actingbackfill.end();
   set<pg_shard_t>::const_iterator a = actingbackfill.begin();
-  for (; a != end; ++a) {
+  for (; a != end; ++a) { // iterate PG::actingbackfill to check if their have missing objects
     if (*a == get_primary()) continue;
     pg_shard_t peer = *a;
     map<pg_shard_t, pg_missing_t>::const_iterator pm = peer_missing.find(peer);
@@ -685,7 +690,7 @@ bool PG::needs_backfill() const
   for (; a != end; ++a) {
     pg_shard_t peer = *a;
     map<pg_shard_t, pg_info_t>::const_iterator pi = peer_info.find(peer);
-    if (!pi->second.last_backfill.is_max()) {
+    if (!pi->second.last_backfill.is_max()) { // ok, there is a shard need to be backfilled
       dout(10) << __func__ << " osd." << peer << " has last_backfill " << pi->second.last_backfill << dendl;
       ret = true;
     }
@@ -886,9 +891,11 @@ bool PG::all_unfound_are_queried_or_lost(const OSDMapRef osdmap) const
 {
   assert(is_primary());
 
+  // PG::build_might_have_unfound has generated the PG::might_have_unfound for us
   set<pg_shard_t>::const_iterator peer = might_have_unfound.begin();
   set<pg_shard_t>::const_iterator mend = might_have_unfound.end();
-  for (; peer != mend; ++peer) {
+  
+  for (; peer != mend; ++peer) { // iterate PG::might_have_unfound
     if (peer_missing.count(*peer))
       continue;
     map<pg_shard_t, pg_info_t>::const_iterator iter = peer_info.find(*peer);
@@ -897,8 +904,9 @@ bool PG::all_unfound_are_queried_or_lost(const OSDMapRef osdmap) const
       continue;
     if (!osdmap->exists(peer->osd))
       continue;
+    
     const osd_info_t &osd_info(osdmap->get_info(peer->osd));
-    if (osd_info.lost_at <= osd_info.up_from) {
+    if (osd_info.lost_at <= osd_info.up_from) { // ok, the osd did not been marked as lost
       // If there is even one OSD in might_have_unfound that isn't lost, we
       // still might retrieve our unfound.
       return false;
@@ -1568,7 +1576,7 @@ void PG::build_might_have_unfound()
     std::vector<int>::const_iterator a_end = interval.acting.end();
     for (; a != a_end; ++a, ++i) {
       pg_shard_t shard(*a, pool.info.ec_pool() ? shard_id_t(i) : shard_id_t::NO_SHARD);
-      if (*a != CRUSH_ITEM_NONE && shard != pg_whoami)
+      if (*a != CRUSH_ITEM_NONE && shard != pg_whoami) // this shard may include objects we need
 	might_have_unfound.insert(shard);
     }
   }
@@ -1869,7 +1877,7 @@ void PG::activate(ObjectStore::Transaction& t,
     // ok, if we need objects to recover, then update recovery source for
     // each object
     
-    if (needs_recovery()) { // has missing objects for any shard
+    if (needs_recovery()) { // has missing objects for any shard of this pg
       // If only one shard has missing, we do a trick to add all others as recovery
       // source, this is considered safe since the PGLogs have been merged locally,
       // and covers vast majority of the use cases, like one OSD/host is down for
@@ -1925,8 +1933,8 @@ void PG::activate(ObjectStore::Transaction& t,
       // queue this pg on OSDService::recovery_wq
       osd->queue_for_recovery(this);
       
-      if (have_unfound()) // have unfound object
-        // iterate each shard in PG::might_have_unfound to prepare MOSDPGQuery
+      if (have_unfound()) // have unfound objects, i.e. with existing shards that cannot be recovered objects
+        // iterate each shard in PG::might_have_unfound to request FULLLOG
 	discover_all_missing(query_map);
     }
 
@@ -4612,7 +4620,7 @@ void PG::fulfill_log(
     from.shard, pg_whoami.shard,
     get_osdmap()->get_epoch(),
     info, query_epoch);
-  mlog->missing = pg_log.get_missing();
+  mlog->missing = pg_log.get_missing(); // PGLog::missing
 
   // primary -> other, when building master log
   if (query.type == pg_query_t::LOG) {
@@ -5572,6 +5580,8 @@ void PG::queue_flushed(epoch_t e)
 					 FlushedEvt())));
 }
 
+// RecoveryState::Stray::react(MQuery) and RecoveryState::Stray::react(MQuery) will
+// handle the MQuery peering evt, so we must be a replica/stray
 void PG::queue_query(epoch_t msg_epoch,
 		     epoch_t query_epoch,
 		     pg_shard_t from, const pg_query_t& q)
@@ -6005,7 +6015,11 @@ boost::statechart::result PG::RecoveryState::Primary::react(const ActMap&)
 {
   dout(7) << "handle ActMap primary" << dendl;
   PG *pg = context< RecoveryMachine >().pg;
+
+  // publish pg stats, i.e. enqueue pg on OSD::pg_stat_queue
   pg->publish_stats_to_osd();
+  
+  // requeue pend peering evt and may requeue ops that are waiting for new osdmap
   pg->take_waiters();
   return discard_event();
 }
@@ -6804,7 +6818,8 @@ boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
     pg->publish_stats_to_osd();
   }
 
-  // let RecoveryState::Started::react(AdvMap) handle it
+  // let RecoveryState::Started::react(AdvMap) handle it, we may need to start a 
+  // new interval
   return forward_event();
 }
     
@@ -6815,17 +6830,17 @@ boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
   assert(pg->is_primary());
 
   if (pg->have_unfound()) { // PG::activate has done this once, with new map we do it again
-    // object may have become unfound, iterate each shard in PG::might_have_unfound 
-    // to prepare MOSDPGQuery
+    // iterate each shard in PG::might_have_unfound to find if we can recover 
+    // the unfound objects from new peers
     pg->discover_all_missing(*context< RecoveryMachine >().get_query_map());
   }
 
-  if (pg->cct->_conf->osd_check_for_log_corruption)
-    pg->check_log_for_corruption(pg->osd->store);
+  if (pg->cct->_conf->osd_check_for_log_corruption) // default is false
+    pg->check_log_for_corruption(pg->osd->store); // do nothing
 
   int unfound = pg->missing_loc.num_unfound();
   if (unfound > 0 &&
-      pg->all_unfound_are_queried_or_lost(pg->get_osdmap())) {
+      pg->all_unfound_are_queried_or_lost(pg->get_osdmap())) { // we have tried all recovery sources and no lucky
     if (pg->cct->_conf->osd_auto_mark_unfound_lost) { // default is false
       pg->osd->clog->error() << pg->info.pgid << " has " << unfound
 			    << " objects unfound and apparently lost, would automatically marking lost but NOT IMPLEMENTED\n";
@@ -6843,8 +6858,12 @@ boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
   if (!pg->is_clean() &&
       !pg->get_osdmap()->test_flag(CEPH_OSDMAP_NOBACKFILL) &&
       (!pg->get_osdmap()->test_flag(CEPH_OSDMAP_NOREBALANCE) || pg->is_degraded())) {
+    // finally, queue the pg on OSDService::recovery_wq
     pg->osd->queue_for_recovery(pg);
   }
+
+  // let RecoveryState::Primary::react(ActMap) have a chance to handle it, i.e.
+  // publish pg stats and take_waiters
   return forward_event();
 }
 
@@ -6866,9 +6885,10 @@ boost::statechart::result PG::RecoveryState::Active::react(const MNotifyRec& not
 	     << dendl;
     pg->proc_replica_info(
       notevt.from, notevt.notify.info, notevt.notify.epoch_sent);
-    
-    if (pg->have_unfound()) {
-      // 
+
+    // TODO: we have queried all shards that may have our unfound objects in PG::activate, why we have to do it again ???
+    if (pg->have_unfound()) { // have missing objects that can not be recovered
+      // iterate each PG::might_have_unfound to request FULLLOG
       pg->discover_all_missing(*context< RecoveryMachine >().get_query_map());
     }
   }
@@ -6993,7 +7013,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const AllReplicasActi
   pg->share_pg_info();
   pg->publish_stats_to_osd();
 
-  pg->check_local();
+  pg->check_local(); // debug use only
 
   // waiters
   if (pg->flushes_in_progress == 0) {
@@ -7095,8 +7115,15 @@ boost::statechart::result PG::RecoveryState::ReplicaActive::react(const ActMap&)
 boost::statechart::result PG::RecoveryState::ReplicaActive::react(const MQuery& query)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
+  // we only handle pg_query_t::MISSING here, pg_query_t::INFO, pg_query_t::LOG, 
+  // pg_query_t::FULLLOG are handled in RecoveryState::Stray::react(MQuery)
+  
   if (query.query.type == pg_query_t::MISSING) {
+    // update PG::info.history, i.e. merge with primary shard's pg history
     pg->update_history_from_master(query.query.history);
+
+    // send MOSDPGLog with PGLog::missing
     pg->fulfill_log(query.from, query.query, query.query_epoch);
   } // else: from prior to activation, safe to ignore
   return discard_event();
@@ -7138,7 +7165,7 @@ PG::RecoveryState::Stray::Stray(my_context ctx)
 }
 
 // primary shard of this pg will send us MOSDPGLog in PG::activate if the
-// replica has less pg log than the primary
+// replica has less pg log than the primary to drive us into state ReplicaActive
 boost::statechart::result PG::RecoveryState::Stray::react(const MLogRec& logevt)
 {
   PG *pg = context< RecoveryMachine >().pg;
@@ -7176,7 +7203,8 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MLogRec& logevt)
 }
 
 // primary shard of this pg will send us MOSDPGInfo in PG::activate if the primary
-// has no pg log to send
+// has no pg log to send, i.e. we have the same pg log as the primary shard, to 
+// drive us into state ReplicaActive
 boost::statechart::result PG::RecoveryState::Stray::react(const MInfoRec& infoevt)
 {
   PG *pg = context< RecoveryMachine >().pg;
@@ -7197,24 +7225,34 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MInfoRec& infoev
   return transit<ReplicaActive>();
 }
 
+// the primary shard send us the pg_query_t::INFO in 
 boost::statechart::result PG::RecoveryState::Stray::react(const MQuery& query)
 {
   PG *pg = context< RecoveryMachine >().pg;
-  if (query.query.type == pg_query_t::INFO) {
+
+  // we only handle pg_query_t::INFO, pg_query_t::LOG, pg_query_t::FULLLOG here,
+  // the pg_query_t::MISSING is handled in RecoveryState::ReplicaActive::react(MQuery)
+  
+  if (query.query.type == pg_query_t::INFO) { // pg_query_t::INFO
     pair<pg_shard_t, pg_info_t> notify_info;
+    // update PG::info.history, i.e. merge with primary shard's pg history
     pg->update_history_from_master(query.query.history);
+
+    // set notify_info to <query.from, PG::info>
     pg->fulfill_info(query.from, query.query, notify_info);
 
-    // prepare notify
+    // prepare notify, multiple pg shards (may belong to different pgs) on the 
+    // same OSD can be sent bundled with only one MOSDPGNotify msg
     context< RecoveryMachine >().send_notify(
       notify_info.first,
       pg_notify_t(
 	notify_info.first.shard, pg->pg_whoami.shard,
 	query.query_epoch,
 	pg->get_osdmap()->get_epoch(),
-	notify_info.second),
-      pg->past_intervals);
-  } else {
+	notify_info.second), // PG::info
+      pg->past_intervals); // PG::past_intervals
+  } else { // pg_query_t::LOG, pg_query_t::FULLLOG
+    // send MOSDPGLog with info + missing + log/fulllog 
     pg->fulfill_log(query.from, query.query, query.query_epoch);
   }
   return discard_event();
@@ -7282,7 +7320,8 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
 }
 
 // only be called by RecoveryState::GetInfo::GetInfo and 
-// RecoveryState::GetInfo::react(MNotifyRec)
+// RecoveryState::GetInfo::react(MNotifyRec) to query pg_query_t::INFO for
+// pgs in prior set
 void PG::RecoveryState::GetInfo::get_infos()
 {
   PG *pg = context< RecoveryMachine >().pg;
@@ -7340,7 +7379,8 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 	infoevt.from, infoevt.notify.info, infoevt.notify.epoch_sent)) { // got a new peer or old peer's new info
     // we got something new ...
     unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
-    
+
+    // TODO: why our history.last_epoch_started is laging behind ???
     if (old_start < pg->info.history.last_epoch_started) { // peer has a updated pg history
       dout(10) << " last_epoch_started moved forward, rebuilding prior" << dendl;
 
@@ -7360,7 +7400,8 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 	}
       }
 
-      // prepare to query info for pgs in PriorSet::probe set
+      // re-prepare pg_query_t::INFO queries to send for pgs in new PriorSet::probe 
+      // set, coz we have rebuilt the prior set above
       get_infos();
     }
 
@@ -7498,6 +7539,8 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
   context< RecoveryMachine >().log_enter(state_name);
 
   PG *pg = context< RecoveryMachine >().pg;
+
+  // ok, we are transitted from state GetInfo
 
   // adjust acting?
   if (!pg->choose_acting(auth_log_shard)) {
