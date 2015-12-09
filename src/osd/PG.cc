@@ -1659,11 +1659,10 @@ void PG::activate(ObjectStore::Transaction& t,
   dirty_info = true;
   dirty_big_info = true; // maybe
 
-  // find out when we commit
   t.register_on_complete(
     // will call PG::_activate_committed when the pg info committed, if primary
-    // and replicas have committed their pg info, we queue a peering evt
-    // AllReplicasActivated to handle
+    // and replicas have committed their pg info, we queue an AllReplicasActivated
+    // peering evt and let the recovery_state machine to handle
     new C_PG_ActivateCommitted(
       this,
       get_osdmap()->get_epoch(),
@@ -1693,7 +1692,7 @@ void PG::activate(ObjectStore::Transaction& t,
     
   log_weirdness();
 
-  // ok, following dirty work are to be done by the primay
+  // ok, following dirty works are to be done by the primary
 
   // if primary..
   if (is_primary()) {
@@ -1703,7 +1702,7 @@ void PG::activate(ObjectStore::Transaction& t,
     assert(!actingbackfill.empty());
     for (set<pg_shard_t>::iterator i = actingbackfill.begin();
 	 i != actingbackfill.end();
-	 ++i) { // iterate each shard of this pg
+	 ++i) { // iterate each acting shard of this pg
       if (*i == pg_whoami) continue; // exclude ourself, i.e. the primary shard
       
       pg_shard_t peer = *i;
@@ -1809,7 +1808,7 @@ void PG::activate(ObjectStore::Transaction& t,
       // based on whether our info for that peer was dne() *before*
       // updating pi.history in the backfill block above.
       if (needs_past_intervals)
-	m->past_intervals = past_intervals;
+	m->past_intervals = past_intervals; // in MOSDPGLog we may not carry the past_intervals
 
       // update local version of peer's missing list!
       if (m && pi.last_backfill != hobject_t()) {
@@ -6483,6 +6482,7 @@ PG::RecoveryState::Activating::Activating(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg->cct, "Started/Primary/Active/Activating")
 {
+  // will transit into Recovered if AllReplicasRecovered evt received
   context< RecoveryMachine >().log_enter(state_name);
 }
 
@@ -6647,6 +6647,7 @@ PG::RecoveryState::Recovered::Recovered(my_context ctx)
   if (pg->acting != pg->up && !pg->choose_acting(auth_log_shard))
     assert(pg->want_acting.size());
 
+  // RecoveryState::Active::react(AllReplicasActivated) will set this field to true
   if (context< Active >().all_replicas_activated)
     post_event(GoClean());
 }
@@ -6733,7 +6734,7 @@ PG::RecoveryState::Active::Active(my_context ctx)
     context< RecoveryMachine >().get_on_applied_context_list(),
     context< RecoveryMachine >().get_on_safe_context_list());
 
-  // 
+  // send MOSDPGInfo, build missing
   pg->activate(*context< RecoveryMachine >().get_cur_transaction(), // t
 	       pg->get_osdmap()->get_epoch(), // activation_epoch
 	       *context< RecoveryMachine >().get_on_safe_context_list(), // tfin
@@ -6752,12 +6753,15 @@ PG::RecoveryState::Active::Active(my_context ctx)
   }
   pg->publish_stats_to_osd();
   dout(10) << "Activate Finished" << dendl;
+
+  // ok, we are to transit into the substate Activating
 }
 
 boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
 {
   PG *pg = context< RecoveryMachine >().pg;
   dout(10) << "Active advmap" << dendl;
+  
   if (!pg->pool.newly_removed_snaps.empty()) {
     pg->snap_trimq.union_of(pg->pool.newly_removed_snaps);
     dout(10) << *pg << " snap_trimq now " << pg->snap_trimq << dendl;
@@ -6765,7 +6769,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
     pg->dirty_big_info = true;
   }
 
-  for (size_t i = 0; i < pg->want_acting.size(); i++) {
+  for (size_t i = 0; i < pg->want_acting.size(); i++) { // TODO: what's the intent ???
     int osd = pg->want_acting[i];
     if (!advmap.osdmap->is_up(osd)) {
       pg_shard_t osd_with_shard(osd, shard_id_t(i));
@@ -6776,15 +6780,17 @@ boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
   /* Check for changes in pool size (if the acting set changed as a result,
    * this does not matter) */
   if (advmap.lastmap->get_pg_size(pg->info.pgid.pgid) !=
-      pg->get_osdmap()->get_pg_size(pg->info.pgid.pgid)) {
+      pg->get_osdmap()->get_pg_size(pg->info.pgid.pgid)) { // pool size changed in new map
     if (pg->get_osdmap()->get_pg_size(pg->info.pgid.pgid) <= pg->actingset.size()) {
+      // pool size changed to smaller
       pg->state_clear(PG_STATE_UNDERSIZED);
-      if (pg->needs_recovery()) {
+      
+      if (pg->needs_recovery()) { // missing objects in this pg (including all shards)
 	pg->state_set(PG_STATE_DEGRADED);
       } else {
 	pg->state_clear(PG_STATE_DEGRADED);
       }
-    } else {
+    } else { // pool size changed to bigger
       pg->state_set(PG_STATE_UNDERSIZED);
       pg->state_set(PG_STATE_DEGRADED);
     }
@@ -6792,12 +6798,13 @@ boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
   }
 
   // if we haven't reported our PG stats in a long time, do so now.
-  if (pg->info.stats.reported_epoch + pg->cct->_conf->osd_pg_stat_report_interval_max < advmap.osdmap->get_epoch()) {
+  if (pg->info.stats.reported_epoch + pg->cct->_conf->osd_pg_stat_report_interval_max < advmap.osdmap->get_epoch()) { // default is 500
     dout(20) << "reporting stats to osd after " << (advmap.osdmap->get_epoch() - pg->info.stats.reported_epoch)
 	     << " epochs" << dendl;
     pg->publish_stats_to_osd();
   }
 
+  // let RecoveryState::Started::react(AdvMap) handle it
   return forward_event();
 }
     
@@ -6807,8 +6814,9 @@ boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
   dout(10) << "Active: handling ActMap" << dendl;
   assert(pg->is_primary());
 
-  if (pg->have_unfound()) {
-    // object may have become unfound
+  if (pg->have_unfound()) { // PG::activate has done this once, with new map we do it again
+    // object may have become unfound, iterate each shard in PG::might_have_unfound 
+    // to prepare MOSDPGQuery
     pg->discover_all_missing(*context< RecoveryMachine >().get_query_map());
   }
 
@@ -6818,7 +6826,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
   int unfound = pg->missing_loc.num_unfound();
   if (unfound > 0 &&
       pg->all_unfound_are_queried_or_lost(pg->get_osdmap())) {
-    if (pg->cct->_conf->osd_auto_mark_unfound_lost) {
+    if (pg->cct->_conf->osd_auto_mark_unfound_lost) { // default is false
       pg->osd->clog->error() << pg->info.pgid << " has " << unfound
 			    << " objects unfound and apparently lost, would automatically marking lost but NOT IMPLEMENTED\n";
       //pg->mark_all_unfound_lost(*context< RecoveryMachine >().get_cur_transaction());
@@ -6966,6 +6974,9 @@ boost::statechart::result PG::RecoveryState::Active::react(const QueryState& q)
 boost::statechart::result PG::RecoveryState::Active::react(const AllReplicasActivated &evt)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
+  // used for RecoveryState::Recovered::Recovered to determine if we need to
+  // queue an internal evt GoClean 
   all_replicas_activated = true;
 
   pg->state_clear(PG_STATE_ACTIVATING);

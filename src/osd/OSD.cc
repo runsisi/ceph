@@ -8015,15 +8015,61 @@ void OSD::dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap,
   }
 }
 
+/*
+ * struct pg_query_t:
+ *    __s32 type;
+ *    eversion_t since;
+ *    pg_history_t history;
+ *    epoch_t epoch_sent;
+ *    shard_id_t to;
+ *    shard_id_t from;
+
+ * struct pg_notify_t:
+ *    epoch_t query_epoch;
+ *    epoch_t epoch_sent;
+ *    pg_info_t info;
+ *    shard_id_t to;
+ *    shard_id_t from;
+   
+ * MOSDPGQuery:
+ *      version_t       epoch;
+ *      map<spg_t, pg_query_t>  pg_list;
+ 
+ * MOSDPGNotify:
+ *      epoch_t epoch;
+ *      vector<pair<pg_notify_t,pg_interval_map_t> > pg_list;
+ 
+ * MOSDPGInfo:
+ *      epoch_t epoch;
+ *      vector<pair<pg_notify_t,pg_interval_map_t> > pg_list;
+ 
+ * MOSDPGLog: // for a specific pg
+ *      epoch_t epoch;
+ *      epoch_t query_epoch;
+ *      shard_id_t to;
+ *      shard_id_t from;
+ *      pg_info_t info;
+ *      pg_log_t log;
+ *      pg_missing_t missing;
+ *      pg_interval_map_t past_intervals;
+ */
+
 /** do_notifies
  * Send an MOSDPGNotify to a primary, with a list of PGs that I have
  * content for, and they are primary for.
  */
-
 void OSD::do_notifies(
   map<int,vector<pair<pg_notify_t,pg_interval_map_t> > >& notify_list,
   OSDMapRef curmap)
 {
+  /*
+   * struct pg_notify_t:
+   *    epoch_t query_epoch;
+   *    epoch_t epoch_sent;
+   *    pg_info_t info;
+   *    shard_id_t to;
+   *    shard_id_t from;
+   */
   for (map<int,
 	   vector<pair<pg_notify_t,pg_interval_map_t> > >::iterator it =
 	 notify_list.begin();
@@ -8057,13 +8103,13 @@ void OSD::do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
 		     OSDMapRef curmap)
 {
   /*
-   * pg_query_t:
-   *   __s32 type;
-   *   eversion_t since;
-   *   pg_history_t history;
-   *   epoch_t epoch_sent;
-   *   shard_id_t to;
-   *   shard_id_t from;
+   * struct pg_query_t:
+   *    __s32 type;
+   *    eversion_t since;
+   *    pg_history_t history;
+   *    epoch_t epoch_sent;
+   *    shard_id_t to;
+   *    shard_id_t from;
    */
   for (map<int, map<spg_t,pg_query_t> >::iterator pit = query_map.begin();
        pit != query_map.end();
@@ -8088,11 +8134,18 @@ void OSD::do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
   }
 }
 
-
 void OSD::do_infos(map<int,
 		       vector<pair<pg_notify_t, pg_interval_map_t> > >& info_map,
 		   OSDMapRef curmap)
 {
+  /*
+   * struct pg_notify_t:
+   *    epoch_t query_epoch;
+   *    epoch_t epoch_sent;
+   *    pg_info_t info;
+   *    shard_id_t to;
+   *    shard_id_t from;
+   */
   for (map<int,
 	   vector<pair<pg_notify_t, pg_interval_map_t> > >::iterator p =
 	 info_map.begin();
