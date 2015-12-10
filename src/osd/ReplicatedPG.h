@@ -1033,6 +1033,8 @@ protected:
     C_PG_ObjectContext(ReplicatedPG *p, ObjectContext *o) :
       pg(p), obc(o) {}
     void finish(int r) {
+      // dec ref of ObjectContext::ssc and remove it from snapset_contexts and 
+      // delete it if needed
       pg->object_context_destructor_callback(obc);
     }
   };

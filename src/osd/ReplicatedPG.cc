@@ -8490,20 +8490,27 @@ void ReplicatedPG::populate_obc_watchers(ObjectContextRef obc)
   for (map<pair<uint64_t, entity_name_t>, watch_info_t>::iterator p =
 	obc->obs.oi.watchers.begin();
        p != obc->obs.oi.watchers.end();
-       ++p) {
+       ++p) { // iterate obc->obs.oi.watchers
     utime_t expire = info.stats.last_became_active;
     expire += p->second.timeout_seconds;
     dout(10) << "  unconnected watcher " << p->first << " will expire " << expire << dendl;
     WatchRef watch(
       Watch::makeWatchRef(
-	this, osd, obc, p->second.timeout_seconds, p->first.first,
-	p->first.second, p->second.addr));
+	this, osd, obc, 
+	p->second.timeout_seconds, // uint32_t
+	p->first.first, // uint64_t
+	p->first.second, // entity_name_t
+	p->second.addr)); // entity_addr_t
+	
     watch->disconnect();
+
+    // insert into obc->watchers
     obc->watchers.insert(
       make_pair(
 	make_pair(p->first.first, p->first.second),
 	watch));
   }
+       
   // Look for watchers from blacklisted clients and drop
   check_blacklisted_obc_watchers(obc);
 }
@@ -8581,14 +8588,20 @@ ObjectContextRef ReplicatedPG::create_object_context(const object_info_t& oi,
 {
   ObjectContextRef obc(object_contexts.lookup_or_create(oi.soid));
   assert(obc->destructor_callback == NULL);
-  obc->destructor_callback = new C_PG_ObjectContext(this, obc.get());  
+  
+  // used to manage ref of ObjectContext::ssc
+  obc->destructor_callback = new C_PG_ObjectContext(this, obc.get());
   obc->obs.oi = oi;
-  obc->obs.exists = false;
+  obc->obs.exists = false; // not exist on disk
   obc->ssc = ssc;
   if (ssc)
+    // register the SnapSetContext on ReplicatedPG::snapset_contexts if has 
+    // not been registered
     register_snapset_context(ssc);
   dout(10) << "create_object_context " << (void*)obc.get() << " " << oi.soid << " " << dendl;
+  
   if (is_active())
+    // populate watchers from obc->obs.oi.watchers and insert into obc->watchers
     populate_obc_watchers(obc);
   return obc;
 }
@@ -8597,28 +8610,29 @@ ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
 						  bool can_create,
 						  map<string, bufferlist> *attrs)
 {
-  assert(
-    attrs || !pg_log.get_missing().is_missing(soid) ||
+  assert(attrs || 
+    !pg_log.get_missing().is_missing(soid) ||
     // or this is a revert... see recover_primary()
     (pg_log.get_log().objects.count(soid) &&
-      pg_log.get_log().objects.find(soid)->second->op ==
-      pg_log_entry_t::LOST_REVERT));
-  ObjectContextRef obc = object_contexts.lookup(soid);
+      pg_log.get_log().objects.find(soid)->second->op == pg_log_entry_t::LOST_REVERT));
+  
+  ObjectContextRef obc = object_contexts.lookup(soid); // lookup in LRU cache
   osd->logger->inc(l_osd_object_ctx_cache_total);
-  if (obc) {
+  if (obc) { // in cache
     osd->logger->inc(l_osd_object_ctx_cache_hit);
     dout(10) << __func__ << ": found obc in cache: " << obc
 	     << dendl;
-  } else {
+  } else { // not in cache, need to read it from disk
     dout(10) << __func__ << ": obc NOT found in cache: " << soid << dendl;
     // check disk
     bufferlist bv;
-    if (attrs) {
+    if (attrs) { // the caller provided the OI bl
       assert(attrs->count(OI_ATTR));
       bv = attrs->find(OI_ATTR)->second;
     } else {
+      // try to get OI attr from object
       int r = pgbackend->objects_get_attr(soid, OI_ATTR, &bv);
-      if (r < 0) {
+      if (r < 0) { // no OI attr, the object does not exist
 	if (!can_create) {
 	  dout(10) << __func__ << ": no obc for soid "
 		   << soid << " and !can_create"
@@ -8626,13 +8640,18 @@ ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
 	  return ObjectContextRef();   // -ENOENT!
 	}
 
+        // no OI found, we are to create a new object on the disk
+
 	dout(10) << __func__ << ": no obc for soid "
 		 << soid << " but can_create"
 		 << dendl;
 	// new object.
 	object_info_t oi(soid);
-	SnapSetContext *ssc = get_snapset_context(
-	  soid, true, 0);
+        // alloc a SnapSetContext instance with empty SnapSet or construct it
+        // from SS attr
+	SnapSetContext *ssc = get_snapset_context(soid, true, 0);
+
+        // create an instance of ObjectContext
 	obc = create_object_context(oi, ssc);
 	dout(10) << __func__ << ": " << obc << " " << soid
 		 << " " << obc->rwstate
@@ -8643,26 +8662,33 @@ ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
       }
     }
 
+    // ok, construct ObjectContext instance with existing OI bl or lookup
+    // from ReplicatedPG::object_contexts cache
+
     object_info_t oi(bv);
 
     assert(oi.soid.pool == (int64_t)info.pgid.pool());
 
-    obc = object_contexts.lookup_or_create(oi.soid);
+    obc = object_contexts.lookup_or_create(oi.soid); // lookup or create and register
     obc->destructor_callback = new C_PG_ObjectContext(this, obc.get());
     obc->obs.oi = oi;
-    obc->obs.exists = true;
+    obc->obs.exists = true; // object existing on disk
 
+    // create an instance of SnapSetContext with existing SS bl or read it
+    // from disk
     obc->ssc = get_snapset_context(
       soid, true,
       soid.has_snapset() ? attrs : 0);
 
     if (is_active())
+      // populate watchers from obc->obs.oi.watchers and insert into obc->watchers
       populate_obc_watchers(obc);
 
-    if (pool.info.require_rollback()) {
+    if (pool.info.require_rollback()) { // ec pool
       if (attrs) {
 	obc->attr_cache = *attrs;
       } else {
+        // get all attrs of this object and cache it
 	int r = pgbackend->objects_get_attrs(
 	  soid,
 	  &obc->attr_cache);
@@ -8673,6 +8699,7 @@ ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
     dout(10) << __func__ << ": creating obc from disk: " << obc
 	     << dendl;
   }
+  
   assert(obc->ssc);
   dout(10) << __func__ << ": " << obc << " " << soid
 	   << " " << obc->rwstate
@@ -8931,6 +8958,7 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
 void ReplicatedPG::object_context_destructor_callback(ObjectContext *obc)
 {
   if (obc->ssc)
+    // dec ref, if ref is 0, remove it from snapset_contexts and delete it
     put_snapset_context(obc->ssc);
 }
 
@@ -9019,36 +9047,45 @@ SnapSetContext *ReplicatedPG::get_snapset_context(
   SnapSetContext *ssc;
   map<hobject_t, SnapSetContext*, hobject_t::BitwiseComparator>::iterator p = snapset_contexts.find(
     oid.get_snapdir());
-  if (p != snapset_contexts.end()) {
-    if (can_create || p->second->exists) {
+  if (p != snapset_contexts.end()) { // in cache
+    if (can_create || p->second->exists) { // empty SnapSet or existing on disk
       ssc = p->second;
     } else {
       return NULL;
     }
-  } else {
+  } else { // not in cache
     bufferlist bv;
-    if (!attrs) {
+    if (!attrs) { // try to get SS attr from head object
       int r = pgbackend->objects_get_attr(oid.get_head(), SS_ATTR, &bv);
-      if (r < 0) {
+      if (r < 0) { // no lucky, try from snapdir object
 	// try _snapset
 	r = pgbackend->objects_get_attr(oid.get_snapdir(), SS_ATTR, &bv);
 	if (r < 0 && !can_create)
 	  return NULL;
       }
-    } else {
+    } else { // the caller provided the SS bl
       assert(attrs->count(SS_ATTR));
       bv = attrs->find(SS_ATTR)->second;
     }
+
+    // ok, we are to create an empty instance of SnapSetContext or construct an
+    // SnapSetContext instance from existing SS bl (caller provided or read from
+    // disk)
+
+    // alloc mem for SnapSetContext instance
     ssc = new SnapSetContext(oid.get_snapdir());
+    // register the newly allocated SnapSetContext in snapset_contexts cache
     _register_snapset_context(ssc);
-    if (bv.length()) {
+    
+    if (bv.length()) { // SnapSetContext has real content
       bufferlist::iterator bvp = bv.begin();
       ssc->snapset.decode(bvp);
       ssc->exists = true;
     } else {
-      ssc->exists = false;
+      ssc->exists = false; // not exist on disk
     }
   }
+  
   assert(ssc);
   ssc->ref++;
   return ssc;
@@ -10310,8 +10347,10 @@ int ReplicatedPG::prep_object_replica_pushes(
   dout(10) << __func__ << ": on " << soid << dendl;
 
   // NOTE: we know we will get a valid oloc off of disk here.
+
+  // try to construct an instance of ObjectContext from disk
   ObjectContextRef obc = get_object_context(soid, false);
-  if (!obc) {
+  if (!obc) { // object does not exist on disk 
     pg_log.missing_add(soid, v, eversion_t());
     missing_loc.remove_location(soid, pg_whoami);
     bool uhoh = true;
@@ -10371,13 +10410,13 @@ int ReplicatedPG::recover_replicas(int max, ThreadPool::TPHandle &handle)
   dout(10) << __func__ << "(" << max << ")" << dendl;
   int started = 0;
 
-  PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op();
+  PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op(); // allocate an instance of RPGHandle
 
   // this is FAR from an optimal recovery order.  pretty lame, really.
   assert(!actingbackfill.empty());
   for (set<pg_shard_t>::iterator i = actingbackfill.begin();
        i != actingbackfill.end();
-       ++i) {
+       ++i) { // iterate each shard and exclude myself
     if (*i == get_primary()) continue;
     pg_shard_t peer = *i;
     map<pg_shard_t, pg_missing_t>::const_iterator pm = peer_missing.find(peer);
@@ -10393,11 +10432,11 @@ int ReplicatedPG::recover_replicas(int max, ThreadPool::TPHandle &handle)
     const pg_missing_t &m(pm->second);
     for (map<version_t, hobject_t>::const_iterator p = m.rmissing.begin();
 	   p != m.rmissing.end() && started < max;
-	   ++p) {
+	   ++p) { // iterate each missing object
       handle.reset_tp_timeout();
-      const hobject_t soid(p->second);
+      const hobject_t soid(p->second); // missing object to handle
 
-      if (cmp(soid, pi->second.last_backfill, get_sort_bitwise()) > 0) {
+      if (cmp(soid, pi->second.last_backfill, get_sort_bitwise()) > 0) { // pending for backfill
 	if (!recovering.count(soid)) {
 	  derr << __func__ << ": object added to missing set for backfill, but "
 	       << "is not in recovering, error!" << dendl;
@@ -10433,14 +10472,16 @@ int ReplicatedPG::recover_replicas(int max, ThreadPool::TPHandle &handle)
 	continue;
       }
 
+      // ok, our primary shard has the missing object
+
       dout(10) << __func__ << ": recover_object_replicas(" << soid << ")" << dendl;
       map<hobject_t,pg_missing_t::item, hobject_t::ComparatorWithDefault>::const_iterator r = m.missing.find(soid);
-      started += prep_object_replica_pushes(soid, r->second.need,
-					    h);
+      
+      started += prep_object_replica_pushes(soid, r->second.need, h);
     }
   }
 
-  pgbackend->run_recovery_op(h, cct->_conf->osd_recovery_op_priority);
+  pgbackend->run_recovery_op(h, cct->_conf->osd_recovery_op_priority); // default is 3
   return started;
 }
 
