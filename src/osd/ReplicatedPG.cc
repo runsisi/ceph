@@ -9677,7 +9677,7 @@ void ReplicatedPG::on_shutdown()
 void ReplicatedPG::on_activate()
 {
   // all clean?
-  if (needs_recovery()) {
+  if (needs_recovery()) { // iterate PG::actingbackfill to check if any shard needs to be recovered
     dout(10) << "activate not all replicas are up-to-date, queueing recovery" << dendl;
     queue_peering_event(
       CephPeeringEvtRef(
@@ -9685,7 +9685,7 @@ void ReplicatedPG::on_activate()
 	  get_osdmap()->get_epoch(),
 	  get_osdmap()->get_epoch(),
 	  DoRecovery())));
-  } else if (needs_backfill()) {
+  } else if (needs_backfill()) { // iterate PG::backfill_targets to check if any shard needs to be backfilled
     dout(10) << "activate queueing backfill" << dendl;
     queue_peering_event(
       CephPeeringEvtRef(
@@ -9693,7 +9693,7 @@ void ReplicatedPG::on_activate()
 	  get_osdmap()->get_epoch(),
 	  get_osdmap()->get_epoch(),
 	  RequestBackfill())));
-  } else {
+  } else { // ok, all replicas recovered
     dout(10) << "activate all replicas clean, no recovery" << dendl;
     queue_peering_event(
       CephPeeringEvtRef(
@@ -9708,6 +9708,7 @@ void ReplicatedPG::on_activate()
   if (!backfill_targets.empty()) {
     last_backfill_started = earliest_backfill();
     new_backfill = true;
+    
     assert(!last_backfill_started.is_max());
     dout(5) << "on activate: bft=" << backfill_targets
 	   << " from " << last_backfill_started << dendl;
@@ -10014,6 +10015,8 @@ bool ReplicatedPG::start_recovery_ops(
     return false;
   }
 
+  // ok, we are in state either PG_STATE_RECOVERING or PG_STATE_BACKFILL
+
   const pg_missing_t &missing = pg_log.get_missing();
 
   int num_missing = missing.num_missing();
@@ -10100,16 +10103,16 @@ bool ReplicatedPG::start_recovery_ops(
     return work_in_progress;
   }
 
-  if (needs_recovery()) {
+  if (needs_recovery()) { // have missing objects
     // this shouldn't happen!
     // We already checked num_missing() so we must have missing replicas
     osd->clog->error() << info.pgid << " recovery ending with missing replicas\n";
     return work_in_progress;
   }
 
-  if (state_test(PG_STATE_RECOVERING)) {
+  if (state_test(PG_STATE_RECOVERING)) { // recovering
     state_clear(PG_STATE_RECOVERING);
-    if (needs_backfill()) {
+    if (needs_backfill()) { // iterate PG::backfill_targets
       dout(10) << "recovery done, queuing backfill" << dendl;
       queue_peering_event(
         CephPeeringEvtRef(
@@ -10518,7 +10521,7 @@ int ReplicatedPG::recover_backfill(
   assert(!backfill_targets.empty());
 
   // Initialize from prior backfill state
-  if (new_backfill) {
+  if (new_backfill) { // only be set by ReplicatedPG::on_activate
     // on_activate() was called prior to getting here
     assert(last_backfill_started == earliest_backfill());
     new_backfill = false;

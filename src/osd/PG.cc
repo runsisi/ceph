@@ -469,7 +469,7 @@ bool PG::search_for_missing(
   
   if (found_missing &&
       (get_osdmap()->get_features(CEPH_ENTITY_TYPE_OSD, NULL) &
-       CEPH_FEATURE_OSD_ERASURE_CODES)) {
+       CEPH_FEATURE_OSD_ERASURE_CODES)) { // ok, find a recovery source for missing objects
     pg_info_t tinfo(oinfo);
     tinfo.pgid.shard = pg_whoami.shard;
 
@@ -1883,7 +1883,7 @@ void PG::activate(ObjectStore::Transaction& t,
       // and covers vast majority of the use cases, like one OSD/host is down for
       // a while for hardware repairing
       if (complete_shards.size() + 1 == actingbackfill.size()) {
-        // 
+        // add recovery source for missing objects
         missing_loc.add_batch_sources_info(complete_shards);
       } else {
         // add primary shard as the recovery source for missing objects
@@ -6904,14 +6904,19 @@ boost::statechart::result PG::RecoveryState::Active::react(const MInfoRec& infoe
   // don't update history (yet) if we are active and primary; the replica
   // may be telling us they have activated (and committed) but we can't
   // share that until _everyone_ does the same.
-  if (pg->is_actingbackfill(infoevt.from)) {
-    // the peer told us that 
+  if (pg->is_actingbackfill(infoevt.from)) { // the peer is in PG::actingbackfill set
+    // the peer told us that they have activated
     dout(10) << " peer osd." << infoevt.from << " activated and committed" 
 	     << dendl;
     pg->peer_activated.insert(infoevt.from);
     pg->blocked_by.erase(infoevt.from.shard);
     pg->publish_stats_to_osd();
+    
     if (pg->peer_activated.size() == pg->actingbackfill.size()) {
+      // queue peering evt AllReplicasActivated, note: we are in substate 
+      // Activating current now, and will handle the queued AllReplicasActivated
+      // evt in substate Activating, and while substate Activating can't handle
+      // it, state Active will handle it eventually
       pg->all_activated_and_committed();
     }
   }
@@ -6926,13 +6931,17 @@ boost::statechart::result PG::RecoveryState::Active::react(const MLogRec& logevt
   pg->proc_replica_log(
     *context<RecoveryMachine>().get_cur_transaction(),
     logevt.msg->info, logevt.msg->log, logevt.msg->missing, logevt.from);
+
+  // check if the peer can be used as a recovery source, and if the peer can
+  // be used as the recovery source, then prepare MOSDPGInfo for it 
   bool got_missing = pg->search_for_missing(
     pg->peer_info[logevt.from],
     pg->peer_missing[logevt.from],
     logevt.from,
     context< RecoveryMachine >().get_recovery_ctx());
-  if (got_missing)
+  if (got_missing) // found a recovery source for missing objects
     pg->osd->queue_for_recovery(pg);
+
   return discard_event();
 }
 
@@ -6991,6 +7000,9 @@ boost::statechart::result PG::RecoveryState::Active::react(const QueryState& q)
   return forward_event();
 }
 
+// PG::all_activated_and_committed queued the peering evt AllReplicasActivated,
+// actually now we are in substate Activating but the substate can not handle the
+// evt, so the parent state, i.e. Active, handles it
 boost::statechart::result PG::RecoveryState::Active::react(const AllReplicasActivated &evt)
 {
   PG *pg = context< RecoveryMachine >().pg;
@@ -7020,6 +7032,12 @@ boost::statechart::result PG::RecoveryState::Active::react(const AllReplicasActi
     pg->requeue_ops(pg->waiting_for_peered);
   }
 
+  // queue peering evt DoRecovery/RequestBackfill/AllReplicasRecovered accordingly,
+  // note: current now we are still in state Activating, so the pending peering
+  // evt is to be handled by state Activating, i.e.
+  // boost::statechart::transition< AllReplicasRecovered, Recovered >,
+  // boost::statechart::transition< DoRecovery, WaitLocalRecoveryReserved >,
+  // boost::statechart::transition< RequestBackfill, WaitLocalBackfillReserved >
   pg->on_activate();
 
   return discard_event();
@@ -7164,7 +7182,7 @@ PG::RecoveryState::Stray::Stray(my_context ctx)
     context< RecoveryMachine >().get_on_safe_context_list());
 }
 
-// primary shard of this pg will send us MOSDPGLog in PG::activate if the
+// primary shard of this pg sends us MOSDPGLog in PG::activate if the
 // replica has less pg log than the primary to drive us into state ReplicaActive
 boost::statechart::result PG::RecoveryState::Stray::react(const MLogRec& logevt)
 {
@@ -7202,9 +7220,10 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MLogRec& logevt)
   return transit<ReplicaActive>();
 }
 
-// primary shard of this pg will send us MOSDPGInfo in PG::activate if the primary
-// has no pg log to send, i.e. we have the same pg log as the primary shard, to 
-// drive us into state ReplicaActive
+// 1) primary shard of this pg sends us MOSDPGInfo in PG::activate if the primary
+// has no pg log to send, i.e. we have the same pg log as the primary shard,
+// 2) or primary shard of this pg prepares MOSDPGLog in PG::search_for_missing,
+// to drive us into state ReplicaActive
 boost::statechart::result PG::RecoveryState::Stray::react(const MInfoRec& infoevt)
 {
   PG *pg = context< RecoveryMachine >().pg;

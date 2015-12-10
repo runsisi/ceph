@@ -1265,12 +1265,18 @@ OSDMapRef OSDService::try_get_map(epoch_t epoch)
   return _add_map(map);
 }
 
+// PG::activate, 
+// RecoveryState::Backfilling::Backfilling, 
+// RecoveryState::Recovering::Recovering, 
+// RecoveryState::Active::react(ActMap), 
+// RecoveryState::Active::react(MLogRec), 
+// ReplicatedPG::mark_all_unfound_lost
 bool OSDService::queue_for_recovery(PG *pg)
 {
   bool b = recovery_wq.queue(pg);
   if (b)
     dout(10) << "queue_for_recovery queued " << *pg << dendl;
-  else
+  else // the pg has been on the queue
     dout(10) << "queue_for_recovery already queued " << *pg << dendl;
   return b;
 }
@@ -8837,7 +8843,7 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
   }
 
   // see how many we should try to start.  note that this is a bit racy.
-  recovery_wq.lock();
+  recovery_wq.lock(); // lock thread pool
   int max = MIN(cct->_conf->osd_recovery_max_active - recovery_ops_active, // default is 3
       cct->_conf->osd_recovery_max_single_start); // default is 1
   if (max > 0) {
@@ -8890,8 +8896,10 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
      * out while trying to pull.
      */
     if (!more && pg->have_unfound()) {
+      // iterate PG::might_have_unfound to request FULLLOG 
       pg->discover_all_missing(*rctx.query_map);
-      if (rctx.query_map->empty()) {
+      
+      if (rctx.query_map->empty()) { // no new recovery source
 	dout(10) << "do_recovery  no luck, giving up on this pg for now" << dendl;
 	recovery_wq.lock();
 	recovery_wq._dequeue(pg);
