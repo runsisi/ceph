@@ -3276,8 +3276,8 @@ public:
     bool get_write_lock(bool greedy=false) {
       if (!greedy) {
 	// don't starve anybody!
-	if (!waiters.empty() ||
-	    recovery_read_marker) {
+	if (!waiters.empty() || // have pending ops
+	    recovery_read_marker) { // recovery read in progress/pending, get_recovery_read set it
 	  return false;
 	}
       }
@@ -3356,6 +3356,7 @@ public:
     bool empty() const { return state == RWNONE; }
   } rwstate;
 
+  // external interfaces for ObjectContext::rwstate
   bool get_read(OpRequestRef op) {
     return rwstate.get_read(op);
   }
@@ -3391,9 +3392,11 @@ public:
   }
   bool get_recovery_read() {
     rwstate.recovery_read_marker = true;
-    if (rwstate.get_read_lock()) {
+    if (rwstate.get_read_lock()) { // no pending ops and no write/excl holder
       return true;
     }
+
+    // have pending ops or currently has write/excl holder
     return false;
   }
   void drop_recovery_read(list<OpRequestRef> *ls) {
@@ -3463,34 +3466,38 @@ public:
   void ondisk_write_lock() {
     lock.Lock();
     writers_waiting++;
-    while (readers_waiting || readers)
+    while (readers_waiting || readers) // wait pending read / in-progress read
       cond.Wait(lock);
     writers_waiting--;
-    unstable_writes++;
+    
+    unstable_writes++; // in-progress write
     lock.Unlock();
   }
   void ondisk_write_unlock() {
     lock.Lock();
     assert(unstable_writes > 0);
     unstable_writes--;
-    if (!unstable_writes && readers_waiting)
+    
+    if (!unstable_writes && readers_waiting) // in-progress write finished and has pending read
       cond.Signal();
     lock.Unlock();
   }
   void ondisk_read_lock() {
     lock.Lock();
     readers_waiting++;
-    while (unstable_writes)
-      cond.Wait(lock);
+    while (unstable_writes) // wait in-progress write
+      cond.Wait(lock);    
     readers_waiting--;
-    readers++;
+    
+    readers++; // in-progress read
     lock.Unlock();
   }
   void ondisk_read_unlock() {
     lock.Lock();
     assert(readers > 0);
     readers--;
-    if (!readers && writers_waiting)
+    
+    if (!readers && writers_waiting) // in-progress read finished and has pending write
       cond.Signal();
     lock.Unlock();
   }

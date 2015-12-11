@@ -266,7 +266,8 @@
      int priority           ///< [in] msg priority
      ) = 0;
 
-   /**
+   /** on_not_missing, on_readable, on_not_degraded
+    *
     * recover_object
     *
     * Triggers a recovery operation on the specified hobject_t

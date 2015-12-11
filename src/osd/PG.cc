@@ -2286,13 +2286,14 @@ void PG::start_recovery_op(const hobject_t& soid)
 #endif
 	   << dendl;
   assert(recovery_ops_active >= 0);
-  recovery_ops_active++;
+  recovery_ops_active++; // inc PG::recovery_ops_active by one
+  
 #ifdef DEBUG_RECOVERY_OIDS
   assert(recovering_oids.count(soid) == 0);
   recovering_oids.insert(soid);
 #endif
   // TODOSAM: osd->osd-> not good
-  osd->osd->start_recovery_op(this, soid);
+  osd->osd->start_recovery_op(this, soid); // inc OSD::recovery_ops_active by one
 }
 
 void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)

@@ -10350,24 +10350,31 @@ int ReplicatedPG::prep_object_replica_pushes(
 
   // try to construct an instance of ObjectContext from disk
   ObjectContextRef obc = get_object_context(soid, false);
-  if (!obc) { // object does not exist on disk 
-    pg_log.missing_add(soid, v, eversion_t());
-    missing_loc.remove_location(soid, pg_whoami);
+  if (!obc) {
+    // object does not exist on disk, try to get a recover source from peers 
+    pg_log.missing_add(soid, v, eversion_t()); // so the object is missing on primary
+    missing_loc.remove_location(soid, pg_whoami); // and can not recover the object from primary shard
+
+    // ok, try to get a recover source from peers
+    
     bool uhoh = true;
     assert(!actingbackfill.empty());
     for (set<pg_shard_t>::iterator i = actingbackfill.begin();
 	 i != actingbackfill.end();
 	 ++i) {
       if (*i == get_primary()) continue;
+      
       pg_shard_t peer = *i;
       if (!peer_missing[peer].is_missing(soid, v)) {
+        // the missing object may can be recovered from the replicas
 	missing_loc.add_location(soid, peer);
 	dout(10) << info.pgid << " unexpectedly missing " << soid << " v" << v
 		 << ", there should be a copy on shard " << peer << dendl;
-	uhoh = false;
+	uhoh = false; // replica has it
       }
     }
-    if (uhoh)
+         
+    if (uhoh) // no lucky, object missing both on primary and replicas
       osd->clog->error() << info.pgid << " missing primary copy of " << soid << ", unfound\n";
     else
       osd->clog->error() << info.pgid << " missing primary copy of " << soid
@@ -10376,7 +10383,10 @@ int ReplicatedPG::prep_object_replica_pushes(
     return 0;
   }
 
+  // ok, the object exists on disk
+
   if (!obc->get_recovery_read()) {
+    // have pending ops or currently has write/excl holder, waiting for the next try
     dout(20) << "recovery delayed on " << soid
 	     << "; could not get rw_manager lock" << dendl;
     return 0;
@@ -10385,16 +10395,20 @@ int ReplicatedPG::prep_object_replica_pushes(
 	     << dendl;
   }
 
+  // inc PG::recovery_ops_active and OSD::recovery_ops_active each by one
   start_recovery_op(soid);
+  
   assert(!recovering.count(soid));
-  recovering.insert(make_pair(soid, obc));
+  recovering.insert(make_pair(soid, obc)); // mark the object is recovering
 
   /* We need this in case there is an in progress write on the object.  In fact,
    * the only possible write is an update to the xattr due to a lost_revert --
    * a client write would be blocked since the object is degraded.
    * In almost all cases, therefore, this lock should be uncontended.
    */
-  obc->ondisk_read_lock();
+  obc->ondisk_read_lock(); // wait in-progress write to finish
+
+  // 
   pgbackend->recover_object(
     soid,
     v,
@@ -10472,11 +10486,12 @@ int ReplicatedPG::recover_replicas(int max, ThreadPool::TPHandle &handle)
 	continue;
       }
 
-      // ok, our primary shard has the missing object
+      // ok, our primary shard has the missing object, push to replicas
 
       dout(10) << __func__ << ": recover_object_replicas(" << soid << ")" << dendl;
       map<hobject_t,pg_missing_t::item, hobject_t::ComparatorWithDefault>::const_iterator r = m.missing.find(soid);
-      
+
+      // 
       started += prep_object_replica_pushes(soid, r->second.need, h);
     }
   }

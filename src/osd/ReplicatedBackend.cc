@@ -87,7 +87,7 @@ void ReplicatedBackend::recover_object(
 {
   dout(10) << __func__ << ": " << hoid << dendl;
   RPGHandle *h = static_cast<RPGHandle *>(_h);
-  if (get_parent()->get_local_missing().is_missing(hoid)) {
+  if (get_parent()->get_local_missing().is_missing(hoid)) { // the object is missing on primary
     assert(!obc);
     // pull
     prepare_pull(
@@ -96,7 +96,7 @@ void ReplicatedBackend::recover_object(
       head,
       h);
     return;
-  } else {
+  } else { // the object is missing on replicas
     assert(obc);
     int started = start_pushes(
       hoid,
@@ -1529,14 +1529,13 @@ void ReplicatedBackend::prepare_pull(
   ObjectContextRef headctx,
   RPGHandle *h)
 {
-  assert(get_parent()->get_local_missing().missing.count(soid));
-  eversion_t _v = get_parent()->get_local_missing().missing.find(
-    soid)->second.need;
+  assert(get_parent()->get_local_missing().missing.count(soid)); // must be missing locally
+  
+  eversion_t _v = get_parent()->get_local_missing().missing.find(soid)->second.need;
   assert(_v == v);
   const map<hobject_t, set<pg_shard_t>, hobject_t::BitwiseComparator> &missing_loc(
     get_parent()->get_missing_loc_shards());
-  const map<pg_shard_t, pg_missing_t > &peer_missing(
-    get_parent()->get_shard_missing());
+  const map<pg_shard_t, pg_missing_t > &peer_missing(get_parent()->get_shard_missing());
   map<hobject_t, set<pg_shard_t>, hobject_t::BitwiseComparator>::const_iterator q = missing_loc.find(soid);
   assert(q != missing_loc.end());
   assert(!q->second.empty());
