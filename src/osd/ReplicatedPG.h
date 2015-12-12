@@ -348,7 +348,7 @@ public:
   std::string gen_dbg_prefix() const { return gen_prefix(); }
   
   const map<hobject_t, set<pg_shard_t>, hobject_t::BitwiseComparator> &get_missing_loc_shards() const {
-    return missing_loc.get_missing_locs();
+    return missing_loc.get_missing_locs(); // return PG::MissingLoc::missingloc
   }
   const map<pg_shard_t, pg_missing_t> &get_shard_missing() const {
     return peer_missing;

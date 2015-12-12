@@ -1534,15 +1534,16 @@ void ReplicatedBackend::prepare_pull(
   eversion_t _v = get_parent()->get_local_missing().missing.find(soid)->second.need;
   assert(_v == v);
   const map<hobject_t, set<pg_shard_t>, hobject_t::BitwiseComparator> &missing_loc(
-    get_parent()->get_missing_loc_shards());
-  const map<pg_shard_t, pg_missing_t > &peer_missing(get_parent()->get_shard_missing());
+    get_parent()->get_missing_loc_shards()); // PG::MissingLoc::missingloc
+  const map<pg_shard_t, pg_missing_t > &peer_missing(get_parent()->get_shard_missing()); // PG::peer_missing
+  // recovery source
   map<hobject_t, set<pg_shard_t>, hobject_t::BitwiseComparator>::const_iterator q = missing_loc.find(soid);
   assert(q != missing_loc.end());
   assert(!q->second.empty());
 
   // pick a pullee
   vector<pg_shard_t> shuffle(q->second.begin(), q->second.end());
-  random_shuffle(shuffle.begin(), shuffle.end());
+  random_shuffle(shuffle.begin(), shuffle.end()); // std::random_shuffle
   vector<pg_shard_t>::iterator p = shuffle.begin();
   assert(get_osdmap()->is_up(p->osd));
   pg_shard_t fromshard = *p;
@@ -1555,18 +1556,17 @@ void ReplicatedBackend::prepare_pull(
 
   assert(peer_missing.count(fromshard));
   const pg_missing_t &pmissing = peer_missing.find(fromshard)->second;
-  if (pmissing.is_missing(soid, v)) {
+  if (pmissing.is_missing(soid, v)) { // the missing object's version the peer need <= v (we need), i.e. we have longer pg log
     assert(pmissing.missing.find(soid)->second.have != v);
     dout(10) << "pulling soid " << soid << " from osd " << fromshard
 	     << " at version " << pmissing.missing.find(soid)->second.have
 	     << " rather than at version " << v << dendl;
-    v = pmissing.missing.find(soid)->second.have;
+    v = pmissing.missing.find(soid)->second.have; // the object version the peer has
     assert(get_parent()->get_log().get_log().objects.count(soid) &&
 	   (get_parent()->get_log().get_log().objects.find(soid)->second->op ==
 	    pg_log_entry_t::LOST_REVERT) &&
 	   (get_parent()->get_log().get_log().objects.find(
-	     soid)->second->reverting_to ==
-	    v));
+	     soid)->second->reverting_to == v)); // we are revert to the object version the peer has
   }
 
   ObjectRecoveryInfo recovery_info;
@@ -1611,7 +1611,8 @@ void ReplicatedBackend::prepare_pull(
 
   assert(!pulling.count(soid));
   pull_from_peer[fromshard].insert(soid);
-  PullInfo &pi = pulling[soid];
+  
+  PullInfo &pi = pulling[soid]; // PullInfo contains all info the PullOp has
   pi.head_ctx = headctx;
   pi.recovery_info = op.recovery_info;
   pi.recovery_progress = op.recovery_progress;
@@ -1646,6 +1647,7 @@ void ReplicatedBackend::prep_push_to_replica(
       dout(15) << "push_to_replica missing head " << head << ", pushing raw clone" << dendl;
       return prep_push(obc, soid, peer, pop);
     }
+    
     hobject_t snapdir = head;
     snapdir.snap = CEPH_SNAPDIR;
     if (get_parent()->get_local_missing().is_missing(snapdir)) {
@@ -1680,6 +1682,7 @@ void ReplicatedBackend::prep_push_to_replica(
       data_subset, clone_subsets);
   }
 
+  // setup a PushOp and register the PushInfo in ReplicatedBackend::pushing
   prep_push(obc, soid, peer, oi.version, data_subset, clone_subsets, pop, cache_dont_need);
 }
 
@@ -1707,6 +1710,7 @@ void ReplicatedBackend::prep_push(
   bool cache_dont_need)
 {
   get_parent()->begin_peer_recover(peer, soid);
+  
   // take note.
   PushInfo &pi = pushing[soid][peer];
   pi.obc = obc;
@@ -1722,13 +1726,14 @@ void ReplicatedBackend::prep_push(
   pi.recovery_progress.omap_complete = 0;
 
   ObjectRecoveryProgress new_progress;
-  int r = build_push_op(pi.recovery_info,
-			pi.recovery_progress,
+  // setup PushOp and progress
+  int r = build_push_op(pi.recovery_info, // const
+			pi.recovery_progress, // const
 			&new_progress,
 			pop,
 			&(pi.stat), cache_dont_need);
   assert(r == 0);
-  pi.recovery_progress = new_progress;
+  pi.recovery_progress = new_progress; // set initial progress
 }
 
 int ReplicatedBackend::send_pull_legacy(int prio, pg_shard_t peer,
@@ -2098,11 +2103,10 @@ int ReplicatedBackend::build_push_op(const ObjectRecoveryInfo &recovery_info,
     new_progress.first = false;
   }
 
-  uint64_t available = cct->_conf->osd_recovery_max_chunk;
+  uint64_t available = cct->_conf->osd_recovery_max_chunk; // default is 8 << 20
   if (!progress.omap_complete) {
     ObjectMap::ObjectMapIterator iter =
-      store->get_omap_iterator(coll,
-			       ghobject_t(recovery_info.soid));
+      store->get_omap_iterator(coll, ghobject_t(recovery_info.soid));
     for (iter->lower_bound(progress.omap_recovered_to);
 	 iter->valid();
 	 iter->next()) {
@@ -2494,13 +2498,17 @@ int ReplicatedBackend::start_pushes(
        i != get_parent()->get_actingbackfill_shards().end();
        ++i) {
     if (*i == get_parent()->whoami_shard()) continue;
+    
     pg_shard_t peer = *i;
     map<pg_shard_t, pg_missing_t>::const_iterator j =
-      get_parent()->get_shard_missing().find(peer);
+      get_parent()->get_shard_missing().find(peer); // PG::peer_missing
     assert(j != get_parent()->get_shard_missing().end());
-    if (j->second.is_missing(soid)) {
+    
+    if (j->second.is_missing(soid)) { // the peer needs the object
       ++pushes;
       h->pushes[peer].push_back(PushOp());
+
+      // setup a PushOp
       prep_push_to_replica(obc, soid, peer,
 			   &(h->pushes[peer].back()), h->cache_dont_need);
     }

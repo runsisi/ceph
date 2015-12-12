@@ -3629,7 +3629,7 @@ bool pg_missing_t::is_missing(const hobject_t& oid, eversion_t v) const
   if (m == missing.end())
     return false;
   const pg_missing_t::item &item(m->second);
-  if (item.need > v)
+  if (item.need > v) // TODO: ???
     return false;
   return true;
 }

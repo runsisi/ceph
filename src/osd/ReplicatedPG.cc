@@ -10408,13 +10408,14 @@ int ReplicatedPG::prep_object_replica_pushes(
    */
   obc->ondisk_read_lock(); // wait in-progress write to finish
 
-  // 
+  // prepare pull/push ops
   pgbackend->recover_object(
     soid,
     v,
     ObjectContextRef(),
     obc, // has snapset context
     h);
+  
   obc->ondisk_read_unlock();
   return 1;
 }
@@ -10491,11 +10492,12 @@ int ReplicatedPG::recover_replicas(int max, ThreadPool::TPHandle &handle)
       dout(10) << __func__ << ": recover_object_replicas(" << soid << ")" << dendl;
       map<hobject_t,pg_missing_t::item, hobject_t::ComparatorWithDefault>::const_iterator r = m.missing.find(soid);
 
-      // 
+      // prepare PushOp
       started += prep_object_replica_pushes(soid, r->second.need, h);
     }
   }
 
+  // send_pushes for replicated backend
   pgbackend->run_recovery_op(h, cct->_conf->osd_recovery_op_priority); // default is 3
   return started;
 }
