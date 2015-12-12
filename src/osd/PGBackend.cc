@@ -124,6 +124,7 @@ int PGBackend::objects_list_partial(
       &_next);
     if (r != 0)
       break;
+    
     for (vector<ghobject_t>::iterator i = objects.begin();
 	 i != objects.end();
 	 ++i) {
@@ -135,6 +136,7 @@ int PGBackend::objects_list_partial(
       }
     }
   }
+  
   if (r == 0)
     *next = _next.hobj;
   return r;

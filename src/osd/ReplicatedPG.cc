@@ -1499,6 +1499,9 @@ void ReplicatedPG::do_request(
 hobject_t ReplicatedPG::earliest_backfill() const
 {
   hobject_t e = hobject_t::get_max();
+
+  // iterate each backfill target to find the min last_backfill object from 
+  // all peers (including myself)
   for (set<pg_shard_t>::iterator i = backfill_targets.begin();
        i != backfill_targets.end();
        ++i) {
@@ -9128,14 +9131,15 @@ int ReplicatedPG::recover_missing(
   // is this a snapped object?  if so, consult the snapset.. we may not need the entire object!
   ObjectContextRef obc;
   ObjectContextRef head_obc;
-  if (soid.snap && soid.snap < CEPH_NOSNAP) {
+  
+  if (soid.snap && soid.snap < CEPH_NOSNAP) { // we are to recover a snapshot object
     // do we have the head and/or snapdir?
     hobject_t head = soid.get_head();
-    if (pg_log.get_missing().is_missing(head)) {
+    if (pg_log.get_missing().is_missing(head)) { // head object is missing
       if (recovering.count(head)) {
 	dout(10) << " missing but already recovering head " << head << dendl;
 	return PULL_NONE;
-      } else {
+      } else { // try to recover head object
 	int r = recover_missing(
 	  head, pg_log.get_missing().missing.find(head)->second.need, priority,
 	  h);
@@ -9144,12 +9148,13 @@ int ReplicatedPG::recover_missing(
 	return PULL_NONE;
       }
     }
+    
     head = soid.get_snapdir();
-    if (pg_log.get_missing().is_missing(head)) {
+    if (pg_log.get_missing().is_missing(head)) { // snapdir object is missing
       if (recovering.count(head)) {
 	dout(10) << " missing but already recovering snapdir " << head << dendl;
 	return PULL_NONE;
-      } else {
+      } else { // try to recover snapdir object
 	int r = recover_missing(
 	  head, pg_log.get_missing().missing.find(head)->second.need, priority,
 	  h);
@@ -9171,15 +9176,21 @@ int ReplicatedPG::recover_missing(
 	0);
     assert(head_obc);
   }
+
+  // inc PG::recovery_ops_active and OSD::recovery_ops_active
   start_recovery_op(soid);
+  
   assert(!recovering.count(soid));
   recovering.insert(make_pair(soid, obc));
+
+  // prepare PullOp/PushOp
   pgbackend->recover_object(
     soid,
     v,
-    head_obc,
-    obc,
+    head_obc, // for prepare_pull
+    obc, // for start_pushes
     h);
+  
   return PULL_YES;
 }
 
@@ -10072,7 +10083,7 @@ bool ReplicatedPG::start_recovery_ops(
     // We still have missing objects that we should grab from replicas.
     started += recover_primary(max, handle);
   }
-  if (!started && num_unfound != get_num_unfound()) {
+  if (!started && num_unfound != get_num_unfound()) { // new recovery source added
     // second chance to recovery replicas
     started = recover_replicas(max, handle);
   }
@@ -10116,6 +10127,7 @@ bool ReplicatedPG::start_recovery_ops(
 
   if (!recovering.empty() ||
       work_in_progress || recovery_ops_active > 0 || deferred_backfill)
+    // pending/in-progress recovering or pending/in-progress backfilling
     return work_in_progress;
 
   assert(recovering.empty());
@@ -10200,15 +10212,15 @@ int ReplicatedPG::recover_primary(int max, ThreadPool::TPHandle &handle)
   int started = 0;
   int skipped = 0;
 
-  PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op();
+  PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op(); // alloc an instance of RPGHandle/ECRecoveryHandle
   map<version_t, hobject_t>::const_iterator p =
     missing.rmissing.lower_bound(pg_log.get_log().last_requested);
-  while (p != missing.rmissing.end()) {
+  while (p != missing.rmissing.end()) { // iterate missing objects
     handle.reset_tp_timeout();
     hobject_t soid;
     version_t v = p->first;
 
-    if (pg_log.get_log().objects.count(p->second)) {
+    if (pg_log.get_log().objects.count(p->second)) { // the latest op to this missing object is an update op
       latest = pg_log.get_log().objects.find(p->second)->second;
       assert(latest->is_update());
       soid = latest->soid;
@@ -10311,8 +10323,7 @@ int ReplicatedPG::recover_primary(int max, ThreadPool::TPHandle &handle)
       if (recovering.count(head)) {
 	++skipped;
       } else {
-	int r = recover_missing(
-	  soid, need, cct->_conf->osd_recovery_op_priority, h);
+	int r = recover_missing(soid, need, cct->_conf->osd_recovery_op_priority, h); // default is 3
 	switch (r) {
 	case PULL_YES:
 	  ++started;
@@ -10334,8 +10345,9 @@ int ReplicatedPG::recover_primary(int max, ThreadPool::TPHandle &handle)
     if (!skipped)
       pg_log.set_last_requested(v);
   }
- 
-  pgbackend->run_recovery_op(h, cct->_conf->osd_recovery_op_priority);
+
+  // send_pushes and send_pulls
+  pgbackend->run_recovery_op(h, cct->_conf->osd_recovery_op_priority); // default is 3
   return started;
 }
 
@@ -10492,7 +10504,7 @@ int ReplicatedPG::recover_replicas(int max, ThreadPool::TPHandle &handle)
       dout(10) << __func__ << ": recover_object_replicas(" << soid << ")" << dendl;
       map<hobject_t,pg_missing_t::item, hobject_t::ComparatorWithDefault>::const_iterator r = m.missing.find(soid);
 
-      // prepare PushOp
+      // prepare 0/1 PushOp
       started += prep_object_replica_pushes(soid, r->second.need, h);
     }
   }
@@ -10587,12 +10599,13 @@ int ReplicatedPG::recover_backfill(
     // initialize BackfillIntervals (with proper sort order)
     for (set<pg_shard_t>::iterator i = backfill_targets.begin();
 	 i != backfill_targets.end();
-	 ++i) {
+	 ++i) { // peer targets
       peer_backfill_info[*i].reset(peer_info[*i].last_backfill,
 				   get_sort_bitwise());
     }
-    backfill_info.reset(last_backfill_started,
-			get_sort_bitwise());
+
+    // primary
+    backfill_info.reset(last_backfill_started, get_sort_bitwise());
 
     // initialize comparators
     backfills_in_flight = set<hobject_t, hobject_t::Comparator>(
@@ -10626,6 +10639,8 @@ int ReplicatedPG::recover_backfill(
 
   // update our local interval to cope with recent changes
   backfill_info.begin = last_backfill_started;
+
+  // update BackfillInterval::objects and BackfillInterval::version
   update_range(&backfill_info, handle);
 
   int ops = 0;
@@ -10816,6 +10831,7 @@ int ReplicatedPG::recover_backfill(
       }
     }
   }
+  
   backfill_pos = MIN_HOBJ(backfill_info.begin, earliest_peer_backfill(),
 			  get_sort_bitwise());
 
@@ -10969,8 +10985,8 @@ void ReplicatedPG::update_range(
   BackfillInterval *bi,
   ThreadPool::TPHandle &handle)
 {
-  int local_min = cct->_conf->osd_backfill_scan_min;
-  int local_max = cct->_conf->osd_backfill_scan_max;
+  int local_min = cct->_conf->osd_backfill_scan_min; // default is 64
+  int local_max = cct->_conf->osd_backfill_scan_max; // default is 512
 
   if (bi->version < info.log_tail) {
     dout(10) << __func__<< ": bi is old, rescanning local backfill_info"
@@ -10981,9 +10997,13 @@ void ReplicatedPG::update_range(
       osr->flush();
       bi->version = info.last_update;
     }
+
+    // setup BackfillInterval::objects
     scan_range(local_min, local_max, bi, handle);
   }
 
+  // update BackfillInterval::objects according to the pg log entries
+  
   if (bi->version >= info.last_update) {
     dout(10) << __func__<< ": bi is current " << dendl;
     assert(bi->version == info.last_update);
@@ -10998,11 +11018,11 @@ void ReplicatedPG::update_range(
       assert(bi->version == eversion_t());
       return;
     }
+    
     assert(!pg_log.get_log().empty());
     dout(10) << __func__<< ": bi is old, (" << bi->version
 	     << ") can be updated with log" << dendl;
-    list<pg_log_entry_t>::const_iterator i =
-      pg_log.get_log().log.end();
+    list<pg_log_entry_t>::const_iterator i = pg_log.get_log().log.end();
     --i;
     while (i != pg_log.get_log().log.begin() &&
            i->version > bi->version) {
@@ -11032,6 +11052,7 @@ void ReplicatedPG::update_range(
 	}
       }
     }
+    
     bi->version = info.last_update;
   } else {
     assert(0 == "scan_range should have raised bi->version past log_tail");
@@ -11044,15 +11065,18 @@ void ReplicatedPG::scan_range(
 {
   assert(is_locked());
   dout(10) << "scan_range from " << bi->begin << dendl;
-  bi->clear_objects();
+  
+  bi->clear_objects(); // reset BackfillInterval::objects to empty
 
   vector<hobject_t> ls;
   ls.reserve(max);
+  // get a vector of objects that min <= ls.size() <= max, and set next start object
   int r = pgbackend->objects_list_partial(bi->begin, min, max, &ls, &bi->end);
   assert(r >= 0);
   dout(10) << " got " << ls.size() << " items, next " << bi->end << dendl;
   dout(20) << ls << dendl;
 
+  // setup BackfillInterval::objects
   for (vector<hobject_t>::iterator p = ls.begin(); p != ls.end(); ++p) {
     handle.reset_tp_timeout();
     ObjectContextRef obc;
@@ -11061,7 +11085,7 @@ void ReplicatedPG::scan_range(
     if (obc) {
       bi->objects[*p] = obc->obs.oi.version;
       dout(20) << "  " << *p << " " << obc->obs.oi.version << dendl;
-    } else {
+    } else { // try to construct ObjectContext from disk
       bufferlist bl;
       int r = pgbackend->objects_get_attr(*p, OI_ATTR, &bl);
 

@@ -93,7 +93,7 @@ void ReplicatedBackend::recover_object(
     prepare_pull(
       v,
       hoid,
-      head,
+      head, // ObjectContext for head/snapdir object, only needed for recovering snapshot object
       h);
     return;
   } else { // the object is missing on replicas
@@ -2009,14 +2009,14 @@ void ReplicatedBackend::send_pushes(int prio, map<pg_shard_t, vector<PushOp> > &
 {
   for (map<pg_shard_t, vector<PushOp> >::iterator i = pushes.begin();
        i != pushes.end();
-       ++i) {
+       ++i) { // iterate pg shard
     ConnectionRef con = get_parent()->get_con_osd_cluster(
       i->first.osd,
       get_osdmap()->get_epoch());
     if (!con)
       continue;
     vector<PushOp>::iterator j = i->second.begin();
-    while (j != i->second.end()) {
+    while (j != i->second.end()) { // iterate PushOp and may construct multiple MOSDPGPush msgs
       uint64_t cost = 0;
       uint64_t pushes = 0;
       MOSDPGPush *msg = new MOSDPGPush();
@@ -2026,8 +2026,8 @@ void ReplicatedBackend::send_pushes(int prio, map<pg_shard_t, vector<PushOp> > &
       msg->set_priority(prio);
       for (;
            (j != i->second.end() &&
-	    cost < cct->_conf->osd_max_push_cost &&
-	    pushes < cct->_conf->osd_max_push_objects) ;
+	    cost < cct->_conf->osd_max_push_cost && // default is 8 << 20
+	    pushes < cct->_conf->osd_max_push_objects) ; // default is 10
 	   ++j) {
 	dout(20) << __func__ << ": sending push " << *j
 		 << " to osd." << i->first << dendl;
