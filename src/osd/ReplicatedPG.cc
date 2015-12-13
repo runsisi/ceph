@@ -1501,7 +1501,7 @@ hobject_t ReplicatedPG::earliest_backfill() const
   hobject_t e = hobject_t::get_max();
 
   // iterate each backfill target to find the min last_backfill object from 
-  // all peers (including myself)
+  // all peers
   for (set<pg_shard_t>::iterator i = backfill_targets.begin();
        i != backfill_targets.end();
        ++i) {
@@ -9756,7 +9756,7 @@ void ReplicatedPG::on_activate()
   publish_stats_to_osd();
 
   if (!backfill_targets.empty()) {
-    last_backfill_started = earliest_backfill();
+    last_backfill_started = earliest_backfill(); // min(peer_info[*].last_backfill)
     new_backfill = true;
     
     assert(!last_backfill_started.is_max());
@@ -10161,7 +10161,7 @@ bool ReplicatedPG::start_recovery_ops(
     return work_in_progress;
   }
 
-  if (state_test(PG_STATE_RECOVERING)) { // recovering
+  if (state_test(PG_STATE_RECOVERING)) { // we were recovering previously
     state_clear(PG_STATE_RECOVERING);
     if (needs_backfill()) { // iterate PG::backfill_targets
       dout(10) << "recovery done, queuing backfill" << dendl;
@@ -10180,7 +10180,7 @@ bool ReplicatedPG::start_recovery_ops(
             get_osdmap()->get_epoch(),
             AllReplicasRecovered())));
     }
-  } else { // backfilling
+  } else { // we were backfilling previously
     state_clear(PG_STATE_BACKFILL);
     dout(10) << "recovery done, backfill done" << dendl;
     queue_peering_event(
@@ -10520,7 +10520,7 @@ hobject_t ReplicatedPG::earliest_peer_backfill() const
 {
   hobject_t e = hobject_t::get_max();
 
-  // get the min BackfillInterval::begin for all backfill_targets (not including me)
+  // min(peer_backfill_info[*].begin)
   for (set<pg_shard_t>::const_iterator i = backfill_targets.begin();
        i != backfill_targets.end();
        ++i) {
@@ -10597,18 +10597,18 @@ int ReplicatedPG::recover_backfill(
   // Initialize from prior backfill state
   if (new_backfill) { // only be set by ReplicatedPG::on_activate
     // on_activate() was called prior to getting here
-    assert(last_backfill_started == earliest_backfill());
+    assert(last_backfill_started == earliest_backfill()); // ReplicatedPG::on_activate set it to min(peer_info[*].last_backfill)
     new_backfill = false;
 
     // initialize BackfillIntervals (with proper sort order)
     for (set<pg_shard_t>::iterator i = backfill_targets.begin();
 	 i != backfill_targets.end();
-	 ++i) { // peer targets
+	 ++i) { // peer targets, set begin = end = last_backfill
       peer_backfill_info[*i].reset(peer_info[*i].last_backfill,
 				   get_sort_bitwise());
     }
 
-    // primary
+    // primary, set begin = end = last_backfill_started
     backfill_info.reset(last_backfill_started, get_sort_bitwise());
 
     // initialize comparators
@@ -10730,9 +10730,9 @@ int ReplicatedPG::recover_backfill(
 
     // Get object within set of peers to operate on and
     // the set of targets for which that object applies.
-    hobject_t check = earliest_peer_backfill();
+    hobject_t check = earliest_peer_backfill(); // min(peer_backfill_info[*].begin)
 
-    if (cmp(check, backfill_info.begin, get_sort_bitwise()) < 0) {
+    if (cmp(check, backfill_info.begin, get_sort_bitwise()) < 0) { // min(peer_backfill_info[*].begin) < backfill_info.begin
       set<pg_shard_t> check_targets;
       for (set<pg_shard_t>::iterator i = backfill_targets.begin();
 	   i != backfill_targets.end();
@@ -10762,7 +10762,7 @@ int ReplicatedPG::recover_backfill(
       // are cheap and not replied to unlike real recovery_ops,
       // and we can't increment ops without requeueing ourself
       // for recovery.
-    } else {
+    } else { // min(peer_backfill_info[*].begin) >= backfill_info.begin
       eversion_t& obj_v = backfill_info.objects.begin()->second;
 
       vector<pg_shard_t> need_ver_targs, missing_targs, keep_ver_targs, skip_targs;
@@ -10835,8 +10835,9 @@ int ReplicatedPG::recover_backfill(
 	       << " skip_targs=" << skip_targs << dendl;
 
       last_backfill_started = backfill_info.begin;
+      
       add_to_stat.insert(backfill_info.begin); // XXX: Only one for all pushes?
-      backfill_info.pop_front();
+      backfill_info.pop_front(); // pop an object and reset begin
       vector<pg_shard_t> check_targets = need_ver_targs;
       check_targets.insert(check_targets.end(), keep_ver_targs.begin(), keep_ver_targs.end());
       for (vector<pg_shard_t>::iterator i = check_targets.begin();
@@ -10849,7 +10850,8 @@ int ReplicatedPG::recover_backfill(
     }
   }
   
-  backfill_pos = MIN_HOBJ(backfill_info.begin, earliest_peer_backfill(),
+  backfill_pos = MIN_HOBJ(backfill_info.begin, 
+                          earliest_peer_backfill(), // min(peer_backfill_info[*].begin)
 			  get_sort_bitwise());
 
   for (set<hobject_t, hobject_t::BitwiseComparator>::iterator i = add_to_stat.begin();
@@ -10866,7 +10868,9 @@ int ReplicatedPG::recover_backfill(
     handle.reset_tp_timeout();
 
     // ordered before any subsequent updates
-    send_remove_op(to_remove[i].get<0>(), to_remove[i].get<1>(), to_remove[i].get<2>());
+    send_remove_op(to_remove[i].get<0>(), // hobject_t
+                to_remove[i].get<1>(), // eversion_t
+                to_remove[i].get<2>()); // pg_shard_t
 
     pending_backfill_updates[to_remove[i].get<0>()]; // add empty stat!
   }
@@ -10874,6 +10878,7 @@ int ReplicatedPG::recover_backfill(
   PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op();
   for (unsigned i = 0; i < to_push.size(); ++i) {
     handle.reset_tp_timeout();
+    // backfill object by recovering
     prep_backfill_object_push(to_push[i].get<0>(), to_push[i].get<1>(),
 	    to_push[i].get<2>(), to_push[i].get<3>(), h);
   }
@@ -10912,8 +10917,7 @@ int ReplicatedPG::recover_backfill(
 
   assert(!pending_backfill_updates.empty() ||
 	 new_last_backfill == last_backfill_started);
-  if (pending_backfill_updates.empty() &&
-      backfill_pos.is_max()) {
+  if (pending_backfill_updates.empty() && backfill_pos.is_max()) {
     assert(backfills_in_flight.empty());
     new_last_backfill = backfill_pos;
     last_backfill_started = backfill_pos;

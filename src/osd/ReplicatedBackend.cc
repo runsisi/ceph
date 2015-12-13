@@ -1055,7 +1055,7 @@ Message * ReplicatedBackend::generate_subop(
     tid, at_version);
 
   // ship resulting transaction, log entries, and pg_stats
-  if (!parent->should_send_op(peer, soid)) {
+  if (!parent->should_send_op(peer, soid)) { // we will send the op by backfill
     dout(10) << "issue_repop shipping empty opt to osd." << peer
 	     <<", object " << soid
 	     << " beyond MAX(last_backfill_started "
