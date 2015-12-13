@@ -10644,11 +10644,11 @@ int ReplicatedPG::recover_backfill(
   update_range(&backfill_info, handle);
 
   int ops = 0;
-  vector<boost::tuple<hobject_t, eversion_t,
-                      ObjectContextRef, vector<pg_shard_t> > > to_push;
+  vector<boost::tuple<hobject_t, eversion_t, ObjectContextRef, vector<pg_shard_t> > > to_push;
   vector<boost::tuple<hobject_t, eversion_t, pg_shard_t> > to_remove;
   set<hobject_t, hobject_t::BitwiseComparator> add_to_stat;
 
+  // update BackfillInterval::begin and BackfillInterval::objects
   for (set<pg_shard_t>::iterator i = backfill_targets.begin();
        i != backfill_targets.end();
        ++i) {
