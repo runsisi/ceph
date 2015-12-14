@@ -356,7 +356,7 @@ public:
 	     needs_recovery_map.begin();
 	   i != needs_recovery_map.end();
 	   ++i) {
-	if (is_unfound(i->first)) // only include those can not recovered
+	if (is_unfound(i->first)) // only include those have no recovery source or can not be recovered
 	  ++ret;
       }
       return ret;

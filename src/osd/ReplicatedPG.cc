@@ -1500,8 +1500,7 @@ hobject_t ReplicatedPG::earliest_backfill() const
 {
   hobject_t e = hobject_t::get_max();
 
-  // iterate each backfill target to find the min last_backfill object from 
-  // all peers
+  // min(peer_info[*].last_backfill)
   for (set<pg_shard_t>::iterator i = backfill_targets.begin();
        i != backfill_targets.end();
        ++i) {
@@ -3192,8 +3191,10 @@ void ReplicatedPG::do_backfill(OpRequestRef op)
 	get_osdmap()->get_epoch(),
 	m->query_epoch,
 	spg_t(info.pgid.pgid, primary.shard));
-      reply->set_priority(cct->_conf->osd_recovery_op_priority);
+      
+      reply->set_priority(cct->_conf->osd_recovery_op_priority); // default is 3      
       osd->send_message_osd_cluster(reply, m->get_connection());
+      
       queue_peering_event(
 	CephPeeringEvtRef(
 	  new CephPeeringEvt(
@@ -3207,6 +3208,7 @@ void ReplicatedPG::do_backfill(OpRequestRef op)
     {
       assert(cct->_conf->osd_kill_backfill_at != 2);
 
+      // update our info.last_backfill and info.stats
       info.set_last_backfill(m->last_backfill, get_sort_bitwise());
       if (m->compat_stat_sum) {
 	info.stats.stats = m->stats.stats; // Previously, we only sent sum
@@ -3226,6 +3228,7 @@ void ReplicatedPG::do_backfill(OpRequestRef op)
     {
       assert(is_primary());
       assert(cct->_conf->osd_kill_backfill_at != 3);
+      
       finish_recovery_op(hobject_t::get_max());
     }
     break;
@@ -9734,7 +9737,7 @@ void ReplicatedPG::on_activate()
 	new CephPeeringEvt(
 	  get_osdmap()->get_epoch(),
 	  get_osdmap()->get_epoch(),
-	  DoRecovery())));
+	  DoRecovery()))); // will transit into state WaitLocalRecoveryReserved
   } else if (needs_backfill()) { // iterate PG::backfill_targets to check if any shard needs to be backfilled
     dout(10) << "activate queueing backfill" << dendl;
     queue_peering_event(
@@ -9742,7 +9745,7 @@ void ReplicatedPG::on_activate()
 	new CephPeeringEvt(
 	  get_osdmap()->get_epoch(),
 	  get_osdmap()->get_epoch(),
-	  RequestBackfill())));
+	  RequestBackfill()))); // will transit into state WaitLocalBackfillReserved
   } else { // ok, all replicas recovered
     dout(10) << "activate all replicas clean, no recovery" << dendl;
     queue_peering_event(
@@ -9750,7 +9753,7 @@ void ReplicatedPG::on_activate()
 	new CephPeeringEvt(
 	  get_osdmap()->get_epoch(),
 	  get_osdmap()->get_epoch(),
-	  AllReplicasRecovered())));
+	  AllReplicasRecovered()))); // will transit into state Recovered
   }
 
   publish_stats_to_osd();
@@ -10057,8 +10060,8 @@ bool ReplicatedPG::start_recovery_ops(
   bool work_in_progress = false;
   assert(is_primary());
 
-  if (!state_test(PG_STATE_RECOVERING) &&
-      !state_test(PG_STATE_BACKFILL)) {
+  if (!state_test(PG_STATE_RECOVERING) && // set in RecoveryState::Recovering::Recovering
+      !state_test(PG_STATE_BACKFILL)) { // set in RecoveryState::Backfilling::Backfilling
     /* TODO: I think this case is broken and will make do_recovery()
      * unhappy since we're returning false */
     dout(10) << "recovery raced and were queued twice, ignoring!" << dendl;
@@ -10090,15 +10093,21 @@ bool ReplicatedPG::start_recovery_ops(
     started = recover_replicas(max, handle);
   }
 
-  if (started)
+  if (started) // recovering in-progress
     work_in_progress = true;
+
+  // ok, let's see if we can do backfilling (only if recovering finished and we 
+  // are in state Backfilling)
 
   bool deferred_backfill = false;
   if (recovering.empty() &&
-      state_test(PG_STATE_BACKFILL) &&
-      !backfill_targets.empty() && started < max &&
+      state_test(PG_STATE_BACKFILL) && // we are in state Backfilling
+      !backfill_targets.empty() && 
+      started < max &&
       missing.num_missing() == 0 &&
       waiting_on_backfill.empty()) {
+    // recovering finished and we are in state Backfilling, now we are to check
+    // if we can start the backfilling right now or defer it
     if (get_osdmap()->test_flag(CEPH_OSDMAP_NOBACKFILL)) {
       dout(10) << "deferring backfill due to NOBACKFILL" << dendl;
       deferred_backfill = true;
@@ -10106,7 +10115,7 @@ bool ReplicatedPG::start_recovery_ops(
 	       !is_degraded())  {
       dout(10) << "deferring backfill due to NOREBALANCE" << dendl;
       deferred_backfill = true;
-    } else if (!backfill_reserved) {
+    } else if (!backfill_reserved) { // TODO: backfill_reserved is set at the same time as PG_STATE_BACKFILL, so this case if impossible
       dout(10) << "deferring backfill due to !backfill_reserved" << dendl;
       if (!backfill_reserving) {
 	dout(10) << "queueing RequestBackfill" << dendl;
@@ -10120,6 +10129,7 @@ bool ReplicatedPG::start_recovery_ops(
       }
       deferred_backfill = true;
     } else {
+      // ok, we can start the backfilling right now
       started += recover_backfill(max - started, handle, &work_in_progress);
     }
   }
@@ -10141,54 +10151,60 @@ bool ReplicatedPG::start_recovery_ops(
   dout(10) << __func__ << " missing_loc: "
 	   << missing_loc.get_missing_locs()
 	   << dendl;
+
+  // have objects need to recover but have no recovery source or existing shards
+  // are not enough to recover the objects, we remain in state Recovering
   int unfound = get_num_unfound();
   if (unfound) {
     dout(10) << " still have " << unfound << " unfound" << dendl;
     return work_in_progress;
   }
 
-  if (missing.num_missing() > 0) {
+  if (missing.num_missing() > 0) { // have missing objects on primary
     // this shouldn't happen!
     osd->clog->error() << info.pgid << " recovery ending with " << missing.num_missing()
 		      << ": " << missing.missing << "\n";
     return work_in_progress;
   }
 
-  if (needs_recovery()) { // have missing objects
+  if (needs_recovery()) { // have missing objects on primary/replicas
     // this shouldn't happen!
     // We already checked num_missing() so we must have missing replicas
     osd->clog->error() << info.pgid << " recovery ending with missing replicas\n";
     return work_in_progress;
   }
 
-  if (state_test(PG_STATE_RECOVERING)) { // we were recovering previously
+  // ok, 1) the first time recovering finished, need to check backfilling, or
+  // 2) backfilling finished, time to queue peering evt to transit our state
+
+  if (state_test(PG_STATE_RECOVERING)) { // we are in state Recovering
     state_clear(PG_STATE_RECOVERING);
-    if (needs_backfill()) { // iterate PG::backfill_targets
+    if (needs_backfill()) { // peer_info[*].last_backfill != max
       dout(10) << "recovery done, queuing backfill" << dendl;
       queue_peering_event(
         CephPeeringEvtRef(
           new CephPeeringEvt(
             get_osdmap()->get_epoch(),
             get_osdmap()->get_epoch(),
-            RequestBackfill())));
-    } else {
+            RequestBackfill()))); // will transit into state WaitRemoteBackfillReserved
+    } else { // no need to backfill, recovering is all we need
       dout(10) << "recovery done, no backfill" << dendl;
       queue_peering_event(
         CephPeeringEvtRef(
           new CephPeeringEvt(
             get_osdmap()->get_epoch(),
             get_osdmap()->get_epoch(),
-            AllReplicasRecovered())));
+            AllReplicasRecovered()))); // will transit into state Recovered
     }
-  } else { // we were backfilling previously
-    state_clear(PG_STATE_BACKFILL);
+  } else { // we are in state Backfilling
+    state_clear(PG_STATE_BACKFILL); // can also be cleared by RecoveryState::Backfilling::exit
     dout(10) << "recovery done, backfill done" << dendl;
     queue_peering_event(
       CephPeeringEvtRef(
         new CephPeeringEvt(
           get_osdmap()->get_epoch(),
           get_osdmap()->get_epoch(),
-          Backfilled())));
+          Backfilled()))); // will transit into state Recovered
   }
 
   return false;
@@ -10893,8 +10909,9 @@ int ReplicatedPG::recover_backfill(
 
   hobject_t next_backfill_to_complete = backfills_in_flight.empty() ?
     backfill_pos : *(backfills_in_flight.begin());
-  hobject_t new_last_backfill = earliest_backfill();
+  hobject_t new_last_backfill = earliest_backfill(); // min(peer_info[*].last_backfill)
   dout(10) << "starting new_last_backfill at " << new_last_backfill << dendl;
+  
   for (map<hobject_t, pg_stat_t, hobject_t::Comparator>::iterator i =
 	 pending_backfill_updates.begin();
        i != pending_backfill_updates.end() &&
@@ -10902,6 +10919,7 @@ int ReplicatedPG::recover_backfill(
        pending_backfill_updates.erase(i++)) {
     dout(20) << " pending_backfill_update " << i->first << dendl;
     assert(cmp(i->first, new_last_backfill, get_sort_bitwise()) > 0);
+    
     for (set<pg_shard_t>::iterator j = backfill_targets.begin();
 	 j != backfill_targets.end();
 	 ++j) {
@@ -10911,6 +10929,7 @@ int ReplicatedPG::recover_backfill(
       if (cmp(i->first, pinfo.last_backfill, get_sort_bitwise()) > 0)
         pinfo.stats.add(i->second);
     }
+         
     new_last_backfill = i->first;
   }
   dout(10) << "possible new_last_backfill at " << new_last_backfill << dendl;
@@ -10933,11 +10952,14 @@ int ReplicatedPG::recover_backfill(
     pg_shard_t bt = *i;
     pg_info_t& pinfo = peer_info[bt];
 
+    // move forward info.last_backfill for peers
     if (cmp(new_last_backfill, pinfo.last_backfill, get_sort_bitwise()) > 0) {
+      // update pinfo.last_backfill to new_last_backfill locally
       pinfo.set_last_backfill(new_last_backfill, get_sort_bitwise());
+
       epoch_t e = get_osdmap()->get_epoch();
       MOSDPGBackfill *m = NULL;
-      if (pinfo.last_backfill.is_max()) {
+      if (pinfo.last_backfill.is_max()) { // backfill finished
         m = new MOSDPGBackfill(
 	  MOSDPGBackfill::OP_BACKFILL_FINISH,
 	  e,
@@ -10948,8 +10970,10 @@ int ReplicatedPG::recover_backfill(
          * backfilled portion in addition to continuing backfill.
          */
         pinfo.stats = info.stats;
+
+        // inc recovery_ops_active for PG and OSD, will dec in do_backfill
         start_recovery_op(hobject_t::get_max());
-      } else {
+      } else { // backfill in-progress
         m = new MOSDPGBackfill(
 	  MOSDPGBackfill::OP_BACKFILL_PROGRESS,
 	  e,
@@ -10957,8 +10981,11 @@ int ReplicatedPG::recover_backfill(
 	  spg_t(info.pgid.pgid, bt.shard));
         // Use default priority here, must match sub_op priority
       }
+
+      // notify peer to update its info.last_backfill and info.stats
       m->last_backfill = pinfo.last_backfill;
       m->stats = pinfo.stats;
+      
       osd->send_message_osd_cluster(bt.osd, m, get_osdmap()->get_epoch());
       dout(10) << " peer " << bt
 	       << " num_objects now " << pinfo.stats.stats.sum.num_objects
@@ -10966,8 +10993,9 @@ int ReplicatedPG::recover_backfill(
     }
   }
 
-  if (ops)
+  if (ops) // backfill ops started
     *work_started = true;
+  
   return ops;
 }
 

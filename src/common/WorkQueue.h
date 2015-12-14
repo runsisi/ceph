@@ -526,7 +526,7 @@ class ShardedThreadPool {
   CephContext *cct;
   string name;
   string lockname;
-  Mutex shardedpool_lock;
+  Mutex shardedpool_lock; // one lock, two condition variables
   Cond shardedpool_cond;
   Cond wait_cond;
   uint32_t num_threads;

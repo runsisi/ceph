@@ -127,7 +127,7 @@ void ThreadPool::worker(WorkThread *wt)
           // we release the lock of thread pool, other thread(s) of the pool can
           // dequeue an item and process
 	  _lock.Unlock();
-	  wq->_void_process(item, tp_handle);
+	  wq->_void_process(item, tp_handle); // the lock of the tp is unlocked when processing the item
 	  _lock.Lock();
 	  wq->_void_process_finish(item);
 	  processing--;
@@ -146,13 +146,11 @@ void ThreadPool::worker(WorkThread *wt)
     // iterated all queue(s), processed nothing, waiting
 
     ldout(cct,20) << "worker waiting" << dendl;
-    cct->get_heartbeat_map()->reset_timeout(
-      hb,
-      cct->_conf->threadpool_default_timeout,
+    cct->get_heartbeat_map()->reset_timeout(hb,
+      cct->_conf->threadpool_default_timeout, // default is 60
       0);
     _cond.WaitInterval(cct, _lock,
-      utime_t(
-	cct->_conf->threadpool_empty_queue_max_wait, 0)); // default is 2
+      utime_t(cct->_conf->threadpool_empty_queue_max_wait, 0)); // default is 2
   }
   ldout(cct,1) << "worker finish" << dendl;
 
@@ -305,44 +303,53 @@ void ShardedThreadPool::shardedthreadpool_worker(uint32_t thread_index)
   heartbeat_handle_d *hb = cct->get_heartbeat_map()->add_worker(ss.str());
 
   while (!stop_threads.read()) {
-    if(pause_threads.read()) {
+    if(pause_threads.read()) { // we were told to pause
       shardedpool_lock.Lock();
-      ++num_paused;
-      wait_cond.Signal();
-      while(pause_threads.read()) {
-       cct->get_heartbeat_map()->reset_timeout(
-	 hb,
+      
+      ++num_paused; // ok, we are paused
+      wait_cond.Signal(); // notify who paused us
+      
+      while(pause_threads.read()) { // pause until the one who paused us unpauses
+       cct->get_heartbeat_map()->reset_timeout(hb,
 	 wq->timeout_interval, wq->suicide_interval);
+       
        shardedpool_cond.WaitInterval(cct, shardedpool_lock,
-	 utime_t(
-	   cct->_conf->threadpool_empty_queue_max_wait, 0));
+	 utime_t(cct->_conf->threadpool_empty_queue_max_wait, 0)); // default is 2
       }
-      --num_paused;
+      --num_paused; // ok, we are unpaused
+      
       shardedpool_lock.Unlock();
     }
-    if (drain_threads.read()) {
+    
+    if (drain_threads.read()) { // we were told to drain
       shardedpool_lock.Lock();
-      if (wq->is_shard_empty(thread_index)) {
-        ++num_drained;
-        wait_cond.Signal();
+      
+      if (wq->is_shard_empty(thread_index)) { // only drain when the shard has nothing to process
+        ++num_drained; // ok, we are drained
+        wait_cond.Signal(); // notify who drained us
+        
         while (drain_threads.read()) {
-	  cct->get_heartbeat_map()->reset_timeout(
-	    hb,
+          // waiting for the final order until all threads notify the commander 
+          // that they are ready to drain
+	  cct->get_heartbeat_map()->reset_timeout(hb,
 	    wq->timeout_interval, wq->suicide_interval);
+          
           shardedpool_cond.WaitInterval(cct, shardedpool_lock,
-	    utime_t(
-	      cct->_conf->threadpool_empty_queue_max_wait, 0));
+	    utime_t(cct->_conf->threadpool_empty_queue_max_wait, 0)); // default is 2
         }
         --num_drained;
       }
+      
       shardedpool_lock.Unlock();
     }
 
-    cct->get_heartbeat_map()->reset_timeout(
-      hb,
+    cct->get_heartbeat_map()->reset_timeout(hb,
       wq->timeout_interval, wq->suicide_interval);
-    wq->_process(thread_index, hb);
 
+    // call WQ implementation to do the real work, note: the thread pool lock 
+    // is not locked when processing a shard, we need a lock of shard to protect
+    // the shard
+    wq->_process(thread_index, hb);
   }
 
   ldout(cct,10) << "sharded worker finish" << dendl;
@@ -395,12 +402,17 @@ void ShardedThreadPool::pause()
 {
   ldout(cct,10) << "pause" << dendl;
   shardedpool_lock.Lock();
+  
   pause_threads.set(1);
   assert(wq != NULL);
+
+ // signal shard_list[*]->sdata_cond stop threads waiting shard data and proceed
   wq->return_waiting_threads();
-  while (num_threads != num_paused){
+  
+  while (num_threads != num_paused){ // wait untill all threads paused
     wait_cond.Wait(shardedpool_lock);
   }
+  
   shardedpool_lock.Unlock();
   ldout(cct,10) << "paused" << dendl; 
 }
@@ -409,9 +421,13 @@ void ShardedThreadPool::pause_new()
 {
   ldout(cct,10) << "pause_new" << dendl;
   shardedpool_lock.Lock();
+  
   pause_threads.set(1);
   assert(wq != NULL);
+
+  // signal shard_list[*]->sdata_cond stop threads waiting shard data and proceed
   wq->return_waiting_threads();
+  
   shardedpool_lock.Unlock();
   ldout(cct,10) << "paused_new" << dendl;
 }
@@ -420,8 +436,10 @@ void ShardedThreadPool::unpause()
 {
   ldout(cct,10) << "unpause" << dendl;
   shardedpool_lock.Lock();
+  
   pause_threads.set(0);
-  shardedpool_cond.Signal();
+  shardedpool_cond.Signal(); // notify all threads that are waiting (paused)
+  
   shardedpool_lock.Unlock();
   ldout(cct,10) << "unpaused" << dendl;
 }
@@ -430,14 +448,22 @@ void ShardedThreadPool::drain()
 {
   ldout(cct,10) << "drain" << dendl;
   shardedpool_lock.Lock();
+
   drain_threads.set(1);
   assert(wq != NULL);
+
+  // signal shard_list[*]->sdata_cond stop threads waiting shard data and proceed
   wq->return_waiting_threads();
-  while (num_threads != num_drained) {
+  
+  while (num_threads != num_drained) { // wait untill all threads drained
     wait_cond.Wait(shardedpool_lock);
   }
+
+  // ok, all threads know i am waiting for them to drain, they are waiting for
+  // my final order now
   drain_threads.set(0);
   shardedpool_cond.Signal();
+  
   shardedpool_lock.Unlock();
   ldout(cct,10) << "drained" << dendl;
 }

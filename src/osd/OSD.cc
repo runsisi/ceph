@@ -8876,7 +8876,7 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
     
     int started = 0;
 
-    // 
+    // do recovering or backfilling
     bool more = pg->start_recovery_ops(max, handle, &started);
     
     dout(10) << "do_recovery started " << started << "/" << max << " on " << *pg << dendl;
@@ -9241,6 +9241,8 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
     
     // we handle one op at a time
     op = sdata->pg_for_processing[&*(item.first)].front();
+
+    // ok, pop the op, op will not belong to WQ anymore
     sdata->pg_for_processing[&*(item.first)].pop_front();
     if (!(sdata->pg_for_processing[&*(item.first)].size()))
       sdata->pg_for_processing.erase(&*(item.first));
