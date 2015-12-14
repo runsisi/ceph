@@ -96,7 +96,7 @@ public:
    * The queue will automatically add itself to the thread pool on construction
    * and remove itself on destruction. */
   template<class T>
-  class BatchWorkQueue : public WorkQueue_ {
+  class BatchWorkQueue : public WorkQueue_ { // external enqueue/dequeue using ThreadPool::_lock
     ThreadPool *pool;
 
     virtual bool _enqueue(T *) = 0;
@@ -180,10 +180,10 @@ public:
    * (a few bytes). The queue will automatically add itself to the thread pool on
    * construction and remove itself on destruction. */
   template<typename T, typename U = T>
-  class WorkQueueVal : public WorkQueue_ {
-    Mutex _lock;
+  class WorkQueueVal : public WorkQueue_ { // external enqueue/dequeue using WorkQueueVal::_lock
+    Mutex _lock; // only used for protecting to_process and to_finish
     ThreadPool *pool;
-    list<U> to_process;
+    list<U> to_process; // used to translate T => U
     list<U> to_finish;
     virtual void _enqueue(T) = 0;
     virtual void _enqueue_front(T) = 0;
@@ -197,7 +197,7 @@ public:
 	if (_empty())
 	  return 0;
 	U u = _dequeue();
-	to_process.push_back(u);
+	to_process.push_back(u); // use to_process to pass the item to process
       }
       return ((void*)1); // Not used
     }
@@ -211,7 +211,7 @@ public:
       _process(u, handle);
 
       _lock.Lock();
-      to_finish.push_back(u);
+      to_finish.push_back(u); // use to_finish to pass the item to finish
       _lock.Unlock();
     }
 
@@ -236,11 +236,15 @@ public:
       pool->remove_work_queue(this);
     }
     void queue(T item) {
+      // can not be changed to WorkQueueVal::_lock, coz _empty is not protected 
+      // by WorkQueueVal::_lock and may be called by ThreadPool::drain
       Mutex::Locker l(pool->_lock);
       _enqueue(item);
       pool->_cond.SignalOne();
     }
     void queue_front(T item) {
+      // can not be changed to WorkQueueVal::_lock, coz _empty is not protected 
+      // by WorkQueueVal::_lock and may be called by ThreadPool::drain
       Mutex::Locker l(pool->_lock);
       _enqueue_front(item);
       pool->_cond.SignalOne();
@@ -267,7 +271,7 @@ public:
    * will automatically add itself to the thread pool on construction and remove itself on
    * destruction. */
   template<class T>
-  class WorkQueue : public WorkQueue_ {
+  class WorkQueue : public WorkQueue_ { // external enqueue/dequeue using ThreadPool::_lock
     ThreadPool *pool;
     
     /// Add a work item to the queue.
@@ -350,7 +354,7 @@ public:
   };
 
 private:
-  vector<WorkQueue_*> work_queues; // a vector of queue(s)
+  vector<WorkQueue_*> work_queues; // a vector of queue(s), i.e. a tp services multiple WQs
   int last_work_queue;
  
 
@@ -446,8 +450,7 @@ public:
   void set_ioprio(int cls, int priority);
 };
 
-class GenContextWQ :
-  public ThreadPool::WorkQueueVal<GenContext<ThreadPool::TPHandle&>*> {
+class GenContextWQ : public ThreadPool::WorkQueueVal<GenContext<ThreadPool::TPHandle&>*> {
   list<GenContext<ThreadPool::TPHandle&>*> _queue;
 public:
   GenContextWQ(const string &name, time_t ti, ThreadPool *tp)
@@ -526,6 +529,7 @@ class ShardedThreadPool {
   CephContext *cct;
   string name;
   string lockname;
+  // not used for enqueue/dequeue, only for thread pause/drain
   Mutex shardedpool_lock; // one lock, two condition variables
   Cond shardedpool_cond;
   Cond wait_cond;
@@ -551,7 +555,7 @@ public:
   };      
 
   template <typename T>
-  class ShardedWQ: public BaseShardedWQ {
+  class ShardedWQ: public BaseShardedWQ { // enqueue/dequeue locking relys on shard locking
   
     ShardedThreadPool* sharded_pool;
 

@@ -9850,7 +9850,7 @@ void OSD::PeeringWQ::_dequeue(list<PG*> *out) {
   set<PG*> got;
   for (list<PG*>::iterator i = peering_queue.begin();
       i != peering_queue.end() &&
-      out->size() < osd->cct->_conf->osd_peering_wq_batch_size;
+      out->size() < osd->cct->_conf->osd_peering_wq_batch_size; // default is 20
       ) {
         if (in_use.count(*i)) {
           ++i;

@@ -112,7 +112,7 @@ void ThreadPool::worker(WorkThread *wt)
       WorkQueue_* wq;
       int tries = work_queues.size();
       bool did = false;
-      while (tries--) { // iterate every queue
+      while (tries--) { // iterate each queue
 	last_work_queue++;
 	last_work_queue %= work_queues.size();
 	wq = work_queues[last_work_queue]; // multiple queue(s)
@@ -149,6 +149,7 @@ void ThreadPool::worker(WorkThread *wt)
     cct->get_heartbeat_map()->reset_timeout(hb,
       cct->_conf->threadpool_default_timeout, // default is 60
       0);
+    
     _cond.WaitInterval(cct, _lock,
       utime_t(cct->_conf->threadpool_empty_queue_max_wait, 0)); // default is 2
   }
@@ -264,6 +265,8 @@ void ThreadPool::drain(WorkQueue_* wq)
   ldout(cct,10) << "drain" << dendl;
   _lock.Lock();
   _draining++;
+
+  // wait until all in-progress items to finish and pending items to finish
   while (processing || (wq != NULL && !wq->_empty()))
     _wait_cond.Wait(_lock);
   _draining--;
@@ -324,13 +327,13 @@ void ShardedThreadPool::shardedthreadpool_worker(uint32_t thread_index)
     if (drain_threads.read()) { // we were told to drain
       shardedpool_lock.Lock();
       
-      if (wq->is_shard_empty(thread_index)) { // only drain when the shard has nothing to process
+      if (wq->is_shard_empty(thread_index)) { // the shard drained, notify the thread waiting for us to drain
         ++num_drained; // ok, we are drained
         wait_cond.Signal(); // notify who drained us
         
         while (drain_threads.read()) {
-          // waiting for the final order until all threads notify the commander 
-          // that they are ready to drain
+          // waiting until all threads notify the commander that they have drained,
+          // until then we can process new items
 	  cct->get_heartbeat_map()->reset_timeout(hb,
 	    wq->timeout_interval, wq->suicide_interval);
           
@@ -452,15 +455,15 @@ void ShardedThreadPool::drain()
   drain_threads.set(1);
   assert(wq != NULL);
 
-  // signal shard_list[*]->sdata_cond stop threads waiting shard data and proceed
+  // signal shard_list[*]->sdata_cond, so those threads waiting for shard data proceed
   wq->return_waiting_threads();
   
-  while (num_threads != num_drained) { // wait untill all threads drained
+  while (num_threads != num_drained) { // wait untill all threads have drained
     wait_cond.Wait(shardedpool_lock);
   }
 
-  // ok, all threads know i am waiting for them to drain, they are waiting for
-  // my final order now
+  // ok, all threads know i am waiting for them to drain, they are waiting there
+  // until i notify them they can continue to process new items
   drain_threads.set(0);
   shardedpool_cond.Signal();
   
