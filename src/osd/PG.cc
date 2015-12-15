@@ -990,6 +990,7 @@ void PG::clear_primary_state()
   scrubber.reserved_peers.clear();
   scrub_after_recovery = false;
 
+  // ThreadPool::WorkQueue<PG>
   osd->recovery_wq.dequeue(this);
 
   agent_clear();
@@ -5060,7 +5061,7 @@ void PG::start_peering_interval(
   scrub_queued = false;
 
   // reset primary state?
-  if (was_old_primary || is_primary()) {
+  if (was_old_primary || is_primary()) { // last/current primary clear/reset pg_temp
     // remove us from OSD::pg_temp_wanted
     osd->remove_want_pg_temp(info.pgid.pgid);
   }

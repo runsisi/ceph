@@ -1903,9 +1903,13 @@ void ReplicatedPG::do_op(OpRequestRef& op)
       return;
     }
 
-    if (!ceph_osd_op_type_multi(osd_op.op.op))
+    if (!ceph_osd_op_type_multi(osd_op.op.op)) // non-multiobject
       continue;
-    if (osd_op.soid.oid.name.length()) {
+
+    // for non-multiobject, only MOSDOp::oid identifies the target object, for
+    // multiobject, MOSDOp::ops[i].soid identifieies the src objects
+    
+    if (osd_op.soid.oid.name.length()) { // CLONERANGE, ASSERT_SRC_VERSION, SRC_CMPXATTR
       object_locator_t src_oloc;
       get_src_oloc(m->get_oid(), m->get_object_locator(), src_oloc);
       hobject_t src_oid(osd_op.soid, src_oloc.key, m->get_pg().ps(),
@@ -9815,22 +9819,36 @@ void ReplicatedPG::on_change(ObjectStore::Transaction *t)
   cancel_flush_ops(is_primary()); // cancel ReplicatedPG::flush_ops
   cancel_proxy_ops(is_primary()); // cancel ReplicatedPG::proxyread_ops and ReplicatedPG::proxywrite_ops
 
+  // requeue pending or in-progress ops/callbacks, i.e.
+  // waiting_for_unreadable_object
+  // waiting_for_degraded_object
+  // waiting_for_blocked_object
+  // callbacks_for_degraded_object
+  // waiting_for_cache_not_full
+  // waiting_for_all_missing
+  // in_progress_async_reads
+
   // requeue object waiters
   if (is_primary()) {
     requeue_object_waiters(waiting_for_unreadable_object);
   } else {
     waiting_for_unreadable_object.clear();
   }
-  for (map<hobject_t,list<OpRequestRef>, hobject_t::BitwiseComparator>::iterator p = waiting_for_degraded_object.begin();
+  
+  for (map<hobject_t,list<OpRequestRef>, hobject_t::BitwiseComparator>::iterator p = 
+        waiting_for_degraded_object.begin();
        p != waiting_for_degraded_object.end();
        waiting_for_degraded_object.erase(p++)) {
     if (is_primary())
       requeue_ops(p->second);
     else
       p->second.clear();
+    
     finish_degraded_object(p->first);
   }
-  for (map<hobject_t,list<OpRequestRef>, hobject_t::BitwiseComparator>::iterator p = waiting_for_blocked_object.begin();
+       
+  for (map<hobject_t,list<OpRequestRef>, hobject_t::BitwiseComparator>::iterator p = 
+        waiting_for_blocked_object.begin();
        p != waiting_for_blocked_object.end();
        waiting_for_blocked_object.erase(p++)) {
     if (is_primary())
@@ -9838,6 +9856,7 @@ void ReplicatedPG::on_change(ObjectStore::Transaction *t)
     else
       p->second.clear();
   }
+       
   for (map<hobject_t, list<Context*>, hobject_t::BitwiseComparator>::iterator i =
 	 callbacks_for_degraded_object.begin();
        i != callbacks_for_degraded_object.end();
@@ -9861,6 +9880,7 @@ void ReplicatedPG::on_change(ObjectStore::Transaction *t)
        i != in_progress_async_reads.end();
        in_progress_async_reads.erase(i++)) {
     close_op_ctx(i->second, -ECANCELED);
+    
     if (is_primary())
       requeue_op(i->first);
   }

@@ -9466,7 +9466,9 @@ void OSD::process_peering_events(
     set<boost::intrusive_ptr<PG> > split_pgs;
     PG *pg = *i;
     pg->lock_suspend_timeout(handle); // suspend tp heartbeat check
-    curmap = service.get_osdmap();
+    
+    curmap = service.get_osdmap(); // we want all PGs we are holding to catch up with this osdmap
+    
     if (pg->deleting) {
       pg->unlock();
       continue;
@@ -9520,12 +9522,16 @@ void OSD::process_peering_events(
     }
 
     // if rctx->transaction is not empty, i.e. pg info, past_intervals may
-    // modified, then queue the txn to execute
-    dispatch_context_transaction(rctx, pg, &handle);
+    // modified, then queue to do the txn
+    dispatch_context_transaction(rctx, pg, &handle); // do txn for each PG
+    
     pg->unlock();
     
     handle.reset_tp_timeout(); // restart tp heartbeat check
-  }
+  } // iterate each PG
+
+  // ok, now all PGs have handled the peering evt (osdmap update is encapsulated 
+  // as a NullEvt peering evt)
 
   if (need_up_thru)
     // tell mon that i am still alive through same_interval_since
