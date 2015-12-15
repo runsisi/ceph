@@ -752,7 +752,7 @@ void PG::generate_past_intervals()
     return;
   }
 
-  // ok, still past interval(s) to generate 
+  // ok, still have past_intervals to generate 
   // between:
   // MAX(MAX(info.history.epoch_created, info.history.last_epoch_clean), oldest_map)
   // and:
@@ -2205,6 +2205,7 @@ void PG::mark_clean()
   // strays yet.
   info.history.last_epoch_clean = get_osdmap()->get_epoch();
 
+  // trim past_intervals up to info.history.last_epoch_clean
   trim_past_intervals();
 
   if (is_clean() && !snap_trimq.empty())
@@ -2243,6 +2244,7 @@ void PG::finish_recovery(list<Context*>& tfin)
   dout(10) << "finish_recovery" << dendl;
   assert(info.last_complete == info.last_update);
 
+  // clear recovering and backfilling intermediate states
   clear_recovery_state();
 
   /*
@@ -2255,13 +2257,19 @@ void PG::finish_recovery(list<Context*>& tfin)
 void PG::_finish_recovery(Context *c)
 {
   lock();
+  
   if (deleting) {
     unlock();
     return;
   }
+
+  // PG::finish_sync_event may be cleared by PG::clear_recovery_state or 
+  // PG::clear_recovery_state, we need a method to detect the stale context
   if (c == finish_sync_event) {
     dout(10) << "_finish_recovery" << dendl;
     finish_sync_event = 0;
+
+    // iterate PG::stray_set to send MOSDPGRemove to purge strays
     purge_strays();
 
     publish_stats_to_osd();
@@ -2275,6 +2283,7 @@ void PG::_finish_recovery(Context *c)
   } else {
     dout(10) << "_finish_recovery -- stale" << dendl;
   }
+  
   unlock();
 }
 
@@ -2472,6 +2481,7 @@ void PG::purge_strays()
       MOSDPGRemove *m = new MOSDPGRemove(
 	get_osdmap()->get_epoch(),
 	to_remove);
+      
       osd->send_message_osd_cluster(p->osd, m, get_osdmap()->get_epoch());
       stray_purged.insert(*p);
     } else {
@@ -6659,12 +6669,12 @@ PG::RecoveryState::Recovered::Recovered(my_context ctx)
     pg->state_clear(PG_STATE_DEGRADED);
 
   // adjust acting set?  (e.g. because backfill completed...)
-  if (pg->acting != pg->up && !pg->choose_acting(auth_log_shard))
+  if (pg->acting != pg->up && !pg->choose_acting(auth_log_shard)) // first time called in RecoveryState::GetLog::GetLog
     assert(pg->want_acting.size());
 
   // RecoveryState::Active::react(AllReplicasActivated) will set this field to true
   if (context< Active >().all_replicas_activated)
-    post_event(GoClean());
+    post_event(GoClean()); // transit into state Clean
 }
 
 void PG::RecoveryState::Recovered::exit()
@@ -6686,10 +6696,20 @@ PG::RecoveryState::Clean::Clean(my_context ctx)
   if (pg->info.last_complete != pg->info.last_update) {
     assert(0);
   }
+
+  // clear recovering and backfilling intermediate states and populate the 
+  // rctx->on_safe->contexts
   pg->finish_recovery(*context< RecoveryMachine >().get_on_safe_context_list());
+
+  // set PG_STATE_CLEAN if acingset size == pool size and acting == up, update 
+  // info.history.last_epoch_clean and trim past_intervals up to 
+  // info.history.last_epoch_clean
   pg->mark_clean();
 
+  // update peer_info[*], send MOSDPGInfo (including my PG::info and empty 
+  // past_intervals) to actingbackfill
   pg->share_pg_info();
+  
   pg->publish_stats_to_osd();
 
 }
@@ -7550,6 +7570,8 @@ void PG::RecoveryState::GetInfo::exit()
 }
 
 /*------GetLog------------*/
+
+// state GetLog can only be transitted from state GetInfo by evt GotInfo
 PG::RecoveryState::GetLog::GetLog(my_context ctx)
   : my_base(ctx),
     NamedState(

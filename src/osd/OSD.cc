@@ -7225,7 +7225,7 @@ bool OSD::advance_pg(
   if (min_epoch) {
     max = min_epoch + g_conf->osd_map_max_advance; // default is 150
   } else {
-    max = next_epoch + g_conf->osd_map_max_advance;
+    max = next_epoch + g_conf->osd_map_max_advance; // default is 150
   }
 
   // iterate each osdmap for the same pg

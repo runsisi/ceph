@@ -127,8 +127,10 @@ void ThreadPool::worker(WorkThread *wt)
           // we release the lock of thread pool, other thread(s) of the pool can
           // dequeue an item and process
 	  _lock.Unlock();
+          
 	  wq->_void_process(item, tp_handle); // the lock of the tp is unlocked when processing the item
-	  _lock.Lock();
+
+          _lock.Lock();
 	  wq->_void_process_finish(item);
 	  processing--;
 	  ldout(cct,15) << "worker wq " << wq->name << " done processing " << item
