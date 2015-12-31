@@ -1579,8 +1579,8 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   }
 
   // object name too long?
-  unsigned max_name_len = MIN(g_conf->osd_max_object_name_len,
-                              osd->osd->store->get_max_object_name_length());
+  unsigned max_name_len = MIN(g_conf->osd_max_object_name_len, // default is 2048
+                              osd->osd->store->get_max_object_name_length()); // for FileStore default is 4096
   if (m->get_oid().name.size() > max_name_len) {
     dout(4) << "do_op '" << m->get_oid().name << "' is longer than "
             << max_name_len << " bytes" << dendl;
@@ -1628,7 +1628,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     }
 
     // too big?
-    if (cct->_conf->osd_max_write_size &&
+    if (cct->_conf->osd_max_write_size && // default is 90
         m->get_data_len() > cct->_conf->osd_max_write_size << 20) {
       // journal can't hold commit!
       derr << "do_op msg data len " << m->get_data_len()

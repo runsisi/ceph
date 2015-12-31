@@ -9037,12 +9037,18 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
   send_map_on_destruct share_map(this, m, osdmap, m->get_map_epoch());
   Session *client_session =
       static_cast<Session*>(m->get_connection()->get_priv());
+
+  // lock Session::sent_epoch_lock
   if (client_session) {
     client_session->sent_epoch_lock.Lock();
   }
+
+  // used to set op->send_map_update later
   share_map.should_send = service.should_share_map(
       m->get_source(), m->get_connection().get(), m->get_map_epoch(),
       osdmap, &client_session->last_sent_epoch);
+
+  // unlock Session::sent_epoch_lock
   if (client_session) {
     client_session->sent_epoch_lock.Unlock();
     client_session->put();
@@ -9119,6 +9125,7 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
   if (pg) {
     // when the op is dequeued in OSD::dequeue_op, we send the map directly, while
     // not queue a C_SendMap callback on osd->service.op_gen_wq
+    // will be tested in in OSD::dequeue_op
     op->send_map_update = share_map.should_send;
     op->sent_epoch = m->get_map_epoch();
     enqueue_op(pg, op);

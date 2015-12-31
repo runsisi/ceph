@@ -1965,7 +1965,7 @@ void Objecter::tick()
 
   // look for laggy requests
   utime_t cutoff = ceph_clock_now(cct);
-  cutoff -= cct->_conf->objecter_timeout;  // timeout
+  cutoff -= cct->_conf->objecter_timeout;  // timeout, default is 10.0
 
   unsigned laggy_ops = 0;
 
