@@ -9481,6 +9481,8 @@ void OSD::process_peering_events(
       continue;
     }
 
+    // always advance osdmap of PG first, then to handle peering evt
+
     // iterate each epoch of the osdmap from epoch the pg currently has to epoch
     // the OSDService has, construct an AvdMap event for each epoch to drive 
     // the pg recovery state machine

@@ -705,7 +705,11 @@ bool PG::needs_backfill() const
 // info.history.same_interval_since, and during calc, we need to exclude
 // those epochs that have been calculated
 bool PG::_calc_past_interval_range(epoch_t *start, epoch_t *end, epoch_t oldest_map)
-{  
+{
+  // PG always has a history assicated with it, refer to PG::init
+  // h.same_interval_since can only be changed by OSD::build_past_intervals_parallel(load), 
+  // OSD::project_pg_history(create) and PG::start_peering_interval(advance osdmap)
+
   if (info.history.same_interval_since) {
     *end = info.history.same_interval_since;
   } else {
@@ -7334,7 +7338,11 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
   context< RecoveryMachine >().log_enter(state_name);
 
   PG *pg = context< RecoveryMachine >().pg;
-  
+
+  // h.same_interval_since can only be changed by OSD::build_past_intervals_parallel(load), 
+  // OSD::project_pg_history(create) and PG::start_peering_interval(advance osdmap)
+  // so, here we regenerate past_intervals only coz we restarted our peering 
+  // interval (we were in state Reset previously)
   pg->generate_past_intervals();
   
   unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
