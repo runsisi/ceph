@@ -3007,7 +3007,7 @@ MOSDOp *Objecter::_prepare_osd_op(Op *op)
 
   MOSDOp *m = new MOSDOp(client_inc.read(), op->tid, 
 			 op->target.target_oid, op->target.target_oloc,
-			 op->target.pgid,
+			 op->target.pgid, // raw pgid unless pre-calc pg
 			 osdmap->get_epoch(),
 			 flags, op->features);
 

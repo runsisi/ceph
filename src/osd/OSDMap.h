@@ -794,12 +794,15 @@ public:
   bool osd_is_valid_op_target(pg_t pg, int osd) const {
     int primary;
     vector<int> group;
-    int nrep = pg_to_acting_osds(pg, &group, &primary);
+    int nrep = pg_to_acting_osds(pg, &group, &primary); // generate seed via pgp_num
     if (osd == primary)
       return true;
+
+    // for ec pg, we must target to primary osd
     if (pg_is_ec(pg))
       return false;
 
+    // for replicated pg, primary or replica both are ok
     return calc_pg_role(osd, group, nrep) >= 0;
   }
 

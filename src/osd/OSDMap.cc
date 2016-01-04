@@ -1743,7 +1743,7 @@ void OSDMap::_pg_to_up_acting_osds(const pg_t& pg, vector<int> *up, int *up_prim
 
   // map pg id to a vector of osd(s) (may be down, but must in state of exist and in), 
   // _up_primary is set, but will soon be updated below in _raw_to_up_osds
-  _pg_to_osds(*pool, pg, &raw, &_up_primary, &pps);
+  _pg_to_osds(*pool, pg, &raw, &_up_primary, &pps); // use pgp_num to generate the seed
 
   // got an array of osd(s) that exist (maybe down)
 

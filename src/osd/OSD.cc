@@ -9063,14 +9063,13 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
   }
 
   // calc actual pgid
-  pg_t _pgid = m->get_pg();
+  pg_t _pgid = m->get_pg(); // raw pgid unless pre-calc pg
   int64_t pool = _pgid.pool();
 
   if ((m->get_flags() & CEPH_OSD_FLAG_PGOP) == 0 &&
       osdmap->have_pg_pool(pool))
-    // use pg_num to do modulo for object storage, i.e. which pg we are to store 
-    // the object, 
-    _pgid = osdmap->raw_pg_to_pg(_pgid);
+    // use pg_num to do modulo
+    _pgid = osdmap->raw_pg_to_pg(_pgid); // call pg_pool_t::raw_pg_to_pg evently
 
   spg_t pgid;
   if (!osdmap->get_primary_shard(_pgid, &pgid)) { // pool has been deleted or acting set is empty
@@ -9096,6 +9095,10 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 		      << "\n";
     return;
   }
+
+  // we (osd) must be targetted, i.e. in acting set, and for ec pg we must be 
+  // primary osd, note: we are calcing against peer's osdmap, so if our calc
+  // find that they miss targetted, then there must be an error
   if (!send_map->osd_is_valid_op_target(pgid.pgid, whoami)) {
     dout(7) << "we are invalid target" << dendl;
     clog->warn() << m->get_source_inst() << " misdirected " << m->get_reqid()
@@ -9110,7 +9113,9 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
     return;
   }
 
-  // check against current map too
+  // check against current map too, we may no long hosting the target PG, the peer
+  // must have an old map, and in the new map the pgp_num must have been updated,
+  // we share them with newer map and they will resend this op
   if (!osdmap->have_pg_pool(pgid.pool()) ||
       !osdmap->osd_is_valid_op_target(pgid.pgid, whoami)) { // if we are replica, it is ok
     dout(7) << "dropping; no longer have PG (or pool); client will retarget"
