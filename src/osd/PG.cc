@@ -6070,6 +6070,8 @@ boost::statechart::result PG::RecoveryState::Peering::react(const AdvMap& advmap
   PG *pg = context< RecoveryMachine >().pg;
   dout(10) << "Peering advmap" << dendl;
   if (prior_set.get()->affected_by_map(advmap.osdmap, pg)) {
+    // need to rebuild prior set, return to state Reset, handle a batch of new
+    // osdmap updates and then let ActMap evt to drive us to rebuild it again
     dout(1) << "Peering, affected_by_map, going to Reset" << dendl;
     post_event(advmap);
     // PriorSet need to be rebuild, transit into state Reset directly, 
@@ -6087,7 +6089,9 @@ boost::statechart::result PG::RecoveryState::Peering::react(const AdvMap& advmap
   // reset need_up_thru if up_thru changed to >= info.history.same_interval_since 
   // in new map
   pg->adjust_need_up_thru(advmap.osdmap);
-  
+
+  // let state Started to determine if we should restart the peering process, if
+  // should then we transit into state Reset, or we update our peer_info
   return forward_event();
 }
 

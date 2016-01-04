@@ -9481,8 +9481,13 @@ void OSD::process_peering_events(
       continue;
     }
 
-    // always advance osdmap of PG first, then to handle peering evt
-
+    // always advance osdmap of PG first, then handle the peering evt
+    // 1. check if the PG is affected by each osdmap update
+    // 2. always transit into a state the PG should be (ActMap evt will do this dirty work)
+    // 3. ActMap evt is most important for PG in state Reset, it drives the PG
+    // to get out of this near-do-nothing state (always check if we should restart
+    // a new interval, then reset all intermediate states for peering/recovery)
+    
     // iterate each epoch of the osdmap from epoch the pg currently has to epoch
     // the OSDService has, construct an AvdMap event for each epoch to drive 
     // the pg recovery state machine
@@ -9496,7 +9501,7 @@ void OSD::process_peering_events(
       // handle an event
       peering_wq.queue(pg); // requeue this pg on back of peering queue
     } else {
-      // ok, internal events (AdvMap, ActMap) have been processed, next we try
+      // ok, the osdmap the PG holds has reached currently the OSDService has, next we try
       // to process the external event that queue us on the OSD::peering_wq
       assert(!pg->peering_queue.empty());
       PG::CephPeeringEvtRef evt = pg->peering_queue.front();
@@ -9504,7 +9509,7 @@ void OSD::process_peering_events(
 
       // finally, external event, for NullEvt(OSD::consume_map queue this to drive 
       // each pg on this osd to update its map), in processing this event, the 
-      // state machine do nothing
+      // state machine does nothing
       // the most important peering evt(s) are: PG::MQuery, PG::MNotifyRec, 
       // PG::MLogRec, PG::MInfoRec
       pg->handle_peering_event(evt, &rctx);
