@@ -5682,10 +5682,10 @@ void PG::handle_loaded(RecoveryCtx *rctx)
 void PG::handle_create(RecoveryCtx *rctx)
 {
   dout(10) << "handle_create" << dendl;
-  Initialize evt;
-  recovery_state.handle_event(evt, rctx);
-  ActMap evt2;
-  recovery_state.handle_event(evt2, rctx);
+  Initialize evt; // now we are in state Initial
+  recovery_state.handle_event(evt, rctx); // ok, boost::statechart::transition< Initialize, Reset >,
+  ActMap evt2; // now we are in state Reset
+  recovery_state.handle_event(evt2, rctx); // ok, GetInfo or Stray
 }
 
 void PG::handle_query_state(Formatter *f)
@@ -5850,7 +5850,7 @@ void PG::RecoveryState::Started::exit()
 }
 
 /*--------Reset---------*/
-PG::RecoveryState::Reset::Reset(my_context ctx)
+PG::RecoveryState::Reset::Reset(my_context ctx) // note: only ActMap can get me out of Reset
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg->cct, "Reset")
 {
@@ -5926,7 +5926,7 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
   // substates, i.e. Reset -> Started -> Start -> Primary -> Peering -> GetInfo,
   // or Reset -> Started -> Start -> Stray (then continue to transit by evt 
   // MLogRec/MInfoRec)
-  return discard_event();
+  return discard_event(); // remain in Reset, only ActMap can get me out of Reset
 }
 
 boost::statechart::result PG::RecoveryState::Reset::react(const ActMap&)
@@ -5980,13 +5980,13 @@ PG::RecoveryState::Start::Start(my_context ctx)
 
   PG *pg = context< RecoveryMachine >().pg;
   if (pg->is_primary()) {
-    // primary resets in PG::start_peering_interval whenever we change to a 
+    // primary get re-set in PG::start_peering_interval whenever we change to a 
     // new interval
     dout(1) << "transitioning to Primary" << dendl;
-    post_event(MakePrimary());
+    post_event(MakePrimary()); // ok, boost::statechart::transition< MakePrimary, Primary >
   } else { //is_stray
     dout(1) << "transitioning to Stray" << dendl; 
-    post_event(MakeStray());
+    post_event(MakeStray()); // ok, boost::statechart::transition< MakeStray, Stray >
   }
 }
 
@@ -7345,8 +7345,12 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
 
   // h.same_interval_since can only be changed by OSD::build_past_intervals_parallel(load), 
   // OSD::project_pg_history(create) and PG::start_peering_interval(advance osdmap)
-  // so, here we regenerate past_intervals only coz we restarted our peering 
-  // interval (we were in state Reset previously)
+  // so, here we generate past_intervals only coz we restarted our peering 
+  // interval (we were in state Reset previously), so we still have the last interval
+  // to generate
+  // for newly create PG from OSD::handle_pg_peering_evt/OSD::handle_pg_create, they 
+  // generate no new interval (the check, i.e. epoch < history.same_interval_since, 
+  // gurantees this)
   pg->generate_past_intervals();
   
   unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;

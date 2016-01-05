@@ -3386,7 +3386,7 @@ void OSD::handle_pg_peering_evt(
   spg_t pgid,
   const pg_info_t& info,
   pg_interval_map_t& pi,
-  epoch_t epoch, // for notify this is epoch we queried, for log and info this is epoch peer sent
+  epoch_t epoch, // for response notify this is epoch we queried, for active notify, log and info this is epoch the peer sent
   pg_shard_t from,
   bool primary, // only OSD::handle_pg_notify will set this to true, in new code, this is obsolete (refer to 53f2c7f291d94)
   PG::CephPeeringEvtRef evt)
@@ -3408,12 +3408,13 @@ void OSD::handle_pg_peering_evt(
 
     pg_history_t history = info.history; // the history the peer carried along
     
-    // extend the history up to current epoch we have, if there is any osdmap
+    // extend the history up to current epoch we (osd) have, if there is any osdmap
     // gap between the epoch the history is built and current epoch we have, 
     // then the carried history is considered invalid, i.e. an obsolete msg
     bool valid_history = project_pg_history(
       pgid, history, epoch, up, up_primary, acting, acting_primary);
 
+    // we have changed to a new interval, your msg is obsolete
     if (!valid_history || epoch < history.same_interval_since) {
       // an obsolete msg, we may or may not be the right target, the peer will 
       // resend it if needed
@@ -3524,7 +3525,7 @@ void OSD::handle_pg_peering_evt(
       // handle internal evt Initialize and ActMap locally, i.e. not in the 
       // context of OSD::peering_wq, i.e. in the context of msgr's dispatch 
       // queue thread
-      pg->handle_create(&rctx);
+      pg->handle_create(&rctx); // Initialize + ActMap -> GetInfo / Stray
       
       pg->write_if_dirty(*rctx.transaction);
 
@@ -3569,7 +3570,7 @@ void OSD::handle_pg_peering_evt(
       // handle internal evt Initialize and ActMap locally, i.e. not in the 
       // context of OSD::peering_wq, i.e. in the context of msgr's dispatch 
       // queue thread
-      pg->handle_create(&rctx);
+      pg->handle_create(&rctx); // Initialize + ActMap -> GetInfo / Stray
       
       pg->write_if_dirty(*rctx.transaction);
       dispatch_context(rctx, pg, osdmap);
@@ -3616,7 +3617,7 @@ void OSD::handle_pg_peering_evt(
 
       // if the resurrected parent PG intance will not hold on this osd, then
       // PG::proc_replica_info will purge the parent PG instance
-      parent->handle_create(&rctx);
+      parent->handle_create(&rctx); // Initialize + ActMap -> GetInfo / Stray
       parent->write_if_dirty(*rctx.transaction);
       dispatch_context(rctx, parent, osdmap);
 
@@ -7930,7 +7931,7 @@ void OSD::handle_pg_create(OpRequestRef op)
       // transit into state Initial->Reset->Started->Start->Primary->Peering->GetInfo 
       // or Initial->Reset->Started->Start->Stray according to whether currently we 
       // are primary pg or not
-      pg->handle_create(&rctx);
+      pg->handle_create(&rctx); // Initialize + ActMap -> GetInfo / Stray
 
       // update pg info and others
       pg->write_if_dirty(*rctx.transaction);
@@ -8713,7 +8714,7 @@ void OSD::handle_pg_remove(OpRequestRef op)
       // queue deletion on OSD::remove_wq, remove from OSD::pg_map and other cleanup
       _remove_pg(pg);
       pg->unlock();
-    } else {
+    } else { // we have changed to a new interval, your msg is obsolete
       dout(10) << *pg << " ignoring remove request, pg changed in epoch "
 	       << history.same_interval_since
 	       << " > " << m->get_epoch() << dendl;
