@@ -928,15 +928,24 @@ void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
     for (map<pg_shard_t,pg_info_t>::iterator it = peer_info.begin();
 	 it != peer_info.end();
 	 ++it) {
+      // peer_info get cleared by PG::clear_primary_state whenever exit state 
+      // Primary or start new interval, so if we have old peer_info which means
+      // our previous prior set was affected by AdvMap (refer to 
+      // prior_set.get()->affected_by_map called in RecoveryState::Peering::react(AdvMap))
+                
+      // info.history.last_epoch_started only gets updated in 
+      // RecoveryState::Active::react(AllReplicasActivated) and PG::append_log
       assert(info.history.last_epoch_started >= it->second.history.last_epoch_started);
     }
   }
+
+  // generate new prior set
   prior_set.reset(
     new PriorSet(
       pool.info.ec_pool(),
       get_pgbackend()->get_is_recoverable_predicate(),
       *get_osdmap(),
-      past_intervals,
+      past_intervals, // may have not reach the latest osdmap, coz in advance_pg we only handle a bunch of maps and then ActMap drived us here
       up,
       acting,
       info,
