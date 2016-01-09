@@ -852,8 +852,13 @@ void PG::trim_past_intervals()
 bool PG::adjust_need_up_thru(const OSDMapRef osdmap)
 {
   epoch_t up_thru = get_osdmap()->get_up_thru(osd->whoami);
+
+  // PG::need_up_thru was set in PG::build_prior, i.e. when we were to start
+  // a new peering process
   if (need_up_thru &&
       up_thru >= info.history.same_interval_since) {
+    // some other PG(on different peering_wq) on the same osd has sent MOSDAlive
+    // to monitor, so we do not have to do the same thing again
     dout(10) << "adjust_need_up_thru now " << up_thru << ", need_up_thru now false" << dendl;
     need_up_thru = false;
     return true;
@@ -6096,7 +6101,7 @@ boost::statechart::result PG::RecoveryState::Peering::react(const AdvMap& advmap
   }
 
   // reset need_up_thru if up_thru changed to >= info.history.same_interval_since 
-  // in new map
+  // in new map, i.e. some ohter PG on another peering_wq has done the notify thing(MOSDAlive)
   pg->adjust_need_up_thru(advmap.osdmap);
 
   // let state Started to determine if we should restart the peering process, if
@@ -7348,6 +7353,9 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg->cct, "Started/Primary/Peering/GetInfo")
 {
+  // got here means we are to start a new peering interval, everything starts
+  // from new, all previous peering interval's imtermediate states are lost
+        
   context< RecoveryMachine >().log_enter(state_name);
 
   PG *pg = context< RecoveryMachine >().pg;
@@ -8127,7 +8135,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
    *  1: A B
    *  2:   B
    *  3:       let's say B dies for good, too (say, from the power spike) 
-   *  4: A
+   *  4: A     i'm back, but i don't know if anyone has accepted client writes during the period i was out
    *
    * which makes it look like B may have applied updates to the PG
    * that we need in order to proceed.  This sucks...
@@ -8148,8 +8156,8 @@ PG::PriorSet::PriorSet(bool ec_pool,
    * or,
    *
    *  1: A B
-   *  2:   B   up_thru[B]=0
-   *  3:   B   up_thru[B]=2
+   *  2:   B   up_thru[B]=0, new interval, start peering process, PG::build_prior should notify monitor that the osd we are on is still alive
+   *  3:   B   up_thru[B]=2, ok, in new osdmap the monitor has marked the osd we are on is alive in new interval
    *  4:
    *  5: A    
    *
@@ -8195,7 +8203,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
       // epoch that we finished previous peering process
       break;  // we don't care
 
-    if (interval.acting.empty()) // no write occurred in this interval
+    if (interval.acting.empty()) // no write could occurr in this interval
       continue;
 
     if (!interval.maybe_went_rw) // no write occurred in this interval
