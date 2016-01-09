@@ -961,7 +961,12 @@ void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
     state_set(PG_STATE_DOWN);
   }
 
-  if (get_osdmap()->get_up_thru(osd->whoami) < info.history.same_interval_since) {
+  // using the osdmap currently we have, if some other PG during their build_prior phase
+  // has notified the monitor then we have no need to do the same thing
+  // if we are handling a series of osdmaps, we may find that in new osdmap the osd 
+  // we are on has been marked alive, then we have no need to send the MOSDAlive too,
+  // refer to PG::adjust_need_up_thru called in RecoveryState::Peering::react(AdvMap)
+  if (get_osdmap()->get_up_thru(osd->whoami) < info.history.same_interval_ssince) {
     dout(10) << "up_thru " << get_osdmap()->get_up_thru(osd->whoami)
 	     << " < same_since " << info.history.same_interval_since
 	     << ", must notify monitor" << dendl;
@@ -6101,7 +6106,9 @@ boost::statechart::result PG::RecoveryState::Peering::react(const AdvMap& advmap
   }
 
   // reset need_up_thru if up_thru changed to >= info.history.same_interval_since 
-  // in new map, i.e. some ohter PG on another peering_wq has done the notify thing(MOSDAlive)
+  // in new map, i.e. we are handling a series of osdmaps, in previous build_prior we
+  // find that we need to send MOSDAlive, but then we may find in new osdmaps some 
+  // other PG may has done the notify thing(MOSDAlive), so we cancel the sending
   pg->adjust_need_up_thru(advmap.osdmap);
 
   // let state Started to determine if we should restart the peering process, if
