@@ -7260,7 +7260,7 @@ bool OSD::advance_pg(
     // an AdvMap internal event to drive the pg recovery state machine
     pg->handle_advance_map(
       nextmap, lastmap, newup, up_primary,
-      newacting, acting_primary, rctx);
+      newacting, acting_primary, rctx); // only step one osdmap
 
     // Check for split!
     set<spg_t> children;
@@ -8097,7 +8097,7 @@ void OSD::do_notifies(
     dout(7) << __func__ << " osd " << it->first
 	    << " on " << it->second.size() << " PGs" << dendl;    
     MOSDPGNotify *m = new MOSDPGNotify(curmap->get_epoch(), 
-        it->second); // vector<pair<pg_notify_t,pg_interval_map_t> >
+        it->second); // vector<pair<pg_notify_t,pg_interval_map_t> >, the same content as MOSDPGInfo
     con->send_message(m);
   }
 }
@@ -8136,7 +8136,7 @@ void OSD::do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
     dout(7) << __func__ << " querying osd." << who
 	    << " on " << pit->second.size() << " PGs" << dendl;
     MOSDPGQuery *m = new MOSDPGQuery(curmap->get_epoch(), 
-        pit->second); // map<spg_t,pg_query_t>
+        pit->second); // map<spg_t,pg_query_t>, minimum info, only pg_history is the most important
     con->send_message(m);
   }
 }
@@ -8177,7 +8177,7 @@ void OSD::do_infos(map<int,
     }
     service.share_map_peer(p->first, con.get(), curmap);
     MOSDPGInfo *m = new MOSDPGInfo(curmap->get_epoch());
-    m->pg_list = p->second; // vector<pair<pg_notify_t, pg_interval_map_t> >
+    m->pg_list = p->second; // vector<pair<pg_notify_t, pg_interval_map_t> >, the same content as MOSDPGNotify
     con->send_message(m);
   }
   info_map.clear();
@@ -8524,7 +8524,9 @@ void OSD::handle_pg_query(OpRequestRef op)
 
   dout(7) << "handle_pg_query from " << m->get_source() << " epoch " << m->get_epoch() << dendl;
   int from = m->get_source().num();
-  
+
+  // if we are older, then the op will be push back of OSD::waiting_for_osdmap and we 
+  // are subscribing a new osdmap
   if (!require_same_or_newer_map(op, m->get_epoch(), false))
     return;
 

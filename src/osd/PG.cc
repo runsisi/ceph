@@ -710,7 +710,7 @@ bool PG::_calc_past_interval_range(epoch_t *start, epoch_t *end, epoch_t oldest_
   // h.same_interval_since can only be changed by OSD::build_past_intervals_parallel(load), 
   // OSD::project_pg_history(create) and PG::start_peering_interval(advance osdmap)
 
-  if (info.history.same_interval_since) {
+  if (info.history.same_interval_since) { // normally, info.history.same_interval_since can only be changed by PG::start_peering_interval
     *end = info.history.same_interval_since;
   } else {
     // PG must be imported, so let's calculate the whole range.
@@ -727,7 +727,9 @@ bool PG::_calc_past_interval_range(epoch_t *start, epoch_t *end, epoch_t oldest_
       return false;
     }
 
-    // the epochs behind this have been calculated by the existing past_intervals
+    // still some epochs between info.history.last_epoch_clean to past_intervals.begin()->first 
+    // have not been processed
+    // TODO: why there is a such weird , whenever we calc past_intervals, we start from the nearest  clean epoch
     *end = past_intervals.begin()->first;
   }
 
@@ -767,14 +769,14 @@ void PG::generate_past_intervals()
   int up_primary = -1;
   vector<int> acting, up, old_acting, old_up;
 
-  cur_map = osd->get_map(cur_epoch);
+  cur_map = osd->get_map(cur_epoch); // the nearest epoch that we know the PG must be clean
   cur_map->pg_to_up_acting_osds(
     get_pgid().pgid, &up, &up_primary, &acting, &primary);
   epoch_t same_interval_since = cur_epoch;
   dout(10) << __func__ << " over epochs " << cur_epoch << "-"
 	   << end_epoch << dendl;
   ++cur_epoch;
-  for (; cur_epoch <= end_epoch; ++cur_epoch) {
+  for (; cur_epoch <= end_epoch; ++cur_epoch) { // from the epoch the PG may not clean to the last time we noted down the PG's same_interval_since
     int old_primary = primary;
     int old_up_primary = up_primary;
     last_map.swap(cur_map);
@@ -802,7 +804,7 @@ void PG::generate_past_intervals()
       up_primary,
       old_up,
       up,
-      same_interval_since,
+      same_interval_since, // the start of our current interval
       info.history.last_epoch_clean,
       cur_map,
       last_map,
@@ -812,7 +814,7 @@ void PG::generate_past_intervals()
       &debug);
     if (new_interval) {
       dout(10) << debug.str() << dendl;
-      same_interval_since = cur_epoch; // used to record the start of the next interval
+      same_interval_since = cur_epoch; // used to record the start of the next interval, i.e. prepare for the next interval
     }
   }
 
@@ -5910,7 +5912,12 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
 
   // make sure we have past_intervals filled in.  hopefully this will happen
   // _before_ we are active.
-  pg->generate_past_intervals(); // OSD::load_pgs has built a past_interals for each pg on this osd
+  // generate PG's historical intervals, coz we only generate between info.history.last_epoch_clean 
+  // to info.history.same_interval_since and only when we have not built any previous past
+  // intervals, so most of the time the past_intervals is constructed by pg_interval_t::check_new_interval
+  // who is called in PG::start_peering_interval
+  // note: normally the info.history.same_interval_since can only be changed by PG::start_peering_interval
+  pg->generate_past_intervals(); // note: OSD::load_pgs has built a past_interals for each pg on this osd
 
   // check if we have transitted from not full to full, includes pool quota 
   // and osd's capacity, if it is true, update info.history.last_epoch_marked_full
@@ -8213,6 +8220,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
     if (interval.acting.empty()) // no write could occurr in this interval
       continue;
 
+    // this field is set in pg_interval_t::check_new_interval
     if (!interval.maybe_went_rw) // no write occurred in this interval
       continue;
 

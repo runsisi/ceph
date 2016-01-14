@@ -2842,12 +2842,14 @@ bool pg_interval_t::check_new_interval(
 	new_up,
 	osdmap,
 	lastmap,
-	pgid)) { // we are to change to a new interval
+	pgid)) { // we are to change to a new interval, so we need to note down some state thing for previous interval
+    // only primary will do this bookkeeping thing, when role changed, those generated past
+    // intervals will be carried with MOSDPGNotify and MOSDPGInfo
     pg_interval_t& i = (*past_intervals)[same_interval_since];
 
-    // record all things needed for an pg_interval_t
+    // record all things needed for an pg_interval_t (the previous interval)
 
-    // the interval starts from same_interval_since and end to last osdmap epoch 
+    // the interval starts from same_interval_since and ends to last osdmap epoch 
     i.first = same_interval_since; // start epoch of previous interval
     i.last = osdmap->get_epoch() - 1; // end epoch of previous interval
     assert(i.first <= i.last);
@@ -2867,6 +2869,7 @@ bool pg_interval_t::check_new_interval(
     set<pg_shard_t> old_acting_shards;
     old_pg_pool.convert_to_pg_shards(old_acting, &old_acting_shards); // vector<int> => set<pg_shard_t>
 
+    // ok, now we want to know if we have accepted client's writes and committed/applied it
     if (num_acting &&
 	i.primary != -1 &&
 	num_acting >= old_pg_pool.min_size &&
