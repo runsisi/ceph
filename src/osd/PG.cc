@@ -7376,12 +7376,14 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
 
   // h.same_interval_since can only be changed by OSD::build_past_intervals_parallel(load), 
   // OSD::project_pg_history(create) and PG::start_peering_interval(advance osdmap)
-  // so, here we generate past_intervals only coz we restarted our peering 
-  // interval (we were in state Reset previously), so we still have the last interval
-  // to generate
+  // here we generate past_intervals only coz we restarted our peering interval (we were 
+  // in state Reset previously), and we are a newly created PG, so when the ActMap comes,
+  // we have not generate any past intervals
   // for newly create PG from OSD::handle_pg_peering_evt/OSD::handle_pg_create, they 
-  // generate no new interval (the check, i.e. epoch < history.same_interval_since, 
-  // gurantees this)
+  // generate no new interval during the time PG to create to put on peering_wq (the check, 
+  // i.e. epoch < history.same_interval_since, gurantees this), but during the time the
+  // PG on the peering_wq OSD may have received new osdmaps and the osdmap the PG currently
+  // holds is lag behind
   pg->generate_past_intervals();
   
   unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
