@@ -948,27 +948,27 @@ void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
 
   // generate new prior set
   prior_set.reset(
-    new PriorSet(
+    new PriorSet( // all parameters are const
       pool.info.ec_pool(),
       get_pgbackend()->get_is_recoverable_predicate(),
-      *get_osdmap(),
-      past_intervals, // may have not reach the latest osdmap, coz in advance_pg we only handle a bunch of maps and then ActMap drived us here
+      *get_osdmap(), // latest map, i.e. the map we are using for peering
+      past_intervals, // may have not reach the latest osdmap, coz in advance_pg we only handle a bunch of maps and then ActMap drove us here
       up,
       acting,
       info,
       this)); // build prior set by iterating past intervals
   PriorSet &prior(*prior_set.get());
 				 
-  if (prior.pg_down) {
+  if (prior.pg_down) { // we are blocked by some down osds to survive some intervals
     state_set(PG_STATE_DOWN);
   }
 
-  // using the osdmap currently we have, if some other PG during their build_prior phase
-  // has notified the monitor then we have no need to do the same thing
-  // if we are handling a series of osdmaps, we may find that in new osdmap the osd 
-  // we are on has been marked alive, then we have no need to send the MOSDAlive too,
+
+  // multiple PGs are resident on the same osd, so the osd we are on may have
+  // been marked alive by some other PG that processes osdmap faster than us,
+  // then we have no need to send the MOSDAlive
   // refer to PG::adjust_need_up_thru called in RecoveryState::Peering::react(AdvMap)
-  if (get_osdmap()->get_up_thru(osd->whoami) < info.history.same_interval_ssince) {
+  if (get_osdmap()->get_up_thru(osd->whoami) < info.history.same_interval_since) {
     dout(10) << "up_thru " << get_osdmap()->get_up_thru(osd->whoami)
 	     << " < same_since " << info.history.same_interval_since
 	     << ", must notify monitor" << dendl;
@@ -980,7 +980,7 @@ void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
     need_up_thru = false;
   }
 
-  // set PG::probe_targets, i.e. osds we are to probe
+  // set PG::probe_targets, i.e. osds currently are up and we may have data on them
   set_probe_targets(prior_set->probe);
 }
 
@@ -8219,7 +8219,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
       // epoch that we finished previous peering process
       break;  // we don't care
 
-    if (interval.acting.empty()) // no write could occurr in this interval
+    if (interval.acting.empty()) // no write could occur in this interval
       continue;
 
     // this field is set in pg_interval_t::check_new_interval
@@ -8235,7 +8235,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
     bool any_down_now = false;  // any candidates down now (that might have useful data)
 
     // consider ACTING osds
-    for (unsigned i=0; i<interval.acting.size(); i++) { // iterate acting set of this interval
+    for (unsigned i=0; i<interval.acting.size(); i++) { // iterate acting set of this interval, i.e. each replica
       int o = interval.acting[i];
       if (o == CRUSH_ITEM_NONE)
 	continue;
@@ -8245,31 +8245,35 @@ PG::PriorSet::PriorSet(bool ec_pool,
       if (osdmap.exists(o))
 	pinfo = &osdmap.get_info(o);
 
-      if (osdmap.is_up(o)) { // exists and up
+      if (osdmap.is_up(o)) { // currently exists and up, in latest map
 	// include past acting osds if they are up.
 	probe.insert(so);
 	up_now.insert(so);
-      } else if (!pinfo) { // does not exist
-        // osd does not exist in osdmap, probably has been removed
+      } else if (!pinfo) { // currently does not exist
+        // osd does not exist in latest osdmap, probably has been removed
 	dout(10) << "build_prior  prior osd." << o << " no longer exists" << dendl;
 	down.insert(o);
-      } else if (pinfo->lost_at > interval.first) { // exists and down, and marked lost (the same effect as up)
+      } else if (pinfo->lost_at > interval.first) { // currently exists and down, and marked lost (the same effect as up)
         // we marked the osd as lost, i.e. we don't care whether the osd held our 
         // modified data or not during this interval
 	dout(10) << "build_prior  prior osd." << o << " is down, but lost_at " << pinfo->lost_at << dendl;
-	up_now.insert(so);
-	down.insert(o);
-      } else { // exists and down, and did not mark lost
+	up_now.insert(so); // osd down, but we don't have to wait for it
+	down.insert(o); // osd down
+      } else { // currently exists and down, and did not mark lost
 	dout(10) << "build_prior  prior osd." << o << " is down" << dendl;
-	down.insert(o);
-	any_down_now = true;
+	down.insert(o); // osd down, may have useful data
+	any_down_now = true; // have down osd that we can wait and then get useful info from
       }
     }
+
+    // may had data written during this interval
 
     // if not enough osds survived this interval, and we may have gone rw,
     // then we need to wait for one of those osds to recover to
     // ensure that we haven't lost any information.
-    if (!(*pcontdec)(up_now) && any_down_now) { // we have to wait for some other osds to survive the pg
+    if (!(*pcontdec)(up_now) && any_down_now) {
+      // currently we have not enough up osds to survive this interval but we
+      // can wait for some down osds to get up and then survive this interval
       // fixme: how do we identify a "clean" shutdown anyway?
       dout(10) << "build_prior  possibly went active+rw, insufficient up;"
 	       << " including down osds" << dendl;
@@ -8287,6 +8291,8 @@ PG::PriorSet::PriorSet(bool ec_pool,
       }
     }
   }
+
+  // iterated every interval from currently now back to last successful peering
 
   dout(10) << "build_prior final: probe " << probe
 	   << " down " << down
