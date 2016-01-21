@@ -3721,6 +3721,8 @@ void OSD::calc_priors_during(
  */
 // called only by OSD::handle_pg_peering_evt, OSD::handle_pg_create,
 // OSD::handle_pg_query, OSD::handle_pg_remove
+
+// generate PG history, note: only h.same_xxx_since populated
 bool OSD::project_pg_history(spg_t pgid, pg_history_t& h, epoch_t from,
 			     const vector<int>& currentup,
 			     int currentupprimary,
@@ -7854,7 +7856,7 @@ void OSD::handle_pg_create(OpRequestRef op)
       history.last_deep_scrub_stamp = ci->second;
     }
 
-    // extend pg history from the epoch the pg was created to the epoch the 
+    // extend pg history from the epoch the pg was created by mon to the epoch the
     // osd currently has
     bool valid_history = project_pg_history(
       pgid, history, created, up, up_primary, acting, acting_primary);
