@@ -806,8 +806,8 @@ void PG::generate_past_intervals()
       up_primary,
       old_up,
       up,
-      same_interval_since, // the start of our current interval
-      info.history.last_epoch_clean,
+      same_interval_since, // a record of the start of our current interval
+      info.history.last_epoch_clean, // use to test if we have went rw
       cur_map,
       last_map,
       pgid,
@@ -5916,8 +5916,8 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
   // make sure we have past_intervals filled in.  hopefully this will happen
   // _before_ we are active.
   // generate PG's historical intervals between info.history.last_epoch_clean (or created)
-  // to info.history.same_interval_since and only when we have not built any previous past
-  // intervals, so most of the time the past_intervals is constructed by pg_interval_t::check_new_interval
+  // to info.history.same_interval_since, TODO: for imported PG only ???
+  // most of the time the past_intervals is constructed by pg_interval_t::check_new_interval
   // called by PG::start_peering_interval
   // note: normally the info.history.same_interval_since can only be changed by PG::start_peering_interval
   pg->generate_past_intervals(); // note: OSD::load_pgs has built a past_interals for each pg on this osd
@@ -7338,10 +7338,11 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MQuery& query)
   return discard_event();
 }
 
+// Stray is substate of Started, so the AdvMap is handled by Started
 boost::statechart::result PG::RecoveryState::Stray::react(const ActMap&)
 {
   PG *pg = context< RecoveryMachine >().pg;
-  if (pg->should_send_notify() && pg->get_primary().osd >= 0) {
+  if (pg->should_send_notify() && pg->get_primary().osd >= 0) { // always send a MOSDPGNotity to current primary PG
     context< RecoveryMachine >().send_notify(
       pg->get_primary(),
       pg_notify_t(
@@ -7349,7 +7350,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const ActMap&)
 	pg->get_osdmap()->get_epoch(),
 	pg->get_osdmap()->get_epoch(),
 	pg->info),
-      pg->past_intervals);
+      pg->past_intervals); // PG info + past_intervals
   }
   pg->take_waiters();
 
@@ -7379,14 +7380,7 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
 
   // h.same_interval_since can only be changed by OSD::build_past_intervals_parallel(load), 
   // OSD::project_pg_history(create) and PG::start_peering_interval(advance osdmap)
-  // here we generate past_intervals only coz we restarted our peering interval (we were 
-  // in state Reset previously), and we are a newly created PG, so when the ActMap comes,
-  // we have not generate any past intervals
-  // for newly create PG from OSD::handle_pg_peering_evt/OSD::handle_pg_create, they 
-  // generate no new interval during the time PG to create to put on peering_wq (the check, 
-  // i.e. epoch < history.same_interval_since, gurantees this), but during the time the
-  // PG on the peering_wq OSD may have received new osdmaps and the osdmap the PG currently
-  // holds is lag behind
+  // TODO: why we need this ???
   pg->generate_past_intervals();
   
   unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
