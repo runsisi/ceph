@@ -1360,11 +1360,16 @@ void ReplicatedPG::get_src_oloc(const object_t& oid, const object_locator_t& olo
     src_oloc.key = oid.name;
 }
 
+// handle both client op and replica op
 void ReplicatedPG::do_request(
   OpRequestRef& op,
   ThreadPool::TPHandle &handle)
 {
   assert(!op_must_wait_for_map(get_osdmap()->get_epoch(), op));
+
+  // for client op info.history.same_primary_since must have not be changed, and for write op
+  // we must be the primary OSD
+  // for replica op we must be in the same interval
   if (can_discard_request(op)) { // misdirected op, discard it silently
     return;
   }

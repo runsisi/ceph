@@ -851,11 +851,11 @@ bool OSDService::should_share_map(entity_name_t name, Connection *con,
   // does client have old map?
   if (name.is_client()) {
     bool message_sendmap = epoch < osdmap->get_epoch();
-    if (message_sendmap && sent_epoch_p) {
+    if (message_sendmap && sent_epoch_p) { // we have shared the osdmap before
       dout(20) << "client session last_sent_epoch: "
                << *sent_epoch_p
                << " versus osdmap epoch " << osdmap->get_epoch() << dendl;
-      if (*sent_epoch_p < osdmap->get_epoch()) {
+      if (*sent_epoch_p < osdmap->get_epoch()) { // share it again
         should_send = true;
       } // else we don't need to send it out again
     }
@@ -867,10 +867,13 @@ bool OSDService::should_share_map(entity_name_t name, Connection *con,
       (osdmap->get_cluster_addr(name.num()) == con->get_peer_addr() ||
        osdmap->get_hb_back_addr(name.num()) == con->get_peer_addr())) {
     // remember
+    // peer OSD's latest osdmap epoch is noted down by OSDService::note_peer_epoch
+    // which is called by OSDService::handle_osd_ping, so we do not have to
+    // share the map if the peer has the same as or newer map than us
     epoch_t has = MAX(get_peer_epoch(name.num()), epoch);
 
     // share?
-    if (has < osdmap->get_epoch()) {
+    if (has < osdmap->get_epoch()) { // peer OSD has older osdmap
       dout(10) << name << " " << con->get_peer_addr()
                << " has old map " << epoch << " < "
                << osdmap->get_epoch() << dendl;
@@ -9038,7 +9041,7 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
     return;
   }
 
-  // set up a map send if the Op gets blocked for some reason
+  // share osdmap with the peer if it has an older osdmap
   send_map_on_destruct share_map(this, m, osdmap, m->get_map_epoch());
   Session *client_session =
       static_cast<Session*>(m->get_connection()->get_priv());
@@ -9048,7 +9051,7 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
     client_session->sent_epoch_lock.Lock();
   }
 
-  // used to set op->send_map_update later
+  // peer has an older osdmap? used to set op->send_map_update later
   share_map.should_send = service.should_share_map(
       m->get_source(), m->get_connection().get(), m->get_map_epoch(),
       osdmap, &client_session->last_sent_epoch);
@@ -9082,7 +9085,7 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
     return;
   }
 
-  OSDMapRef send_map = service.try_get_map(m->get_map_epoch());
+  OSDMapRef send_map = service.try_get_map(m->get_map_epoch()); // the osdmap the peer used to send out this op
   // check send epoch
   if (!send_map) {
     dout(7) << "don't have sender's osdmap; assuming it was valid and that"
@@ -9105,6 +9108,8 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
   // primary osd, note: we are calcing against peer's osdmap, so if our calc
   // find that they miss targetted, then there must be an error
   if (!send_map->osd_is_valid_op_target(pgid.pgid, whoami)) {
+    // for replicated pool, non-primary OSD is valid target (but PG::can_discard_op thinks that
+    // the write op directed to the non-primary OSD is also invalid target)
     dout(7) << "we are invalid target" << dendl;
     clog->warn() << m->get_source_inst() << " misdirected " << m->get_reqid()
 		      << " pg " << m->get_pg()
@@ -9151,12 +9156,12 @@ void OSD::handle_replica_op(OpRequestRef& op, OSDMapRef& osdmap)
   assert(m->get_type() == MSGTYPE);
 
   dout(10) << __func__ << " " << *m << " epoch " << m->map_epoch << dendl;
-  if (!require_self_aliveness(op->get_req(), m->map_epoch))
+  if (!require_self_aliveness(op->get_req(), m->map_epoch)) // not a lagecy message before i am up
     return;
-  if (!require_osd_peer(op->get_req()))
+  if (!require_osd_peer(op->get_req())) // peer must be an OSD
     return;
   if (osdmap->get_epoch() >= m->map_epoch &&
-      !require_same_peer_instance(op->get_req(), osdmap, true))
+      !require_same_peer_instance(op->get_req(), osdmap, true)) // not a lagecy message from a previous OSD incarnation
     return;
 
   // must be a rep op.
@@ -9169,6 +9174,8 @@ void OSD::handle_replica_op(OpRequestRef& op, OSDMapRef& osdmap)
   if (peer_session) {
     peer_session->sent_epoch_lock.Lock();
   }
+
+  // if the peer OSD has an older osdmap, share our map with it
   should_share_map = service.should_share_map(
       m->get_source(), m->get_connection().get(), m->map_epoch,
       osdmap,
@@ -9183,7 +9190,7 @@ void OSD::handle_replica_op(OpRequestRef& op, OSDMapRef& osdmap)
     op->send_map_update = should_share_map;
     op->sent_epoch = m->map_epoch;
     enqueue_op(pg, op);
-  } else if (should_share_map && m->get_connection()->is_connected()) {
+  } else if (should_share_map && m->get_connection()->is_connected()) { // connection state is in STATE_OPEN
     C_SendMap *send_map = new C_SendMap(this, m->get_source(),
 					m->get_connection(),
                                         osdmap, m->map_epoch);

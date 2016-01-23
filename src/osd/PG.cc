@@ -5367,6 +5367,11 @@ bool PG::can_discard_op(OpRequestRef& op)
   } else {
     // normal case; must be primary
     if (!is_primary()) {
+      // osd_is_valid_op_target called in OSD::handle_op thinks that the non-primary OSD is 
+      // valid target for replicated pool, but for write op this is not a valid target, actually
+
+      // reply ENXIO for replicated pool, silently dropped for ec pool(impossible, 
+      // osd_is_valid_op_target won't let the op enqueue)
       osd->handle_misdirected_op(this, op);
       return true;
     }
@@ -5401,7 +5406,7 @@ bool PG::can_discard_replica_op(OpRequestRef& op)
 
   // same pg?
   //  if pg changes _at all_, we reset and repeer!
-  if (old_peering_msg(m->map_epoch, m->map_epoch)) {
+  if (old_peering_msg(m->map_epoch, m->map_epoch)) { // compare with PG::last_peering_reset
     dout(10) << "can_discard_replica_op pg changed " << info.history
 	     << " after " << m->map_epoch
 	     << ", dropping" << dendl;
@@ -5440,9 +5445,9 @@ bool PG::can_discard_request(OpRequestRef& op)
 {
   switch (op->get_req()->get_type()) {
   case CEPH_MSG_OSD_OP:
-    return can_discard_op(op); // misdirected op
+    return can_discard_op(op); // primary OSD changed or for write op i am not the primary OSD 
   case MSG_OSD_SUBOP:
-    return can_discard_replica_op<MOSDSubOp, MSG_OSD_SUBOP>(op);
+    return can_discard_replica_op<MOSDSubOp, MSG_OSD_SUBOP>(op); // not in the same interval
   case MSG_OSD_REPOP:
     return can_discard_replica_op<MOSDRepOp, MSG_OSD_REPOP>(op);
   case MSG_OSD_PG_PUSH:
@@ -7504,10 +7509,10 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
   // OSD::project_pg_history gurantees that the message is in the same
   // interval as us
 
-  // PG::info.history.last_epoch_started is set in three places:
+  // PG::info.history.last_epoch_started is updated in three places:
   // 1. RecoveryState::Active::react(AllReplicasActivated), for primary replica, see PG::_activate_committed
-  // 2. PG::_activate_committed, for other replicas, see PG::_activate_committed
-  // 3. PG::append_log, for other replicas
+  // 2. PG::_activate_committed, for non-primary replicas, see PG::_activate_committed
+  // 3. PG::append_log, for non-primary replicas
   epoch_t old_start = pg->info.history.last_epoch_started;
   
   // check if we can get something new from peers or prior set, if yes then merge PG::info.history
