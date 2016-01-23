@@ -358,7 +358,7 @@ bool PG::proc_replica_info(
   // remove last scrub job from OSDService::sched_scrub_pg
   unreg_next_scrub();
   
-  // primary PG always wants the latest history
+  // update PG history to the latest between us and the peer
   if (info.history.merge(oinfo.history)) // update primary pg info (every fields) to the latest
     dirty_info = true;
 
@@ -2125,6 +2125,7 @@ void PG::_activate_committed(epoch_t epoch, epoch_t activation_epoch)
       get_osdmap()->get_epoch(),
       info);
 
+    // ok, we are not primary PG, set the h.last_epoch_started directly
     i.info.history.last_epoch_started = activation_epoch;
     if (acting.size() >= pool.info.min_size) {
       state_set(PG_STATE_ACTIVE);
@@ -5965,6 +5966,9 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
 boost::statechart::result PG::RecoveryState::Reset::react(const ActMap&)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
+  // notify primary osd to create primary PG or update primary PG info,
+  // see RecoveryState::GetInfo::react(MNotifyRec)
   if (pg->should_send_notify() && pg->get_primary().osd >= 0) {
     // we are not primary pg(stray or replica) and new primary pg's osd exists, 
     // we need to notify the primary pg
@@ -7389,7 +7393,8 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
   
   unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
 
-  assert(pg->blocked_by.empty()); // PG::blocked_by used only by PriorSet::affected_by_map
+  // PriorSet and PG both have a member named blocked_by
+  assert(pg->blocked_by.empty());
 
   if (!prior_set.get()) // the first time we transit into
     pg->build_prior(prior_set); // populate PG::probe_targets by PG::past intervals
@@ -7422,21 +7427,24 @@ void PG::RecoveryState::GetInfo::get_infos()
   pg->blocked_by.clear();
   for (set<pg_shard_t>::const_iterator it = prior_set->probe.begin();
        it != prior_set->probe.end();
-       ++it) { // iterate each probe target (pg shard, i.e. osd + shard id)
+       ++it) { // iterate each probe target, i.e. PG replica
     pg_shard_t peer = *it;
     if (peer == pg->pg_whoami) { // skip myself
       continue;
     }
-    if (pg->peer_info.count(peer)) {
+    if (pg->peer_info.count(peer)) { // we have queried and got a reply
       dout(10) << " have osd." << peer << " info " << pg->peer_info[peer] << dendl;
       continue;
     }
-    if (peer_info_requested.count(peer)) { // have queried
+
+    // we are blocked by those osds that we have sent query request and has not get a reply
+    
+    if (peer_info_requested.count(peer)) { // have queried, waiting for reply
       dout(10) << " already requested info from osd." << peer << dendl;
-      pg->blocked_by.insert(peer.osd);
+      pg->blocked_by.insert(peer.osd); // sent query and has not been replied
     } else if (!pg->get_osdmap()->is_up(peer.osd)) { // peer is down
       dout(10) << " not querying info from down osd." << peer << dendl;
-    } else { // prepare to query
+    } else { // have not query yet, prepare to query
       dout(10) << " querying info from osd." << peer << dendl;
       context< RecoveryMachine >().send_query(
 	peer, pg_query_t(pg_query_t::INFO, // request pg info
@@ -7447,31 +7455,67 @@ void PG::RecoveryState::GetInfo::get_infos()
 			 
       // mark we have prepared the query for this peer
       peer_info_requested.insert(peer);
-      pg->blocked_by.insert(peer.osd);
+      pg->blocked_by.insert(peer.osd); // new query to send
     }
   }
 
   pg->publish_stats_to_osd();
 }
 
+//struct pg_history_t {
+//  epoch_t epoch_created;       // epoch in which PG was created
+//  epoch_t last_epoch_started;  // lower bound on last epoch started (anywhere, not necessarily locally)
+//  epoch_t last_epoch_clean;    // lower bound on last epoch the PG was completely clean.
+//  epoch_t last_epoch_split;    // as parent
+//  epoch_t last_epoch_marked_full;  // pool or cluster
+//
+//  /**
+//   * In the event of a map discontinuity, same_*_since may reflect the first
+//   * map the osd has seen in the new map sequence rather than the actual start
+//   * of the interval.  This is ok since a discontinuity at epoch e means there
+//   * must have been a clean interval between e and now and that we cannot be
+//   * in the active set during the interval containing e.
+//   */
+//  epoch_t same_up_since;       // same acting set since
+//  epoch_t same_interval_since;   // same acting AND up set since
+//  epoch_t same_primary_since;  // same primary at least back through this epoch.
+//
+//  eversion_t last_scrub;
+//  eversion_t last_deep_scrub;
+//  utime_t last_scrub_stamp;
+//  utime_t last_deep_scrub_stamp;
+//  utime_t last_clean_scrub_stamp;
+//}
 boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& infoevt) 
 {
   PG *pg = context< RecoveryMachine >().pg;
 
   set<pg_shard_t>::iterator p = peer_info_requested.find(infoevt.from);
-  if (p != peer_info_requested.end()) { // ok we got this peer's info, remove it from requested set
+  if (p != peer_info_requested.end()) { // ok we got this peer's reply
     peer_info_requested.erase(p);
-    pg->blocked_by.erase(infoevt.from.osd);
+    pg->blocked_by.erase(infoevt.from.osd); // got a reply, the peer has a osdmap in the same interval as us
   }
 
+  // this MNotifyRec may be not a reply for our active query, coz we (PG) may have not
+  // been on this OSD before, this message drive us to be created, see OSD::handle_pg_peering_evt
+  // but the OSD that sent us this message must be in peer_info_requested, coz
+  // generated the set in RecoveryState::GetInfo::get_infos right before
+  // we get here
+  // OSD::project_pg_history gurantees that the message is in the same
+  // interval as us
+
+  // PG::info.history.last_epoch_started is set in three places:
+  // 1. RecoveryState::Active::react(AllReplicasActivated), for primary replica, see PG::_activate_committed
+  // 2. PG::_activate_committed, for other replicas, see PG::_activate_committed
+  // 3. PG::append_log, for other replicas
   epoch_t old_start = pg->info.history.last_epoch_started;
-  // check if we can get something new from peers or prior set
+  
+  // check if we can get something new from peers or prior set, if yes then merge PG::info.history
   if (pg->proc_replica_info(
 	infoevt.from, infoevt.notify.info, infoevt.notify.epoch_sent)) { // got a new peer or old peer's new info
     // we got something new ...
     unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
 
-    // TODO: why our history.last_epoch_started is laging behind ???
     if (old_start < pg->info.history.last_epoch_started) { // peer has a updated pg history
       dout(10) << " last_epoch_started moved forward, rebuilding prior" << dendl;
 
@@ -7482,8 +7526,8 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
       // peer_info_requested.  this is less expensive than restarting
       // peering (which would re-probe everyone).
       set<pg_shard_t>::iterator p = peer_info_requested.begin();
-      while (p != peer_info_requested.end()) {
-	if (prior_set->probe.count(*p) == 0) { // we need not to probe this peer anymore
+      while (p != peer_info_requested.end()) { // we can transit into next state only if peer_info_requested is empty
+	if (prior_set->probe.count(*p) == 0) { // this OSD not in new prior set any more
 	  dout(20) << " dropping osd." << *p << " from info_requested, no longer in probe set" << dendl;
 	  peer_info_requested.erase(p++);
 	} else {
@@ -8240,7 +8284,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
       int o = interval.acting[i];
       if (o == CRUSH_ITEM_NONE)
 	continue;
-      pg_shard_t so(o, ec_pool ? shard_id_t(i) : shard_id_t::NO_SHARD);
+      pg_shard_t so(o, ec_pool ? shard_id_t(i) : shard_id_t::NO_SHARD); // we need to query all PG replicas for each interval
 
       const osd_info_t *pinfo = 0; // osd info in current osdmap
       if (osdmap.exists(o))
@@ -8287,7 +8331,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
 
 	  // make note of when any down osd in the cur set was lost, so that
 	  // we can notice changes in prior_set_affected.
-	  blocked_by[*i] = osdmap.get_info(*i).lost_at;
+	  blocked_by[*i] = osdmap.get_info(*i).lost_at; // see OSDMoinitor::prepare_boot
 	}
       }
     }
