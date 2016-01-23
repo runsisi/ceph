@@ -358,6 +358,7 @@ bool PG::proc_replica_info(
   // remove last scrub job from OSDService::sched_scrub_pg
   unreg_next_scrub();
   
+  // primary PG always wants the latest history
   if (info.history.merge(oinfo.history)) // update primary pg info (every fields) to the latest
     dirty_info = true;
 
@@ -939,12 +940,15 @@ void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
 	 it != peer_info.end();
 	 ++it) {
       // peer_info get cleared by PG::clear_primary_state whenever exit state 
-      // Primary or start new interval, so if we have old peer_info which means
-      // our previous prior set was affected by AdvMap (refer to 
+      // Primary or start a new interval, so if we have old peer_info which means
+      // our previous prior set was affected by AdvMap and we are rebuilding the prior set, but
+      // we do not have to restart a new interval (refer to 
       // prior_set.get()->affected_by_map called in RecoveryState::Peering::react(AdvMap))
                 
       // info.history.last_epoch_started only gets updated in 
       // RecoveryState::Active::react(AllReplicasActivated) and PG::append_log
+
+      // PG::proc_replica_info gurantees the primary PG has the latest PG history
       assert(info.history.last_epoch_started >= it->second.history.last_epoch_started);
     }
   }
@@ -7385,10 +7389,10 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
   
   unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
 
-  assert(pg->blocked_by.empty());
+  assert(pg->blocked_by.empty()); // PG::blocked_by used only by PriorSet::affected_by_map
 
   if (!prior_set.get()) // the first time we transit into
-    pg->build_prior(prior_set); // build prior set by past intervals
+    pg->build_prior(prior_set); // populate PG::probe_targets by PG::past intervals
 
   pg->reset_min_peer_features();
 
