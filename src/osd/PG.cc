@@ -7495,8 +7495,11 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 
   // this MNotifyRec may be not a reply for our active query, coz we (PG) may have not
   // been on this OSD before, this message drive us to be created, see OSD::handle_pg_peering_evt
-  // if we have been on this OSD before, then the MNotifyRec must be in the
-  // same interval as only, or we will drop this message, see OSD::handle_pg_peering_evt
+  // but the OSD that sent us this message must be in peer_info_requested, coz
+  // generated the set in RecoveryState::GetInfo::get_infos right before
+  // we get here
+  // OSD::project_pg_history gurantees that the message is in the same
+  // interval as us
 
   // PG::info.history.last_epoch_started is set in three places:
   // 1. RecoveryState::Active::react(AllReplicasActivated), for primary replica, see PG::_activate_committed
