@@ -3642,7 +3642,7 @@ void OSD::handle_pg_peering_evt(
   } else {
     // already had it.  did the mapping change?
     PG *pg = _lookup_lock_pg(pgid);
-    if (epoch < pg->info.history.same_interval_since) {
+    if (epoch < pg->info.history.same_interval_since) { // for MOSDPGQuery, the sender will be blocked
       dout(10) << *pg << " get_or_create_pg acting changed in "
 	       << pg->info.history.same_interval_since
 	       << " (msg from " << epoch << ")" << dendl;
