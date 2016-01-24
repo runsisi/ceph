@@ -9540,7 +9540,7 @@ void OSD::process_peering_events(
     // we may updated the pg info, past_intervals, e.g. OSD::split_pgs in advance_pg
     // or after handled the inner AdvMap evt we may need to change to a new interval, 
     // etc.
-    pg->write_if_dirty(*rctx.transaction);
+    pg->write_if_dirty(*rctx.transaction); // note down the changes to the PG into txn and apply it later
 
     // we check if any pg needs to split on each epoch, if it does, we create
     // child PG instance and create child coll in OSD::split_pgs
@@ -9554,7 +9554,7 @@ void OSD::process_peering_events(
 
     // if rctx->transaction is not empty, i.e. pg info, past_intervals may
     // modified, then queue to do the txn
-    dispatch_context_transaction(rctx, pg, &handle); // do txn for each PG
+    dispatch_context_transaction(rctx, pg, &handle); // queue txn for each PG and allocate new txn
     
     pg->unlock();
     
