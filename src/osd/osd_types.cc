@@ -2888,6 +2888,7 @@ bool pg_interval_t::check_new_interval(
       // is down, the mon may still record the primary as up in the osdmap, which
       // results the pg still map to the down primary osd, so we need a explicit
       // flag (up_thru) to mark that the osd is definitely up
+      
       // up_from is set when the osd is up, i.e. by MOSDBoot
       // up_thru is set explicitly by MOSDAlive (send_alive)
       
@@ -2934,7 +2935,7 @@ bool pg_interval_t::check_new_interval(
 	       << " does not include interval"
 	       << std::endl;
       }
-    } else { // we are not active during this interval, no write possible
+    } else { // we could not go active during this interval, so no write possible
       i.maybe_went_rw = false;
       if (out)
 	*out << "generate_past_intervals " << i << " : acting set is too small" << std::endl;

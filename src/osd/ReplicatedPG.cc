@@ -1383,7 +1383,8 @@ void ReplicatedPG::do_request(
     return;
   }
 
-  if (!is_peered()) { // peered = PG_STATE_ACTIVE || PG_STATE_PEERED
+  // PG::start_peering_interval cleared PG_STATE_ACTIVE, PG_STATE_PEERED and others
+  if (!is_peered()) { // is PG_STATE_ACTIVE or PG_STATE_PEERED
     // Delay unless PGBackend says it's ok
     if (pgbackend->can_handle_while_inactive(op)) { // for replicated backend we can handle pull op at any time      
       // ec backend is always false, for replicated backend only ops below are allowed:

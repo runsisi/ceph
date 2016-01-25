@@ -7497,7 +7497,7 @@ void OSD::consume_map()
     RWLock::RLocker l(pg_map_lock);
     for (ceph::unordered_map<spg_t,PG*>::iterator it = pg_map.begin();
         it != pg_map.end();
-        ++it) {
+        ++it) { // every PG needs to consume this osdmap
       PG *pg = it->second;
       pg->lock();
       // queue a CephPeeringEvtRef event into peering_queue, and queue us into peering_wq
@@ -8590,10 +8590,14 @@ void OSD::handle_pg_query(OpRequestRef op)
       }
     }
 
+    // we don't have the PG
+
     if (!osdmap->have_pg_pool(pgid.pool()))
       continue;
 
-    // PG instance does not exist, send empty pg info/log
+    // PG instance does not exist, send empty pg info/log, but before we send the empty
+    // reply, we need to check if we are in the same interval, if not we ignore it
+    // silently, and let the peer update their osdmap first
 
     // get active crush mapping
     int up_primary, acting_primary;
@@ -8612,7 +8616,7 @@ void OSD::handle_pg_query(OpRequestRef op)
       dout(10) << " pg " << pgid << " dne, and pg has changed in "
 	       << history.same_interval_since
 	       << " (msg from " << it->second.epoch_sent << ")" << dendl;
-      continue;
+      continue; // ignore it silently, the peer should update their osdmap first
     }
 
     // ok, same interval, so we are still in acting set, but note that we do not 
@@ -9489,7 +9493,7 @@ void OSD::process_peering_events(
        ++i) { // iterate each pg dequeued from peering_wq
     set<boost::intrusive_ptr<PG> > split_pgs;
     PG *pg = *i;
-    pg->lock_suspend_timeout(handle); // suspend tp heartbeat check
+    pg->lock_suspend_timeout(handle); // lock PG and suspend tp heartbeat check
     
     curmap = service.get_osdmap(); // we want all PGs we are holding to catch up with this osdmap
     

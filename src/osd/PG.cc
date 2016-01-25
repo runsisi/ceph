@@ -7521,7 +7521,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
     // we got something new ...
     unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
 
-    if (old_start < pg->info.history.last_epoch_started) { // peer has a updated pg history
+    if (old_start < pg->info.history.last_epoch_started) { // peer has a updated pg history, i.e. i am a newly joined osd into this group
       dout(10) << " last_epoch_started moved forward, rebuilding prior" << dendl;
 
       // rebuild prior set

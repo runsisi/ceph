@@ -44,10 +44,10 @@ However, in a case like
 
 .. code:: none
 
-  calc_acting osd.0 1.4e( v 473'302 (292'200,473'302] local-les=473 n=4 ec=5 les/c 473/473 556/556/556
+  calc_acting osd.0 1.4e( v 473'302 (292'200,473'302]             local-les=473 n=4 ec=5 les/c 473/473 556/556/556
   calc_acting osd.1 1.4e( v 473'302 (293'202,473'302] lb 0//0//-1 local-les=477 n=0 ec=5 les/c 473/473 556/556/556
-  calc_acting osd.4 1.4e( v 473'302 (120'121,473'302] local-les=473 n=4 ec=5 les/c 473/473 556/556/556
-  calc_acting osd.5 1.4e( empty local-les=0 n=0 ec=5 les/c 473/473 556/556/556
+  calc_acting osd.4 1.4e( v 473'302 (120'121,473'302] 			  local-les=473 n=4 ec=5 les/c 473/473 556/556/556
+  calc_acting osd.5 1.4e( empty 								  local-les=0   n=0 ec=5 les/c 473/473 556/556/556
 
 since osd.1 is the only one which recorded info.les=477 while 4,0
 which were the acting set in that interval did not (4 restarted and 0
