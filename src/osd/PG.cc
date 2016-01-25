@@ -7532,7 +7532,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
       // peering (which would re-probe everyone).
       set<pg_shard_t>::iterator p = peer_info_requested.begin();
       while (p != peer_info_requested.end()) { // we can transit into next state only if peer_info_requested is empty
-	if (prior_set->probe.count(*p) == 0) { // this OSD not in new prior set any more
+	if (prior_set->probe.count(*p) == 0) { // this OSD was in previes prior set is not in new prior set any more
 	  dout(20) << " dropping osd." << *p << " from info_requested, no longer in probe set" << dendl;
 	  peer_info_requested.erase(p++);
 	} else {
@@ -7549,8 +7549,10 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
       << hex << infoevt.features << dec << dendl;
     pg->apply_peer_features(infoevt.features);
 
+    // to see if we are to stay in GetInfo or transit into next state
+
     // are we done getting everything?
-    if (peer_info_requested.empty() && !prior_set->pg_down) {
+    if (peer_info_requested.empty() && !prior_set->pg_down) { // all peers need to query have replied and no one is blocking us
       // ok, we got replied for all previous queries and we can survive every 
       // interval of PG::past_intervals
       /*
@@ -7569,11 +7571,12 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 	  if (!p->second.maybe_went_rw) // no write during this interval
 	    continue;
 
-          // ok, we have gone write during this interval
+          // ok, we may have gone write during this interval
           
 	  pg_interval_t& interval = p->second;
 	  dout(10) << " last maybe_went_rw interval was " << interval << dendl;
-	  OSDMapRef osdmap = pg->get_osdmap();
+          
+	  OSDMapRef osdmap = pg->get_osdmap(); // current osdmap
 
 	  /*
 	   * this mirrors the PriorSet calculation: we wait if we
@@ -7602,18 +7605,20 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 
               // check if any peer has backfilled, i.e. not backfilling
 	      if (!pinfo->is_incomplete())
-		any_up_complete_now = true; // not backfilling, we are complete
-	    } else { // peer is down
+		any_up_complete_now = true; // not backfilling, this replica is complete
+	    } else { // peer is down, we may have useful data on it, so we are still blocked by this OSD
 	      any_down_now = true;
 	    }
 	  }
-          
+
+          // check for every interval, see PriorSet
 	  if (!any_up_complete_now && any_down_now) {
             // during this interval we have no complete replicas (primary included),
             // and any useful osd in this interval currently is down, so we can not
             // continue the peering process
 	    dout(10) << " no osds up+complete from interval " << interval << dendl;
-	    pg->state_set(PG_STATE_DOWN);
+            
+	    pg->state_set(PG_STATE_DOWN); // we are blocked in this interval
 	    return discard_event();
 	  }
 
@@ -7627,10 +7632,10 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
       dout(20) << "Common acting features: " << hex << pg->get_min_acting_features() << dec << dendl;
       dout(20) << "Common upacting features: " << hex << pg->get_min_upacting_features() << dec << dendl;
 
-      // silently transit into state GetLog
-      post_event(GotInfo());
+      post_event(GotInfo()); // all queried replied and complete or they are marked lost, transit into state GetLog
     }
   }
+  
   return discard_event();
 }
 
@@ -8321,7 +8326,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
     // if not enough osds survived this interval, and we may have gone rw,
     // then we need to wait for one of those osds to recover to
     // ensure that we haven't lost any information.
-    if (!(*pcontdec)(up_now) && any_down_now) {
+    if (!(*pcontdec)(up_now) && any_down_now) { // check for every interval
       // currently we have not enough up osds to survive this interval but we
       // can wait for some down osds to get up and then survive this interval
       // fixme: how do we identify a "clean" shutdown anyway?
@@ -8332,7 +8337,8 @@ PG::PriorSet::PriorSet(bool ec_pool,
 	   ++i) {
 	if (osdmap.exists(*i) &&   // if it doesn't exist, we already consider it lost.
 	    osdmap.is_down(*i)) { // osd exists and down
-	  pg_down = true;
+	    
+	  pg_down = true; // any interval can set this PG to down, see RecoveryState::GetInfo::react(MNotifyRec)
 
 	  // make note of when any down osd in the cur set was lost, so that
 	  // we can notice changes in prior_set_affected.
