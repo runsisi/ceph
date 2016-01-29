@@ -8590,6 +8590,10 @@ void OSD::handle_pg_query(OpRequestRef op)
       }
     }
 
+    // if we have the PG, we will not check if the message is come from an OSD in the same interval,
+    // but if we do not have the PG, we will check if the message is come from an OSD in the same interval,
+    // and silently drop the obsolete message
+
     // we don't have the PG
 
     if (!osdmap->have_pg_pool(pgid.pool()))
