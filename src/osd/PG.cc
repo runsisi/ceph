@@ -7402,7 +7402,7 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
   assert(pg->blocked_by.empty());
 
   if (!prior_set.get()) // the first time we transit into
-    pg->build_prior(prior_set); // populate PG::probe_targets by PG::past intervals
+    pg->build_prior(prior_set); // allocate an PriorSet, and populate PG::probe_targets by PG::past intervals
 
   pg->reset_min_peer_features();
 
@@ -7521,11 +7521,13 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
     // we got something new ...
     unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
 
-    if (old_start < pg->info.history.last_epoch_started) { // peer has a updated pg history, i.e. i am a newly joined osd into this group
+    if (old_start < pg->info.history.last_epoch_started) {
+      // peer has a updated pg history, i.e. i am a newly (re-)joined osd into this group
       dout(10) << " last_epoch_started moved forward, rebuilding prior" << dendl;
 
-      // rebuild prior set
-      pg->build_prior(prior_set);
+      // use the updated info.history.last_epoch_started(we do not need to search
+      // back so much) to rebuild prior set
+      pg->build_prior(prior_set); // reallocate an PriorSet and rebuild probe set
 
       // filter out any osds that got dropped from the probe set from
       // peer_info_requested.  this is less expensive than restarting
@@ -7534,6 +7536,8 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
       while (p != peer_info_requested.end()) { // we can transit into next state only if peer_info_requested is empty
 	if (prior_set->probe.count(*p) == 0) { // this OSD was in previes prior set is not in new prior set any more
 	  dout(20) << " dropping osd." << *p << " from info_requested, no longer in probe set" << dendl;
+
+	  // you are excluded, no need to wait for your reply anymore
 	  peer_info_requested.erase(p++);
 	} else {
 	  ++p;
@@ -7542,6 +7546,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 
       // re-prepare pg_query_t::INFO queries to send for pgs in new PriorSet::probe 
       // set, coz we have rebuilt the prior set above
+      // in fact, we just want to reuse this fuction to update the PG::blocked_by
       get_infos();
     }
 
@@ -7592,7 +7597,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
             
 	    pg_shard_t so(o, pg->pool.info.ec_pool() ? shard_id_t(i) : shard_id_t::NO_SHARD);
 	    if (!osdmap->exists(o) || osdmap->get_info(o).lost_at > interval.first)
-	      continue;  // dne or lost, we let the peering process continue
+	      continue;  // dne or lost, we won't get anything from these OSDs
 	      
 	    if (osdmap->is_up(o)) { // up
 	      pg_info_t *pinfo;
@@ -7612,6 +7617,9 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 	  }
 
           // check for every interval, see PriorSet
+	  // currently, there is not any complete OSD that is up which can
+	  // provide complete objects, but we can still wait for some down OSD(s)
+	  // to check if they have complete objects
 	  if (!any_up_complete_now && any_down_now) {
             // during this interval we have no complete replicas (primary included),
             // and any useful osd in this interval currently is down, so we can not
