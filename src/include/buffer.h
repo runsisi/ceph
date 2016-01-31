@@ -125,15 +125,15 @@ private:
   /*
    * an abstract raw buffer.  with a reference count.
    */
-  class raw;
-  class raw_malloc;
-  class raw_static;
-  class raw_mmap_pages;
-  class raw_posix_aligned;
-  class raw_hack_aligned;
-  class raw_char;
-  class raw_pipe;
-  class raw_unshareable; // diagnostic, unshareable char buffer
+  class raw; // a tuple of (char*, len, nref), never alloc mem for itself
+  class raw_malloc; // raw(malloc(len), len) or raw(buf, len)
+  class raw_static; // raw(buf, len), never frees the buf
+  class raw_mmap_pages; // raw(mmap, len)
+  class raw_posix_aligned; // raw(posix_memalign, len)
+  class raw_hack_aligned; // raw(aligned_alloc, len) for cygwin
+  class raw_char; // raw(new char[len], len) or raw(buf, len)
+  class raw_pipe; // create a pair of pipe with pipe size set to len
+  class raw_unshareable; // diagnostic, unshareable char buffer, raw(new char[len], len) without debugging stats or raw(buf, len)
 
   friend std::ostream& operator<<(std::ostream& out, const raw &r);
 
@@ -144,16 +144,16 @@ public:
   /*
    * named constructors 
    */
-  static raw* copy(const char *c, unsigned len);
-  static raw* create(unsigned len);
-  static raw* claim_char(unsigned len, char *buf);
-  static raw* create_malloc(unsigned len);
-  static raw* claim_malloc(unsigned len, char *buf);
-  static raw* create_static(unsigned len, char *buf);
-  static raw* create_aligned(unsigned len, unsigned align);
-  static raw* create_page_aligned(unsigned len);
-  static raw* create_zero_copy(unsigned len, int fd, int64_t *offset);
-  static raw* create_unshareable(unsigned len);
+  static raw* copy(const char *c, unsigned len); // new raw_char(len) then memcpy
+  static raw* create(unsigned len); // new raw_char(len)
+  static raw* claim_char(unsigned len, char *buf); // new raw_char(buf, len)
+  static raw* create_malloc(unsigned len); // new raw_malloc(len)
+  static raw* claim_malloc(unsigned len, char *buf); // new raw_malloc(buf, len)
+  static raw* create_static(unsigned len, char *buf); // new raw_static(buf, len)
+  static raw* create_aligned(unsigned len, unsigned align); // new raw_xxx_aligned(len, align)
+  static raw* create_page_aligned(unsigned len); // new raw_xxx_aligned(len, 4096)
+  static raw* create_zero_copy(unsigned len, int fd, int64_t *offset); // new raw_pipe(len)
+  static raw* create_unshareable(unsigned len); // new raw_unshareable(len)
 
 #if defined(HAVE_XIO)
   static raw* create_msg(unsigned len, char *buf, XioDispatchHook *m_hook);
@@ -171,20 +171,20 @@ public:
   public:
     ptr() : _raw(0), _off(0), _len(0) {}
     ptr(raw *r);
-    ptr(unsigned l);
-    ptr(const char *d, unsigned l);
-    ptr(const ptr& p);
-    ptr(const ptr& p, unsigned o, unsigned l);
-    ptr& operator= (const ptr& p);
+    ptr(unsigned l); // create an instance of raw via: new char[l], inc ref
+    ptr(const char *d, unsigned l); // create an insance of raw via: new char[len] then memcpy, inc ref
+    ptr(const ptr& p); // _raw point to the same mem as p via: inc ref
+    ptr(const ptr& p, unsigned o, unsigned l); // _raw point to the same mem with different _off and _len via: inc ref
+    ptr& operator= (const ptr& p); // release itself then assign
     ~ptr() {
       release();
     }
 
     bool have_raw() const { return _raw ? true:false; }
 
-    raw *clone();
+    raw *clone(); // alloc then memcpy
     void swap(ptr& other);
-    ptr& make_shareable();
+    ptr& make_shareable(); // clone then dec ref of original _raw
 
     // misc
     bool at_buffer_head() const { return _off == 0; }
@@ -202,7 +202,7 @@ public:
 
     // accessors
     raw *get_raw() const { return _raw; }
-    const char *c_str() const;
+    const char *c_str() const; // a char* pointer with an offset _off
     char *c_str();
     unsigned length() const { return _len; }
     unsigned offset() const { return _off; }
@@ -212,7 +212,7 @@ public:
     const char& operator[](unsigned n) const;
     char& operator[](unsigned n);
 
-    const char *raw_c_str() const;
+    const char *raw_c_str() const; // a char* pointer without an offset _off
     unsigned raw_length() const;
     int raw_nref() const;
 
@@ -221,7 +221,7 @@ public:
     bool can_zero_copy() const;
     int zero_copy_to_fd(int fd, int64_t *offset) const;
 
-    unsigned wasted();
+    unsigned wasted(); // _raw->len - _len
 
     int cmp(const ptr& o) const;
     bool is_zero() const;
@@ -236,9 +236,9 @@ public:
       _len = l;
     }
 
-    unsigned append(char c);
+    unsigned append(char c); // append a char
     unsigned append(const char *p, unsigned l);
-    void copy_in(unsigned o, unsigned l, const char *src);
+    void copy_in(unsigned o, unsigned l, const char *src); // copy from src to _raw->data + _off + o with length of l
     void copy_in(unsigned o, unsigned l, const char *src, bool crc_reset);
     void zero();
     void zero(bool crc_reset);
@@ -255,7 +255,7 @@ public:
 
   class CEPH_BUFFER_API list {
     // my private bits
-    std::list<ptr> _buffers;
+    std::list<ptr> _buffers; // a list of ptr (i.e. raw)
     unsigned _len;
     unsigned _memcopy_count; //the total of memcopy using rebuild().
     ptr append_buffer;  // where i put small appends.
@@ -265,13 +265,13 @@ public:
     protected:
       typedef typename std::conditional<is_const,
 					const list,
-					list>::type bl_t;
+					list>::type bl_t; // typedef list bl_t;
       typedef typename std::conditional<is_const,
 					const std::list<ptr>,
-					std::list<ptr> >::type list_t;
+					std::list<ptr> >::type list_t; // typedef list<ptr> list_t;
       typedef typename std::conditional<is_const,
 					typename std::list<ptr>::const_iterator,
-					typename std::list<ptr>::iterator>::type list_iter_t;
+					typename std::list<ptr>::iterator>::type list_iter_t; // typedef list<ptr>::iterator list_iter_t;
       bl_t* bl;
       list_t* ls;  // meh.. just here to avoid an extra pointer dereference..
       unsigned off; // in bl

@@ -795,7 +795,7 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
     if (o+l > _len)
         throw end_of_buffer();
     char* src =  _raw->data + _off + o;
-    maybe_inline_memcpy(dest, src, l, 8);
+    maybe_inline_memcpy(dest, src, l, 8); // optimized memcpy
   }
 
   unsigned buffer::ptr::wasted()
