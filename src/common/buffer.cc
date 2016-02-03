@@ -912,7 +912,7 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
   void buffer::list::iterator_impl<is_const>::advance(int o)
   {
     //cout << this << " advance " << o << " from " << off << " (p_off " << p_off << " in " << p->length() << ")" << std::endl;
-    if (o > 0) {
+    if (o > 0) { // advance in positive direction
       p_off += o;
       while (p_off > 0) {
 	if (p == ls->end())
@@ -926,18 +926,19 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
 	  break;
 	}
       }
-      off += o;
+      off += o; // offset in total ptr list
       return;
     }
-    while (o < 0) {
-      if (p_off) {
+
+    while (o < 0) { // advance in negative direction
+      if (p_off) { // we are in the middle of a single ptr
 	unsigned d = -o;
 	if (d > p_off)
 	  d = p_off;
 	p_off -= d;
 	off -= d;
 	o += d;
-      } else if (off > 0) {
+      } else if (off > 0) { // p_off == 0, i.e. we are at the beginning of a single ptr
 	assert(p != ls->begin());
 	p--;
 	p_off = p->length();
@@ -1011,7 +1012,7 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
   template<bool is_const>
   void buffer::list::iterator_impl<is_const>::copy(unsigned len, ptr &dest)
   {
-    dest = create(len);
+    dest = create(len); // create a raw instance and implicitly construct an temp ptr then assign
     copy(len, dest.c_str());
   }
 
@@ -1368,11 +1369,12 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
     for (std::list<ptr>::iterator it = _buffers.begin();
 	 it != _buffers.end();
 	 ++it) {
+      // iterate each ptr in original list<ptr> and copy to a single ptr
       nb.copy_in(pos, it->length(), it->c_str(), false);
       pos += it->length();
     }
     _memcopy_count += pos;
-    _buffers.clear();
+    _buffers.clear(); // dctor of ptr will free the mem
     if (nb.length())
       _buffers.push_back(nb);
     invalidate_crc();
@@ -1410,7 +1412,7 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
   	     << " not ok" << std::endl;
         */
         offset += p->length();
-        unaligned.push_back(*p);
+        unaligned.push_back(*p); // stash the ptr to a stack list<ptr>
         _buffers.erase(p++);
       } while (p != _buffers.end() &&
   	     (!p->is_aligned(align_memory) ||
@@ -1418,10 +1420,10 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
   	      (offset % align_size)));
       if (!(unaligned.is_contiguous() && unaligned._buffers.front().is_aligned(align_memory))) {
         ptr nb(buffer::create_aligned(unaligned._len, align_memory));
-        unaligned.rebuild(nb);
+        unaligned.rebuild(nb); // compact multiple ptr(s) into a single ptr
         _memcopy_count += unaligned._len;
       }
-      _buffers.insert(p, unaligned._buffers.front());
+      _buffers.insert(p, unaligned._buffers.front()); // insert the compacted ptr into original list<ptr> to align
     }
   }
   
@@ -1670,6 +1672,7 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
     return curbuf->c_str() + off;
   }
 
+  // get subset of other list<ptr>'s mem as my data
   void buffer::list::substr_of(const list& other, unsigned off, unsigned len)
   {
     if (off + len > other.length())
@@ -1709,6 +1712,8 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
   }
 
   // funky modifer
+  // truncate myself, and the trucated list<ptr> is inserted into claim_by, i.e. assign the truncated
+  // mem to claim_by
   void buffer::list::splice(unsigned off, unsigned len, list *claim_by /*, bufferlist& replace_with */)
   {    // fixme?
     if (len == 0)
@@ -1968,6 +1973,7 @@ int buffer::list::write_fd(int fd) const
   return 0;
 }
 
+// a ptr -> an iov
 void buffer::list::prepare_iov(std::vector<iovec> *piov) const
 {
   piov->resize(_buffers.size());

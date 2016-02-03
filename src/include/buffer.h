@@ -265,18 +265,18 @@ public:
     protected:
       typedef typename std::conditional<is_const,
 					const list,
-					list>::type bl_t; // typedef list bl_t;
+					list>::type bl_t; // typedef list bl_t;, note: this list is not std::list but buffer::list
       typedef typename std::conditional<is_const,
 					const std::list<ptr>,
 					std::list<ptr> >::type list_t; // typedef list<ptr> list_t;
       typedef typename std::conditional<is_const,
 					typename std::list<ptr>::const_iterator,
 					typename std::list<ptr>::iterator>::type list_iter_t; // typedef list<ptr>::iterator list_iter_t;
-      bl_t* bl;
-      list_t* ls;  // meh.. just here to avoid an extra pointer dereference..
+      bl_t* bl; // buffer::list* bl; used to reference container (buffer::list)
+      list_t* ls;  // buffer::list<ptr>* ls; meh.. just here to avoid an extra pointer dereference..
       unsigned off; // in bl
-      list_iter_t p;
-      unsigned p_off;   // in *p
+      list_iter_t p; // buffer::list<ptr>::iterator p; used to reference container's data, i.e. single ptr
+      unsigned p_off;   // in *p, i.e. offset in individual ptr
 
     public:
       // constructor.  position.
@@ -284,7 +284,7 @@ public:
 	: bl(0), ls(0), off(0), p_off(0) {}
       iterator_impl(bl_t *l, unsigned o=0)
 	: bl(l), ls(&bl->_buffers), off(0), p(ls->begin()), p_off(0) {
-	advance(o);
+	advance(o); // move off and p_off, can be positive or negative
       }
       iterator_impl(bl_t *l, unsigned o, list_iter_t ip, unsigned po)
 	: bl(l), ls(&bl->_buffers), off(o), p(ip), p_off(po) {}
@@ -301,16 +301,16 @@ public:
 	//return off == bl->length();
       }
 
-      void advance(int o);
+      void advance(int o); // move back or forward |o| chars
       void seek(unsigned o);
-      bool operator!=(const iterator_impl& rhs) const;
+      bool operator!=(const iterator_impl& rhs) const; // point to the same list<ptr> and at the same off
       char operator*() const;
-      iterator_impl& operator++();
+      iterator_impl& operator++(); // advance one char
       ptr get_current_ptr() const;
 
       bl_t& get_bl() { return *bl; }
 
-      // copy data out.
+      // copy data out. for const iterator, we can only copy out
       // note that these all _append_ to dest!
       void copy(unsigned len, char *dest);
       void copy(unsigned len, ptr &dest);
@@ -405,7 +405,7 @@ public:
 
     // modifiers
     void clear() {
-      _buffers.clear();
+      _buffers.clear(); // free all mem occuppied by list<ptr> 
       _len = 0;
       _memcopy_count = 0;
       last_p = begin();

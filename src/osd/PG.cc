@@ -7610,7 +7610,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 
               // check if any peer has backfilled, i.e. not backfilling
 	      if (!pinfo->is_incomplete())
-		any_up_complete_now = true; // not backfilling, this replica is complete
+		any_up_complete_now = true; // not backfilling, this replica is complete, we can use this PG to restore data
 	    } else { // peer is down, we may have useful data on it, so we are still blocked by this OSD
 	      any_down_now = true;
 	    }
