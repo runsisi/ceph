@@ -1046,18 +1046,17 @@ map<pg_shard_t, pg_info_t>::const_iterator PG::find_best_info(
   epoch_t max_last_epoch_started_found = 0;
 
   // iterate each pg info for all peers (including myself) to find the max 
-  // pg_info_t::last_epoch_started
+  // (pg_info_t::last_epoch_started, pg_info_t::history::last_epoch_started)
   for (map<pg_shard_t, pg_info_t>::const_iterator i = infos.begin();
        i != infos.end();
        ++i) {
     if (!cct->_conf->osd_find_best_info_ignore_history_les && // default is false
 	max_last_epoch_started_found < i->second.history.last_epoch_started) {
-      min_last_update_acceptable = eversion_t::max();
       max_last_epoch_started_found = i->second.history.last_epoch_started; // from info.history.last_epoch_started
     }
+
     if (!i->second.is_incomplete() && // not backfilling, i.e. last_backfill == MAX
 	max_last_epoch_started_found < i->second.last_epoch_started) {
-      min_last_update_acceptable = eversion_t::max();
       max_last_epoch_started_found = i->second.last_epoch_started; // from info.last_epoch_started
     }
   }
@@ -1068,12 +1067,14 @@ map<pg_shard_t, pg_info_t>::const_iterator PG::find_best_info(
        i != infos.end();
        ++i) {
     if (max_last_epoch_started_found <= i->second.last_epoch_started) { // max got by applied filter of (!info.is_incomplete)
+      // only find min last_update in those peers that have equal or newer last_epoch_started than 
+      // the max complete last_epoch_started, i.e. min last_update in those have latest last_epoch_started
       if (min_last_update_acceptable > i->second.last_update)
 	min_last_update_acceptable = i->second.last_update;
     }
   }
        
-  if (min_last_update_acceptable == eversion_t::max())
+  if (min_last_update_acceptable == eversion_t::max()) // TODO: infos is empty ???
     return infos.end();
 
   map<pg_shard_t, pg_info_t>::const_iterator best = infos.end();
@@ -1381,6 +1382,8 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
        ++p) {
     dout(10) << "calc_acting osd." << p->first << " " << p->second << dendl;
   }
+
+  // all probe target has replied our query
 
   // ok, first we need to find the best pg info
   map<pg_shard_t, pg_info_t>::const_iterator auth_log_shard = find_best_info(all_info);
@@ -8349,7 +8352,8 @@ PG::PriorSet::PriorSet(bool ec_pool,
 	  pg_down = true; // any interval can set this PG to down, see RecoveryState::GetInfo::react(MNotifyRec)
 
 	  // make note of when any down osd in the cur set was lost, so that
-	  // we can notice changes in prior_set_affected.
+	  // we can know changes in prior set, (PriorSet::blocked_by is only useful in PriorSet::affected_by_map)
+	  // pay attention to the difference between PriorSet::blocked_by and PG::blocked_by
 	  blocked_by[*i] = osdmap.get_info(*i).lost_at; // see OSDMoinitor::prepare_boot
 	}
       }
@@ -8358,9 +8362,11 @@ PG::PriorSet::PriorSet(bool ec_pool,
 
   // iterated every interval from currently now back to last successful peering
 
-  dout(10) << "build_prior final: probe " << probe
-	   << " down " << down
-	   << " blocked_by " << blocked_by
+  dout(10) << "build_prior final: probe " << probe // PriorSet::probe only contains the really up OSDs
+	   << " down " << down                     // PriorSet::down contains all really down OSDs
+	   << " blocked_by " << blocked_by         // PriorSet::blocked_by contains all OSDs that are now (exists + down + not marked lost)
+	                                           // for a prior interval and we can not use these (exists + up(or marked lost)) OSDs to 
+	                                           // survive the PG in this interval
 	   << (pg_down ? " pg_down":"")
 	   << dendl;
 }
@@ -8381,7 +8387,7 @@ bool PG::PriorSet::affected_by_map(const OSDMapRef osdmap, const PG *debug_pg) c
 
     // did a down osd in cur get (re)marked as lost?
     map<int, epoch_t>::const_iterator r = blocked_by.find(o);
-    if (r != blocked_by.end()) {
+    if (r != blocked_by.end()) { // we are blocked by this OSD, it now may have been marked lost or removed
       if (!osdmap->exists(o)) { // exists -> does not exist
 	dout(10) << "affected_by_map osd." << o << " no longer exists" << dendl;
 	return true;
@@ -8389,7 +8395,7 @@ bool PG::PriorSet::affected_by_map(const OSDMapRef osdmap, const PG *debug_pg) c
 
       // if we have never mark the osd as lost, then r->second is 0, refer to 
       // PG::PriorSet::PriorSet
-      if (osdmap->get_info(o).lost_at != r->second) { // may marked lost -> marked lost
+      if (osdmap->get_info(o).lost_at != r->second) { // may marked lost -> definitely marked lost
 	dout(10) << "affected_by_map osd." << o << " (re)marked as lost" << dendl;
 	return true;
       }
