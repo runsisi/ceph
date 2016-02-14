@@ -8362,10 +8362,10 @@ PG::PriorSet::PriorSet(bool ec_pool,
 
   // iterated every interval from currently now back to last successful peering
 
-  dout(10) << "build_prior final: probe " << probe // PriorSet::probe only contains the really up OSDs
-	   << " down " << down                     // PriorSet::down contains all really down OSDs
-	   << " blocked_by " << blocked_by         // PriorSet::blocked_by contains all OSDs that are now (exists + down + not marked lost)
-	                                           // for a prior interval and we can not use these (exists + up(or marked lost)) OSDs to 
+  dout(10) << "build_prior final: probe " << probe // PriorSet::probe only contains the really up OSDs (we can query them)
+	   << " down " << down                     // PriorSet::down contains all down OSDs (we can not query)
+	   << " blocked_by " << blocked_by         // PriorSet::blocked_by contains all OSDs that are now in state (exists + down + not marked lost)
+	                                           // for a prior interval and we can not use the rest (exists + up(including marked lost)) to 
 	                                           // survive the PG in this interval
 	   << (pg_down ? " pg_down":"")
 	   << dendl;
