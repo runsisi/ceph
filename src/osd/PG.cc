@@ -7593,7 +7593,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 	   */
 	  bool any_up_complete_now = false;
 	  bool any_down_now = false;
-	  for (unsigned i=0; i<interval.acting.size(); i++) {
+	  for (unsigned i=0; i<interval.acting.size(); i++) { // to find any up and complete OSD for last rw interval
 	    int o = interval.acting[i];
 	    if (o == CRUSH_ITEM_NONE)
 	      continue;
@@ -7619,7 +7619,6 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 	    }
 	  }
 
-          // check for every interval, see PriorSet
 	  // currently, there is not any complete OSD that is up which can
 	  // provide complete objects, but we can still wait for some down OSD(s)
 	  // to check if they have complete objects
@@ -7633,8 +7632,12 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 	    return discard_event();
 	  }
 
-          // we can survive the latest interval that we have written something to,
-          // so we can survive any interval, coz we can write to a pg only after
+          // now we may have found that:
+          // 1) any OSD is up and complete or 
+          // 2) all OSDs are up but incomplete for the last rw interval
+
+          // if we can survive the latest interval that we have written something to,
+          // then we can survive any interval, coz we can write to a pg only after
           // it has finished its previous peering process
 	  break;
 	}
