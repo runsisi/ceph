@@ -1050,6 +1050,11 @@ map<pg_shard_t, pg_info_t>::const_iterator PG::find_best_info(
   for (map<pg_shard_t, pg_info_t>::const_iterator i = infos.begin();
        i != infos.end();
        ++i) {
+    // history.last_epoch_started is set only when peering changed to Active, i.e.
+    // RecoveryState::Active::react(AllReplicasActivated), for primary PG or
+    // PG::_activate_committed for replica PG
+    // option introduced to fix http://tracker.ceph.com/issues/11110, it is only used to fix the
+    // erronous cluster, no other usage, merged in 93ef911bbfcaf2a6
     if (!cct->_conf->osd_find_best_info_ignore_history_les && // default is false
 	max_last_epoch_started_found < i->second.history.last_epoch_started) {
       max_last_epoch_started_found = i->second.history.last_epoch_started; // from info.history.last_epoch_started
@@ -1068,14 +1073,17 @@ map<pg_shard_t, pg_info_t>::const_iterator PG::find_best_info(
        ++i) {
     if (max_last_epoch_started_found <= i->second.last_epoch_started) { // max got by applied filter of (!info.is_incomplete)
       // only find min last_update in those peers that have equal or newer last_epoch_started than 
-      // the max complete last_epoch_started, i.e. min last_update in those have latest last_epoch_started
+      // the max complete last_epoch_started, i.e. min last_update in those have synced pg info to the latest interval
       if (min_last_update_acceptable > i->second.last_update)
 	min_last_update_acceptable = i->second.last_update;
     }
   }
-       
-  if (min_last_update_acceptable == eversion_t::max()) // TODO: infos is empty ???
+
+  // no suitable last_update found
+  if (min_last_update_acceptable == eversion_t::max()) // TODO: why ??
     return infos.end();
+
+  // ok, we got at least one acceptable last_update, i.e, we have PG(s) that have synced pg info up to date and are complete
 
   map<pg_shard_t, pg_info_t>::const_iterator best = infos.end();
   // find osd with newest last_update (oldest for ec_pool).
@@ -1385,16 +1393,17 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
 
   // all probe target has replied our query
 
-  // ok, first we need to find the best pg info
+  // ok, first we need to find the best pg info, i.e. which pg shard has the best pg info
   map<pg_shard_t, pg_info_t>::const_iterator auth_log_shard = find_best_info(all_info);
 
-  if (auth_log_shard == all_info.end()) { // no valid pg info found
-    if (up != acting) {
+  if (auth_log_shard == all_info.end()) { // no auth pg shard (i.e., who has the best pg info) found
+    if (up != acting) { // find_best_info never change member variables of PG
       dout(10) << "choose_acting no suitable info found (incomplete backfills?),"
 	       << " reverting to up" << dendl;
       want_acting = up;
       
       vector<int> empty;
+      // update OSDService::pg_temp_wanted[pgid] to empty
       osd->queue_want_pg_temp(info.pgid.pgid, empty); // clear OSD::pg_temp_wanted for this pg
     } else {
       dout(10) << "choose_acting failed" << dendl;
@@ -1407,9 +1416,9 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
   // recalc best pg info
   if ((up.size() &&
       !all_info.find(up_primary)->second.is_incomplete() &&
-      all_info.find(up_primary)->second.last_update >=
-       auth_log_shard->second.log_tail) &&
+       all_info.find(up_primary)->second.last_update >= auth_log_shard->second.log_tail) &&
       auth_log_shard->second.is_incomplete()) {
+    // up_primary is complete while the selected auth shard is not
     map<pg_shard_t, pg_info_t> complete_infos;
     for (map<pg_shard_t, pg_info_t>::const_iterator i = all_info.begin();
 	 i != all_info.end();
@@ -1417,8 +1426,8 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
       if (!i->second.is_incomplete())
 	complete_infos.insert(*i);
     }
-    map<pg_shard_t, pg_info_t>::const_iterator i = find_best_info(
-      complete_infos);
+
+    map<pg_shard_t, pg_info_t>::const_iterator i = find_best_info(complete_infos);
     if (i != complete_infos.end()) {
       auth_log_shard = all_info.find(i->first);
     }
@@ -1676,6 +1685,8 @@ void PG::activate(ObjectStore::Transaction& t,
   if (is_primary()) {
     // only update primary last_epoch_started if we will go active
     if (acting.size() >= pool.info.min_size) {
+      // option introduced to fix http://tracker.ceph.com/issues/11110, it is only used to fix the
+      // erronous cluster, no other use
       assert(cct->_conf->osd_find_best_info_ignore_history_les ||
 	     info.last_epoch_started <= activation_epoch);
       info.last_epoch_started = activation_epoch;
