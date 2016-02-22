@@ -1460,6 +1460,11 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
   vector<int> want;
   pg_shard_t want_primary;
   stringstream ss;
+  // PG members:
+  // vector<int> up, acting, want_acting;
+  // set<pg_shard_t> actingbackfill, actingset;
+  // set<pg_shard_t> backfill_targets;
+  // and PG::actingset is initialized in PG::init_primary_up_acting
   if (!pool.info.ec_pool()) // replicated pool
     calc_replicated_acting(
       auth_log_shard,
