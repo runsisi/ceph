@@ -1397,6 +1397,9 @@ void PG::calc_replicated_acting(
  *
  * calculate the desired acting, and request a change with the monitor
  * if it differs from the current acting.
+ * 
+ * returns true if we have not to change the current PG::acting and the current PG::acting
+ * is totally qulified to survive the PG
  */
 bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
 {
