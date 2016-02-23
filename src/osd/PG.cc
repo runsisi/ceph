@@ -1421,7 +1421,7 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
       want_acting = up; // change back
       
       vector<int> empty; // no auth info found, we should reset acting to up
-      // update OSDService::pg_temp_wanted[pgid] to empty
+      // update previously queued OSDService::pg_temp_wanted[pgid] to empty
       osd->queue_want_pg_temp(info.pgid.pgid, empty); // clear OSD::pg_temp_wanted for this pg
     } else {
       dout(10) << "choose_acting failed" << dendl;
@@ -1555,20 +1555,27 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
     return false;
   }
 
-  // with the chosen PG::want_acting set, we can recover
+  // with the chosen PG::want_acting set, we can recover, now we are to check whether we
+  // have to change the PG::acting if the current PG::up has some shard(s) have to be
+  // backfilled
 
-  if (want != acting) { // our want_acting set is not the same as current acting set
+  if (want != acting) { // i.e. new PG::want_acting != current PG::acting
+    // our new want_acting set is not the same as current acting set, we need to notify the mon
+    // to change the PG::acting and change the state into WaitActingChange to wait 
+    // for PG::acting to change
+  
     dout(10) << "choose_acting want " << want << " != acting " << acting
 	     << ", requesting pg_temp change" << dendl;
 
-    want_acting = want; // set want_acting set
+    want_acting = want; // set new PG::want_acting set
 
     if (want_acting == up) {
       // There can't be any pending backfill if
       // want is the same as crush map up OSDs.
       assert(compat_mode || want_backfill.empty()); // PG::backfill_targets
 
-      // to cancel the previously pg temp
+      // to cancel the previously set pg temp(may have not sent out), i.e. reset PG::acting 
+      // to the same as PG::up, we will queue the new PG::want_acting
       vector<int> empty;
       osd->queue_want_pg_temp(info.pgid.pgid, empty); // clear OSDService::pg_temp_wanted
     } else // wanted acting set != up set, request mon to set pg_temp
@@ -1577,11 +1584,8 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
     return false;
   }
 
-  // ok, want_acting set is the same as current acting set, no need to request
-  // mon to set pg_temp
-
-  // if we need to request mon to set pg_temp, then we have called 
-  // OSDService::queue_want_pg_temp to queue this request on OSDService::pg_temp_wanted
+  // ok, new want_acting set is the same as current acting set, no need to request
+  // mon to set pg_temp, so reuse the current acting
   want_acting.clear();
   
   actingbackfill = want_acting_backfill;
