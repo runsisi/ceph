@@ -1231,32 +1231,32 @@ void PG::calc_ec_acting(
  */
 void PG::calc_replicated_acting(
   map<pg_shard_t, pg_info_t>::const_iterator auth_log_shard,
-  unsigned size,
+  unsigned size, // pool size
   const vector<int> &acting,
   pg_shard_t acting_primary,
   const vector<int> &up,
   pg_shard_t up_primary,
   const map<pg_shard_t, pg_info_t> &all_info,
   bool compat_mode,
-  vector<int> *want,
-  set<pg_shard_t> *backfill,
-  set<pg_shard_t> *acting_backfill,
-  pg_shard_t *want_primary,
+  vector<int> *want,                    // used to set PG::want_acting
+  set<pg_shard_t> *backfill,            // used to set PG::backfill_targets
+  set<pg_shard_t> *acting_backfill,     // used to set PG::actingbackfill
+  pg_shard_t *want_primary,             // not used by caller
   ostream &ss)
-{
+{          
   ss << "calc_acting newest update on osd." << auth_log_shard->first
      << " with " << auth_log_shard->second << std::endl;
   pg_shard_t auth_log_shard_id = auth_log_shard->first;
   
-  // select primary
+  // select PG::primary, i.e. acting primary
   map<pg_shard_t,pg_info_t>::const_iterator primary;
   if (up.size() &&
       !all_info.find(up_primary)->second.is_incomplete() &&
-      all_info.find(up_primary)->second.last_update >=
-        auth_log_shard->second.log_tail) {
+      all_info.find(up_primary)->second.last_update >= auth_log_shard->second.log_tail) {
+    // up_primary can be chosen as the acting primary
     ss << "up_primary: " << up_primary << ") selected as primary" << std::endl;
     primary = all_info.find(up_primary); // prefer up[0], all thing being equal
-  } else { // choose a temp primary
+  } else { // choose the auth shard as the temp primary, i.e. acting primary
     assert(!auth_log_shard->second.is_incomplete());
     ss << "up[0] needs backfill, osd." << auth_log_shard_id
        << " selected as primary instead" << std::endl;
@@ -1265,10 +1265,18 @@ void PG::calc_replicated_acting(
 
   ss << "calc_acting primary is osd." << primary->first
      << " with " << primary->second << std::endl;
+
+  // PG members:
+  // pg_shard_t up_primary;
+  // pg_shard_t primary;
+  // vector<int> up, acting, want_acting;
+  // set<pg_shard_t> actingset, actingbackfill, backfill_targets;
+  // and PG::up_primary, PG::primary, PG::up, PG::acting, PG::actingset is initialized in PG::init_primary_up_acting
+  // PG::want_acting, PG::actingbackfill, PG::backfill_targets are got here and set in PG::choose_acting
   
-  *want_primary = primary->first;
-  want->push_back(primary->first.osd);
-  acting_backfill->insert(primary->first);
+  *want_primary = primary->first; // can used to set PG::primary, but the caller did not use it, it can infer from PG::actingbackfill
+  want->push_back(primary->first.osd); // add acting primary OSD to PG::want_acting
+  acting_backfill->insert(primary->first); // add acting primary pg shard to PG::actingbackfill
   
   unsigned usable = 1;
 
@@ -1285,9 +1293,7 @@ void PG::calc_replicated_acting(
     
     const pg_info_t &cur_info = all_info.find(up_cand)->second;
     if (cur_info.is_incomplete() ||
-      cur_info.last_update < MIN(
-	primary->second.log_tail,
-	auth_log_shard->second.log_tail)) {
+      cur_info.last_update < MIN(primary->second.log_tail, auth_log_shard->second.log_tail)) {
       /* We include auth_log_shard->second.log_tail because in GetLog,
        * we will request logs back to the min last_update over our
        * acting_backfill set, which will result in our log being extended
@@ -1301,12 +1307,18 @@ void PG::calc_replicated_acting(
 	  acting_backfill->insert(up_cand);
 	}
       } else {
-	backfill->insert(up_cand);
-	acting_backfill->insert(up_cand);
+        // this PG is a backfill target (first is must be in PG::up set)
+	backfill->insert(up_cand); // PG::backfill_target
+	
+	// both backfill target and backfill source are in PG::acting_backfill set
+	acting_backfill->insert(up_cand);  // PG::acting_backfill
       }
     } else {
-      want->push_back(*i);
-      acting_backfill->insert(up_cand);
+      want->push_back(*i); // PG::want_acting
+      
+      // this PG is a backfill source, os it can be used to backfill others
+      // both backfill target and backfill source are in PG::acting_backfill set
+      acting_backfill->insert(up_cand); // PG::acting_backfill
       usable++;
       ss << " osd." << *i << " (up) accepted " << cur_info << std::endl;
     }
@@ -1318,6 +1330,7 @@ void PG::calc_replicated_acting(
        i != acting.end();
        ++i) {
     pg_shard_t acting_cand(*i, shard_id_t::NO_SHARD);
+    
     if (usable >= size) // already got enough candidates, i.e. >= pool size required
       break;
 
@@ -1328,25 +1341,29 @@ void PG::calc_replicated_acting(
     if (up_it != up.end())
       continue;
 
+    // ok, let's consider those stray PGs that can possiblely be chosen as acting shard(s)
+    
     const pg_info_t &cur_info = all_info.find(acting_cand)->second;
     if (cur_info.is_incomplete() ||
-	cur_info.last_update < primary->second.log_tail) {
+	cur_info.last_update < primary->second.log_tail) { // this stray PG is not qualified
       ss << " shard " << acting_cand << " (stray) REJECTED "
 	       << cur_info << std::endl;
     } else {
-      want->push_back(*i);
-      acting_backfill->insert(acting_cand);
+      want->push_back(*i); // this stray PG can be used as an PG::acting set member
+      acting_backfill->insert(acting_cand); // this stray PG can be used as backfill source
       ss << " shard " << acting_cand << " (stray) accepted "
 	 << cur_info << std::endl;
       usable++;
     }
   }
 
+  // still not enough (pool size) complete pg shards, we should choose from those remaining stray PGs
+
   // 3) choose replicas from any peer_info osds
   for (map<pg_shard_t,pg_info_t>::const_iterator i = all_info.begin();
        i != all_info.end();
        ++i) {
-    if (usable >= size)
+    if (usable >= size) // enough
       break;
 
     // skip up osds we already considered above
@@ -1355,18 +1372,19 @@ void PG::calc_replicated_acting(
     vector<int>::const_iterator up_it = find(up.begin(), up.end(), i->first.osd);
     if (up_it != up.end())
       continue;
-    vector<int>::const_iterator acting_it = find(
-      acting.begin(), acting.end(), i->first.osd);
+    vector<int>::const_iterator acting_it = find(acting.begin(), acting.end(), i->first.osd);
     if (acting_it != acting.end())
       continue;
 
+    // OK, consider those stray PGs that not in PG::up and PG::acting
+
     if (i->second.is_incomplete() ||
-	i->second.last_update < primary->second.log_tail) {
+	i->second.last_update < primary->second.log_tail) { // not qualified
       ss << " shard " << i->first << " (stray) REJECTED "
 	 << i->second << std::endl;
     } else {
-      want->push_back(i->first.osd);
-      acting_backfill->insert(i->first);
+      want->push_back(i->first.osd); // this stray PG can be used as an PG::acting set member
+      acting_backfill->insert(i->first); // this stray PG can be used as backfill source
       ss << " shard " << i->first << " (stray) accepted "
 	 << i->second << std::endl;
       usable++;
@@ -1400,14 +1418,14 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
     if (up != acting) { // find_best_info never change member variables of PG
       dout(10) << "choose_acting no suitable info found (incomplete backfills?),"
 	       << " reverting to up" << dendl;
-      want_acting = up;
+      want_acting = up; // change back
       
-      vector<int> empty;
+      vector<int> empty; // no auth info found, we should reset acting to up
       // update OSDService::pg_temp_wanted[pgid] to empty
       osd->queue_want_pg_temp(info.pgid.pgid, empty); // clear OSD::pg_temp_wanted for this pg
     } else {
       dout(10) << "choose_acting failed" << dendl;
-      assert(want_acting.empty());
+      assert(want_acting.empty()); // no auth info found, we should not change PG::acting
     }
     
     return false;
@@ -1458,13 +1476,15 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
 
   set<pg_shard_t> want_backfill, want_acting_backfill;
   vector<int> want;
-  pg_shard_t want_primary;
+  pg_shard_t want_primary; // not used, only a placeholder for function parameter
   stringstream ss;
   // PG members:
+  // pg_shard_t up_primary;
+  // pg_shard_t primary;
   // vector<int> up, acting, want_acting;
-  // set<pg_shard_t> actingbackfill, actingset;
-  // set<pg_shard_t> backfill_targets;
-  // and PG::actingset is initialized in PG::init_primary_up_acting
+  // set<pg_shard_t> actingset, actingbackfill, backfill_targets;
+  // and PG::up_primary, PG::primary, PG::up, PG::acting, PG::actingset is initialized in PG::init_primary_up_acting
+  // PG::want_acting, PG::actingbackfill, PG::backfill_targets are set here
   if (!pool.info.ec_pool()) // replicated pool
     calc_replicated_acting(
       auth_log_shard,
@@ -1475,10 +1495,10 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
       up_primary,
       all_info,
       compat_mode,
-      &want, // want_acting
-      &want_backfill, // backfill_targets
-      &want_acting_backfill, // actingbackfill
-      &want_primary,
+      &want,                    // used to set PG::want_acting
+      &want_backfill,           // used to set PG::backfill_targets
+      &want_acting_backfill,    // used to set PG::actingbackfill
+      &want_primary,            // not used
       ss);
   else // ec pool
     calc_ec_acting(
@@ -1490,10 +1510,10 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
       up_primary,
       all_info,
       compat_mode,
-      &want,
-      &want_backfill,
-      &want_acting_backfill,
-      &want_primary,
+      &want,                    // used to set PG::want_acting
+      &want_backfill,           // used to set PG::backfill_targets
+      &want_acting_backfill,    // used to set PG::actingbackfill
+      &want_primary,            // not used
       ss);
   dout(10) << ss.str() << dendl;
 
@@ -1535,6 +1555,8 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
     return false;
   }
 
+  // with the chosen PG::want_acting set, we can recover
+
   if (want != acting) { // our want_acting set is not the same as current acting set
     dout(10) << "choose_acting want " << want << " != acting " << acting
 	     << ", requesting pg_temp change" << dendl;
@@ -1544,7 +1566,9 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
     if (want_acting == up) {
       // There can't be any pending backfill if
       // want is the same as crush map up OSDs.
-      assert(compat_mode || want_backfill.empty());
+      assert(compat_mode || want_backfill.empty()); // PG::backfill_targets
+
+      // to cancel the previously pg temp
       vector<int> empty;
       osd->queue_want_pg_temp(info.pgid.pgid, empty); // clear OSDService::pg_temp_wanted
     } else // wanted acting set != up set, request mon to set pg_temp
@@ -7595,7 +7619,8 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 	  if (!p->second.maybe_went_rw) // no write during this interval
 	    continue;
 
-          // ok, we may have gone write during this interval
+          // ok, we may have gone write during this interval,
+          // we only to check the last maybe_went_rw interval, see the last break of this 'for' loop
           
 	  pg_interval_t& interval = p->second;
 	  dout(10) << " last maybe_went_rw interval was " << interval << dendl;
