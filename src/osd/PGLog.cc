@@ -630,25 +630,25 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
   //  this is just filling in history.  it does not affect our
   //  missing set, as that should already be consistent with our
   //  current log.
-  if (olog.tail < log.tail) {
+  if (olog.tail < log.tail) { // auth log longer than us, we have to extend our log backward
     dout(10) << "merge_log extending tail to " << olog.tail << dendl;
-    list<pg_log_entry_t>::iterator from = olog.log.begin();
+    list<pg_log_entry_t>::iterator from = olog.log.begin(); // pg_log_t::list<pg_log_entry_t> olog.log
     list<pg_log_entry_t>::iterator to;
     eversion_t last;
-    for (to = from;
-	 to != olog.log.end();
-	 ++to) { // iterate each authority log entry up to our log's tail
-      if (to->version > log.tail)
+    for (to = from; to != olog.log.end(); ++to) { // iterate each authority log entry up to our log's tail
+      if (to->version > log.tail) // add the log entries we do not have
 	break;
-      log.index(*to); // add the log entry to the index
+      
+      log.index(*to); // add the missing log entry to our index
       dout(15) << *to << dendl;
       last = to->version;
     }
 
-    // mark PGLog::dirty_to to last
+    // mark PGLog::dirty_to to last, which means those log entries from log.log.begin() to
+    // last are dirty
     mark_dirty_to(last);
 
-    // splice into our log.
+    // splice into our log. really add the missing log entries into our log entry list, i.e. PGLog::log
     log.log.splice(log.log.begin(),
 		   olog.log, from, to);
       
@@ -664,6 +664,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
   
   if (info.last_backfill.is_max())
     info.stats = oinfo.stats;
+  
   info.hit_set = oinfo.hit_set;
 
   // do we have divergent entries to throw out?
@@ -694,6 +695,8 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
 	break;
       }
     }
+
+    // for this version on, the log entries are extended from auth log
     mark_dirty_from(lower_bound);
 
     // index, update missing, delete deleted
@@ -712,7 +715,8 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
       }
     }
 
-    // ok, now we prepare to merge the divergent pg log entries (peer has, we do not)
+    // ok, now we prepare to merge the divergent pg log entries (peer has, we do not), first we need
+    // to throw out the divergent entries
       
     // move aside divergent items
     list<pg_log_entry_t> divergent;
@@ -733,9 +737,8 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
       log.log.pop_back();
     }
 
-    // splice
-    log.log.splice(log.log.end(), 
-		   olog.log, from, to); // merge authority log with us
+    // ok, merge thos auth enties we do not have
+    log.log.splice(log.log.end(), olog.log, from, to); // merge authority log with us
     log.index(); // reindex 
 
     info.last_update = log.head = olog.head; // extend our log on head
