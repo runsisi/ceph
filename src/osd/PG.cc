@@ -7452,10 +7452,14 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
 
   unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
 
-  // PriorSet and PG both have a member named blocked_by
+  // note: PriorSet and PG both have a member named blocked_by
+  // if we are newly transitted in, PG::blocked_by apparently must be empty, if we are 
+  // transitted from Peering(or its substates) to Reset then to GetInfo with out restart
+  // a new interval, then PG::block_by must be empty too, bc if we it is not empty then
+  // we can not transit into Peering(or its substates), we were blocked :)
   assert(pg->blocked_by.empty());
 
-  if (!prior_set.get()) // the first time we transit into
+  if (!prior_set.get())
     pg->build_prior(prior_set); // allocate an PriorSet, and populate PG::probe_targets by PG::past intervals
 
   pg->reset_min_peer_features();
@@ -7466,17 +7470,18 @@ PG::RecoveryState::GetInfo::GetInfo(my_context ctx)
   // PriorSet::pg_down is set when there is not enough osds survived the
   // interval, and we may have gone rw, refer to PriorSet::PriorSet,
   // PriorSet::pg_down never reset to false explicitly, we can only
-  // set it to false by rebuilding the PriorSet (refer to RecoveryState::Peering::react(AdvMap))
+  // set it to false by rebuilding a new PriorSet, i.e. previous down osds that
+  // we need to query come to up, refer to RecoveryState::Peering::react(AdvMap))
   if (peer_info_requested.empty() && !prior_set->pg_down) {
-    // newly created PG instance with pool size set to 1 or we got all queries
-    // replied (refer to RecoveryState::GetInfo::react(MNotifyRec))
+    // pool size is 1 or degraded PG (up + acting only contains my own) and this PG 
+    // has never went to Active so no rw has ever went on it
     post_event(GotInfo()); // silently transit into state GetLog
   }
 }
 
-// only be called by RecoveryState::GetInfo::GetInfo and
-// RecoveryState::GetInfo::react(MNotifyRec) to query pg_query_t::INFO for
-// pgs in prior set
+// only be called by RecoveryState::GetInfo::GetInfo to query shards in newly built
+// PriorSet and RecoveryState::GetInfo::react(MNotifyRec) to query shards in rebuilt
+// PriorSet
 void PG::RecoveryState::GetInfo::get_infos()
 {
   PG *pg = context< RecoveryMachine >().pg;
@@ -7486,24 +7491,29 @@ void PG::RecoveryState::GetInfo::get_infos()
   pg->blocked_by.clear();
   for (set<pg_shard_t>::const_iterator it = prior_set->probe.begin();
        it != prior_set->probe.end();
-       ++it) { // iterate each probe target, i.e. PG replica
+       ++it) { // iterate each probe target, i.e. those up shards that may have went rw during previous intervals 
     pg_shard_t peer = *it;
     if (peer == pg->pg_whoami) { // skip myself
       continue;
     }
-    if (pg->peer_info.count(peer)) { // we have queried and got a reply
+    
+    if (pg->peer_info.count(peer)) {
+      // apparently we are rebuilding the PriorSet while not restarting the peering interval, 
+      // if we are starting a new interval, the PG::peer_info must have been cleared by 
+      // PG::clear_primary_state, refer to RecoveryState::Peering::react(AdvMap) for the 
+      // PriorSet rebuilding thing
       dout(10) << " have osd." << peer << " info " << pg->peer_info[peer] << dendl;
       continue;
     }
 
-    // we are blocked by those osds that we have sent query request and has not get a reply
+    // we are waiting for those osds that we have sent query request and has not get a reply
 
     if (peer_info_requested.count(peer)) { // have queried, waiting for reply
       dout(10) << " already requested info from osd." << peer << dendl;
       pg->blocked_by.insert(peer.osd); // sent query and has not been replied
-    } else if (!pg->get_osdmap()->is_up(peer.osd)) { // peer is down
+    } else if (!pg->get_osdmap()->is_up(peer.osd)) { // peer is down, no need to query
       dout(10) << " not querying info from down osd." << peer << dendl;
-    } else { // have not query yet, prepare to query
+    } else { // have not queried yet, prepare to query
       dout(10) << " querying info from osd." << peer << dendl;
       context< RecoveryMachine >().send_query(
 	peer, pg_query_t(pg_query_t::INFO, // request pg info
@@ -7581,7 +7591,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 
       // use the updated info.history.last_epoch_started(we do not need to search
       // back so much) to rebuild prior set
-      pg->build_prior(prior_set); // reallocate an PriorSet and rebuild probe set
+      pg->build_prior(prior_set); // rebuild PriorSet
 
       // filter out any osds that got dropped from the probe set from
       // peer_info_requested.  this is less expensive than restarting
@@ -7611,7 +7621,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
     // to see if we are to stay in GetInfo or transit into next state
 
     // are we done getting everything?
-    if (peer_info_requested.empty() && !prior_set->pg_down) { // all peers need to query have replied and no one is blocking us
+    if (peer_info_requested.empty() && !prior_set->pg_down) { // all peers previous queried have replied and no need to wait down osds
       // ok, we got replied for all previous queries and we can survive every
       // interval of PG::past_intervals
       /*
@@ -7680,7 +7690,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
             // continue the peering process
 	    dout(10) << " no osds up+complete from interval " << interval << dendl;
 
-	    pg->state_set(PG_STATE_DOWN); // we are blocked in this interval
+	    pg->state_set(PG_STATE_DOWN); // this last rw interval are blocking us in state GetInfo
 	    return discard_event();
 	  }
 
@@ -7756,7 +7766,7 @@ PG::RecoveryState::GetLog::GetLog(my_context ctx)
   // ok, we are transitted from state GetInfo
 
   // adjust acting?
-  if (!pg->choose_acting(auth_log_shard)) {
+  if (!pg->choose_acting(auth_log_shard)) { // auth_log_shard is a member variable of GetLog
     // we need to adjust the acting set or the want_acting set is not possible to survive the PG
     if (!pg->want_acting.empty()) { // we want to change acting set, so wait new map
       post_event(NeedActingChange()); // transit into state WaitActingChange
@@ -8416,7 +8426,7 @@ PG::PriorSet::PriorSet(bool ec_pool,
 
 	  pg_down = true; // any interval can set this PG to down, see RecoveryState::GetInfo::react(MNotifyRec)
 
-	  // make note of when any down osd in the cur set was lost, so that
+	  // make note when any down osd in the cur set was lost, so that
 	  // we can know changes in prior set, (PriorSet::blocked_by is only useful in PriorSet::affected_by_map)
 	  // pay attention to the difference between PriorSet::blocked_by and PG::blocked_by
 	  blocked_by[*i] = osdmap.get_info(*i).lost_at; // see OSDMoinitor::prepare_boot
