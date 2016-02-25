@@ -275,7 +275,7 @@ void PGLog::proc_replica_log(
 
   list<pg_log_entry_t> divergent;
   list<pg_log_entry_t>::const_iterator pp = olog.log.end();
-  while (true) { // iterate peer's log in reverse order
+  while (true) { // iterate auth log in reverse order
     if (pp == olog.log.begin())
       break; // finished iterating
 
@@ -736,7 +736,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
       if (oe.version.version <= lower_bound.version)
 	break;
       dout(10) << "merge_log divergent " << oe << dendl;
-      divergent.push_front(oe);
+      divergent.push_front(oe); // the front are the older entries
       log.log.pop_back();
     }
 
@@ -755,7 +755,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     map<eversion_t, hobject_t> new_priors;
     // merge divergent log entries to update our missing map
     _merge_divergent_entries(
-      log, // has extended log entries
+      log, // log that has been extended to the head of auth log
       divergent, // divergent log entries we have but the authority does not have
       info,
       log.can_rollback_to,

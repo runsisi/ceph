@@ -615,7 +615,7 @@ protected:
       _merge_object_divergent_entries(
 	log, // const IndexedLog
 	i->first, // const hobject_t
-	i->second, // const list<pg_log_entry_t>
+	i->second, // const list<pg_log_entry_t>, older -> newer entries
 	oinfo, // const pg_info_t
 	olog_can_rollback_to, // eversion_t, passed by value
 	omissing, // pg_missing_t
