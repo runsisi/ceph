@@ -561,6 +561,9 @@ void PGLog::rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead
     if (p->version <= newhead) {
       // ok, reached back of the head of authority log's head
       ++p;
+      
+      // move divergent log entries from p to log.log.end to this temp list, later we will
+      // use it in _merge_divergent_entries
       divergent.splice(divergent.begin(), log.log, p, log.log.end());
       break;
     }
@@ -696,11 +699,11 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
       }
     }
 
-    // for this version on, the log entries are extended from auth log
+    // for this version on, the missing log entries are extended from the auth log
     mark_dirty_from(lower_bound);
 
     // index, update missing, delete deleted
-    for (list<pg_log_entry_t>::iterator p = from; p != to; ++p) {
+    for (list<pg_log_entry_t>::iterator p = from; p != to; ++p) { // extend to what auth log has
       // iterate each log entry diverges from the authority log
       pg_log_entry_t &ne = *p;
       dout(20) << "merge_log " << ne << dendl;
@@ -737,7 +740,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
       log.log.pop_back();
     }
 
-    // ok, merge thos auth enties we do not have
+    // ok, merge those auth enties we do not have
     log.log.splice(log.log.end(), olog.log, from, to); // merge authority log with us
     log.index(); // reindex 
 
@@ -746,11 +749,14 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     info.last_user_version = oinfo.last_user_version;
     info.purged_snaps = oinfo.purged_snaps;
 
+    // we are extending our log entries on head, and we may have divergent entries from the
+    // auth log to thow out
+
     map<eversion_t, hobject_t> new_priors;
     // merge divergent log entries to update our missing map
     _merge_divergent_entries(
-      log, // extended log entries
-      divergent, // divergent log entries we do not have but the authority does have
+      log, // has extended log entries
+      divergent, // divergent log entries we have but the authority does not have
       info,
       log.can_rollback_to,
       missing,

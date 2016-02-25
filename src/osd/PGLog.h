@@ -569,7 +569,7 @@ protected:
     map<hobject_t, list<pg_log_entry_t>, hobject_t::BitwiseComparator> *out_entries) {
     while (!entries.empty()) { // construct the map from the log entries
       list<pg_log_entry_t> &out_list = (*out_entries)[entries.front().soid];
-      out_list.splice(out_list.end(), entries, entries.begin());
+      out_list.splice(out_list.end(), entries, entries.begin()); // move entry from divergent entry list to this list
     }
   }
 
@@ -602,8 +602,8 @@ protected:
     LogEntryHandler *rollbacker          ///< [in] optional rollbacker object
     ) {
     map<hobject_t, list<pg_log_entry_t>, hobject_t::BitwiseComparator > split;
-    // construct a map of divergent log entries classified by the object from 
-    // the original divergent log entries
+
+    // classify divergent log entries by the hobject_t
     split_by_object(entries, &split);
     
     for (map<hobject_t, list<pg_log_entry_t>, hobject_t::BitwiseComparator>::iterator i = split.begin();
@@ -611,7 +611,7 @@ protected:
 	 ++i) { // iterate each object's divergent log entries
       boost::optional<pair<eversion_t, hobject_t> > new_divergent_prior;
       
-      // merge divergent pg log entries for an object
+      // merge divergent pg log entries for an single object
       _merge_object_divergent_entries(
 	log, // const IndexedLog
 	i->first, // const hobject_t
