@@ -438,7 +438,8 @@ void PG::merge_log(
   // merge authority log with ours
   pg_log.merge_log(t, oinfo, olog, from, info, &rollbacker, dirty_info, dirty_big_info);
 
-  // auth log are longer than ours, so we are rollbacking
+  // auth log are different than ours, so we are rollbacking, all entries are recorded in this 
+  // PGLogEntryHandler
   rollbacker.apply(this, &t);
 }
 

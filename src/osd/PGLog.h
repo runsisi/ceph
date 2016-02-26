@@ -593,7 +593,7 @@ protected:
   static void _merge_divergent_entries(
     const IndexedLog &log,               ///< [in] log to merge against
     list<pg_log_entry_t> &entries,       ///< [in] divergent entries to merge
-    const pg_info_t &oinfo,              ///< [in] info for merging entries
+    const pg_info_t &oinfo,              ///< [in] info for merging entries, the final info, i.e. the same as auth info
     eversion_t olog_can_rollback_to,     ///< [in] rollback boundary
     // the "omissing" is our own's PGLog::missing if we are called in PG::proc_master_log,
     // is peer's PGLog::missings if we are called in PG::proc_replica_log

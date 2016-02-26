@@ -3653,10 +3653,11 @@ eversion_t pg_missing_t::have_old(const hobject_t& oid) const
  */
 void pg_missing_t::add_next_event(const pg_log_entry_t& e)
 {
-  if (e.is_update()) {
+  if (e.is_update()) { // op other than LOST_DELETE
     map<hobject_t, item, hobject_t::ComparatorWithDefault>::iterator missing_it;
     missing_it = missing.find(e.soid);
     bool is_missing_divergent_item = missing_it != missing.end();
+    
     if (e.prior_version == eversion_t() || e.is_clone()) {
       // new object.
       if (is_missing_divergent_item) {  // use iterator, already in missing map
@@ -3677,8 +3678,8 @@ void pg_missing_t::add_next_event(const pg_log_entry_t& e)
       missing[e.soid] = item(e.version, e.prior_version); // (need, have)
     }
     rmissing[e.version.version] = e.soid;
-  } else
-    rm(e.soid, e.version);
+  } else // LOST_DELETE
+    rm(e.soid, e.version); // remove from pg_missing_t::rmissing and pg_missing_t::missing
 }
 
 void pg_missing_t::revise_need(hobject_t oid, eversion_t need)
