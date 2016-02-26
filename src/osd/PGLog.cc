@@ -423,10 +423,10 @@ void PGLog::_merge_object_divergent_entries(
 
     // ensure missing has been updated appropriately, PGLog::merge_log has
     // updated the missing for us
-    if (objiter->second->is_update()) {
+    if (objiter->second->is_update()) { // non LOST_DELETE
       assert(missing.is_missing(hoid) &&
 	     missing.missing[hoid].need == objiter->second->version);
-    } else {
+    } else { // LOST_DELETE
       assert(!missing.is_missing(hoid));
     }
     
@@ -715,7 +715,9 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
       log.index(ne); // classify the pg_log_entry_t by hboject_t and osd_reqid_t
       
       if (cmp(ne.soid, info.last_backfill, info.last_backfill_bitwise) <= 0) {
-	missing.add_next_event(ne); // update our pg_missing_t::missing for this object
+        // update object state, i.e. which version the PG has and which version the PG 
+        // needs this object finally to be
+	missing.add_next_event(ne);
 	
 	if (ne.is_delete()) // delete deleted
 	  rollbacker->remove(ne.soid);

@@ -3660,7 +3660,7 @@ void pg_missing_t::add_next_event(const pg_log_entry_t& e)
     
     if (e.prior_version == eversion_t() || e.is_clone()) {
       // new object.
-      if (is_missing_divergent_item) {  // use iterator, already in missing map
+      if (is_missing_divergent_item) {
         rmissing.erase((missing_it->second).need.version);
         missing_it->second = item(e.version, eversion_t());  // .have = nil
       } else  // create new element in missing map
