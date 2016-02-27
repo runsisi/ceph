@@ -223,7 +223,7 @@ struct PGLog {
           objects[e.soid]->version < e.version) // always replace with the newer version
         objects[e.soid] = &e;
       
-      if (e.reqid_is_indexed()) { // reqid != osd_reqid_t() && (op == MODIFY || op == DELETE)
+      if (e.reqid_is_indexed()) { // MODIFY or DELETE
 	//assert(caller_ops.count(i->reqid) == 0);  // divergent merge_log indexes new before unindexing old
 	caller_ops[e.reqid] = &e;
       }

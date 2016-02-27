@@ -392,7 +392,7 @@ void PGLog::_merge_object_divergent_entries(
       assert(i->prior_version == last); // every pg_log_entry_t records the version of PG when last modifying the object
     }
     
-    last = i->version; // PG version when we last modifying the object
+    last = i->version; // object version, i.e. PG version when we last modifying the object
     
     if (rollbacker)
       rollbacker->trim(*i); // gather the divergent log entries to trim
@@ -422,7 +422,7 @@ void PGLog::_merge_object_divergent_entries(
 	     << *objiter->second << ", already merged" << dendl;
 
     // ensure missing has been updated appropriately, PGLog::merge_log has
-    // updated the missing for us
+    // updated the missing for us, refer to pg_missing_t::add_next_event
     if (objiter->second->is_update()) { // non LOST_DELETE
       assert(missing.is_missing(hoid) &&
 	     missing.missing[hoid].need == objiter->second->version);
@@ -439,6 +439,7 @@ void PGLog::_merge_object_divergent_entries(
 
   dout(10) << __func__ << ": hoid " << hoid
 	   <<" has no more recent entries in log" << dendl;
+
   if (prior_version == eversion_t() || entries.front().is_clone()) {
     /// Case 2)
     dout(10) << __func__ << ": hoid " << hoid
@@ -453,7 +454,7 @@ void PGLog::_merge_object_divergent_entries(
     return;
   }
 
-  if (missing.is_missing(hoid)) { // the object is missing, i.e. we do have this versioned object in this PG
+  if (missing.is_missing(hoid)) {
     /// Case 3)
     dout(10) << __func__ << ": hoid " << hoid
 	     << " missing, " << missing.missing[hoid]
