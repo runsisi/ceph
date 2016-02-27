@@ -193,7 +193,7 @@ struct PGLog {
            ++i) { // iterate each log entry
         objects[i->soid] = &(*i);
         
-	if (i->reqid_is_indexed()) { // reqid != osd_reqid_t() && (op == MODIFY || op == DELETE)
+	if (i->reqid_is_indexed()) { // MODIFY or DELETE
 	  //assert(caller_ops.count(i->reqid) == 0);  // divergent merge_log indexes new before unindexing old
 	  caller_ops[i->reqid] = &(*i);
 	}

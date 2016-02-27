@@ -1677,7 +1677,7 @@ int FileStore::mount()
 
   journal_start(); // start JournalObjectStore::finisher
 
-  op_tp.start(); // OSD::peering_wq + OSDService::op_gen_wq
+  op_tp.start(); // FileStore::op_wq
   op_finisher.start(); // start FileStore::op_finisher
   ondisk_finisher.start(); // start FileStore::ondisk_finisher
 

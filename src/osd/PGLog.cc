@@ -453,7 +453,7 @@ void PGLog::_merge_object_divergent_entries(
     return;
   }
 
-  if (missing.is_missing(hoid)) { // the object is missing, i.e. we do have this object in this PG
+  if (missing.is_missing(hoid)) { // the object is missing, i.e. we do have this versioned object in this PG
     /// Case 3)
     dout(10) << __func__ << ": hoid " << hoid
 	     << " missing, " << missing.missing[hoid]
@@ -768,6 +768,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
       missing,
       &new_priors,
       rollbacker);
+    
     for (map<eversion_t, hobject_t>::iterator i = new_priors.begin();
 	 i != new_priors.end();
 	 ++i) {
@@ -1064,7 +1065,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
   
   log.head = info.last_update;
 
-  // build log entry index and update rollback_info_trimmed_to down to 
+  // classify log entries by hobject_t and osd_reqid_t, then update rollback_info_trimmed_to down to 
   // log entry <= rollback_info_trimmed_to
   log.index();
 
@@ -1074,7 +1075,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	     << "," << info.last_update << "]" << dendl;
 
     set<hobject_t, hobject_t::BitwiseComparator> did;
-    for (list<pg_log_entry_t>::reverse_iterator i = log.log.rbegin(); // every log entry associates with an object
+    for (list<pg_log_entry_t>::reverse_iterator i = log.log.rbegin();
 	 i != log.log.rend();
 	 ++i) { // reverse iterate log entries down to info.last_complete
       if (i->version <= info.last_complete) 
@@ -1092,9 +1093,10 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
       if (cmp(i->soid, info.last_backfill, info.last_backfill_bitwise) > 0) // cmp for hobject_t defined in hobject.h
         // i->soid > info.last_backfill
 	continue;
-      if (did.count(i->soid)) continue; // the log entry associated object has already been handled
       
-      did.insert(i->soid); // insert the oid, so without handling one object twice
+      if (did.count(i->soid)) continue;
+      
+      did.insert(i->soid); // only have to read the newest log entry of the object 
 
       // op == DELETE || op == LOST_DELETE, the object does not exist now
       if (i->is_delete()) continue;
@@ -1109,8 +1111,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
         
 	object_info_t oi(bv);
 	if (oi.version < i->version) {
-          // version in the log is newer, the object of the modified version 
-          // may have been lost
+          // the log entry recorded a newer object
 	  dout(15) << "read_log  missing " << *i << " (have " << oi.version << ")" << dendl;
 	  missing.add(i->soid, i->version, oi.version);
 	}
@@ -1126,11 +1127,14 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	 i != divergent_priors.rend();
 	 ++i) {
       if (i->first <= info.last_complete) break;
+      
       // skip those objects past backfill line
       if (cmp(i->second, info.last_backfill, info.last_backfill_bitwise) > 0)
 	continue;
+      
       if (did.count(i->second)) continue;
-      did.insert(i->second); // ok, mark that we have handled this object
+      
+      did.insert(i->second); // ok, mark that we have handled this object with a newer version
       bufferlist bv;
       int r = store->getattr(
 	pg_coll,
