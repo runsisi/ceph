@@ -1080,8 +1080,6 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	 i != log.log.rend();
 	 ++i) { // reverse iterate log entries down to info.last_complete
       if (i->version <= info.last_complete) 
-        // reached the entry that the pg is complete throught, no need to traval 
-        // any older entries, done the loop
         break;
 
       // refer to: http://dachary.org/?p=2009
@@ -1090,7 +1088,6 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
       // and those in the process of being copied. The objects that are lower 
       // than last_backfill have been copied and the objects that are greater 
       // than last_backfill are going to be copied.
-      // TODO: ???
       if (cmp(i->soid, info.last_backfill, info.last_backfill_bitwise) > 0) // cmp for hobject_t defined in hobject.h
         // i->soid > info.last_backfill
 	continue;
@@ -1101,6 +1098,9 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 
       // op == DELETE || op == LOST_DELETE, the object does not exist now
       if (i->is_delete()) continue;
+
+      // the last time the OSD was alive may have peered its PGLog, but the 
+      // objects (from last_complete to last_update) it contains may have not synced
       
       bufferlist bv;
       int r = store->getattr(
@@ -1116,7 +1116,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	  dout(15) << "read_log  missing " << *i << " (have " << oi.version << ")" << dendl;
 	  missing.add(i->soid, i->version, oi.version);
 	}
-      } else { // no info found for the modified object, object does not exist
+      } else { // no info found for the modified object, object does not exist in store
 	dout(15) << "read_log  missing " << *i << dendl;
 	missing.add(i->soid, i->version, eversion_t());
       }
