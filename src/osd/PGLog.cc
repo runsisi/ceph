@@ -361,7 +361,7 @@ void PGLog::_merge_object_divergent_entries(
   const pg_info_t &info,
   eversion_t olog_can_rollback_to,
   pg_missing_t &missing,
-  boost::optional<pair<eversion_t, hobject_t> > *new_divergent_prior,
+  boost::optional<pair<eversion_t, hobject_t> > *new_divergent_prior, // only used when entries.begin()->prior_version <= info.log_tail
   LogEntryHandler *rollbacker
   )
 {
@@ -382,7 +382,6 @@ void PGLog::_merge_object_divergent_entries(
   for (list<pg_log_entry_t>::const_iterator i = entries.begin();
        i != entries.end();
        ++i) { // iterate each divergent log entry of this object to trim, from older to newer
-    // all entries are on hoid, refer to PGLog::split_by_object
     assert(i->soid == hoid);
     
     if (i != entries.begin() && i->prior_version != eversion_t()) {
@@ -401,6 +400,10 @@ void PGLog::_merge_object_divergent_entries(
   const eversion_t prior_version = entries.begin()->prior_version;
   const eversion_t first_divergent_update = entries.begin()->version;
   const eversion_t last_divergent_update = entries.rbegin()->version;
+  
+  // auth log told us that the store does not need this hobject_t anymore, and the divergent entries
+  // told us that it has deleted the hobject_t in its last operation, so the object does not need to 
+  // be in the store anymore
   const bool object_not_in_store = !missing.is_missing(hoid) 
         && entries.rbegin()->is_delete(); // op == DELETE || op == LOST_DELETE
         
@@ -414,7 +417,7 @@ void PGLog::_merge_object_divergent_entries(
   ceph::unordered_map<hobject_t, pg_log_entry_t*>::const_iterator objiter = log.objects.find(hoid);
   
   if (objiter != log.objects.end() &&
-      objiter->second->version >= first_divergent_update) {
+      objiter->second->version >= first_divergent_update) { // object modified both in divergent and recent auth entries
     /// Case 1)
     assert(objiter->second->version > last_divergent_update);
 
@@ -429,7 +432,8 @@ void PGLog::_merge_object_divergent_entries(
     } else { // LOST_DELETE
       assert(!missing.is_missing(hoid));
     }
-    
+
+    // our have version is divergent, so the previous calculated missing is deprecated, update it
     missing.revise_have(hoid, eversion_t());
     
     if (rollbacker && !object_not_in_store)
@@ -440,13 +444,14 @@ void PGLog::_merge_object_divergent_entries(
   dout(10) << __func__ << ": hoid " << hoid
 	   <<" has no more recent entries in log" << dendl;
 
-  if (prior_version == eversion_t() || entries.front().is_clone()) {
+  if (prior_version == eversion_t() || entries.front().is_clone()) { // object modified only in divergent entries and new 
+                                                                     // object created on the first divergent entry
     /// Case 2)
     dout(10) << __func__ << ": hoid " << hoid
 	     << " prior_version or op type indicates creation, deleting"
 	     << dendl;
     
-    if (missing.is_missing(hoid))
+    if (missing.is_missing(hoid)) // new created object in divergent entries, not referenced by extended entries, remove it
       missing.rm(missing.missing.find(hoid));
     
     if (rollbacker && !object_not_in_store)
@@ -454,26 +459,26 @@ void PGLog::_merge_object_divergent_entries(
     return;
   }
 
-  if (missing.is_missing(hoid)) {
+  if (missing.is_missing(hoid)) { // object modified only in divergent entries, and the first divergent entry is not a creation
     /// Case 3)
     dout(10) << __func__ << ": hoid " << hoid
 	     << " missing, " << missing.missing[hoid]
 	     << " adjusting" << dendl;
 
-    if (missing.missing[hoid].have == prior_version) {
+    if (missing.missing[hoid].have == prior_version) { // we have got what we want
       dout(10) << __func__ << ": hoid " << hoid
 	       << " missing.have is prior_version " << prior_version
 	       << " removing from missing" << dendl;
       
       missing.rm(missing.missing.find(hoid));
-    } else {
+    } else { // divergent entries modified the object that has already been in pg_missing_t
       dout(10) << __func__ << ": hoid " << hoid
 	       << " missing.have is " << missing.missing[hoid].have
 	       << ", adjusting" << dendl;
       
       missing.revise_need(hoid, prior_version);
       
-      if (prior_version <= info.log_tail) {
+      if (prior_version <= info.log_tail) { // the last modification of this object is long time ago
 	dout(10) << __func__ << ": hoid " << hoid
 		 << " prior_version " << prior_version << " <= info.log_tail "
 		 << info.log_tail << dendl;
@@ -482,8 +487,12 @@ void PGLog::_merge_object_divergent_entries(
 	  *new_divergent_prior = make_pair(prior_version, hoid);
       }
     }
+    
     return;
   }
+
+  // the object only modified in the divergent entries, but it is not in pg_missing_t, i.e. it has been
+  // deleted by the last divergent entry or the divergent entries have no missing set
 
   dout(10) << __func__ << ": hoid " << hoid
 	   << " must be rolled back or recovered, attempting to rollback"
@@ -516,15 +525,15 @@ void PGLog::_merge_object_divergent_entries(
     }
     dout(10) << __func__ << ": hoid " << hoid << " rolled back" << dendl;
     return;
-  } else {
+  } else { // can not rollback
     /// Case 5)
     dout(10) << __func__ << ": hoid " << hoid << " cannot roll back, "
 	     << "removing and adding to missing" << dendl;
     
-    if (rollbacker && !object_not_in_store)
+    if (rollbacker && !object_not_in_store) // the last divergent entry is: op != DELETE && op != LOST_DELETE
       rollbacker->remove(hoid);
     
-    missing.add(hoid, prior_version, eversion_t()); // add a missing entry
+    missing.add(hoid, prior_version, eversion_t()); // we need a not updated version, i.e. not modified by the divergent entries
     
     if (prior_version <= info.log_tail) {
       dout(10) << __func__ << ": hoid " << hoid
@@ -708,7 +717,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     // for this version on, the missing log entries are extended from the auth log
     mark_dirty_from(lower_bound);
 
-    for (list<pg_log_entry_t>::iterator p = from; p != to; ++p) { // extend to what auth log has
+    for (list<pg_log_entry_t>::iterator p = from; p != to; ++p) { // extend log entries on head
       // iterate each log entry diverges from the authority log
       pg_log_entry_t &ne = *p;
       dout(20) << "merge_log " << ne << dendl;
@@ -716,9 +725,8 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
       log.index(ne); // classify the pg_log_entry_t by hboject_t and osd_reqid_t
       
       if (cmp(ne.soid, info.last_backfill, info.last_backfill_bitwise) <= 0) {
-        // update object state, i.e. which version the PG has and which version the PG 
-        // needs this object finally to be
-	missing.add_next_event(ne);
+        
+	missing.add_next_event(ne); // update missing status, we may be based on the divergent entries (if we have divergent entries)
 	
 	if (ne.is_delete()) // delete deleted
 	  rollbacker->remove(ne.soid);
@@ -730,7 +738,7 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
       
     // move aside divergent items
     list<pg_log_entry_t> divergent;
-    while (!log.empty()) { // may still have log entries that are divergent
+    while (!log.empty()) { // gather divergent log entries
       pg_log_entry_t &oe = *log.log.rbegin();
       /*
        * look at eversion.version here.  we want to avoid a situation like:
@@ -742,16 +750,18 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
        */
       if (oe.version.version <= lower_bound.version)
 	break;
+      
       dout(10) << "merge_log divergent " << oe << dendl;
-      divergent.push_front(oe); // the front are the older entries
-      log.log.pop_back();
+      divergent.push_front(oe); // note down the divergent log entries, older -> newer
+      
+      log.log.pop_back(); // throw out the divergent log entries
     }
 
-    // ok, merge those auth enties we do not have
-    log.log.splice(log.log.end(), olog.log, from, to); // merge authority log with us
+    // ok, extend on head
+    log.log.splice(log.log.end(), olog.log, from, to);
     log.index(); // reindex 
 
-    info.last_update = log.head = olog.head; // extend our log on head
+    info.last_update = log.head = olog.head; // update pg info
 
     info.last_user_version = oinfo.last_user_version;
     info.purged_snaps = oinfo.purged_snaps;
@@ -762,8 +772,8 @@ void PGLog::merge_log(ObjectStore::Transaction& t,
     map<eversion_t, hobject_t> new_priors;
     // merge divergent log entries to update our missing map
     _merge_divergent_entries(
-      log, // log that has been extended to the head of auth log
-      divergent, // divergent log entries we have but the authority does not have
+      log, // log that has been extended
+      divergent, // divergent log entries
       info, // the final info of us, i.e. the updated PG info that keep pace with auth log
       log.can_rollback_to,
       missing,
@@ -1071,7 +1081,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
   log.index();
 
   // build missing
-  if (info.last_complete < info.last_update) {
+  if (info.last_complete < info.last_update) { // we extended our log from auth log previously and then we restarted
     dout(10) << "read_log checking for missing items over interval (" << info.last_complete
 	     << "," << info.last_update << "]" << dendl;
 
@@ -1122,7 +1132,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
       }
     }
 
-
+    // the log entries are not backward longer enough to cover this
     for (map<eversion_t, hobject_t>::reverse_iterator i =
 	   divergent_priors.rbegin();
 	 i != divergent_priors.rend();
@@ -1142,7 +1152,7 @@ void PGLog::read_log(ObjectStore *store, coll_t pg_coll,
 	ghobject_t(i->second, ghobject_t::NO_GEN, info.pgid.shard),
 	OI_ATTR,
 	bv);
-      if (r >= 0) { // this oid does not have an entry in the log
+      if (r >= 0) { // this oid does not have an entry in the log, i.e. log trimmed and the needed object is modified back to the trimmed entries
 	object_info_t oi(bv);
 	/**
 	 * 1) we see this entry in the divergent priors mapping
