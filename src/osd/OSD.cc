@@ -7969,14 +7969,17 @@ void OSD::handle_pg_create(OpRequestRef op)
 PG::RecoveryCtx OSD::create_context()
 {
   ObjectStore::Transaction *t = new ObjectStore::Transaction;
+  
   C_Contexts *on_applied = new C_Contexts(cct);
   C_Contexts *on_safe = new C_Contexts(cct);
+  
   map<int, map<spg_t,pg_query_t> > *query_map =
     new map<int, map<spg_t, pg_query_t> >;
   map<int,vector<pair<pg_notify_t, pg_interval_map_t> > > *notify_list =
     new map<int, vector<pair<pg_notify_t, pg_interval_map_t> > >;
   map<int,vector<pair<pg_notify_t, pg_interval_map_t> > > *info_map =
     new map<int, vector<pair<pg_notify_t, pg_interval_map_t> > >;
+  
   PG::RecoveryCtx rctx(query_map, info_map, notify_list,
 		       on_applied, on_safe, t);
   return rctx;
@@ -9573,7 +9576,7 @@ void OSD::process_peering_events(
   // as a NullEvt peering evt)
 
   if (need_up_thru)
-    // tell mon that i am still alive through same_interval_since
+    // tell mon that i am still alive through same_interval_since, send MOSDAlive
     queue_want_up_thru(same_interval_since);
 
   // we do send message(s)

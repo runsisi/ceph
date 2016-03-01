@@ -171,6 +171,9 @@ struct C_Lock : public Context {
  * ContextType must be an ancestor class of ContextInstanceType, or the same class.
  * ContextInstanceType must be default-constructable.
  */
+
+// this template class inherits interfaces of ContextInstanceType and contains a list of ContextType* to complete
+// inherit list: Context -> ContextType -> ContextInstanceType
 template <class ContextType, class ContextInstanceType>
 class C_ContextsBase : public ContextInstanceType {
 public:
@@ -191,13 +194,14 @@ public:
   void complete(int r) {
     // Neuter any ContextInstanceType custom complete(), because although
     // I want to look like it, I don't actually want to run its code.
-    Context::complete(r);
+    Context::complete(r); // call virtual method `finish`
   }
   void finish(int r) {
     finish_contexts(cct, contexts, r);
   }
   bool empty() { return contexts.empty(); }
 
+  // convert a list of Context to a single Context that contains the list of Context(s)
   static ContextType *list_to_context(list<ContextType *> &cs) {
     if (cs.size() == 0) {
       return 0;

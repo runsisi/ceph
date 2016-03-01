@@ -1374,7 +1374,7 @@ void ReplicatedPG::do_request(
     return;
   }
   
-  if (flushes_in_progress > 0) {
+  if (flushes_in_progress > 0) { // PG::start_flush has been called and the flush trigger has not been fired, i.e. has not been finished
     dout(20) << flushes_in_progress
 	     << " flushes_in_progress pending "
 	     << "waiting for active on " << op << dendl;

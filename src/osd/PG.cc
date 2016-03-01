@@ -298,7 +298,7 @@ void PG::proc_master_log(
   if (oinfo.last_epoch_started > info.last_epoch_started)
     info.last_epoch_started = oinfo.last_epoch_started;
 
-  // merge pg info with the info the authority pg has
+  // update info.history to keep up with auth history
   info.history.merge(oinfo.history);
   assert(info.last_epoch_started >= info.history.last_epoch_started);
 
@@ -438,8 +438,8 @@ void PG::merge_log(
   // merge authority log with ours
   pg_log.merge_log(t, oinfo, olog, from, info, &rollbacker, dirty_info, dirty_big_info);
 
-  // auth log are different than ours, so we are rollbacking, all entries are recorded in this 
-  // PGLogEntryHandler
+  // auth log are different than ours, throw out divergent entries and extend missing entries, 
+  // all entries are recorded in this PGLogEntryHandler
   rollbacker.apply(this, &t);
 }
 
@@ -4719,6 +4719,7 @@ void PG::fulfill_log(
     from.shard, pg_whoami.shard,
     get_osdmap()->get_epoch(),
     info, query_epoch);
+  
   mlog->missing = pg_log.get_missing(); // PGLog::missing
 
   // primary -> other, when building master log
@@ -4927,7 +4928,7 @@ struct FlushState {
   ~FlushState() {
     pg->lock();
     if (!pg->pg_has_reset_since(epoch))
-      pg->queue_flushed(epoch);
+      pg->queue_flushed(epoch); // queue a FlushedEvt peering evt
     pg->unlock();
   }
 };
@@ -4939,16 +4940,16 @@ void PG::start_flush(ObjectStore::Transaction *t,
 {
   // flush in progress ops
   FlushStateRef flush_trigger(
-    new FlushState(this, get_osdmap()->get_epoch()));
+    new FlushState(this, get_osdmap()->get_epoch())); // call PG::queue_flushed in ~FlushState
 
   t->nop(); // in case no pending/previous txn
 
-  // block ReplicatedPG::do_request, will be unblocked the ReplicatedPG::on_flushed
-  // which triggered by the callback flush_trigger
+  // block ReplicatedPG::do_request, will be unblocked by the ReplicatedPG::on_flushed
+  // which triggered by the FlushedEvt peering evt which queued by dtor of FlushState
   flushes_in_progress++;
 
-  // will trigger when both on_applied and on_safe destroyed
-  on_applied->push_back(new ContainerContext<FlushStateRef>(flush_trigger));
+  // will trigger when both on_applied and on_safe destroyed, i.e. ref of flush_trigger reached 0
+  on_applied->push_back(new ContainerContext<FlushStateRef>(flush_trigger)); // a Context containing a single object
   on_safe->push_back(new ContainerContext<FlushStateRef>(flush_trigger));
 }
 
@@ -5959,6 +5960,9 @@ boost::statechart::result
 PG::RecoveryState::Reset::react(const FlushedEvt&)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
+  // decrease PG::flushes_in_progress, and requeue client ops which queued in ReplicatedPG::do_request if
+  // PG::flushes_in_progress reached 0
   pg->on_flushed();
   return discard_event();
 }
@@ -7302,9 +7306,11 @@ PG::RecoveryState::Stray::Stray(my_context ctx)
   context< RecoveryMachine >().log_enter(state_name);
 
   PG *pg = context< RecoveryMachine >().pg;
-  assert(!pg->is_peered());
-  assert(!pg->is_peering());
+  assert(!pg->is_peered()); // !(PG_STATE_PEERED || PG_STATE_ACTIVE)
+  assert(!pg->is_peering()); // !PG_STATE_PEERING
   assert(!pg->is_primary());
+
+  // stop ReplicatedPG::do_request from processing new op
   pg->start_flush(
     context< RecoveryMachine >().get_cur_transaction(),
     context< RecoveryMachine >().get_on_applied_context_list(),
@@ -7383,6 +7389,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MQuery& query)
 
   if (query.query.type == pg_query_t::INFO) { // pg_query_t::INFO
     pair<pg_shard_t, pg_info_t> notify_info;
+    
     // update PG::info.history, i.e. merge with primary shard's pg history
     pg->update_history_from_master(query.query.history);
 
@@ -7399,7 +7406,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MQuery& query)
 	pg->get_osdmap()->get_epoch(),
 	notify_info.second), // PG::info
       pg->past_intervals); // PG::past_intervals
-  } else { // pg_query_t::LOG, pg_query_t::FULLLOG
+  } else { // pg_query_t::LOG or pg_query_t::FULLLOG
     // send MOSDPGLog with info + missing + log/fulllog
     pg->fulfill_log(query.from, query.query, query.query_epoch);
   }
@@ -7865,7 +7872,8 @@ boost::statechart::result PG::RecoveryState::GetLog::react(const MLogRec& logevt
 
   msg = logevt.msg; // got authority pg log
 
-  post_event(GotLog()); // actually, GotAuthorityLog is more accurate
+  post_event(GotLog()); // actually, GotAuthorityLog is more accurate, next we will process this received auth log
+  
   return discard_event();
 }
 
@@ -7888,12 +7896,12 @@ boost::statechart::result PG::RecoveryState::GetLog::react(const GotLog&)
 			auth_log_shard);
   }
 
-  // flush current pending and all previous txn(s) and prevent OSD::osd_op_tp from
-  // handling client I/O
+  // increase PG::flushes_in_progress to prevent ReplicatedPG::do_request doing new request and register callbacks 
+  // to cancel the prevention
   pg->start_flush(
     context< RecoveryMachine >().get_cur_transaction(), // RecoveryState::rctx->transaction
-    context< RecoveryMachine >().get_on_applied_context_list(),
-    context< RecoveryMachine >().get_on_safe_context_list());
+    context< RecoveryMachine >().get_on_applied_context_list(), // RecoveryMachine::state->rctx->on_applied->contexts
+    context< RecoveryMachine >().get_on_safe_context_list()); // RecoveryMachine::state->rctx->on_safe->contexts
 
   return transit< GetMissing >();
 }
@@ -8057,10 +8065,9 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
   PG *pg = context< RecoveryMachine >().pg;
   assert(!pg->actingbackfill.empty());
 
-  // PG::choose_acting will set the PG::actingbackfill
   for (set<pg_shard_t>::iterator i = pg->actingbackfill.begin();
        i != pg->actingbackfill.end();
-       ++i) { // iterate each actingbackfill
+       ++i) { // iterate each member of actingbackfill, i.e. those will be involved in this backfill process
     if (*i == pg->get_primary()) continue; // if want_acting is not empty, we may be a temp primary
 
     const pg_info_t& pi = pg->peer_info[*i];
@@ -8073,6 +8080,7 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
       pg->peer_missing[*i];
       continue;
     }
+    
     if (pi.last_backfill == hobject_t()) {
       dout(10) << " osd." << *i << " will fully backfill; can infer empty missing set" << dendl;
       pg->peer_missing[*i];
@@ -8097,6 +8105,7 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
     // get enough log to detect divergent updates.
     eversion_t since(pi.last_epoch_started, 0);
     assert(pi.last_update >= pg->info.log_tail);  // or else choose_acting() did a bad thing
+    
     if (pi.log_tail <= since) {
       dout(10) << " requesting log+missing since " << since << " from osd." << *i << dendl;
       context< RecoveryMachine >().send_query(
@@ -8104,8 +8113,8 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
 	pg_query_t(
 	  pg_query_t::LOG,
 	  i->shard, pg->pg_whoami.shard,
-	  since, pg->info.history,
-	  pg->get_osdmap()->get_epoch()));
+	  since, // we request partial log
+	  pg->info.history, pg->get_osdmap()->get_epoch()));
     } else {
       dout(10) << " requesting fulllog+missing from osd." << *i
 	       << " (want since " << since << " < log.tail " << pi.log_tail << ")"
@@ -8123,6 +8132,7 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
   }
 
   if (peer_missing_requested.empty()) {
+    // OSD::process_peering_events queued the up_thru (MOSDAlive) but we have not received the new AdvMap
     if (pg->need_up_thru) { // PG::need_up_thru is set in PG::build_prior
       dout(10) << " still need up_thru update before going active" << dendl;
       post_event(NeedUpThru()); // transit into state WaitUpThru
@@ -8131,7 +8141,7 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
 
     // all good!
     post_event(Activate(pg->get_osdmap()->get_epoch())); // transit into state Active
-  } else {
+  } else { // waiting reply
     pg->publish_stats_to_osd();
   }
 }
@@ -8140,18 +8150,17 @@ boost::statechart::result PG::RecoveryState::GetMissing::react(const MLogRec& lo
 {
   PG *pg = context< RecoveryMachine >().pg;
 
-  peer_missing_requested.erase(logevt.from); // got a MLogRec from peer
+  peer_missing_requested.erase(logevt.from); // got a MLogRec from an actingbackfill source
 
-  // process the MLogRec the peer sent to us (we sent they queries for their pg
+  // process the MLogRec the peer sent to us (we sent them queries for their pg
   // log to construct their missing map in RecoveryState::GetMissing::GetMissing)
-  // to update their missing map and pg info
   pg->proc_replica_log(*context<RecoveryMachine>().get_cur_transaction(),
 		       logevt.msg->info, logevt.msg->log, logevt.msg->missing, logevt.from);
 
-  if (peer_missing_requested.empty()) {
+  if (peer_missing_requested.empty()) { // all requests got replied
     if (pg->need_up_thru) { // need to inform mon about our aliveness in OSDMap
       dout(10) << " still need up_thru update before going active" << dendl;
-      post_event(NeedUpThru()); // transit into state WaitUpThru
+      post_event(NeedUpThru()); // transit into state WaitUpThru, waiting for AdvMap
     } else {
       dout(10) << "Got last missing, don't need missing "
 	       << "posting CheckRepops" << dendl;
@@ -8195,7 +8204,7 @@ void PG::RecoveryState::GetMissing::exit()
   PG *pg = context< RecoveryMachine >().pg;
   utime_t dur = ceph_clock_now(pg->cct) - enter_time;
   pg->osd->recoverystate_perf->tinc(rs_getmissing_latency, dur);
-  pg->blocked_by.clear();
+  pg->blocked_by.clear(); // all LOG/FULLLOG request has got replied
   pg->publish_stats_to_osd();
 }
 
@@ -8220,7 +8229,7 @@ boost::statechart::result PG::RecoveryState::WaitUpThru::react(const ActMap& am)
   return forward_event();
 }
 
-// TODO: why we can receive the MLogRec, we have handled all the requested
+// TODO: why we can receive the MLogRec, we have handled all the replies of the requested log
 // MLogRec in RecoveryState::GetMissing::react(MLogRec) ???
 boost::statechart::result PG::RecoveryState::WaitUpThru::react(const MLogRec& logevt)
 {
