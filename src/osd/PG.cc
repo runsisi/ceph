@@ -315,10 +315,10 @@ void PG::proc_replica_log(
   dout(10) << "proc_replica_log for osd." << from << ": "
 	   << oinfo << " " << olog << " " << omissing << dendl;
 
-  // process the peer's log and update the peer's missing and info
+  // update peer's missing and info
   pg_log.proc_replica_log(t, oinfo, olog, omissing, from);
 
-  peer_info[from] = oinfo; // note down peer's info
+  peer_info[from] = oinfo; // note down peer's info, PG::proc_replica_info has done this ???
   dout(10) << " peer osd." << from << " now " << oinfo << " " << omissing << dendl;
 
   might_have_unfound.insert(from);
@@ -1686,6 +1686,7 @@ struct C_PG_ActivateCommitted : public Context {
   }
 };
 
+// called by PG::RecoveryState::Active::Active and PG::RecoveryState::ReplicaActive::react(Activate)
 void PG::activate(ObjectStore::Transaction& t,
 		  epoch_t activation_epoch,
 		  list<Context*>& tfin,
@@ -6872,10 +6873,10 @@ PG::RecoveryState::Active::Active(my_context ctx)
   assert(!pg->backfill_reserving);
   assert(!pg->backfill_reserved);
   assert(pg->is_primary());
+  
   dout(10) << "In Active, about to call activate" << dendl;
 
-  // flush current pending and all previous txn(s) and prevent OSD::osd_op_tp from
-  // handling client I/O
+  // prevent ReplicatedPG::do_request from doing client I/O
   pg->start_flush(
     context< RecoveryMachine >().get_cur_transaction(),
     context< RecoveryMachine >().get_on_applied_context_list(),
@@ -6898,6 +6899,7 @@ PG::RecoveryState::Active::Active(my_context ctx)
       pg->blocked_by.insert(p->shard);
     }
   }
+       
   pg->publish_stats_to_osd();
   dout(10) << "Activate Finished" << dendl;
 
@@ -8152,8 +8154,7 @@ boost::statechart::result PG::RecoveryState::GetMissing::react(const MLogRec& lo
 
   peer_missing_requested.erase(logevt.from); // got a MLogRec from an actingbackfill source
 
-  // process the MLogRec the peer sent to us (we sent them queries for their pg
-  // log to construct their missing map in RecoveryState::GetMissing::GetMissing)
+  // request sent in RecoveryState::GetMissing::GetMissing
   pg->proc_replica_log(*context<RecoveryMachine>().get_cur_transaction(),
 		       logevt.msg->info, logevt.msg->log, logevt.msg->missing, logevt.from);
 
