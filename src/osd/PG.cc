@@ -1686,7 +1686,7 @@ struct C_PG_ActivateCommitted : public Context {
   }
 };
 
-// called by PG::RecoveryState::Active::Active and PG::RecoveryState::ReplicaActive::react(Activate)
+// called by PG::RecoveryState::Active::Active or PG::RecoveryState::ReplicaActive::react(Activate)
 void PG::activate(ObjectStore::Transaction& t,
 		  epoch_t activation_epoch,
 		  list<Context*>& tfin,
@@ -1701,18 +1701,20 @@ void PG::activate(ObjectStore::Transaction& t,
   // -- crash recovery?
   if (acting.size() >= pool.info.min_size &&
       is_primary() &&
-      pool.info.crash_replay_interval > 0 &&
-      may_need_replay(get_osdmap())) {
+      pool.info.crash_replay_interval > 0 && // default is 0
+      may_need_replay(get_osdmap())) { // have any interval that no acting osds survived beyond that interval
     replay_until = ceph_clock_now(cct);
     replay_until += pool.info.crash_replay_interval;
+    
     dout(10) << "activate starting replay interval for " << pool.info.crash_replay_interval
 	     << " until " << replay_until << dendl;
+    
     state_set(PG_STATE_REPLAY);
 
     // TODOSAM: osd->osd-> is no good
     osd->osd->replay_queue_lock.Lock();
-    // push this pg on OSDService::replay_queue, OSD::tick will check the replay_queue
-    // periodically
+    // push this pg on OSD::replay_queue, OSD::tick will check the replay_queue
+    // periodically which will call PG::replay_queued_ops
     osd->osd->replay_queue.push_back(pair<spg_t,utime_t>(
 	info.pgid, replay_until));
     osd->osd->replay_queue_lock.Unlock();
@@ -2127,7 +2129,7 @@ void PG::replay_queued_ops()
 
   for (map<eversion_t,OpRequestRef>::iterator p = replay_queue.begin();
        p != replay_queue.end();
-       ++p) { // iterate each op
+       ++p) { // iterate each op on PG::replay_queue
     if (p->first.version != c.version+1) {
       dout(10) << "activate replay " << p->first
 	       << " skipping " << c.version+1 - p->first.version
@@ -2135,8 +2137,10 @@ void PG::replay_queued_ops()
 	       << dendl;
       c = p->first;
     }
+    
     dout(10) << "activate replay " << p->first << " "
              << *p->second->get_req() << dendl;
+    
     replay.push_back(p->second); // need to replay
   }
   replay_queue.clear();
@@ -4761,7 +4765,7 @@ bool PG::may_need_replay(const OSDMapRef osdmap) const
 
   for (map<epoch_t,pg_interval_t>::const_reverse_iterator p = past_intervals.rbegin();
        p != past_intervals.rend();
-       ++p) {
+       ++p) { // iterate past_intervals in reverse order
     const pg_interval_t &interval = p->second;
     dout(10) << "may_need_replay " << interval << dendl;
 
@@ -4776,7 +4780,8 @@ bool PG::may_need_replay(const OSDMapRef osdmap) const
 
     // look at whether any of the osds during this interval survived
     // past the end of the interval (i.e., didn't crash and
-    // potentially fail to COMMIT a write that it ACKed).
+    // potentially fail to COMMIT a write that it ACKed). refer to rados_aio_create_completion
+    
     bool any_survived_interval = false;
 
     // consider ACTING osds
@@ -4800,7 +4805,7 @@ bool PG::may_need_replay(const OSDMapRef osdmap) const
 	}
 	else if (pinfo->up_from <= interval.first &&
 		 (std::find(acting.begin(), acting.end(), o) != acting.end() ||
-		  std::find(up.begin(), up.end(), o) != up.end())) {
+		  std::find(up.begin(), up.end(), o) != up.end())) { // TODO: up_thru has not updated yet ???
 	  dout(10) << "may_need_replay  osd." << o
 		   << " up_from " << pinfo->up_from << " and is in acting|up,"
 		   << " assumed to have survived the interval" << dendl;
@@ -4809,7 +4814,7 @@ bool PG::may_need_replay(const OSDMapRef osdmap) const
 	}
 	else if (pinfo->up_from > interval.last &&
 		 pinfo->last_clean_begin <= interval.first &&
-		 pinfo->last_clean_end > interval.last) {
+		 pinfo->last_clean_end > interval.last) { // OSD restarted after the interval
 	  dout(10) << "may_need_replay  prior osd." << o
 		   << " up_from " << pinfo->up_from
 		   << " and last clean interval ["
@@ -4820,7 +4825,7 @@ bool PG::may_need_replay(const OSDMapRef osdmap) const
       }
     }
 
-    if (!any_survived_interval) {
+    if (!any_survived_interval) { // no existing osd has survived beyond this interval
       dout(3) << "may_need_replay  no known survivors of interval "
 	      << interval.first << "-" << interval.last
 	      << ", may need replay" << dendl;
