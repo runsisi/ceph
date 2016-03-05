@@ -322,16 +322,18 @@ Context *Watch::get_delayed_cb()
 void Watch::register_cb()
 {
   Mutex::Locker l(osd->watch_lock);
-  if (cb) {
+  if (cb) { // cancel previously set callback
     dout(15) << "re-registering callback, timeout: " << timeout << dendl;
     cb->cancel();
     osd->watch_timer.cancel_event(cb);
   } else {
     dout(15) << "registering callback, timeout: " << timeout << dendl;
   }
-  cb = new HandleWatchTimeout(self.lock());
+
+  // one-shot timer
+  cb = new HandleWatchTimeout(self.lock()); // will call ReplicatedPG::handle_watch_timeout
   osd->watch_timer.add_event_after(
-    timeout,
+    timeout, // default is 30 secs
     cb);
 }
 
@@ -363,24 +365,28 @@ void Watch::connect(ConnectionRef con, bool _will_ping)
     dout(10) << "connecting - already connected" << dendl;
     return;
   }
+  
   dout(10) << "connecting" << dendl;
   conn = con;
-  will_ping = _will_ping;
+  will_ping = _will_ping; // never change afterward
   OSD::Session* sessionref(static_cast<OSD::Session*>(con->get_priv()));
   if (sessionref) {
-    sessionref->wstate.addWatch(self.lock());
+    sessionref->wstate.addWatch(self.lock()); // add to  WatchConState::watches
     sessionref->put();
+
+    // in_progress_notifies added in Watch::start_notify
     for (map<uint64_t, NotifyRef>::iterator i = in_progress_notifies.begin();
 	 i != in_progress_notifies.end();
 	 ++i) {
-      send_notify(i->second);
+      send_notify(i->second); // send currently in progress notifies to our newly added watcher
     }
   }
+  
   if (will_ping) {
     last_ping = ceph_clock_now(NULL);
-    register_cb();
+    register_cb(); // register a new HandleWatchTimeout one shot timer
   } else {
-    unregister_cb();
+    unregister_cb(); // cancel the timer
   }
 }
 
@@ -444,6 +450,7 @@ void Watch::remove(bool send_disconnect)
   discard_state();
 }
 
+// called by ReplicatedPG::do_osd_op_effects
 void Watch::start_notify(NotifyRef notif)
 {
   assert(in_progress_notifies.find(notif->notify_id) ==
@@ -451,7 +458,7 @@ void Watch::start_notify(NotifyRef notif)
   if (will_ping) {
     utime_t cutoff = ceph_clock_now(NULL);
     cutoff.sec_ref() -= timeout;
-    if (last_ping < cutoff) {
+    if (last_ping < cutoff) { // has timeout, last_ping only updated by CEPH_OSD_WATCH_OP_PING op
       dout(10) << __func__ << " " << notif->notify_id
 	       << " last_ping " << last_ping << " < cutoff " << cutoff
 	       << ", disconnecting" << dendl;
@@ -459,11 +466,16 @@ void Watch::start_notify(NotifyRef notif)
       return;
     }
   }
+  
   dout(10) << "start_notify " << notif->notify_id << dendl;
+
+  // register in progress notify
   in_progress_notifies[notif->notify_id] = notif;
-  notif->start_watcher(self.lock());
+  
+  notif->start_watcher(self.lock()); // insert into Notify::watchers
+  
   if (connected())
-    send_notify(notif);
+    send_notify(notif); // send MWatchNotify to peer
 }
 
 void Watch::cancel_notify(NotifyRef notif)
@@ -482,6 +494,7 @@ void Watch::send_notify(NotifyRef notif)
   conn->send_message(notify_msg);
 }
 
+// called in ReplicatedPG::do_osd_op_effects
 void Watch::notify_ack(uint64_t notify_id, bufferlist& reply_bl)
 {
   dout(10) << "notify_ack" << dendl;

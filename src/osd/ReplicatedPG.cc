@@ -3967,6 +3967,7 @@ bool ReplicatedPG::maybe_create_new_object(OpContext *ctx)
   return false;
 }
 
+// mainly called by ReplicatedPG::prepare_transaction
 int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 {
   int result = 0;
@@ -5149,7 +5150,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	dout(10) << "watch: peer_addr="
 	  << ctx->op->get_req()->get_connection()->get_peer_addr() << dendl;
 
-	watch_info_t w(cookie, cct->_conf->osd_client_watch_timeout,
+	watch_info_t w(cookie, cct->_conf->osd_client_watch_timeout, // default is 30 secs
 	  ctx->op->get_req()->get_connection()->get_peer_addr());
 	if (op.watch.op == CEPH_OSD_WATCH_OP_WATCH ||
 	    op.watch.op == CEPH_OSD_WATCH_OP_LEGACY_WATCH) {
@@ -5157,7 +5158,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	    dout(10) << " found existing watch " << w << " by " << entity << dendl;
 	  } else {
 	    dout(10) << " registered new watch " << w << " by " << entity << dendl;
-	    oi.watchers[make_pair(cookie, entity)] = w;
+	    oi.watchers[make_pair(cookie, entity)] = w; // register in ctx->new_obs.oi
 	    t->nop();  // make sure update the object_info on disk!
 	  }
 	  bool will_ping = (op.watch.op == CEPH_OSD_WATCH_OP_WATCH);
@@ -6261,12 +6262,16 @@ void ReplicatedPG::add_interval_usage(interval_set<uint64_t>& s, object_stat_sum
   }
 }
 
+// called by ReplicatedPG::execute_ctx for read op, or ReplicatedPG::eval_repop when 
+// txns have committed and applied by all replicas (including primary)
 void ReplicatedPG::do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn)
 {
   entity_name_t entity = ctx->reqid.name;
   dout(15) << "do_osd_op_effects " << entity << " con " << conn.get() << dendl;
 
   // disconnects first
+  // ctx->watch_disconnects added by CEPH_OSD_WATCH_OP_UNWATCH op and ReplicatedPG::_delete_oid
+  // and ReplicatedPG::handle_watch_timeout
   for (list<OpContext::watch_disconnect_t>::iterator i =
 	 ctx->watch_disconnects.begin();
        i != ctx->watch_disconnects.end();
@@ -6283,19 +6288,27 @@ void ReplicatedPG::do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn)
     }
   }
 
+  // only repop created by ReplicatedPG::simple_repop_create will be called by 
+  // ReplicatePG::eval_repop with conn set to NULL
   if (!conn)
     return;
+  
   boost::intrusive_ptr<OSD::Session> session((OSD::Session *)conn->get_priv());
   if (!session.get())
     return;
   session->put();  // get_priv() takes a ref, and so does the intrusive_ptr
 
+  // ctx->watch_connects are added for CEPH_OSD_WATCH_OP_WATCH, CEPH_OSD_WATCH_OP_LEGACY_WATCH
+  // and CEPH_OSD_WATCH_OP_RECONNECT ops in ReplicatedPG::do_osd_ops
   for (list<pair<watch_info_t,bool> >::iterator i = ctx->watch_connects.begin();
        i != ctx->watch_connects.end();
        ++i) {
+    // refer to map<pair<uint64_t, entity_name_t>, watch_info_t> object_info_t::watchers
     pair<uint64_t, entity_name_t> watcher(i->first.cookie, entity);
+    
     dout(15) << "do_osd_op_effects applying watch connect on session "
 	     << session.get() << " watcher " << watcher << dendl;
+    
     WatchRef watch;
     if (ctx->obc->watchers.count(watcher)) {
       dout(15) << "do_osd_op_effects found existing watch watcher " << watcher
@@ -6304,17 +6317,22 @@ void ReplicatedPG::do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn)
     } else {
       dout(15) << "do_osd_op_effects new watcher " << watcher
 	       << dendl;
+
+      // register new <watcher, watch> tuple
       watch = Watch::makeWatchRef(
-	this, osd, ctx->obc, i->first.timeout_seconds,
+	this, osd, ctx->obc, i->first.timeout_seconds, // default is 30 secs
 	i->first.cookie, entity, conn->get_peer_addr());
+
       ctx->obc->watchers.insert(
 	make_pair(
 	  watcher,
 	  watch));
     }
+    
     watch->connect(conn, i->second);
   }
 
+  // ctx->notifies added in ReplicatedPG::do_osd_ops for CEPH_OSD_OP_NOTIFY op
   for (list<notify_info_t>::iterator p = ctx->notifies.begin();
        p != ctx->notifies.end();
        ++p) {
@@ -6330,16 +6348,19 @@ void ReplicatedPG::do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn)
 	p->notify_id,
 	ctx->obc->obs.oi.user_version,
 	osd));
+
     for (map<pair<uint64_t, entity_name_t>, WatchRef>::iterator i =
 	   ctx->obc->watchers.begin();
 	 i != ctx->obc->watchers.end();
-	 ++i) {
+	 ++i) { // notify all concerned watchers
       dout(10) << "starting notify on watch " << i->first << dendl;
       i->second->start_notify(notif);
     }
-    notif->init();
+         
+    notif->init(); // call Notify::register_cb
   }
 
+  // ctx->notify_acks added in ReplicatedPG::do_osd_ops for CEPH_OSD_OP_NOTIFY_ACK op
   for (list<OpContext::NotifyAck>::iterator p = ctx->notify_acks.begin();
        p != ctx->notify_acks.end();
        ++p) {
@@ -6354,6 +6375,7 @@ void ReplicatedPG::do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn)
       if (i->first.second != entity) continue;
       if (p->watch_cookie &&
 	  p->watch_cookie.get() != i->first.first) continue;
+      
       dout(10) << "acking notify on watch " << i->first << dendl;
       i->second->notify_ack(p->notify_id, p->reply_bl);
     }
@@ -6382,6 +6404,7 @@ hobject_t ReplicatedPG::get_temp_recovery_object(eversion_t version, snapid_t sn
   return hoid;
 }
 
+// called by ReplicatedPG::execute_ctx which called by ReplicatedPG::do_op or CopyFromCallback.finish
 int ReplicatedPG::prepare_transaction(OpContext *ctx)
 {
   assert(!ctx->ops.empty());
@@ -6432,6 +6455,7 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
   if (soid.snap == CEPH_NOSNAP)
     make_writeable(ctx); // COW, make a snap object and write to the original object
 
+  // prepare PGLog
   finish_ctx(ctx,
 	     ctx->new_obs.exists ? pg_log_entry_t::MODIFY :
 	     pg_log_entry_t::DELETE);
@@ -8263,6 +8287,7 @@ void ReplicatedPG::eval_repop(RepGather *repop)
   if (repop->all_applied && repop->all_committed) {
     repop->rep_done = true;
 
+    // repop->ctx->op is NULL only for repop created by ReplicatedPG::simple_repop_create
     do_osd_op_effects(
       repop->ctx,
       repop->ctx->op ? repop->ctx->op->get_req()->get_connection() :
@@ -8533,6 +8558,7 @@ void ReplicatedPG::populate_obc_watchers(ObjectContextRef obc)
   check_blacklisted_obc_watchers(obc);
 }
 
+// called by ReplicatedPG::check_blacklisted_obc_watchers
 void ReplicatedPG::handle_watch_timeout(WatchRef watch)
 {
   ObjectContextRef obc = watch->get_obc(); // handle_watch_timeout owns this ref
