@@ -1595,7 +1595,7 @@ public:
 
       typedef boost::mpl::list <
 	boost::statechart::transition< Initialize, Reset >,
-	boost::statechart::custom_reaction< Load >,
+	boost::statechart::custom_reaction< Load >, // will init PG::should_notify
 	boost::statechart::custom_reaction< NullEvt >,
 	boost::statechart::transition< boost::statechart::event_base, Crashed >
 	> reactions;

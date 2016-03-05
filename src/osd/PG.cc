@@ -970,7 +970,7 @@ void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
       this)); // build prior set by iterating past intervals
   PriorSet &prior(*prior_set.get());
 
-  if (prior.pg_down) { // we are blocked by some down osds to survive some intervals
+  if (prior.pg_down) { // we are blocked by some down osds may need to survive some intervals
     state_set(PG_STATE_DOWN);
   }
 
@@ -1721,10 +1721,12 @@ void PG::activate(ObjectStore::Transaction& t,
   }
 
   // twiddle pg state
-  state_clear(PG_STATE_DOWN);
+  state_clear(PG_STATE_DOWN); // PG::build_prior and RecoveryState::GetInfo::react(MNotifyRec) may set PG_STATE_DOWN
 
+  // init in RecoveryState::Initial::react(Load) and reinit in PG::start_peering_interval
   send_notify = false;
 
+  // we have got info, auth log, missing, now we can go to active, update info.last_epoch_started
   if (is_primary()) {
     // only update primary last_epoch_started if we will go active
     if (acting.size() >= pool.info.min_size) {
@@ -1732,9 +1734,10 @@ void PG::activate(ObjectStore::Transaction& t,
       // erronous cluster, no other use
       assert(cct->_conf->osd_find_best_info_ignore_history_les ||
 	     info.last_epoch_started <= activation_epoch);
-      info.last_epoch_started = activation_epoch;
+      
+      info.last_epoch_started = activation_epoch; // current PG owned osdmap_ref's epoch
     }
-  } else if (is_acting(pg_whoami)) {
+  } else if (is_acting(pg_whoami)) { // i am in PG::acting
     /* update last_epoch_started on acting replica to whatever the primary sent
      * unless it's smaller (could happen if we are going peered rather than
      * active, see doc/dev/osd_internals/last_epoch_started.rst) */
@@ -1745,13 +1748,15 @@ void PG::activate(ObjectStore::Transaction& t,
   const pg_missing_t &missing = pg_log.get_missing();
 
   if (is_primary()) {
+    // TODO: ???
     last_update_ondisk = info.last_update;
     min_last_complete_ondisk = eversion_t(0,0);  // we don't know (yet)!
   }
+  
   last_update_applied = info.last_update;
   last_rollback_info_trimmed_to_applied = pg_log.get_rollback_trimmed_to();
 
-  need_up_thru = false;
+  need_up_thru = false; // TODO: for primary if this is true we can not transit into Active, for replica we never set it ???
 
   // write pg info, log
   dirty_info = true;
@@ -1764,7 +1769,7 @@ void PG::activate(ObjectStore::Transaction& t,
     new C_PG_ActivateCommitted(
       this,
       get_osdmap()->get_epoch(),
-      activation_epoch));
+      activation_epoch)); // called when we persisted the result
 
   // initialize snap_trimq
   if (is_primary()) {
@@ -7711,7 +7716,8 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 
           // now we may have found that:
           // 1) any OSD is up and complete or
-          // 2) all OSDs are up but incomplete for the last rw interval
+          // 2) all OSDs are up but incomplete for the last rw interval, choose_acting called in 
+          // RecoveryState::GetLog::GetLog will return false, so we will transit into state Incomplete evently
 
           // if we can survive the latest interval that we have written something to,
           // then we can survive any interval, coz we can write to a pg only after
