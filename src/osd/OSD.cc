@@ -8825,7 +8825,7 @@ void OSD::check_replay_queue()
       
       dout(10) << "check_replay_queue " << *pg << dendl;
       if ((pg->is_active() || pg->is_activating()) &&
-	  pg->is_replay() &&
+	  pg->is_replay() && // set in PG::activate
           pg->is_primary() &&
           pg->replay_until == p->second) {
         // requeue ops on PG::repaly_queue onto OSDService::op_wq

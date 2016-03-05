@@ -5443,7 +5443,7 @@ bool PG::can_discard_op(OpRequestRef& op)
     }
   }
 
-  if (is_replay()) { // PG_STATE_REPLAY
+  if (is_replay()) { // PG_STATE_REPLAY, set in PG::activate
     if (m->get_version().version > 0) {
       dout(7) << " queueing replay at " << m->get_version()
 	      << " for " << *m << dendl;
