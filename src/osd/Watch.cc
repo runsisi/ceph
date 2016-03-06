@@ -371,7 +371,7 @@ void Watch::connect(ConnectionRef con, bool _will_ping)
   will_ping = _will_ping; // never change afterward
   OSD::Session* sessionref(static_cast<OSD::Session*>(con->get_priv()));
   if (sessionref) {
-    sessionref->wstate.addWatch(self.lock()); // add to  WatchConState::watches
+    sessionref->wstate.addWatch(self.lock()); // add to WatchConState::watches
     sessionref->put();
 
     // in_progress_notifies added in Watch::start_notify
@@ -462,7 +462,7 @@ void Watch::start_notify(NotifyRef notif)
       dout(10) << __func__ << " " << notif->notify_id
 	       << " last_ping " << last_ping << " < cutoff " << cutoff
 	       << ", disconnecting" << dendl;
-      disconnect();
+      disconnect(); // set Watch::conn to NULL
       return;
     }
   }

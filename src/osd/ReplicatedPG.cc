@@ -6318,7 +6318,7 @@ void ReplicatedPG::do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn)
       dout(15) << "do_osd_op_effects new watcher " << watcher
 	       << dendl;
 
-      // register new <watcher, watch> tuple
+      // register new <watcher, watch> tuple in ctx->obc->watchers
       watch = Watch::makeWatchRef(
 	this, osd, ctx->obc, i->first.timeout_seconds, // default is 30 secs
 	i->first.cookie, entity, conn->get_peer_addr());
@@ -6328,7 +6328,8 @@ void ReplicatedPG::do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn)
 	  watcher,
 	  watch));
     }
-    
+
+    // register watch in session then send in progress notifies, and register a ping timer
     watch->connect(conn, i->second);
   }
 
@@ -6352,12 +6353,15 @@ void ReplicatedPG::do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn)
     for (map<pair<uint64_t, entity_name_t>, WatchRef>::iterator i =
 	   ctx->obc->watchers.begin();
 	 i != ctx->obc->watchers.end();
-	 ++i) { // notify all concerned watchers
+	 ++i) { // iterate each notify to notify all concerned watchers
       dout(10) << "starting notify on watch " << i->first << dendl;
+
+      // register the notify in Watch::in_progress_notifies and regiter the watcher
+      // in Notify::watchers
       i->second->start_notify(notif);
     }
          
-    notif->init(); // call Notify::register_cb
+    notif->init(); // call Notify::register_cb to register a NotifyTimeoutCB timer
   }
 
   // ctx->notify_acks added in ReplicatedPG::do_osd_ops for CEPH_OSD_OP_NOTIFY_ACK op
