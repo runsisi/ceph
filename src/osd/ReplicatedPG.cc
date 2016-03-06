@@ -8514,7 +8514,7 @@ void ReplicatedPG::check_blacklisted_obc_watchers(ObjectContextRef obc)
       assert(j->second->get_pg() == this);
       j->second->unregister_cb();
 
-      // 
+      // remove watcher from oi.watchers and insert the watch into ctx->watch_disconnects
       handle_watch_timeout(j->second);
     }
   }
@@ -8562,7 +8562,8 @@ void ReplicatedPG::populate_obc_watchers(ObjectContextRef obc)
   check_blacklisted_obc_watchers(obc);
 }
 
-// called by ReplicatedPG::check_blacklisted_obc_watchers
+// called by ReplicatedPG::check_blacklisted_obc_watchers or HandleDelayedWatchTimeout
+// or HandleWatchTimeout
 void ReplicatedPG::handle_watch_timeout(WatchRef watch)
 {
   ObjectContextRef obc = watch->get_obc(); // handle_watch_timeout owns this ref

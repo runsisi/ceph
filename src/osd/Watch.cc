@@ -110,7 +110,7 @@ void Notify::do_timeout()
     boost::intrusive_ptr<ReplicatedPG> pg((*i)->get_pg());
     pg->lock();
     if (!(*i)->is_discarded()) {
-      (*i)->cancel_notify(self.lock());
+      (*i)->cancel_notify(self.lock()); // unregister notify from Watch::in_progress_notifies
     }
     pg->unlock();
   }
@@ -121,7 +121,7 @@ void Notify::register_cb()
   assert(lock.is_locked_by_me());
   {
     osd->watch_lock.Lock();
-    cb = new NotifyTimeoutCB(self.lock());
+    cb = new NotifyTimeoutCB(self.lock()); // if timeout, will unregister this notify from all watchers's in_progress_notifies
     osd->watch_timer.add_event_after(
       timeout,
       cb);
@@ -150,6 +150,7 @@ void Notify::start_watcher(WatchRef watch)
   watchers.insert(watch);
 }
 
+// called in Watch::notify_ack
 void Notify::complete_watcher(WatchRef watch, bufferlist& reply_bl)
 {
   Mutex::Locker l(lock);
@@ -157,10 +158,13 @@ void Notify::complete_watcher(WatchRef watch, bufferlist& reply_bl)
   if (is_discarded())
     return;
   assert(watchers.count(watch));
+  
   watchers.erase(watch);
   notify_replies.insert(make_pair(make_pair(watch->get_watcher_gid(),
 					    watch->get_cookie()),
 				  reply_bl));
+  
+  // if all watchers replied or timeout, send MWatchNotify reply to the peer who sent us the notify
   maybe_complete_notify();
 }
 
@@ -246,7 +250,8 @@ public:
     osd->watch_lock.Unlock();
     pg->lock();
     watch->cb = NULL;
-    if (!watch->is_discarded() && !canceled)
+    if (!watch->is_discarded() && !canceled) // the timer is still valid
+      // remove watcher from oi.watchers and insert the watch into ctx->watch_disconnects
       watch->pg->handle_watch_timeout(watch);
     delete this; // ~Watch requires pg lock!
     pg->unlock();
@@ -267,6 +272,7 @@ public:
     assert(watch->pg->is_locked());
     watch->cb = NULL;
     if (!watch->is_discarded() && !canceled)
+      // remove watcher from oi.watchers and insert the watch into ctx->watch_disconnects
       watch->pg->handle_watch_timeout(watch);
   }
 };
@@ -322,15 +328,15 @@ Context *Watch::get_delayed_cb()
 void Watch::register_cb()
 {
   Mutex::Locker l(osd->watch_lock);
-  if (cb) { // cancel previously set callback
+  if (cb) { // cancel previously registered timer
     dout(15) << "re-registering callback, timeout: " << timeout << dendl;
     cb->cancel();
-    osd->watch_timer.cancel_event(cb);
+    osd->watch_timer.cancel_event(cb); // be deleted in it
   } else {
     dout(15) << "registering callback, timeout: " << timeout << dendl;
   }
 
-  // one-shot timer
+  // one-shot timer, Watch::got_ping will cancel this timer and re-register it
   cb = new HandleWatchTimeout(self.lock()); // will call ReplicatedPG::handle_watch_timeout
   osd->watch_timer.add_event_after(
     timeout, // default is 30 secs
@@ -355,6 +361,8 @@ void Watch::got_ping(utime_t t)
 {
   last_ping = t;
   if (conn) {
+    // cancel the previously registered timer then register a new HandleWatchTimeout 
+    // one shot timer which calls ReplicatedPG::handle_watch_timeout if timed out
     register_cb();
   }
 }
@@ -386,16 +394,24 @@ void Watch::connect(ConnectionRef con, bool _will_ping)
     last_ping = ceph_clock_now(NULL);
     register_cb(); // register a new HandleWatchTimeout one shot timer
   } else {
+    // may be 1) a legacy watch op which will not ping us periodically followed after a 
+    // normal watch op, or 2) we were reset previously and we registered a timer, refer to
+    // Watch::disconnect
     unregister_cb(); // cancel the timer
   }
 }
 
+// called by WatchConState::reset or Watch::start_notify
 void Watch::disconnect()
 {
   dout(10) << "disconnect" << dendl;
   conn = ConnectionRef();
+
+  // if client supports ping, we always have a timer to disconnect if the conn reset
+  // and the client died, but if they do not support it, we must register a timer to
+  // disconnect explicitly
   if (!will_ping)
-    register_cb();
+    register_cb(); // used by WatchConState::reset
 }
 
 void Watch::discard()
@@ -458,7 +474,8 @@ void Watch::start_notify(NotifyRef notif)
   if (will_ping) {
     utime_t cutoff = ceph_clock_now(NULL);
     cutoff.sec_ref() -= timeout;
-    if (last_ping < cutoff) { // has timeout, last_ping only updated by CEPH_OSD_WATCH_OP_PING op
+    if (last_ping < cutoff) { // has timeout, the client has not ping us for a while
+      // last_ping only get updated by CEPH_OSD_WATCH_OP_PING op
       dout(10) << __func__ << " " << notif->notify_id
 	       << " last_ping " << last_ping << " < cutoff " << cutoff
 	       << ", disconnecting" << dendl;
