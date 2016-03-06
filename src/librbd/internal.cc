@@ -3524,17 +3524,20 @@ reprotect_and_return_err:
     }
 
     for (vector<ObjectExtent>::iterator p = extents.begin(); p != extents.end(); ++p) {
+      // iterate each object
+      
       ldout(cct, 20) << " oid " << p->oid << " " << p->offset << "~" << p->length
 		     << " from " << p->buffer_extents << dendl;
       // assemble extent
       bufferlist bl;
       for (vector<pair<uint64_t,uint64_t> >::iterator q = p->buffer_extents.begin();
 	   q != p->buffer_extents.end();
-	   ++q) {
+	   ++q) { // each object's data is not continuous
 	bl.append(buf + q->first, q->second);
       }
 
-      C_AioWrite *req_comp = new C_AioWrite(cct, c);
+      // write a single object
+      C_AioWrite *req_comp = new C_AioWrite(cct, c); // c is type of librbd::AioCompletion
       if (ictx->object_cacher) {
 	c->add_request();
 	ictx->write_to_cache(p->oid, bl, p->length, p->offset, req_comp, op_flags);

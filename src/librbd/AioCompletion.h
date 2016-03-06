@@ -46,9 +46,9 @@ namespace librbd {
     Cond cond;
     bool done;
     ssize_t rval;
-    callback_t complete_cb;
+    callback_t complete_cb; // user callback
     void *complete_arg;
-    rbd_completion_t rbd_comp;
+    rbd_completion_t rbd_comp; // librbd::RBD::AioCompletion
     int pending_count;   ///< number of requests
     uint32_t blockers;
     int ref;

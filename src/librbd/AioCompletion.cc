@@ -90,7 +90,7 @@ namespace librbd {
 
     if (complete_cb) {
       lock.Unlock();
-      complete_cb(rbd_comp, complete_arg);
+      complete_cb(rbd_comp, complete_arg); // user callback
       lock.Lock();
     }
     done = true;
@@ -123,7 +123,7 @@ namespace librbd {
     }
     assert(pending_count);
     int count = --pending_count;
-    if (!count && blockers == 0) {
+    if (!count && blockers == 0) { // all inflight AioRequest finished
       finalize(cct, rval);
       complete(cct);
     }

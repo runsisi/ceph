@@ -41,14 +41,18 @@ namespace librbd {
     compute_parent_extents();
   }
 
+  // m_hide_enoent:
+  // AioRead / AioWrite: false
+  // AioRemove / AioTrim / AioTruncate / AioZero: true
   void AioRequest::complete(int r)
   {
-    if (should_complete(r)) {
+    // check for layered read/write
+    if (should_complete(r)) { // AioRead::should_complete or AbstractWrite::should_complete
       ldout(m_ictx->cct, 20) << "complete " << this << dendl;
       if (m_hide_enoent && r == -ENOENT) {
 	r = 0;
       }
-      m_completion->complete(r);
+      m_completion->complete(r); // C_AioWrite or C_AioRead
       delete this;
     }
   }
@@ -471,6 +475,7 @@ namespace librbd {
     add_write_ops(&m_write);
     assert(m_write.size() != 0);
 
+    // osd req callback
     librados::AioCompletion *rados_completion =
       librados::Rados::aio_create_completion(this, NULL, rados_req_cb);
     int r = m_ictx->data_ctx.aio_operate(m_oid, rados_completion, &m_write,

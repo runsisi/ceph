@@ -373,10 +373,11 @@ namespace librbd {
 
   RBD::AioCompletion::AioCompletion(void *cb_arg, callback_t complete_cb)
   {
+    // same as: c = new librbd::AioCompletion
     librbd::AioCompletion *c = librbd::aio_create_completion(cb_arg,
 							     complete_cb);
-    pc = (void *)c;
-    c->rbd_comp = this;
+    pc = (void *)c; // librbd::AioCompletion
+    c->rbd_comp = this; // librbd::RBD::AioCompletion
   }
 
   bool RBD::AioCompletion::is_complete()
@@ -1889,6 +1890,10 @@ extern "C" int rbd_aio_create_completion(void *cb_arg,
 					 rbd_callback_t complete_cb,
 					 rbd_completion_t *c)
 {
+  // same as:
+  // rbd_comp = new librbd::RBD::AioCompletion
+  // rbd_comp->pc = new librbd::AioCompletion
+  // rbd_comp->pc->rbd_comp = rbd_comp
   librbd::RBD::AioCompletion *rbd_comp =
     new librbd::RBD::AioCompletion(cb_arg, complete_cb);
   *c = (rbd_completion_t) rbd_comp;
@@ -1901,6 +1906,7 @@ extern "C" int rbd_aio_write(rbd_image_t image, uint64_t off, size_t len,
   librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
   librbd::RBD::AioCompletion *comp = (librbd::RBD::AioCompletion *)c;
   tracepoint(librbd, aio_write_enter, ictx, ictx->name.c_str(), ictx->snap_name.c_str(), ictx->read_only, off, len, buf, comp->pc);
+  // librbd::RBD::AioCompletion -> librbd::AioCompletion, i.e. librbd::RBD::AioCompletion::pc
   submit_aio_write(ictx, off, len, buf, get_aio_completion(comp), 0);
   tracepoint(librbd, aio_write_exit, 0);
   return 0;
