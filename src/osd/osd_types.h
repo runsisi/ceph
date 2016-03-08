@@ -1909,6 +1909,7 @@ struct pg_info_t {
     last_backfill_bitwise = sort;
   }
 
+  // version is increased monotonically, refer to PG::get_next_version
   bool is_empty() const { return last_update.version == 0; }
   bool dne() const { return history.epoch_created == 0; }
 

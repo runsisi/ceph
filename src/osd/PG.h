@@ -356,7 +356,7 @@ public:
 	     needs_recovery_map.begin();
 	   i != needs_recovery_map.end();
 	   ++i) {
-	if (is_unfound(i->first)) // only include those have no recovery source or can not be recovered
+	if (is_unfound(i->first)) // no missing_loc found or existing missing_loc[hobject_t] can not recover this object
 	  ++ret;
       }
       return ret;
@@ -1055,7 +1055,7 @@ public:
   void proc_primary_info(ObjectStore::Transaction &t, const pg_info_t &info);
 
   bool have_unfound() const { 
-    // we have some objects that have no recovery source or exsiting shards are 
+    // some objects in needs_recovery_map have no recovery source or exsiting shards are 
     // not enough to recover those objects
     return missing_loc.num_unfound();
   }

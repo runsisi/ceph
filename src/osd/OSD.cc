@@ -8006,10 +8006,10 @@ void OSD::dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap,
 {
   if (service.get_osdmap()->is_up(whoami) &&
       is_active()) {
-    do_notifies(*ctx.notify_list, curmap); // send MOSDPGNotify
-    do_queries(*ctx.query_map, curmap); // send MOSDPGQuery
+    do_notifies(*ctx.notify_list, curmap); // send MOSDPGNotify, MNotifyRec
+    do_queries(*ctx.query_map, curmap); // send MOSDPGQuery, MQuery
     // RecoveryCtx::info_map added by PG::search_for_missing or PG::activate
-    do_infos(*ctx.info_map, curmap); // send MOSDPGInfo
+    do_infos(*ctx.info_map, curmap); // send MOSDPGInfo, MInfoRec
   }
   delete ctx.notify_list;
   delete ctx.query_map;
@@ -8103,7 +8103,9 @@ void OSD::do_notifies(
     }
     service.share_map_peer(it->first, con.get(), curmap);
     dout(7) << __func__ << " osd " << it->first
-	    << " on " << it->second.size() << " PGs" << dendl;    
+	    << " on " << it->second.size() << " PGs" << dendl;
+
+    // MNotifyRec
     MOSDPGNotify *m = new MOSDPGNotify(curmap->get_epoch(), 
         it->second); // vector<pair<pg_notify_t,pg_interval_map_t> >, the same content as MOSDPGInfo
     con->send_message(m);
@@ -8143,6 +8145,8 @@ void OSD::do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
     service.share_map_peer(who, con.get(), curmap);
     dout(7) << __func__ << " querying osd." << who
 	    << " on " << pit->second.size() << " PGs" << dendl;
+
+    // MQuery
     MOSDPGQuery *m = new MOSDPGQuery(curmap->get_epoch(), 
         pit->second); // map<spg_t,pg_query_t>, minimum info, only pg_history is the most important
     con->send_message(m);
@@ -8184,6 +8188,8 @@ void OSD::do_infos(map<int,
       continue;
     }
     service.share_map_peer(p->first, con.get(), curmap);
+
+    // MInfoRec
     MOSDPGInfo *m = new MOSDPGInfo(curmap->get_epoch());
     m->pg_list = p->second; // vector<pair<pg_notify_t, pg_interval_map_t> >, the same content as MOSDPGNotify
     con->send_message(m);
