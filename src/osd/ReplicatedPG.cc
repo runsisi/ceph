@@ -10107,7 +10107,7 @@ void PG::MissingLoc::check_recovery_sources(const OSDMapRef osdmap)
   }
 }
   
-
+// called by OSD::do_recovery
 bool ReplicatedPG::start_recovery_ops(
   int max, ThreadPool::TPHandle &handle,
   int *ops_started)

@@ -8860,6 +8860,7 @@ bool OSD::_recover_now()
   return true;
 }
 
+// we dequeued from OSDService::recovery_wq, i.e. OSD::recovery_wq
 void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
 {
   if (g_conf->osd_recovery_sleep > 0) { // default is 0
