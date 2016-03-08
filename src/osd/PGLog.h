@@ -116,7 +116,7 @@ struct PGLog {
       zero();
     }
     void reset_recovery_pointers() {
-      complete_to = log.end();
+      complete_to = log.end(); // list<pg_log_entry_t>::end()
       last_requested = 0;
     }
 
@@ -546,10 +546,11 @@ public:
 
   void activate_not_complete(pg_info_t &info) {
     log.complete_to = log.log.begin();
-    while (log.complete_to->version <
-	   missing.missing[missing.rmissing.begin()->second].need)
-      ++log.complete_to;
+    while (log.complete_to->version < missing.missing[missing.rmissing.begin()->second].need)
+      ++log.complete_to; // iterator of IndexedLog::list<pg_log_entry_t>
+    
     assert(log.complete_to != log.log.end());
+    
     if (log.complete_to == log.log.begin()) {
       info.last_complete = eversion_t();
     } else {

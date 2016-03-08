@@ -8008,7 +8008,7 @@ void OSD::dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap,
       is_active()) {
     do_notifies(*ctx.notify_list, curmap); // send MOSDPGNotify
     do_queries(*ctx.query_map, curmap); // send MOSDPGQuery
-    // RecoveryCtx::info_map only set by PG::search_for_missing
+    // RecoveryCtx::info_map added by PG::search_for_missing or PG::activate
     do_infos(*ctx.info_map, curmap); // send MOSDPGInfo
   }
   delete ctx.notify_list;

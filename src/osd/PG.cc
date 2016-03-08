@@ -474,11 +474,11 @@ bool PG::search_for_missing(
 
   if (found_missing &&
       (get_osdmap()->get_features(CEPH_ENTITY_TYPE_OSD, NULL) &
-       CEPH_FEATURE_OSD_ERASURE_CODES)) { // ok, find a recovery source for missing objects
+       CEPH_FEATURE_OSD_ERASURE_CODES)) {
     pg_info_t tinfo(oinfo);
     tinfo.pgid.shard = pg_whoami.shard;
 
-    // prepare MOSDPGInfo
+    // prepare MOSDPGInfo, this stray PG will transit into RepliaActive
     (*(ctx->info_map))[from.osd].push_back(
       make_pair(
 	pg_notify_t(
@@ -537,6 +537,7 @@ bool PG::MissingLoc::add_source_info(
     if (handle) {
       handle->reset_tp_timeout();
     }
+    
     if (oinfo.last_update < need) {
       dout(10) << "search_for_missing " << soid << " " << need
 	       << " also missing on osd." << fromosd
@@ -664,6 +665,7 @@ bool PG::needs_recovery() const
   set<pg_shard_t>::const_iterator a = actingbackfill.begin();
   for (; a != end; ++a) { // iterate PG::actingbackfill to check if their have missing objects
     if (*a == get_primary()) continue;
+    
     pg_shard_t peer = *a;
     map<pg_shard_t, pg_missing_t>::const_iterator pm = peer_missing.find(peer);
     if (pm == peer_missing.end()) {
@@ -671,6 +673,7 @@ bool PG::needs_recovery() const
         << dendl;
       continue;
     }
+    
     if (pm->second.num_missing()) {
       dout(10) << __func__ << " osd." << peer << " has "
         << pm->second.num_missing() << " missing" << dendl;
@@ -1691,7 +1694,7 @@ void PG::activate(ObjectStore::Transaction& t,
 		  epoch_t activation_epoch,
 		  list<Context*>& tfin,
 		  map<int, map<spg_t,pg_query_t> >& query_map,
-		  map<int, vector<pair<pg_notify_t, pg_interval_map_t> > > *activator_map,
+		  map<int, vector<pair<pg_notify_t, pg_interval_map_t> > > *activator_map, // RecoveryCtx::info_map
                   RecoveryCtx *ctx)
 {
   assert(!is_peered());
@@ -1762,10 +1765,10 @@ void PG::activate(ObjectStore::Transaction& t,
   dirty_info = true;
   dirty_big_info = true; // maybe
 
+  // register a PG::_activate_committed callback which calleds when committed and applied
   t.register_on_complete(
-    // will call PG::_activate_committed when the pg info committed, if primary
-    // and replicas have committed their pg info, we queue an AllReplicasActivated
-    // peering evt and let the recovery_state machine to handle
+    // if both primary and replicas have committed an applied their pg info, we queue an AllReplicasActivated
+    // peering evt
     new C_PG_ActivateCommitted(
       this,
       get_osdmap()->get_epoch(),
@@ -1783,14 +1786,17 @@ void PG::activate(ObjectStore::Transaction& t,
   }
 
   // init complete pointer
-  if (missing.num_missing() == 0) {
+  if (missing.num_missing() == 0) { // no missing objects in this PG coll
     dout(10) << "activate - no missing, moving last_complete " << info.last_complete
 	     << " -> " << info.last_update << dendl;
     info.last_complete = info.last_update;
+
+    // reset PGLog::IndexedLog::complete_to to PGLog::IndexedLog::list<pg_log_entry_t>::end()
     pg_log.reset_recovery_pointers();
   } else {
     dout(10) << "activate - not complete, " << missing << dendl;
-    pg_log.activate_not_complete(info);
+    
+    pg_log.activate_not_complete(info); // update info.last_complete and PGLog::IndexedLog::complete_to
   }
 
   log_weirdness();
@@ -1805,7 +1811,7 @@ void PG::activate(ObjectStore::Transaction& t,
     assert(!actingbackfill.empty());
     for (set<pg_shard_t>::iterator i = actingbackfill.begin();
 	 i != actingbackfill.end();
-	 ++i) { // iterate each acting shard of this pg
+	 ++i) {
       if (*i == pg_whoami) continue; // exclude ourself, i.e. the primary shard
 
       pg_shard_t peer = *i;
@@ -1817,7 +1823,7 @@ void PG::activate(ObjectStore::Transaction& t,
       MOSDPGLog *m = 0;
       pg_missing_t& pm = peer_missing[peer];
 
-      bool needs_past_intervals = pi.dne();
+      bool needs_past_intervals = pi.dne(); // i.e. info.history.epoch_created == 0
 
       /*
        * cover case where peer sort order was different and
@@ -1825,11 +1831,16 @@ void PG::activate(ObjectStore::Transaction& t,
        */
       bool force_restart_backfill =
 	!pi.last_backfill.is_max() &&
-	pi.last_backfill_bitwise != get_sort_bitwise();
+	pi.last_backfill_bitwise != get_sort_bitwise(); // the last backfill to the peer has not finished, but the sort order has been changed
+
+      // determine if each peer 1) is keeping pace with us or 2) need sto be backfilled or 3) needs some updated log
+      // to catch up with us, then send them MOSDPGInfo or MOSDPGLog both drive the peer into ReplicaActive and
+      // handle Activate evt
 
       if (pi.last_update == info.last_update && !force_restart_backfill) {
-        // empty log
-	if (!pi.last_backfill.is_max())
+        // empty log, maybe empty past_intervals too if the peer is empty
+        
+	if (!pi.last_backfill.is_max()) // last backfill has not finished, continue
 	  osd->clog->info() << info.pgid << " continuing backfill to osd."
 			    << peer
 			    << " from (" << pi.log_tail << "," << pi.last_update
@@ -1837,11 +1848,11 @@ void PG::activate(ObjectStore::Transaction& t,
 			    << " to " << info.last_update;
 
         // RecoveryState::ReplicaActive::react(Activate) will call us with
-        // activator_map (i.e. info_map :)) setting to NULL
-	if (!pi.is_empty() && activator_map) {
+        // activator_map (i.e. info_map :)) setting to NULL, but it never reaches here, so activator_map should never be NULL
+	if (!pi.is_empty() && activator_map) { // have writes during this epoch
 	  dout(10) << "activate peer osd." << peer << " is up to date, queueing in pending_activators" << dendl;
 
-          // prepare MOSDPGInfo
+          // prepare MOSDPGInfo, will be sent by OSD::dispatch_context, PG::search_for_missing will also insert into this queue
 	  (*activator_map)[peer.osd].push_back(
 	    make_pair(
 	      pg_notify_t(
@@ -1849,20 +1860,41 @@ void PG::activate(ObjectStore::Transaction& t,
 		get_osdmap()->get_epoch(),
 		get_osdmap()->get_epoch(),
 		info),
-	      past_intervals));
-	} else {
+	      past_intervals)); // send info + past_intervals
+	} else { // no writes during this epoch
 	  dout(10) << "activate peer osd." << peer << " is up to date, but sending pg_log anyway" << dendl;
 
-          // prepare MOSDPGLog
+          /*
+                class MOSDPGLog : public Message {
+                  epoch_t epoch;
+                  epoch_t query_epoch;
+                public:
+                  shard_id_t to;
+                  shard_id_t from;
+                  pg_info_t info;
+                  pg_log_t log;
+                  pg_missing_t missing;
+                  pg_interval_map_t past_intervals;
+                };
+
+                class MOSDPGInfo : public Message {
+                  epoch_t epoch;
+                public:
+                  vector<pair<pg_notify_t,pg_interval_map_t> > pg_list; // i.e. a list of MOSDPGLog without log
+                };
+              */
+
+          // send it only our info
 	  m = new MOSDPGLog(
 	    i->shard, pg_whoami.shard,
-	    get_osdmap()->get_epoch(), info);
+	    get_osdmap()->get_epoch(), // should be (version_t)get_osdmap()->get_epoch()
+	    info);
 	}
       } else if (
 	pg_log.get_tail() > pi.last_update ||
 	pi.last_backfill == hobject_t() ||
 	force_restart_backfill ||
-	(backfill_targets.count(*i) && pi.last_backfill.is_max())) {
+	(backfill_targets.count(*i) && pi.last_backfill.is_max())) { // start/restart backfill, previous backfill state will get reset
 	/* ^ This last case covers a situation where a replica is not contiguous
 	 * with the auth_log, but is contiguous with this replica.  Reshuffling
 	 * the active set to handle this would be tricky, so instead we just go
@@ -1878,7 +1910,7 @@ void PG::activate(ObjectStore::Transaction& t,
 
 	pi.last_update = info.last_update;
 	pi.last_complete = info.last_update;
-	pi.set_last_backfill(hobject_t(), get_sort_bitwise());
+	pi.set_last_backfill(hobject_t(), get_sort_bitwise()); // RecoveryState::Stray::react(MLogRec) will notice this
 	pi.last_epoch_started = info.last_epoch_started;
 	pi.history = info.history;
 	pi.hit_set = info.hit_set;
@@ -1896,34 +1928,34 @@ void PG::activate(ObjectStore::Transaction& t,
 	m->info.log_tail = m->log.tail;
 	pi.log_tail = m->log.tail;  // sigh...
 
-	pm.clear();
+	pm.clear(); // we are backfilling to this peer, the missing set is useless
       } else {
 	// catch up
 	assert(pg_log.get_tail() <= pi.last_update);
+        
 	m = new MOSDPGLog(
 	  i->shard, pg_whoami.shard,
 	  get_osdmap()->get_epoch(), info);
 	// send new stuff to append to replicas log
-	m->log.copy_after(pg_log.get_log(), pi.last_update);
+	m->log.copy_after(pg_log.get_log(), pi.last_update); // send peer new log it does not have
       }
 
       // share past_intervals if we are creating the pg on the replica
       // based on whether our info for that peer was dne() *before*
       // updating pi.history in the backfill block above.
       if (needs_past_intervals)
-	m->past_intervals = past_intervals; // in MOSDPGLog we may not carry the past_intervals
+	m->past_intervals = past_intervals;
 
       // update local version of peer's missing list!
-      if (m && pi.last_backfill != hobject_t()) {
+      if (m && pi.last_backfill != hobject_t()) { // no need to backfill, so update missing
         for (list<pg_log_entry_t>::iterator p = m->log.log.begin();
              p != m->log.log.end();
-             ++p)
+             ++p) 
 	  if (cmp(p->soid, pi.last_backfill, get_sort_bitwise()) <= 0)
 	    pm.add_next_event(*p);
       }
 
-      // send MOSDPGLog, the MOSDPGInfo will be sent outside of the recovery_state
-      // handling
+      // send MOSDPGLog, the MOSDPGInfo will be sent in OSD::dispatch_context, i.e. batch handled with other PGs
       if (m) {
 	dout(10) << "activate peer osd." << peer << " sending " << m->log << dendl;
 	//m->log.print(cout);
@@ -1954,9 +1986,9 @@ void PG::activate(ObjectStore::Transaction& t,
         if (!missing.have_missing())
           complete_shards.insert(*i);
       } else {
-	assert(peer_missing.count(*i)); // refer to RecoveryState::GetMissing::GetMissing
+	assert(peer_missing.count(*i));
 
-        // register missing objects of replica shard in PG::missing_loc
+        // add missing hobject_t to MissingLoc::needs_recovery_map
 	missing_loc.add_active_missing(peer_missing[*i]);
 
         if (!peer_missing[*i].have_missing() && peer_info[*i].last_backfill == hobject_t::get_max())
@@ -1972,29 +2004,28 @@ void PG::activate(ObjectStore::Transaction& t,
     // ok, if we need objects to recover, then update recovery source for
     // each object
 
-    if (needs_recovery()) { // has missing objects for any shard of this pg
+    if (needs_recovery()) { // has missing objects for this group of actingbackfill
       // If only one shard has missing, we do a trick to add all others as recovery
       // source, this is considered safe since the PGLogs have been merged locally,
       // and covers vast majority of the use cases, like one OSD/host is down for
       // a while for hardware repairing
       if (complete_shards.size() + 1 == actingbackfill.size()) {
-        // add recovery source for missing objects
         missing_loc.add_batch_sources_info(complete_shards);
       } else {
-        // add primary shard as the recovery source for missing objects
         missing_loc.add_source_info(pg_whoami, info, pg_log.get_missing(),
 				    get_sort_bitwise(), ctx->handle);
+        
         for (set<pg_shard_t>::iterator i = actingbackfill.begin();
 	     i != actingbackfill.end();
 	     ++i) {
 	  if (*i == pg_whoami) continue; // already added above
+	  
 	  dout(10) << __func__ << ": adding " << *i << " as a source" << dendl;
 	  assert(peer_missing.count(*i));
 	  assert(peer_info.count(*i));
 
-          // add replica shard as the recovery source for missing objects
-	  missing_loc.add_source_info(
-	    *i, // check if we can recover from this shard
+	  missing_loc.add_source_info( // if we can get the missing object from this shard then add this shard as a source
+	    *i,
 	    peer_info[*i],
 	    peer_missing[*i],
 	    get_sort_bitwise(),
@@ -2009,9 +2040,10 @@ void PG::activate(ObjectStore::Transaction& t,
         // the recovery source above
 	if (is_actingbackfill(i->first))
 	  continue;
+        
 	assert(peer_info.count(i->first));
 
-        // try to add recovery source
+        // try to add this peer as recovery source
 	search_for_missing(
 	  peer_info[i->first],
 	  i->second,
@@ -2162,20 +2194,28 @@ void PG::replay_queued_ops()
   publish_stats_to_osd();
 }
 
+// registered in PG::activate, called when the activation txn committed and applied
 void PG::_activate_committed(epoch_t epoch, epoch_t activation_epoch)
 {
   lock();
-  if (pg_has_reset_since(epoch)) { // obsolete activation
+
+  // Stray and ReplicaActive both are substate of Started, the AdvMap evt is handled by state Started, so
+  // replica PGs can be transit into state Reset to start a new peering interval
+  
+  if (pg_has_reset_since(epoch)) { // obsolete activation, we have started a new peering interval
     dout(10) << "_activate_committed " << epoch
 	     << ", that was an old interval" << dendl;
   } else if (is_primary()) { // we are primary shard
     peer_activated.insert(pg_whoami);
+    
     dout(10) << "_activate_committed " << epoch
 	     << " peer_activated now " << peer_activated
 	     << " last_epoch_started " << info.history.last_epoch_started
 	     << " same_interval_since " << info.history.same_interval_since << dendl;
     assert(!actingbackfill.empty());
-    if (peer_activated.size() == actingbackfill.size()) // all peers activated
+
+    // in PG::activate we have sent MOSDPGLog to all parties in PG::actingbackfill to wait them to be activated
+    if (peer_activated.size() == actingbackfill.size()) // all parties involved has been activated
       // queue a peering evt AllReplicasActivated, the peering evt will be
       // handled by RecoveryState::Active::react(AllReplicasActivated) or
       // RecoveryState::Recovered::react(AllReplicasActivated)
@@ -2189,7 +2229,7 @@ void PG::_activate_committed(epoch_t epoch, epoch_t activation_epoch)
       get_osdmap()->get_epoch(),
       info);
 
-    // ok, we are not primary PG, set the h.last_epoch_started directly
+    // we did not update my local info.history, we just tell the primary that we can update to this epoch
     i.info.history.last_epoch_started = activation_epoch;
     if (acting.size() >= pool.info.min_size) {
       state_set(PG_STATE_ACTIVE);
@@ -2197,19 +2237,23 @@ void PG::_activate_committed(epoch_t epoch, epoch_t activation_epoch)
       state_set(PG_STATE_PEERED);
     }
 
-    // tell the primary we have committed our pg info updates
     m->pg_list.push_back(make_pair(i, pg_interval_map_t()));
+
+    // send MOSDPGInfo to primary shard to tell it that we have committed and applied the activation status,
+    // the primary shard is waiting for all replicas
     osd->send_message_osd_cluster(get_primary().osd, m, get_osdmap()->get_epoch());
 
     // waiters
     if (flushes_in_progress == 0) {
+      // ops were cumulated in ReplicatedPG::do_request which prevented by PG::start_flush called in 
+      // RecoveryState::Active::Active or RecoveryState::Active::ReplicaActive
       requeue_ops(waiting_for_peered);
     }
   }
 
   if (dirty_info) {
     ObjectStore::Transaction *t = new ObjectStore::Transaction;
-    write_if_dirty(*t);
+    write_if_dirty(*t); // will set dirty_info and dirty_big_info to false
     int tr = osd->store->queue_transaction_and_cleanup(osr.get(), t);
     assert(tr == 0);
   }
@@ -3057,7 +3101,7 @@ void PG::write_if_dirty(ObjectStore::Transaction& t)
   if (dirty_big_info || dirty_info)
     // encode current pg epoch, pg info, and maybe (when dirty_big_info is true)
     // past_intervals and info.purged_snaps into km
-    prepare_write_info(&km);
+    prepare_write_info(&km); // will set dirty_info and dirty_big_info to false
 
   // remove old dirty log entries, and encode the new dirty log entries into km
   pg_log.write_log(t, &km, coll, pgmeta_oid);
@@ -6897,7 +6941,7 @@ PG::RecoveryState::Active::Active(my_context ctx)
 	       pg->get_osdmap()->get_epoch(), // activation_epoch
 	       *context< RecoveryMachine >().get_on_safe_context_list(), // tfin
 	       *context< RecoveryMachine >().get_query_map(), // query_map
-	       context< RecoveryMachine >().get_info_map(), // activator_map
+	       context< RecoveryMachine >().get_info_map(), // activator_map, i.e. state->rctx->info_map
 	       context< RecoveryMachine >().get_recovery_ctx()); // ctx
 
   // everyone has to commit/ack before we are truly active
@@ -7338,7 +7382,8 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MLogRec& logevt)
   dout(10) << "got info+log from osd." << logevt.from << " " << msg->info << " " << msg->log << dendl;
 
   ObjectStore::Transaction* t = context<RecoveryMachine>().get_cur_transaction();
-  if (msg->info.last_backfill == hobject_t()) {
+
+  if (msg->info.last_backfill == hobject_t()) { // we are to be backfilled
     if (!(msg->get_connection()->get_features() & CEPH_FEATURE_OSD_MIN_SIZE_RECOVERY)) {
       dout(10) << "Got logevt resetting backfill from peer featuring bug"
 	       << " 10780, setting msg->info.last_epoch_started to logevt.query_epoch,"
@@ -7357,7 +7402,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MLogRec& logevt)
     rollbacker.apply(pg, t);
 
     pg->pg_log.reset_backfill();
-  } else {
+  } else { // update log from the primary
     pg->merge_log(*t, msg->info, msg->log, logevt.from);
   }
 
@@ -7376,7 +7421,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MInfoRec& infoev
   PG *pg = context< RecoveryMachine >().pg;
   dout(10) << "got info from osd." << infoevt.from << " " << infoevt.info << dendl;
 
-  if (pg->info.last_update > infoevt.info.last_update) { // we have divergent log entries
+  if (pg->info.last_update > infoevt.info.last_update) { // we have divergent log entries, so this msg is sent by PG::search_for_missing
     // rewind divergent log entries
     ObjectStore::Transaction* t = context<RecoveryMachine>().get_cur_transaction();
     pg->rewind_divergent_log(*t, infoevt.info.last_update);

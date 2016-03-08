@@ -383,6 +383,7 @@ public:
 	   ++i) {
 	map<hobject_t, pg_missing_t::item, hobject_t::BitwiseComparator>::const_iterator j =
 	  needs_recovery_map.find(i->first);
+        
 	if (j == needs_recovery_map.end()) {
 	  needs_recovery_map.insert(*i);
 	} else {
@@ -586,8 +587,7 @@ public:
 	     = m.info_map.begin();
 	   i != m.info_map.end();
 	   ++i) {
-	vector<pair<pg_notify_t, pg_interval_map_t> > &ovec =
-	  (*info_map)[i->first];
+	vector<pair<pg_notify_t, pg_interval_map_t> > &ovec = (*info_map)[i->first];
 	ovec.reserve(ovec.size() + i->second.size());
 	ovec.insert(ovec.end(), i->second.begin(), i->second.end());
       }
@@ -1595,7 +1595,7 @@ public:
 
       typedef boost::mpl::list <
 	boost::statechart::transition< Initialize, Reset >,
-	boost::statechart::custom_reaction< Load >, // will init PG::should_notify
+	boost::statechart::custom_reaction< Load >, // will init PG::send_notify
 	boost::statechart::custom_reaction< NullEvt >,
 	boost::statechart::transition< boost::statechart::event_base, Crashed >
 	> reactions;

@@ -465,8 +465,10 @@ public:
     }
     void register_on_complete(Context *c) {
       if (!c) return;
+
+      // run Context *c in dtor of RunOnDelete, i.e. when both committed and applied
       RunOnDeleteRef _complete(new RunOnDelete(c));
-      register_on_applied(new ContainerContext<RunOnDeleteRef>(_complete));
+      register_on_applied(new ContainerContext<RunOnDeleteRef>(_complete)); // dtor _complete when ContainerContext::complete get called
       register_on_commit(new ContainerContext<RunOnDeleteRef>(_complete));
     }
 
