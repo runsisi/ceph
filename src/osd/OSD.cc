@@ -249,8 +249,8 @@ OSDService::OSDService(OSD *osd) :
   last_tid(0),
   tid_lock("OSDService::tid_lock"),
   reserver_finisher(cct),
-  local_reserver(&reserver_finisher, cct->_conf->osd_max_backfills,
-		 cct->_conf->osd_min_recovery_priority),
+  local_reserver(&reserver_finisher, cct->_conf->osd_max_backfills, // default 1
+		 cct->_conf->osd_min_recovery_priority), // default 0
   remote_reserver(&reserver_finisher, cct->_conf->osd_max_backfills,
 		  cct->_conf->osd_min_recovery_priority),
   pg_temp_lock("OSDService::pg_temp_lock"),
@@ -8911,6 +8911,7 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
     bool more = pg->start_recovery_ops(max, handle, &started);
     
     dout(10) << "do_recovery started " << started << "/" << max << " on " << *pg << dendl;
+    
     // If no recovery op is started, don't bother to manipulate the RecoveryCtx
     if (!started && (more || !pg->have_unfound())) {
       pg->unlock();

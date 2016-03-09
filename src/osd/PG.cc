@@ -1406,7 +1406,7 @@ void PG::calc_replicated_acting(
  * calculate the desired acting, and request a change with the monitor
  * if it differs from the current acting.
  *
- * returns true if we have not to change the current PG::acting and the current PG::acting
+ * returns true if we do not have to change the current PG::acting and the current PG::acting
  * is totally qulified to survive the PG
  */
 bool PG::choose_acting(pg_shard_t &auth_log_shard_id)
@@ -4708,7 +4708,8 @@ void PG::share_pg_info()
       peer_info[peer].last_epoch_started = info.last_epoch_started;
       peer_info[peer].history.merge(info.history);
     }
-    MOSDPGInfo *m = new MOSDPGInfo(get_osdmap()->get_epoch());
+    
+    MOSDPGInfo *m = new MOSDPGInfo(get_osdmap()->get_epoch()); // MInfoRec
     m->pg_list.push_back(
       make_pair(
 	pg_notify_t(
@@ -4717,6 +4718,7 @@ void PG::share_pg_info()
 	  get_osdmap()->get_epoch(),
 	  info),
 	pg_interval_map_t()));
+    
     osd->send_message_osd_cluster(peer.osd, m, get_osdmap()->get_epoch());
   }
 }
@@ -6710,12 +6712,15 @@ PG::RecoveryState::WaitLocalRecoveryReserved::WaitLocalRecoveryReserved(my_conte
   context< RecoveryMachine >().log_enter(state_name);
   PG *pg = context< RecoveryMachine >().pg;
   pg->state_set(PG_STATE_RECOVERY_WAIT);
+
+  // queue current reservation in OSDService::local_reserver and check if we can dequeue
+  // some previously queued reservations to handle, let the Context to drive the reserve op
   pg->osd->local_reserver.request_reservation(
     pg->info.pgid,
     new QueuePeeringEvt<LocalRecoveryReserved>(
       pg, pg->get_osdmap()->get_epoch(),
       LocalRecoveryReserved()),
-    pg->get_recovery_priority());
+    pg->get_recovery_priority()); // a const priority value
 }
 
 void PG::RecoveryState::WaitLocalRecoveryReserved::exit()
@@ -6841,6 +6846,7 @@ PG::RecoveryState::Recovered::Recovered(my_context ctx)
   context< RecoveryMachine >().log_enter(state_name);
 
   PG *pg = context< RecoveryMachine >().pg;
+
   pg->osd->local_reserver.cancel_reservation(pg->info.pgid);
 
   assert(!pg->needs_recovery());
@@ -6848,17 +6854,16 @@ PG::RecoveryState::Recovered::Recovered(my_context ctx)
   // if we finished backfill, all acting are active; recheck if
   // DEGRADED | UNDERSIZED is appropriate.
   assert(!pg->actingbackfill.empty());
-  if (pg->get_osdmap()->get_pg_size(pg->info.pgid.pgid) <=
-      pg->actingbackfill.size())
+  if (pg->get_osdmap()->get_pg_size(pg->info.pgid.pgid) <= pg->actingbackfill.size())
     pg->state_clear(PG_STATE_DEGRADED);
 
   // adjust acting set?  (e.g. because backfill completed...)
-  if (pg->acting != pg->up && !pg->choose_acting(auth_log_shard)) // first time called in RecoveryState::GetLog::GetLog
+  if (pg->acting != pg->up && !pg->choose_acting(auth_log_shard)) 
     assert(pg->want_acting.size());
 
   // RecoveryState::Active::react(AllReplicasActivated) will set this field to true
   if (context< Active >().all_replicas_activated)
-    post_event(GoClean()); // transit into state Clean
+    post_event(GoClean()); // transit into state Clean, i.e. substate of Active
 }
 
 void PG::RecoveryState::Recovered::exit()
@@ -7257,7 +7262,8 @@ boost::statechart::result PG::RecoveryState::Active::react(const AllReplicasActi
   // info.last_epoch_started is set during activate()
   pg->info.history.last_epoch_started = pg->info.last_epoch_started;
 
-  pg->share_pg_info();
+  pg->share_pg_info(); // send MInfoRec to actingbackfill
+  
   pg->publish_stats_to_osd();
 
   pg->check_local(); // debug use only
@@ -7330,11 +7336,14 @@ boost::statechart::result PG::RecoveryState::ReplicaActive::react(const Activate
   return discard_event();
 }
 
+// sent by PG::share_pg_info
 boost::statechart::result PG::RecoveryState::ReplicaActive::react(const MInfoRec& infoevt)
 {
   PG *pg = context< RecoveryMachine >().pg;
+  
   pg->proc_primary_info(*context<RecoveryMachine>().get_cur_transaction(),
 			infoevt.info);
+  
   return discard_event();
 }
 
@@ -7464,7 +7473,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MLogRec& logevt)
 
 // 1) primary shard of this pg sends us MOSDPGInfo in PG::activate if the primary
 // has no pg log to send, i.e. we have the same pg log as the primary shard,
-// 2) or primary shard of this pg prepares MOSDPGLog in PG::search_for_missing,
+// 2) or primary shard of this pg prepares MOSDPGInfo in PG::search_for_missing,
 // to drive us into state ReplicaActive
 boost::statechart::result PG::RecoveryState::Stray::react(const MInfoRec& infoevt)
 {
@@ -7537,7 +7546,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const ActMap&)
       pg->past_intervals); // PG info + past_intervals
   }
 
-  // requeue peering evts stashed by PG::handle_peering_event
+  // requeue ops and peering evts stashed by PG::handle_peering_event
   pg->take_waiters();
 
   // remain in state Stray, can only be changed by evt MLogRec/MInfoRec

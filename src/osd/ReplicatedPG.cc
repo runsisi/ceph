@@ -9771,7 +9771,7 @@ void ReplicatedPG::on_shutdown()
 void ReplicatedPG::on_activate()
 {
   // all clean?
-  if (needs_recovery()) { // iterate PG::actingbackfill to check if any shard needs to be recovered
+  if (needs_recovery()) { // iterate PG::actingbackfill to check missing objects, backfill_targets have zero missing
     dout(10) << "activate not all replicas are up-to-date, queueing recovery" << dendl;
     queue_peering_event(
       CephPeeringEvtRef(
@@ -9787,7 +9787,7 @@ void ReplicatedPG::on_activate()
 	  get_osdmap()->get_epoch(),
 	  get_osdmap()->get_epoch(),
 	  RequestBackfill()))); // will transit into state WaitLocalBackfillReserved
-  } else { // ok, all replicas recovered
+  } else { // ok, no recovery or backfill needed
     dout(10) << "activate all replicas clean, no recovery" << dendl;
     queue_peering_event(
       CephPeeringEvtRef(

@@ -38,7 +38,7 @@ class AsyncReserver {
   Mutex lock;
 
   map<unsigned, list<pair<T, Context*> > > queues;
-  map<T, pair<unsigned, typename list<pair<T, Context*> >::iterator > > queue_pointers;
+  map<T, pair<unsigned, typename list<pair<T, Context*> >::iterator > > queue_pointers; // point into queues
   set<T> in_progress;
 
   void do_queues() {
@@ -47,13 +47,14 @@ class AsyncReserver {
          it != queues.rend() &&
 	   in_progress.size() < max_allowed &&
 	   it->first >= min_priority;
-         ++it) {
+         ++it) { // priority first
       while (in_progress.size() < max_allowed &&
-             !it->second.empty()) {
+             !it->second.empty()) { // iterate list<>, fifo
         pair<T, Context*> p = it->second.front();
-        queue_pointers.erase(p.first);
-        it->second.pop_front();
-        f->queue(p.second);
+        queue_pointers.erase(p.first); // to be removed from list<pair<T, Context*> >
+        it->second.pop_front(); // remove from list<pair<T, Context*> >
+        // let the Context* to drive the reserve op
+        f->queue(p.second); // queue Context*
         in_progress.insert(p.first);
       }
     }
@@ -123,8 +124,13 @@ public:
     Mutex::Locker l(lock);
     assert(!queue_pointers.count(item) &&
 	   !in_progress.count(item));
+
+    // queue this request
     queues[prio].push_back(make_pair(item, on_reserved));
+    // used to find pair<T, Context*> fast
     queue_pointers.insert(make_pair(item, make_pair(prio,--(queues[prio]).end())));
+
+    // priority first then fifo
     do_queues();
   }
 
@@ -139,14 +145,15 @@ public:
     T item                   ///< [in] key for reservation to cancel
     ) {
     Mutex::Locker l(lock);
-    if (queue_pointers.count(item)) {
+    if (queue_pointers.count(item)) { // still queued, waiting to be handled
       unsigned prio = queue_pointers[item].first;
-      delete queue_pointers[item].second->second;
-      queues[prio].erase(queue_pointers[item].second);
+      delete queue_pointers[item].second->second; // delete Context* in queues
+      queues[prio].erase(queue_pointers[item].second); // remove from list
       queue_pointers.erase(item);
-    } else {
+    } else { // dequeued, in progress
       in_progress.erase(item);
     }
+    
     do_queues();
   }
   static const unsigned MAX_PRIORITY = (unsigned)-1;
