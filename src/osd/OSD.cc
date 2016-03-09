@@ -8638,6 +8638,7 @@ void OSD::handle_pg_query(OpRequestRef op)
 
     dout(10) << " pg " << pgid << " dne" << dendl;
     pg_info_t empty(spg_t(pgid.pgid, it->second.to));
+    
     /* This is racy, but that should be ok: if we complete the deletion
      * before the pg is recreated, we'll just start it off backfilling
      * instead of just empty */
@@ -8872,6 +8873,7 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
 
   // see how many we should try to start.  note that this is a bit racy.
   recovery_wq.lock(); // lock thread pool
+  
   int max = MIN(cct->_conf->osd_recovery_max_active - recovery_ops_active, // default is 3
       cct->_conf->osd_recovery_max_single_start); // default is 1
   if (max > 0) {
@@ -8882,17 +8884,18 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
     dout(10) << "do_recovery can start 0 (" << recovery_ops_active << "/" << cct->_conf->osd_recovery_max_active
 	     << " rops)" << dendl;
   }
+  
   recovery_wq.unlock();
 
   if (max <= 0) { // we have reached the max of allowed active recovery ops, requeue
     dout(10) << "do_recovery raced and failed to start anything; requeuing " << *pg << dendl;
     recovery_wq.queue(pg);
     return;
-  } else {
+  } else { // ok, we can start recovery now
     pg->lock_suspend_timeout(handle);
 
     // PG::deleting set by ReplicatedPG::on_shutdown
-    if (pg->deleting || !(pg->is_peered() && pg->is_primary())) {
+    if (pg->deleting || !(pg->is_peered() && pg->is_primary())) { // only primary which has been peered can do recovery
       pg->unlock();
       goto out;
     }
@@ -9063,8 +9066,7 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 
   // share osdmap with the peer if it has an older osdmap
   send_map_on_destruct share_map(this, m, osdmap, m->get_map_epoch());
-  Session *client_session =
-      static_cast<Session*>(m->get_connection()->get_priv());
+  Session *client_session = static_cast<Session*>(m->get_connection()->get_priv());
 
   // lock Session::sent_epoch_lock
   if (client_session) {

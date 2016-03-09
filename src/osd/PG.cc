@@ -2035,7 +2035,8 @@ void PG::activate(ObjectStore::Transaction& t,
         }
       }
 
-      // try to add others peers not in actingbackfill set as recovery sources
+      // try to add others peers not in actingbackfill set as recovery sources, PG::peer_missing may
+      // be added from PG::proc_master_pg and PG::proc_replica_pg
       
       for (map<pg_shard_t, pg_missing_t>::iterator i = peer_missing.begin();
 	   i != peer_missing.end();
@@ -2072,8 +2073,7 @@ void PG::activate(ObjectStore::Transaction& t,
         // these objects
         
         // try possible recovery source from PG::might_have_unfound to request FULLLOG,
-        // prepare MOSDPGQuery to send, they are not in peer_missing, so need to query 
-        // info first
+        // prepare MOSDPGQuery, i.e. MQuery to send
 	discover_all_missing(query_map); // setup state->rctx->query_map
     }
 
@@ -5705,13 +5705,16 @@ void PG::take_waiters()
 void PG::handle_peering_event(CephPeeringEvtRef evt, RecoveryCtx *rctx)
 {
   dout(10) << "handle_peering_event: " << evt->get_desc() << dendl;
-  if (!have_same_or_newer_map(evt->get_epoch_sent())) {
+  if (!have_same_or_newer_map(evt->get_epoch_sent())) { // TODO: OSD::handle_pg_xxx has check the Message's map, should this necessary ???
     // pg must have the same or newer map than the evt sent to us, note
     // that OSD::require_same_or_newer_map has a much more paranoid check,
     // refer to: OSD::handle_pg_trim
 
     // this pg has older osdmap than evt
     dout(10) << "deferring event " << evt->get_desc() << dendl;
+
+    // stash, will be handled by PG::take_waiters which called by: Reset::react(ActMap), 
+    // Primary::react(ActMap), Stray::react(ActMap), ReplicaActive::react(ActMap)
     peering_waiters.push_back(evt); // wait for newer map
     return;
   }
@@ -7043,8 +7046,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
   assert(pg->is_primary());
 
   if (pg->have_unfound()) { // PG::activate has done this once, with new map we do it again
-    // iterate each shard in PG::might_have_unfound to find if we can recover
-    // the unfound objects from possible new up OSDs
+    // iterate each shard in PG::might_have_unfound to query FULLLOG
     pg->discover_all_missing(*context< RecoveryMachine >().get_query_map());
   }
 
@@ -7102,12 +7104,14 @@ boost::statechart::result PG::RecoveryState::Active::react(const MNotifyRec& not
 	     << ", calling proc_replica_info and discover_all_missing"
 	     << dendl;
 
-    // a brand new peer
+    // a brand new peer, PG::search_for_missing sent out MOSDPGInfo (i.e. MInfoRec) to drive peer into
+    // ReplicaActive, 
     pg->proc_replica_info(
       notevt.from, notevt.notify.info, notevt.notify.epoch_sent);
 
-    if (pg->have_unfound()) { // have missing objects that can not be recovered
-      // iterate each PG::might_have_unfound to request FULLLOG
+    if (pg->have_unfound()) { // have missing objects that can not be recovered, try non-actingbackfill peers
+      // iterate each PG::might_have_unfound to request FULLLOG, i.e. we want new peers add to
+      // PG::peer_missing
       pg->discover_all_missing(*context< RecoveryMachine >().get_query_map());
     }
   }
@@ -7120,17 +7124,21 @@ boost::statechart::result PG::RecoveryState::Active::react(const MInfoRec& infoe
   PG *pg = context< RecoveryMachine >().pg;
   assert(pg->is_primary());
   assert(!pg->actingbackfill.empty());
+
+  // PG::search_for_missing may send MInfoRec to drive non-actingbackfill stray PG into ReplicaActive, so
+  // here we may receive MInfoRec from non-actingbackfill stray PG
   
   // don't update history (yet) if we are active and primary; the replica
   // may be telling us they have activated (and committed) but we can't
   // share that until _everyone_ does the same.
-  if (pg->is_actingbackfill(infoevt.from)) { // the peer is in PG::actingbackfill set
-    // the peer told us that they have activated
+  if (pg->is_actingbackfill(infoevt.from)) {
+    // the peer told us that they have activated, i.e. activation state has been committed and applied
     dout(10) << " peer osd." << infoevt.from << " activated and committed"
 	     << dendl;
     
-    pg->peer_activated.insert(infoevt.from);
-    pg->blocked_by.erase(infoevt.from.shard);
+    pg->peer_activated.insert(infoevt.from); // the peer has transitted into ReplicaActive
+    pg->blocked_by.erase(infoevt.from.shard); // all members of PG::actingbackfill except me
+    
     pg->publish_stats_to_osd();
 
     if (pg->peer_activated.size() == pg->actingbackfill.size()) {
@@ -7144,24 +7152,27 @@ boost::statechart::result PG::RecoveryState::Active::react(const MInfoRec& infoe
   return discard_event();
 }
 
-// in PG::activate we may have queried FULLLOG to find any possible recovery 
+// in PG::activate we may have queried FULLLOG (via PG::discover_all_missing) to find any possible recovery 
 // source for unfound objects
 boost::statechart::result PG::RecoveryState::Active::react(const MLogRec& logevt)
 {
   dout(10) << "searching osd." << logevt.from
            << " log for unfound items" << dendl;
   PG *pg = context< RecoveryMachine >().pg;
+
+  // add to PG::peer_missing
   pg->proc_replica_log(
     *context<RecoveryMachine>().get_cur_transaction(),
     logevt.msg->info, logevt.msg->log, logevt.msg->missing, logevt.from);
 
-  // check if the peer can be used as a recovery source, and if the peer can
-  // be used as the recovery source, then prepare MOSDPGInfo for it
+  // check this non-actingbackfill members to see if it can be used as a recovery source, 
+  // prepare MOSDPGInfo to drive this stray PG into ReplicaActive
   bool got_missing = pg->search_for_missing(
     pg->peer_info[logevt.from],
     pg->peer_missing[logevt.from],
     logevt.from,
     context< RecoveryMachine >().get_recovery_ctx());
+  
   if (got_missing) // found a recovery source for missing objects
     pg->osd->queue_for_recovery(pg);
 
@@ -7223,9 +7234,8 @@ boost::statechart::result PG::RecoveryState::Active::react(const QueryState& q)
   return forward_event();
 }
 
-// PG::all_activated_and_committed queued the peering evt AllReplicasActivated,
-// actually now we are in substate Activating but the substate can not handle the
-// evt, so the parent state, i.e. Active, handles it
+// PG::all_activated_and_committed called by RecoveryState::Active::react(MInfoRec) or PG::_activate_committed 
+// queued the peering evt AllReplicasActivated, currently we are in substate Activating
 boost::statechart::result PG::RecoveryState::Active::react(const AllReplicasActivated &evt)
 {
   PG *pg = context< RecoveryMachine >().pg;
@@ -7234,9 +7244,11 @@ boost::statechart::result PG::RecoveryState::Active::react(const AllReplicasActi
   // queue an internal evt GoClean
   all_replicas_activated = true;
 
-  pg->state_clear(PG_STATE_ACTIVATING);
-  pg->state_clear(PG_STATE_CREATING);
-  if (pg->acting.size() >= pg->pool.info.min_size) {
+  pg->state_clear(PG_STATE_ACTIVATING); // set in PG::activate, cleared in RecoveryState::Active::exit or here
+  pg->state_clear(PG_STATE_CREATING); // set in RecoveryState::Primary::Primary, cleared in RecoveryState::Primary::exit or here
+
+  // cleared by PG::start_peering_interval previously
+  if (pg->acting.size() >= pg->pool.info.min_size) { // can accept client io now, refer to ReplicatedPG::do_request
     pg->state_set(PG_STATE_ACTIVE);
   } else {
     pg->state_set(PG_STATE_PEERED);
@@ -7307,6 +7319,7 @@ boost::statechart::result PG::RecoveryState::ReplicaActive::react(const Activate
   dout(10) << "In ReplicaActive, about to call activate" << dendl;
   PG *pg = context< RecoveryMachine >().pg;
   map<int, map<spg_t, pg_query_t> > query_map;
+  
   pg->activate(*context< RecoveryMachine >().get_cur_transaction(), // t
 	       actevt.activation_epoch, // activation_epoch
 	       *context< RecoveryMachine >().get_on_safe_context_list(), // tfin, not used
@@ -7336,11 +7349,13 @@ boost::statechart::result PG::RecoveryState::ReplicaActive::react(const MLogRec&
   return discard_event();
 }
 
+// behaves the same as Stray::react(ActMap)
 boost::statechart::result PG::RecoveryState::ReplicaActive::react(const ActMap&)
 {
   PG *pg = context< RecoveryMachine >().pg;
+  
   if (pg->should_send_notify() && pg->get_primary().osd >= 0) {
-    context< RecoveryMachine >().send_notify(
+    context< RecoveryMachine >().send_notify( // MNotifyRec
       pg->get_primary(),
       pg_notify_t(
 	pg->get_primary().shard, pg->pg_whoami.shard,
@@ -7349,6 +7364,7 @@ boost::statechart::result PG::RecoveryState::ReplicaActive::react(const ActMap&)
 	pg->info),
       pg->past_intervals);
   }
+  
   pg->take_waiters();
   return discard_event();
 }
@@ -7509,6 +7525,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MQuery& query)
 boost::statechart::result PG::RecoveryState::Stray::react(const ActMap&)
 {
   PG *pg = context< RecoveryMachine >().pg;
+  
   if (pg->should_send_notify() && pg->get_primary().osd >= 0) { // always send a MOSDPGNotity to current primary PG
     context< RecoveryMachine >().send_notify(
       pg->get_primary(),
@@ -7519,6 +7536,8 @@ boost::statechart::result PG::RecoveryState::Stray::react(const ActMap&)
 	pg->info),
       pg->past_intervals); // PG info + past_intervals
   }
+
+  // requeue peering evts stashed by PG::handle_peering_event
   pg->take_waiters();
 
   // remain in state Stray, can only be changed by evt MLogRec/MInfoRec
