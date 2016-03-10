@@ -146,6 +146,7 @@ class C_clean_handler : public EventCallback {
  public:
   C_clean_handler(AsyncConnectionRef c): conn(c) {}
   void do_request(int id) {
+    // reset all AsyncConnection::xxx_handler
     conn->cleanup_handler();
   }
 };
@@ -1920,8 +1921,9 @@ void AsyncConnection::accept(int incoming)
   sd = incoming;
   state = STATE_ACCEPTING;
   center->create_file_event(sd, EVENT_READABLE, read_handler);
+  
   // rescheduler connection in order to avoid lock dep
-  center->dispatch_event_external(read_handler);
+  center->dispatch_event_external(read_handler); // notify notify_receive_fd
 }
 
 int AsyncConnection::send_message(Message *m)
@@ -2088,23 +2090,27 @@ void AsyncConnection::fault()
 
   // requeue sent items
   requeue_sent();
+  
   recv_start = recv_end = 0;
   state_offset = 0;
   replacing = false;
   is_reset_from_peer = false;
   outcoming_bl.clear();
-  if (!once_ready && !is_queued() &&
-      state >=STATE_ACCEPTING && state <= STATE_ACCEPTING_WAIT_CONNECT_MSG_AUTH) {
+  if (!once_ready && !is_queued() && state >=STATE_ACCEPTING && state <= STATE_ACCEPTING_WAIT_CONNECT_MSG_AUTH) {
+    // non connect side, i.e. we are not client
     ldout(async_msgr->cct, 0) << __func__ << " with nothing to send and in the half "
                               << " accept state just closed, state="
                               << get_state_name(state) << dendl;
+
+    // register an external event
     center->dispatch_event_external(reset_handler);
 
     write_lock.Unlock();
     _stop();
     return ;
   }
-  if (policy.standby && !is_queued()) {
+  
+  if (policy.standby && !is_queued()) { // nothing to send
     ldout(async_msgr->cct,0) << __func__ << " with nothing to send, going to standby" << dendl;
     state = STATE_STANDBY;
     write_lock.Unlock();
@@ -2112,7 +2118,7 @@ void AsyncConnection::fault()
   }
 
   write_lock.Unlock();
-  if (!(state >= STATE_CONNECTING && state < STATE_CONNECTING_READY)) {
+  if (!(state >= STATE_CONNECTING && state < STATE_CONNECTING_READY)) { // we are not in connecting
     // policy maybe empty when state is in accept
     if (policy.server) {
       ldout(async_msgr->cct, 0) << __func__ << " server, going to standby" << dendl;
@@ -2123,12 +2129,12 @@ void AsyncConnection::fault()
       state = STATE_CONNECTING;
     }
     backoff = utime_t();
-  } else {
+  } else { // we are in connecting state
     if (backoff == utime_t()) {
-      backoff.set_from_double(async_msgr->cct->_conf->ms_initial_backoff);
+      backoff.set_from_double(async_msgr->cct->_conf->ms_initial_backoff); // default 0.2
     } else {
       backoff += backoff;
-      if (backoff > async_msgr->cct->_conf->ms_max_backoff)
+      if (backoff > async_msgr->cct->_conf->ms_max_backoff) // default 15.0
         backoff.set_from_double(async_msgr->cct->_conf->ms_max_backoff);
     }
     state = STATE_CONNECTING;
@@ -2136,8 +2142,7 @@ void AsyncConnection::fault()
   }
 
   // woke up again;
-  register_time_events.insert(center->create_time_event(
-          backoff.to_nsec()/1000, wakeup_handler));
+  register_time_events.insert(center->create_time_event(backoff.to_nsec()/1000, wakeup_handler));
 }
 
 void AsyncConnection::was_session_reset()
@@ -2168,11 +2173,14 @@ void AsyncConnection::_stop()
     return ;
 
   ldout(async_msgr->cct, 1) << __func__ << dendl;
+  
   Mutex::Locker l(write_lock);
   if (sd >= 0)
     center->delete_file_event(sd, EVENT_READABLE|EVENT_WRITABLE);
 
   discard_out_queue();
+
+  // register the conn to disconnect in AsyncMessenger::deleted_conns for lazy deletion
   async_msgr->unregister_conn(this);
 
   state = STATE_CLOSED;
@@ -2184,9 +2192,11 @@ void AsyncConnection::_stop()
     ::close(sd);
   }
   sd = -1;
+  
   for (set<uint64_t>::iterator it = register_time_events.begin();
        it != register_time_events.end(); ++it)
     center->delete_time_event(*it);
+
   // Make sure in-queue events will been processed
   center->dispatch_event_external(EventCallbackRef(new C_clean_handler(this)));
 }

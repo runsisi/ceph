@@ -1336,9 +1336,7 @@ void ReplicatedPG::calc_trim_to()
 ReplicatedPG::ReplicatedPG(OSDService *o, OSDMapRef curmap,
 			   const PGPool &_pool, spg_t p) :
   PG(o, curmap, _pool, p),
-  pgbackend(
-    PGBackend::build_pg_backend(
-      _pool.info, curmap, this, coll_t(p), o->store, cct)), // allocate an instance of ReplicatedBackend/ECBackend
+  pgbackend(PGBackend::build_pg_backend(_pool.info, curmap, this, coll_t(p), o->store, cct)), // allocate an instance of ReplicatedBackend/ECBackend
   object_contexts(o->cct, g_conf->osd_pg_object_context_cache_count), // default is 64
   snapset_contexts_lock("ReplicatedPG::snapset_contexts"),
   backfills_in_flight(hobject_t::Comparator(true)),
@@ -9229,7 +9227,7 @@ int ReplicatedPG::recover_missing(
   assert(!recovering.count(soid));
   recovering.insert(make_pair(soid, obc));
 
-  // prepare PullOp/PushOp
+  // prepare pull the hobject_t
   pgbackend->recover_object(
     soid,
     v,
@@ -10141,10 +10139,12 @@ bool ReplicatedPG::start_recovery_ops(
     // Recover the replicas.
     started = recover_replicas(max, handle);
   }
+  
   if (!started) {
     // We still have missing objects that we should grab from replicas.
     started += recover_primary(max, handle);
   }
+  
   if (!started && num_unfound != get_num_unfound()) { // new recovery source added
     // second chance to recovery replicas
     started = recover_replicas(max, handle);
@@ -10159,17 +10159,16 @@ bool ReplicatedPG::start_recovery_ops(
   bool deferred_backfill = false;
   if (recovering.empty() &&
       state_test(PG_STATE_BACKFILL) && // we are in state Backfilling
-      !backfill_targets.empty() && 
+      !backfill_targets.empty() && // have members of up set need to be backfilled
       started < max &&
-      missing.num_missing() == 0 &&
+      missing.num_missing() == 0 && // finished recovery
       waiting_on_backfill.empty()) {
     // recovering finished and we are in state Backfilling, now we are to check
     // if we can start the backfilling right now or defer it
     if (get_osdmap()->test_flag(CEPH_OSDMAP_NOBACKFILL)) {
       dout(10) << "deferring backfill due to NOBACKFILL" << dendl;
       deferred_backfill = true;
-    } else if (get_osdmap()->test_flag(CEPH_OSDMAP_NOREBALANCE) &&
-	       !is_degraded())  {
+    } else if (get_osdmap()->test_flag(CEPH_OSDMAP_NOREBALANCE) && !is_degraded()) {
       dout(10) << "deferring backfill due to NOREBALANCE" << dendl;
       deferred_backfill = true;
     } else if (!backfill_reserved) { // TODO: backfill_reserved is set at the same time as PG_STATE_BACKFILL, so this case if impossible
@@ -10194,8 +10193,7 @@ bool ReplicatedPG::start_recovery_ops(
   dout(10) << " started " << started << dendl;
   osd->logger->inc(l_osd_rop, started);
 
-  if (!recovering.empty() ||
-      work_in_progress || recovery_ops_active > 0 || deferred_backfill)
+  if (!recovering.empty() || work_in_progress || recovery_ops_active > 0 || deferred_backfill)
     // pending/in-progress recovering or pending/in-progress backfilling
     return work_in_progress;
 
@@ -10236,6 +10234,7 @@ bool ReplicatedPG::start_recovery_ops(
 
   if (state_test(PG_STATE_RECOVERING)) { // we are in state Recovering
     state_clear(PG_STATE_RECOVERING);
+    
     if (needs_backfill()) { // peer_info[*].last_backfill != max
       dout(10) << "recovery done, queuing backfill" << dendl;
       queue_peering_event(
@@ -10256,6 +10255,7 @@ bool ReplicatedPG::start_recovery_ops(
   } else { // we are in state Backfilling
     state_clear(PG_STATE_BACKFILL); // can also be cleared by RecoveryState::Backfilling::exit
     dout(10) << "recovery done, backfill done" << dendl;
+    
     queue_peering_event(
       CephPeeringEvtRef(
         new CephPeeringEvt(
@@ -10288,8 +10288,7 @@ int ReplicatedPG::recover_primary(int max, ThreadPool::TPHandle &handle)
   int skipped = 0;
 
   PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op(); // alloc an instance of RPGHandle/ECRecoveryHandle
-  map<version_t, hobject_t>::const_iterator p =
-    missing.rmissing.lower_bound(pg_log.get_log().last_requested);
+  map<version_t, hobject_t>::const_iterator p = missing.rmissing.lower_bound(pg_log.get_log().last_requested);
   while (p != missing.rmissing.end()) { // iterate missing objects
     handle.reset_tp_timeout();
     hobject_t soid;
@@ -10398,6 +10397,7 @@ int ReplicatedPG::recover_primary(int max, ThreadPool::TPHandle &handle)
       if (recovering.count(head)) {
 	++skipped;
       } else {
+        // prepare to pull a single object
 	int r = recover_missing(soid, need, cct->_conf->osd_recovery_op_priority, h); // default is 3
 	switch (r) {
 	case PULL_YES:
@@ -10455,6 +10455,7 @@ int ReplicatedPG::prep_object_replica_pushes(
       if (!peer_missing[peer].is_missing(soid, v)) {
         // the missing object may can be recovered from the replicas
 	missing_loc.add_location(soid, peer);
+        
 	dout(10) << info.pgid << " unexpectedly missing " << soid << " v" << v
 		 << ", there should be a copy on shard " << peer << dendl;
 	uhoh = false; // replica has it
@@ -10472,7 +10473,7 @@ int ReplicatedPG::prep_object_replica_pushes(
 
   // ok, the object exists on disk
 
-  if (!obc->get_recovery_read()) {
+  if (!obc->get_recovery_read()) { // get read lock failed
     // have pending ops or currently has write/excl holder, waiting for the next try
     dout(20) << "recovery delayed on " << soid
 	     << "; could not get rw_manager lock" << dendl;
@@ -10482,7 +10483,7 @@ int ReplicatedPG::prep_object_replica_pushes(
 	     << dendl;
   }
 
-  // inc PG::recovery_ops_active and OSD::recovery_ops_active each by one
+  // inc counter of PG::recovery_ops_active and OSD::recovery_ops_active
   start_recovery_op(soid);
   
   assert(!recovering.count(soid));
@@ -10495,7 +10496,7 @@ int ReplicatedPG::prep_object_replica_pushes(
    */
   obc->ondisk_read_lock(); // wait in-progress write to finish
 
-  // prepare pull/push ops
+  // prepare push single hobject_t
   pgbackend->recover_object(
     soid,
     v,
@@ -10503,7 +10504,7 @@ int ReplicatedPG::prep_object_replica_pushes(
     obc, // has snapset context
     h);
   
-  obc->ondisk_read_unlock();
+  obc->ondisk_read_unlock(); // release read lock
   return 1;
 }
 
@@ -10516,10 +10517,12 @@ int ReplicatedPG::recover_replicas(int max, ThreadPool::TPHandle &handle)
 
   // this is FAR from an optimal recovery order.  pretty lame, really.
   assert(!actingbackfill.empty());
+  
   for (set<pg_shard_t>::iterator i = actingbackfill.begin();
        i != actingbackfill.end();
-       ++i) { // iterate each shard and exclude myself
+       ++i) { // iterate each member and exclude myself
     if (*i == get_primary()) continue;
+    
     pg_shard_t peer = *i;
     map<pg_shard_t, pg_missing_t>::const_iterator pm = peer_missing.find(peer);
     assert(pm != peer_missing.end());
@@ -10534,7 +10537,7 @@ int ReplicatedPG::recover_replicas(int max, ThreadPool::TPHandle &handle)
     const pg_missing_t &m(pm->second);
     for (map<version_t, hobject_t>::const_iterator p = m.rmissing.begin();
 	   p != m.rmissing.end() && started < max;
-	   ++p) { // iterate each missing object
+	   ++p) { // iterate each missing object of peer
       handle.reset_tp_timeout();
       const hobject_t soid(p->second); // missing object to handle
 
@@ -10580,7 +10583,7 @@ int ReplicatedPG::recover_replicas(int max, ThreadPool::TPHandle &handle)
       map<hobject_t,pg_missing_t::item, hobject_t::ComparatorWithDefault>::const_iterator r = m.missing.find(soid);
 
       // prepare 0/1 PushOp
-      started += prep_object_replica_pushes(soid, r->second.need, h);
+      started += prep_object_replica_pushes(soid, r->second.need, h); // insert into ReplicatedPG::recovering
     }
   }
 

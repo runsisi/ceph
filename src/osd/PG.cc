@@ -6543,6 +6543,7 @@ void PG::RecoveryState::RepNotRecovering::exit()
 }
 
 /*---RepWaitRecoveryReserved--*/
+// silently transitted from state RepNotRecovering by peering evt RequestRecovery
 PG::RecoveryState::RepWaitRecoveryReserved::RepWaitRecoveryReserved(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg->cct, "Started/ReplicaActive/RepWaitRecoveryReserved")
@@ -6562,13 +6563,15 @@ boost::statechart::result
 PG::RecoveryState::RepWaitRecoveryReserved::react(const RemoteRecoveryReserved &evt)
 {
   PG *pg = context< RecoveryMachine >().pg;
+  
   pg->osd->send_message_osd_cluster(
     pg->primary.osd,
     new MRecoveryReserve(
       MRecoveryReserve::GRANT,
       spg_t(pg->info.pgid.pgid, pg->primary.shard),
       pg->get_osdmap()->get_epoch()),
-    pg->get_osdmap()->get_epoch());
+    pg->get_osdmap()->get_epoch()); // on peer side: queue peering evt RemoteRecoveryReserved, then reserve the next PG shard
+    
   return transit<RepRecovering>();
 }
 
@@ -6719,7 +6722,7 @@ PG::RecoveryState::WaitLocalRecoveryReserved::WaitLocalRecoveryReserved(my_conte
     pg->info.pgid,
     new QueuePeeringEvt<LocalRecoveryReserved>(
       pg, pg->get_osdmap()->get_epoch(),
-      LocalRecoveryReserved()),
+      LocalRecoveryReserved()), // silently transit into WaitRemoteRecoveryReserved
     pg->get_recovery_priority()); // a const priority value
 }
 
@@ -6737,6 +6740,9 @@ PG::RecoveryState::WaitRemoteRecoveryReserved::WaitRemoteRecoveryReserved(my_con
     remote_recovery_reservation_it(context< Active >().remote_shards_to_reserve_recovery.begin())
 {
   context< RecoveryMachine >().log_enter(state_name);
+
+  // we have not reserved any remote peer yet, but we pretend that we have reserved from one remote peer and let
+  // the state machine to drive us to send the initial reserver request, so, just for code reuse
   post_event(RemoteRecoveryReserved());
 }
 
@@ -6744,6 +6750,8 @@ boost::statechart::result
 PG::RecoveryState::WaitRemoteRecoveryReserved::react(const RemoteRecoveryReserved &evt) {
   PG *pg = context< RecoveryMachine >().pg;
 
+  // remote_shards_to_reserve_recovery and remote_shards_to_reserve_backfill are members of Active
+  // both initialized in ctor of RecoveryState::Active::Active
   if (remote_recovery_reservation_it != context< Active >().remote_shards_to_reserve_recovery.end()) {
     assert(*remote_recovery_reservation_it != pg->pg_whoami);
   }
@@ -6756,12 +6764,13 @@ PG::RecoveryState::WaitRemoteRecoveryReserved::react(const RemoteRecoveryReserve
         new MRecoveryReserve(
 	  MRecoveryReserve::REQUEST,
 	  spg_t(pg->info.pgid.pgid, remote_recovery_reservation_it->shard),
-	  pg->get_osdmap()->get_epoch()),
+	  pg->get_osdmap()->get_epoch()), // on peer side: queue peering evt RequestRecovery, then transit into RepWaitRecoveryReserved
 	con.get());
     }
-    ++remote_recovery_reservation_it;
-  } else {
-    post_event(AllRemotesReserved());
+    
+    ++remote_recovery_reservation_it; // next PG shard on different OSD
+  } else { // ok, all remote peers have been reserved, they are in state 
+    post_event(AllRemotesReserved()); // sliently transit into Recovering
   }
   return discard_event();
 }
@@ -6783,6 +6792,7 @@ PG::RecoveryState::Recovering::Recovering(my_context ctx)
   PG *pg = context< RecoveryMachine >().pg;
   pg->state_clear(PG_STATE_RECOVERY_WAIT);
   pg->state_set(PG_STATE_RECOVERING);
+  
   pg->osd->queue_for_recovery(pg);
 }
 
@@ -6806,7 +6816,7 @@ void PG::RecoveryState::Recovering::release_reservations()
 	  MRecoveryReserve::RELEASE,
 	  spg_t(pg->info.pgid.pgid, i->shard),
 	  pg->get_osdmap()->get_epoch()),
-	con.get());
+	con.get()); // on peer side: queue peering evt RecoveryDone, then transit into RepNotRecovering
     }
   }
 }
@@ -6934,11 +6944,11 @@ PG::RecoveryState::Active::Active(my_context ctx)
     NamedState(context< RecoveryMachine >().pg->cct, "Started/Primary/Active"),
     remote_shards_to_reserve_recovery( // const set<pg_shard_t>
       unique_osd_shard_set(
-	context< RecoveryMachine >().pg->pg_whoami, // skip
+	context< RecoveryMachine >().pg->pg_whoami, // skip myself
 	context< RecoveryMachine >().pg->actingbackfill)),
     remote_shards_to_reserve_backfill( // const set<pg_shard_t>
       unique_osd_shard_set(
-	context< RecoveryMachine >().pg->pg_whoami, // skip
+	context< RecoveryMachine >().pg->pg_whoami, // skip myself
 	context< RecoveryMachine >().pg->backfill_targets)),
     all_replicas_activated(false)
 {
@@ -7305,6 +7315,8 @@ void PG::RecoveryState::Active::exit()
   pg->agent_stop();
 }
 
+// RepNotRecovering is the initial substate of ReplicaActive
+
 /*------ReplicaActive-----*/
 PG::RecoveryState::ReplicaActive::ReplicaActive(my_context ctx)
   : my_base(ctx),
@@ -7468,7 +7480,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MLogRec& logevt)
   assert(pg->pg_log.get_head() == pg->info.last_update);
 
   post_event(Activate(logevt.msg->info.last_epoch_started));
-  return transit<ReplicaActive>();
+  return transit<ReplicaActive>(); // directly transit into substate RepNotRecovering
 }
 
 // 1) primary shard of this pg sends us MOSDPGInfo in PG::activate if the primary
@@ -7492,7 +7504,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MInfoRec& infoev
   assert(pg->pg_log.get_head() == pg->info.last_update);
 
   post_event(Activate(infoevt.info.last_epoch_started));
-  return transit<ReplicaActive>();
+  return transit<ReplicaActive>(); // directly transit into substate RepNotRecovering
 }
 
 // the primary shard send us the pg_query_t::INFO in

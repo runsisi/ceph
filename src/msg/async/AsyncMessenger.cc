@@ -322,10 +322,12 @@ WorkerPool::WorkerPool(CephContext *c): cct(c), seq(0), started(false),
                                         barrier_count(0)
 {
   assert(cct->_conf->ms_async_op_threads > 0);
-  for (int i = 0; i < cct->_conf->ms_async_op_threads; ++i) {
+  
+  for (int i = 0; i < cct->_conf->ms_async_op_threads; ++i) { // default 2
     Worker *w = new Worker(cct, this, i);
     workers.push_back(w);
   }
+  
   vector<string> corestrs;
   get_str_vec(cct->_conf->ms_async_affinity_cores, corestrs);
   for (vector<string>::iterator it = corestrs.begin();
@@ -393,7 +395,9 @@ AsyncMessenger::AsyncMessenger(CephContext *cct, entity_name_t name,
     cluster_protocol(0), stopped(true)
 {
   ceph_spin_init(&global_seq_lock);
+  // WorkerPool is singletion across all AsyncMessenger(s)
   cct->lookup_or_create_singleton_object<WorkerPool>(pool, WorkerPool::name);
+  
   Worker *w = pool->get_worker();
   local_connection = new AsyncConnection(cct, this, &w->center, w->get_perf_counter());
   local_features = features;

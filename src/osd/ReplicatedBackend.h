@@ -26,6 +26,7 @@ class ReplicatedBackend : public PGBackend {
     map<pg_shard_t, vector<PushOp> > pushes;
     map<pg_shard_t, vector<PullOp> > pulls;
   };
+  
   friend struct C_ReplicatedBackend_OnPullComplete;
 public:
   CephContext *cct;

@@ -1,4 +1,4 @@
-// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*- 
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 /*
  * Ceph - scalable distributed file system
@@ -7,9 +7,9 @@
  *
  * This is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
- * License version 2.1, as published by the Free Software 
+ * License version 2.1, as published by the Free Software
  * Foundation.  See file COPYING.
- * 
+ *
  */
 
 
@@ -196,7 +196,7 @@ class interval_set {
     }
     return p;
   }
-  
+
   typename map<T,T>::iterator find_inc_m(T start) {
     typename map<T,T>::iterator p = m.lower_bound(start);
     if (p != m.begin() &&
@@ -207,7 +207,7 @@ class interval_set {
     }
     return p;
   }
-  
+
   typename map<T,T>::const_iterator find_adj(T start) const {
     typename map<T,T>::const_iterator p = m.lower_bound(start);
     if (p != m.begin() &&
@@ -218,18 +218,20 @@ class interval_set {
     }
     return p;
   }
-  
+
   typename map<T,T>::iterator find_adj_m(T start) {
-    typename map<T,T>::iterator p = m.lower_bound(start);
-    if (p != m.begin() &&
-        (p == m.end() || p->first > start)) {
+    typename map<T,T>::iterator p = m.lower_bound(start); // the first key >= start
+
+    if (p != m.begin() && (p == m.end() || p->first > start)) {
       p--;   // might touch?
-      if (p->first + p->second < start)
+
+      if (p->first + p->second < start) // off + len < new off
         p++; // it doesn't.
     }
+
     return p;
   }
-  
+
  public:
   bool operator==(const interval_set& other) const {
     return _size == other._size && m == other.m;
@@ -328,39 +330,39 @@ class interval_set {
     typename map<T,T>::const_iterator p = find_inc(start);
     return p->first+p->second;
   }
-  
+
   void insert(T val) {
     insert(val, 1);
   }
 
-  void insert(T start, T len) {
+  void insert(T start, T len) { // prepend or append or insert new interval
     //cout << "insert " << start << "~" << len << endl;
     assert(len > 0);
     _size += len;
-    typename map<T,T>::iterator p = find_adj_m(start);
-    if (p == m.end()) {
+    typename map<T,T>::iterator p = find_adj_m(start); // find a position for new off
+
+    if (p == m.end()) { // new interval
       m[start] = len;                  // new interval
     } else {
-      if (p->first < start) {
-        
+      if (p->first < start) { // combine with this interval and possible the next interval
+
         if (p->first + p->second != start) {
           //cout << "p is " << p->first << "~" << p->second << ", start is " << start << ", len is " << len << endl;
           assert(0);
         }
-        
-        assert(p->first + p->second == start);
+
+        assert(p->first + p->second == start); // combine with this interval
         p->second += len;               // append to end
-        
+
         typename map<T,T>::iterator n = p;
         n++;
-        if (n != m.end() && 
-            start+len == n->first) {   // combine with next, too!
+        if (n != m.end() && start+len == n->first) {   // combine with next, too!
           p->second += n->second;
           m.erase(n);
         }
-      } else {
+      } else { // start <= p->first
         if (start+len == p->first) {
-          m[start] = len + p->second;  // append to front 
+          m[start] = len + p->second;  // append to front
           m.erase(p);
         } else {
           assert(p->first > start+len);
@@ -375,8 +377,8 @@ class interval_set {
     int64_t t = _size;
     _size = other._size;
     other._size = t;
-  }    
-  
+  }
+
   void erase(iterator &i) {
     _size -= i.get_len();
     assert(_size >= 0);
@@ -399,8 +401,8 @@ class interval_set {
     T before = start - p->first;
     assert(p->second >= before+len);
     T after = p->second - before - len;
-    
-    if (before) 
+
+    if (before)
       p->second = before;        // shorten bit before
     else
       m.erase(p);
@@ -431,12 +433,12 @@ class interval_set {
 
     typename map<T,T>::const_iterator pa = a.m.begin();
     typename map<T,T>::const_iterator pb = b.m.begin();
-    
+
     while (pa != a.m.end() && pb != b.m.end()) {
       // passing?
-      if (pa->first + pa->second <= pb->first) 
+      if (pa->first + pa->second <= pb->first)
         { pa++;  continue; }
-      if (pb->first + pb->second <= pa->first) 
+      if (pb->first + pb->second <= pa->first)
         { pb++;  continue; }
       T start = MAX(pa->first, pb->first);
       T en = MIN(pa->first+pa->second, pb->first+pb->second);
@@ -445,7 +447,7 @@ class interval_set {
       if (pa->first+pa->second > pb->first+pb->second)
         pb++;
       else
-        pa++; 
+        pa++;
     }
   }
   void intersection_of(const interval_set& b) {
@@ -458,7 +460,7 @@ class interval_set {
     assert(&a != this);
     assert(&b != this);
     clear();
-    
+
     //cout << "union_of" << endl;
 
     // a
@@ -476,17 +478,17 @@ class interval_set {
   }
   void union_of(const interval_set &b) {
     interval_set a;
-    swap(a);    
+    swap(a);
     union_of(a, b);
   }
 
   bool subset_of(const interval_set &big) const {
     for (typename map<T,T>::const_iterator i = m.begin();
          i != m.end();
-         i++) 
+         i++)
       if (!big.contains(i->first, i->second)) return false;
     return true;
-  }  
+  }
 
   /*
    * build a subset of @other, starting at or after @start, and including

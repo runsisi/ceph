@@ -120,7 +120,7 @@ class EventCenter {
     assert(fd < nevent);
     FileEvent *p = &file_events[fd];
     if (!p->mask)
-      new(p) FileEvent();
+      new(p) FileEvent(); // reinitialize p
     return p;
   }
 

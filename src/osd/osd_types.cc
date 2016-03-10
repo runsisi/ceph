@@ -5027,7 +5027,7 @@ uint64_t PushOp::cost(CephContext *cct) const
        ++i) {
     cost += i->second.length();
   }
-  cost += cct->_conf->osd_push_per_object_cost;
+  cost += cct->_conf->osd_push_per_object_cost; // default 1000
   return cost;
 }
 

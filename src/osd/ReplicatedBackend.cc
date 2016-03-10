@@ -72,11 +72,16 @@ void ReplicatedBackend::run_recovery_op(
   int priority)
 {
   RPGHandle *h = static_cast<RPGHandle *>(_h);
+  
   send_pushes(priority, h->pushes);
   send_pulls(priority, h->pulls);
+  
   delete h;
 }
 
+// called by ReplicatedPG::recover_missing, pull
+// ReplicatedPG::prep_object_replica_pushes, push
+// ReplicatedPG::prep_backfill_object_push
 void ReplicatedBackend::recover_object(
   const hobject_t &hoid,
   eversion_t v,
@@ -87,7 +92,8 @@ void ReplicatedBackend::recover_object(
 {
   dout(10) << __func__ << ": " << hoid << dendl;
   RPGHandle *h = static_cast<RPGHandle *>(_h);
-  if (get_parent()->get_local_missing().is_missing(hoid)) { // the object is missing on primary
+  
+  if (get_parent()->get_local_missing().is_missing(hoid)) { // missing on primary, pull
     assert(!obc);
     // pull
     prepare_pull(
@@ -96,9 +102,9 @@ void ReplicatedBackend::recover_object(
       head, // ObjectContext for head/snapdir object, only needed for recovering snapshot object
       h);
     return;
-  } else { // the object is missing on replicas
+  } else { // missing on peer, push
     assert(obc);
-    int started = start_pushes(
+    int started = start_pushes( // prepare PushInfo and PushOp for specific hobject_t to members of actingbackfill
       hoid,
       obc,
       h);
@@ -1396,36 +1402,38 @@ void ReplicatedBackend::calc_head_subsets(
     return;
   }
 
-  if (!cct->_conf->osd_recover_clone_overlap) {
+  if (!cct->_conf->osd_recover_clone_overlap) { // default true
     dout(10) << "calc_head_subsets " << head << " -- osd_recover_clone_overlap disabled" << dendl;
     return;
   }
 
-
   interval_set<uint64_t> cloning;
   interval_set<uint64_t> prev;
+  
   if (size)
     prev.insert(0, size);
 
   for (int j=snapset.clones.size()-1; j>=0; j--) {
     hobject_t c = head;
     c.snap = snapset.clones[j];
+    
     prev.intersection_of(snapset.clone_overlap[snapset.clones[j]]);
-    if (!missing.is_missing(c) &&
-	cmp(c, last_backfill, get_parent()->sort_bitwise()) < 0) {
+    if (!missing.is_missing(c) && cmp(c, last_backfill, get_parent()->sort_bitwise()) < 0) {
       dout(10) << "calc_head_subsets " << head << " has prev " << c
 	       << " overlap " << prev << dendl;
+      
       clone_subsets[c] = prev;
       cloning.union_of(prev);
       break;
     }
+    
     dout(10) << "calc_head_subsets " << head << " does not have prev " << c
 	     << " overlap " << prev << dendl;
   }
 
-
-  if (cloning.num_intervals() > cct->_conf->osd_recover_clone_overlap_limit) {
+  if (cloning.num_intervals() > cct->_conf->osd_recover_clone_overlap_limit) { // default 10
     dout(10) << "skipping clone, too many holes" << dendl;
+    
     clone_subsets.clear();
     cloning.clear();
   }
@@ -1452,38 +1460,43 @@ void ReplicatedBackend::calc_clone_subsets(
   if (size)
     data_subset.insert(0, size);
 
-  if (get_parent()->get_pool().allow_incomplete_clones()) {
+  if (get_parent()->get_pool().allow_incomplete_clones()) { // TODO: ???
     dout(10) << __func__ << ": caching (was) enabled, skipping clone subsets" << dendl;
     return;
   }
 
-  if (!cct->_conf->osd_recover_clone_overlap) {
+  if (!cct->_conf->osd_recover_clone_overlap) { // default true
     dout(10) << "calc_clone_subsets " << soid << " -- osd_recover_clone_overlap disabled" << dendl;
     return;
   }
 
   unsigned i;
-  for (i=0; i < snapset.clones.size(); i++)
+  for (i=0; i < snapset.clones.size(); i++) // get the index in SnapSet::clones
     if (snapset.clones[i] == soid.snap)
       break;
 
   // any overlap with next older clone?
   interval_set<uint64_t> cloning;
   interval_set<uint64_t> prev;
+  
   if (size)
     prev.insert(0, size);
-  for (int j=i-1; j>=0; j--) {
+  
+  for (int j=i-1; j>=0; j--) { // iterate the older snap object
     hobject_t c = soid;
     c.snap = snapset.clones[j];
+    
     prev.intersection_of(snapset.clone_overlap[snapset.clones[j]]);
-    if (!missing.is_missing(c) &&
-	cmp(c, last_backfill, get_parent()->sort_bitwise()) < 0) {
+    
+    if (!missing.is_missing(c) && cmp(c, last_backfill, get_parent()->sort_bitwise()) < 0) {
       dout(10) << "calc_clone_subsets " << soid << " has prev " << c
 	       << " overlap " << prev << dendl;
+      
       clone_subsets[c] = prev;
       cloning.union_of(prev);
       break;
     }
+    
     dout(10) << "calc_clone_subsets " << soid << " does not have prev " << c
 	     << " overlap " << prev << dendl;
   }
@@ -1500,15 +1513,17 @@ void ReplicatedBackend::calc_clone_subsets(
 	cmp(c, last_backfill, get_parent()->sort_bitwise()) < 0) {
       dout(10) << "calc_clone_subsets " << soid << " has next " << c
 	       << " overlap " << next << dendl;
+      
       clone_subsets[c] = next;
       cloning.union_of(next);
       break;
     }
+    
     dout(10) << "calc_clone_subsets " << soid << " does not have next " << c
 	     << " overlap " << next << dendl;
   }
 
-  if (cloning.num_intervals() > cct->_conf->osd_recover_clone_overlap_limit) {
+  if (cloning.num_intervals() > cct->_conf->osd_recover_clone_overlap_limit) { // default 10
     dout(10) << "skipping clone, too many holes" << dendl;
     clone_subsets.clear();
     cloning.clear();
@@ -1556,11 +1571,13 @@ void ReplicatedBackend::prepare_pull(
 
   assert(peer_missing.count(fromshard));
   const pg_missing_t &pmissing = peer_missing.find(fromshard)->second;
+  
   if (pmissing.is_missing(soid, v)) { // the missing object's version the peer need <= v (we need), i.e. we have longer pg log
     assert(pmissing.missing.find(soid)->second.have != v);
     dout(10) << "pulling soid " << soid << " from osd " << fromshard
 	     << " at version " << pmissing.missing.find(soid)->second.have
 	     << " rather than at version " << v << dendl;
+    
     v = pmissing.missing.find(soid)->second.have; // the object version the peer has
     assert(get_parent()->get_log().get_log().objects.count(soid) &&
 	   (get_parent()->get_log().get_log().objects.find(soid)->second->op ==
@@ -1577,10 +1594,12 @@ void ReplicatedBackend::prepare_pull(
 	   !get_parent()->get_local_missing().is_missing(
 	     soid.get_snapdir()));
     assert(headctx);
+    
     // check snapset
     SnapSetContext *ssc = headctx->ssc;
     assert(ssc);
     dout(10) << " snapset " << ssc->snapset << dendl;
+    
     calc_clone_subsets(ssc->snapset, soid, get_parent()->get_local_missing(),
 		       get_info().last_backfill,
 		       recovery_info.copy_subset,
@@ -1597,10 +1616,12 @@ void ReplicatedBackend::prepare_pull(
     recovery_info.size = ((uint64_t)-1);
   }
 
+  // will be sent later by ReplicatedBackend::run_recovery_op
   h->pulls[fromshard].push_back(PullOp());
+  
   PullOp &op = h->pulls[fromshard].back();
+  
   op.soid = soid;
-
   op.recovery_info = recovery_info;
   op.recovery_info.soid = soid;
   op.recovery_info.version = v;
@@ -1637,7 +1658,7 @@ void ReplicatedBackend::prep_push_to_replica(
   interval_set<uint64_t> data_subset;
 
   // are we doing a clone on the replica?
-  if (soid.snap && soid.snap < CEPH_NOSNAP) {
+  if (soid.snap && soid.snap < CEPH_NOSNAP) { // snap object
     hobject_t head = soid;
     head.snap = CEPH_NOSNAP;
 
@@ -1645,36 +1666,41 @@ void ReplicatedBackend::prep_push_to_replica(
     // we need the head (and current SnapSet) locally to do that.
     if (get_parent()->get_local_missing().is_missing(head)) {
       dout(15) << "push_to_replica missing head " << head << ", pushing raw clone" << dendl;
+      
       return prep_push(obc, soid, peer, pop);
     }
     
     hobject_t snapdir = head;
     snapdir.snap = CEPH_SNAPDIR;
+    
     if (get_parent()->get_local_missing().is_missing(snapdir)) {
       dout(15) << "push_to_replica missing snapdir " << snapdir
 	       << ", pushing raw clone" << dendl;
+      
       return prep_push(obc, soid, peer, pop);
     }
+
+    // snap object, both head and snapdir objects exist
 
     SnapSetContext *ssc = obc->ssc;
     assert(ssc);
     dout(15) << "push_to_replica snapset is " << ssc->snapset << dendl;
-    map<pg_shard_t, pg_missing_t>::const_iterator pm =
-      get_parent()->get_shard_missing().find(peer);
+    map<pg_shard_t, pg_missing_t>::const_iterator pm = get_parent()->get_shard_missing().find(peer);
     assert(pm != get_parent()->get_shard_missing().end());
-    map<pg_shard_t, pg_info_t>::const_iterator pi =
-      get_parent()->get_shard_info().find(peer);
+    map<pg_shard_t, pg_info_t>::const_iterator pi = get_parent()->get_shard_info().find(peer);
     assert(pi != get_parent()->get_shard_info().end());
+    
     calc_clone_subsets(ssc->snapset, soid,
 		       pm->second,
 		       pi->second.last_backfill,
 		       data_subset, clone_subsets);
-  } else if (soid.snap == CEPH_NOSNAP) {
+  } else if (soid.snap == CEPH_NOSNAP) { // non-snap object
     // pushing head or unversioned object.
     // base this on partially on replica's clones?
     SnapSetContext *ssc = obc->ssc;
     assert(ssc);
     dout(15) << "push_to_replica snapset is " << ssc->snapset << dendl;
+    
     calc_head_subsets(
       obc,
       ssc->snapset, soid, get_parent()->get_shard_missing().find(peer)->second,
@@ -1682,7 +1708,9 @@ void ReplicatedBackend::prep_push_to_replica(
       data_subset, clone_subsets);
   }
 
-  // setup a PushOp and register the PushInfo in ReplicatedBackend::pushing
+  // 1) head object or 2) snap object with both head and snapdir exist
+
+  // setup the PushOp and register the PushInfo in ReplicatedBackend::pushing
   prep_push(obc, soid, peer, oi.version, data_subset, clone_subsets, pop, cache_dont_need);
 }
 
@@ -1693,8 +1721,11 @@ void ReplicatedBackend::prep_push(ObjectContextRef obc,
   interval_set<uint64_t> data_subset;
   if (obc->obs.oi.size)
     data_subset.insert(0, obc->obs.oi.size);
+  
   map<hobject_t, interval_set<uint64_t>, hobject_t::BitwiseComparator> clone_subsets;
 
+  // register a PushInfo in ReplicatedBackend::pushing[hobject_t][pg_shard_t] and build a PushOp, an object push
+  // for a peer may consume multiple PushOp, so we need a progress indicator in PushInfo
   prep_push(obc, soid, peer,
 	    obc->obs.oi.version, data_subset, clone_subsets,
 	    pop);
@@ -1726,13 +1757,15 @@ void ReplicatedBackend::prep_push(
   pi.recovery_progress.omap_complete = 0;
 
   ObjectRecoveryProgress new_progress;
-  // setup PushOp and progress
-  int r = build_push_op(pi.recovery_info, // const
-			pi.recovery_progress, // const
+  
+  // setup PushOp and progress of the overall push
+  int r = build_push_op(pi.recovery_info, // const, recovery_info.clone_subset is not used
+			pi.recovery_progress, // const, the last progress
 			&new_progress,
 			pop,
 			&(pi.stat), cache_dont_need);
   assert(r == 0);
+  
   pi.recovery_progress = new_progress; // set initial progress
 }
 
@@ -2009,12 +2042,13 @@ void ReplicatedBackend::send_pushes(int prio, map<pg_shard_t, vector<PushOp> > &
 {
   for (map<pg_shard_t, vector<PushOp> >::iterator i = pushes.begin();
        i != pushes.end();
-       ++i) { // iterate pg shard
+       ++i) { // iterate pg shards
     ConnectionRef con = get_parent()->get_con_osd_cluster(
       i->first.osd,
       get_osdmap()->get_epoch());
     if (!con)
       continue;
+    
     vector<PushOp>::iterator j = i->second.begin();
     while (j != i->second.end()) { // iterate PushOp and may construct multiple MOSDPGPush msgs
       uint64_t cost = 0;
@@ -2031,11 +2065,14 @@ void ReplicatedBackend::send_pushes(int prio, map<pg_shard_t, vector<PushOp> > &
 	   ++j) {
 	dout(20) << __func__ << ": sending push " << *j
 		 << " to osd." << i->first << dendl;
+        
 	cost += j->cost(cct);
 	pushes += 1;
 	msg->pushes.push_back(*j);
       }
-      msg->compute_cost(cct);
+           
+      msg->compute_cost(cct); // TODO: has been calc above
+      
       get_parent()->send_message_osd_cluster(msg, con);
     }
   }
@@ -2051,8 +2088,11 @@ void ReplicatedBackend::send_pulls(int prio, map<pg_shard_t, vector<PullOp> > &p
       get_osdmap()->get_epoch());
     if (!con)
       continue;
+    
     dout(20) << __func__ << ": sending pulls " << i->second
 	     << " to osd." << i->first << dendl;
+
+    // a single MOSDPGPull msg
     MOSDPGPull *msg = new MOSDPGPull();
     msg->from = parent->whoami_shard();
     msg->set_priority(prio);
@@ -2060,6 +2100,7 @@ void ReplicatedBackend::send_pulls(int prio, map<pg_shard_t, vector<PullOp> > &p
     msg->map_epoch = get_osdmap()->get_epoch();
     msg->pulls.swap(i->second);
     msg->compute_cost(cct);
+    
     get_parent()->send_message_osd_cluster(msg, con);
   }
 }
@@ -2104,15 +2145,16 @@ int ReplicatedBackend::build_push_op(const ObjectRecoveryInfo &recovery_info,
   }
 
   uint64_t available = cct->_conf->osd_recovery_max_chunk; // default is 8 << 20
-  if (!progress.omap_complete) {
+  
+  if (!progress.omap_complete) { // copy omap entries
     ObjectMap::ObjectMapIterator iter =
       store->get_omap_iterator(coll, ghobject_t(recovery_info.soid));
     for (iter->lower_bound(progress.omap_recovered_to);
 	 iter->valid();
 	 iter->next()) {
-      if (!out_op->omap_entries.empty() &&
-	  available <= (iter->key().size() + iter->value().length()))
+      if (!out_op->omap_entries.empty() && available <= (iter->key().size() + iter->value().length()))
 	break;
+      
       out_op->omap_entries.insert(make_pair(iter->key(), iter->value()));
 
       if ((iter->key().size() + iter->value().length()) <= available)
@@ -2120,12 +2162,15 @@ int ReplicatedBackend::build_push_op(const ObjectRecoveryInfo &recovery_info,
       else
 	available = 0;
     }
+
+    // check if omap enties copied complete
     if (!iter->valid())
       new_progress.omap_complete = true;
     else
       new_progress.omap_recovered_to = iter->key();
   }
 
+  // recovery_info.copy_subset and recovery_info.clone_subset are set in ReplicatedBackend::prep_push
   if (available > 0) {
     if (!recovery_info.copy_subset.empty()) {
       interval_set<uint64_t> copy_subset = recovery_info.copy_subset;
@@ -2144,8 +2189,9 @@ int ReplicatedBackend::build_push_op(const ObjectRecoveryInfo &recovery_info,
 
         copy_subset.intersection_of(fiemap_included);
       }
-      out_op->data_included.span_of(copy_subset, progress.data_recovered_to,
-                                    available);
+      
+      out_op->data_included.span_of(copy_subset, progress.data_recovered_to, available);
+      
       if (out_op->data_included.empty()) // zero filled section, skip to end!
         new_progress.data_recovered_to = recovery_info.copy_subset.range_end();
       else
@@ -2162,24 +2208,29 @@ int ReplicatedBackend::build_push_op(const ObjectRecoveryInfo &recovery_info,
     store->read(coll, ghobject_t(recovery_info.soid),
 		p.get_start(), p.get_len(), bit,
                 cache_dont_need ? CEPH_OSD_OP_FLAG_FADVISE_DONTNEED: 0);
+    
     if (p.get_len() != bit.length()) {
       dout(10) << " extent " << p.get_start() << "~" << p.get_len()
 	       << " is actually " << p.get_start() << "~" << bit.length()
 	       << dendl;
+      
       interval_set<uint64_t>::iterator save = p++;
       if (bit.length() == 0)
         out_op->data_included.erase(save);     //Remove this empty interval
       else
         save.set_len(bit.length());
+      
       // Remove any other intervals present
       while (p != out_op->data_included.end()) {
         interval_set<uint64_t>::iterator save = p++;
         out_op->data_included.erase(save);
       }
+      
       new_progress.data_complete = true;
       out_op->data.claim_append(bit);
       break;
     }
+
     out_op->data.claim_append(bit);
   }
 
@@ -2493,24 +2544,23 @@ int ReplicatedBackend::start_pushes(
   int pushes = 0;
   // who needs it?
   assert(get_parent()->get_actingbackfill_shards().size() > 0);
-  for (set<pg_shard_t>::iterator i =
-	 get_parent()->get_actingbackfill_shards().begin();
+  for (set<pg_shard_t>::iterator i = get_parent()->get_actingbackfill_shards().begin();
        i != get_parent()->get_actingbackfill_shards().end();
-       ++i) {
+       ++i) { // iterate actingbackfill
     if (*i == get_parent()->whoami_shard()) continue;
     
     pg_shard_t peer = *i;
-    map<pg_shard_t, pg_missing_t>::const_iterator j =
-      get_parent()->get_shard_missing().find(peer); // PG::peer_missing
+    map<pg_shard_t, pg_missing_t>::const_iterator j = get_parent()->get_shard_missing().find(peer); // PG::peer_missing
     assert(j != get_parent()->get_shard_missing().end());
     
     if (j->second.is_missing(soid)) { // the peer needs the object
       ++pushes;
+
+      // will be sent later by ReplicatedBackend::run_recovery_op
       h->pushes[peer].push_back(PushOp());
 
-      // setup a PushOp
-      prep_push_to_replica(obc, soid, peer,
-			   &(h->pushes[peer].back()), h->cache_dont_need);
+      // register a PushInfo and build a PushOp for specific hobject_t and peer
+      prep_push_to_replica(obc, soid, peer, &(h->pushes[peer].back()), h->cache_dont_need);
     }
   }
   return pushes;

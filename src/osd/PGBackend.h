@@ -51,7 +51,7 @@
     * implementation holding a lock and that the callbacks are
     * called under the same locks.
     */
-   class Listener {
+   class Listener { // ReplicatedPG inherts from Listener
    public:
      /// Recovery
 
@@ -228,6 +228,7 @@
 
      virtual ~Listener() {}
    };
+   
    Listener *parent;
    Listener *get_parent() const { return parent; }
    PGBackend(Listener *l, ObjectStore *store, coll_t coll) :

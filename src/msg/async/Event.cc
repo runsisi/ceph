@@ -132,19 +132,23 @@ int EventCenter::create_file_event(int fd, int mask, EventCallbackRef ctxt)
   Mutex::Locker l(file_lock);
   if (fd >= nevent) {
     int new_size = nevent << 2;
+    
     while (fd > new_size)
       new_size <<= 2;
+    
     ldout(cct, 10) << __func__ << " event count exceed " << nevent << ", expand to " << new_size << dendl;
     r = driver->resize_events(new_size);
     if (r < 0) {
       lderr(cct) << __func__ << " event count is exceed." << dendl;
       return -ERANGE;
     }
+    
     FileEvent *new_events = static_cast<FileEvent *>(realloc(file_events, sizeof(FileEvent)*new_size));
     if (!new_events) {
       lderr(cct) << __func__ << " failed to realloc file_events" << cpp_strerror(errno) << dendl;
       return -errno;
     }
+    
     file_events = new_events;
     memset(file_events+nevent, 0, sizeof(FileEvent)*(new_size-nevent));
     nevent = new_size;
@@ -269,7 +273,7 @@ void EventCenter::wakeup()
     ldout(cct, 1) << __func__ << dendl;
     char buf[1];
     buf[0] = 'c';
-    // wake up "event_wait"
+    // wake up "event_wait", refer to EventCenter::init, notify_send_fd and notify_receive_fd are a pair of pipe
     int n = write(notify_send_fd, buf, 1);
     // FIXME ?
     assert(n == 1);
@@ -327,6 +331,7 @@ int EventCenter::process_time_events()
   return processed;
 }
 
+// main procedure for Worker::entry
 int EventCenter::process_events(int timeout_microseconds)
 {
   // Must set owner before looping
@@ -366,7 +371,11 @@ int EventCenter::process_events(int timeout_microseconds)
   ldout(cct, 10) << __func__ << " wait second " << tv.tv_sec << " usec " << tv.tv_usec << dendl;
   vector<FiredFileEvent> fired_events;
   next_time = shortest;
+
+  // wait epoll/kqueue/select event
   numevents = driver->event_wait(fired_events, &tv);
+
+  // handle socket event
   file_lock.Lock();
   for (int j = 0; j < numevents; j++) {
     int rfired = 0;
@@ -400,9 +409,11 @@ int EventCenter::process_events(int timeout_microseconds)
   }
   file_lock.Unlock();
 
+  // handle timer event
   if (trigger_time)
     numevents += process_time_events();
 
+  // handle external event
   external_lock.Lock();
   if (external_events.empty()) {
     external_lock.Unlock();
@@ -410,13 +421,15 @@ int EventCenter::process_events(int timeout_microseconds)
     deque<EventCallbackRef> cur_process;
     cur_process.swap(external_events);
     external_lock.Unlock();
-    while (!cur_process.empty()) {
+    
+    while (!cur_process.empty()) { // handle all previously queued external events
       EventCallbackRef e = cur_process.front();
       if (e)
         e->do_request(0);
       cur_process.pop_front();
     }
   }
+  
   return numevents;
 }
 
@@ -425,5 +438,7 @@ void EventCenter::dispatch_event_external(EventCallbackRef e)
   external_lock.Lock();
   external_events.push_back(e);
   external_lock.Unlock();
+  
+  // notify notify_receive_fd to wake up the EventCenter
   wakeup();
 }
