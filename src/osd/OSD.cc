@@ -8451,7 +8451,7 @@ void OSD::handle_pg_backfill_reserve(OpRequestRef op)
       new PG::CephPeeringEvt(
 	m->query_epoch,
 	m->query_epoch,
-	PG::RemoteReservationRejected()));
+	PG::RemoteReservationRejected())); // will transit into NotBackfilling
   } else {
     assert(0);
   }

@@ -702,7 +702,7 @@ public:
     /// removes items <= soid and adjusts begin to the first object
     void trim_to(const hobject_t &soid) {
       // set BackfillInterval::begin to the first object of BackfillInterval::objects
-      trim(); // TODO: move to below ???
+      trim(); // adjusts begin to the first object
       
       while (!objects.empty() &&
 	     cmp(objects.begin()->first, soid, sort_bitwise) <= 0) {

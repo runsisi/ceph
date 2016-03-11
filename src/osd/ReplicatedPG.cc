@@ -3127,7 +3127,7 @@ void ReplicatedPG::do_scan(
 	    new CephPeeringEvt(
 	      get_osdmap()->get_epoch(),
 	      get_osdmap()->get_epoch(),
-	      BackfillTooFull())));
+	      BackfillTooFull()))); // currently in RepRecovring, will send MBackfillReserve to primary OSD
 	return;
       }
 
@@ -10723,7 +10723,7 @@ int ReplicatedPG::recover_backfill(
   // update our local interval to cope with recent changes
   backfill_info.begin = last_backfill_started;
 
-  // update BackfillInterval::objects and BackfillInterval::version
+  // collect BackfillInterval::objects and update BackfillInterval::version to info.last_update
   update_range(&backfill_info, handle);
 
   int ops = 0;
@@ -10775,6 +10775,7 @@ int ReplicatedPG::recover_backfill(
       BackfillInterval& pbi = peer_backfill_info[bt];
 
       dout(20) << " peer shard " << bt << " backfill " << pbi << dendl;
+      
       if (cmp(pbi.begin, backfill_info.begin, get_sort_bitwise()) <= 0 &&
 	  !pbi.extends_to_end() && pbi.empty()) {
 	dout(10) << " scanning peer osd." << bt << " from " << pbi.end << dendl;
@@ -10798,6 +10799,8 @@ int ReplicatedPG::recover_backfill(
     // Count simultaneous scans as a single op and let those complete
     if (sent_scan) {
       ops++;
+
+      // inc counter
       start_recovery_op(hobject_t::get_max()); // XXX: was pbi.end
       break;
     }
@@ -11101,6 +11104,8 @@ void ReplicatedPG::update_range(
   int local_min = cct->_conf->osd_backfill_scan_min; // default is 64
   int local_max = cct->_conf->osd_backfill_scan_max; // default is 512
 
+  // PG is always changing, we need a mark to note down the last time we collected
+  // this range of objects
   if (bi->version < info.log_tail) {
     dout(10) << __func__<< ": bi is old, rescanning local backfill_info"
 	     << dendl;
@@ -11111,7 +11116,7 @@ void ReplicatedPG::update_range(
       bi->version = info.last_update;
     }
 
-    // setup BackfillInterval::objects
+    // collect BackfillInterval::objects start from bi.begin from backend storage
     scan_range(local_min, local_max, bi, handle); // bi->version is not used here
   }
 
@@ -11135,10 +11140,10 @@ void ReplicatedPG::update_range(
     assert(!pg_log.get_log().empty());
     dout(10) << __func__<< ": bi is old, (" << bi->version
 	     << ") can be updated with log" << dendl;
+    
     list<pg_log_entry_t>::const_iterator i = pg_log.get_log().log.end();
     --i;
-    while (i != pg_log.get_log().log.begin() &&
-           i->version > bi->version) {
+    while (i != pg_log.get_log().log.begin() && i->version > bi->version) {
       --i;
     }
     if (i->version == bi->version)
@@ -11147,10 +11152,11 @@ void ReplicatedPG::update_range(
     assert(i != pg_log.get_log().log.end());
     dout(10) << __func__ << ": updating from version " << i->version
 	     << dendl;
-    for (; i != pg_log.get_log().log.end(); ++i) {
+    
+    for (; i != pg_log.get_log().log.end(); ++i) { // use the latest PGLog to update the scanned range of objects
       const hobject_t &soid = i->soid;
       if (cmp(soid, bi->begin, get_sort_bitwise()) >= 0 &&
-	  cmp(soid, bi->end, get_sort_bitwise()) < 0) {
+	  cmp(soid, bi->end, get_sort_bitwise()) < 0) { // TODO: what about those objects < bi->begin ???
 	if (i->is_update()) {
 	  dout(10) << __func__ << ": " << i->soid << " updated to version "
 		   << i->version << dendl;

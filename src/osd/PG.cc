@@ -6678,7 +6678,7 @@ boost::statechart::result
 PG::RecoveryState::RepRecovering::react(const BackfillTooFull &)
 {
   PG *pg = context< RecoveryMachine >().pg;
-  pg->reject_reservation();
+  pg->reject_reservation(); // send MBackfillReserve to primary OSD
   return discard_event();
 }
 
