@@ -9797,8 +9797,10 @@ void ReplicatedPG::on_activate()
 
   publish_stats_to_osd();
 
-  if (!backfill_targets.empty()) {
-    last_backfill_started = earliest_backfill(); // min(peer_info[*].last_backfill)
+  if (!backfill_targets.empty()) { // there are osds need to be backfilled
+    last_backfill_started = earliest_backfill(); // min(peer_info[*].last_backfill), peers in backfill_targets
+
+    // will be used in ReplicatedPG::recover_backfill
     new_backfill = true;
     
     assert(!last_backfill_started.is_max());
@@ -10287,7 +10289,9 @@ int ReplicatedPG::recover_primary(int max, ThreadPool::TPHandle &handle)
   int started = 0;
   int skipped = 0;
 
+  // will be deleted by ReplicatedBackend::run_recovery_op
   PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op(); // alloc an instance of RPGHandle/ECRecoveryHandle
+
   map<version_t, hobject_t>::const_iterator p = missing.rmissing.lower_bound(pg_log.get_log().last_requested);
   while (p != missing.rmissing.end()) { // iterate missing objects
     handle.reset_tp_timeout();
@@ -10421,7 +10425,7 @@ int ReplicatedPG::recover_primary(int max, ThreadPool::TPHandle &handle)
       pg_log.set_last_requested(v);
   }
 
-  // send_pushes and send_pulls
+  // call send_pulls to send MOSDPGPull
   pgbackend->run_recovery_op(h, cct->_conf->osd_recovery_op_priority); // default is 3
   return started;
 }
@@ -10496,7 +10500,7 @@ int ReplicatedPG::prep_object_replica_pushes(
    */
   obc->ondisk_read_lock(); // wait in-progress write to finish
 
-  // prepare push single hobject_t
+  // prepare push for the specific hobject_t to members of actingbackfill
   pgbackend->recover_object(
     soid,
     v,
@@ -10582,12 +10586,12 @@ int ReplicatedPG::recover_replicas(int max, ThreadPool::TPHandle &handle)
       dout(10) << __func__ << ": recover_object_replicas(" << soid << ")" << dendl;
       map<hobject_t,pg_missing_t::item, hobject_t::ComparatorWithDefault>::const_iterator r = m.missing.find(soid);
 
-      // prepare 0/1 PushOp
+      // prepare a vector of PushOp for a specific object
       started += prep_object_replica_pushes(soid, r->second.need, h); // insert into ReplicatedPG::recovering
     }
   }
 
-  // send_pushes for replicated backend
+  // call send_pushes to send MOSDPGPush
   pgbackend->run_recovery_op(h, cct->_conf->osd_recovery_op_priority); // default is 3
   return started;
 }
@@ -10676,18 +10680,17 @@ int ReplicatedPG::recover_backfill(
     assert(last_backfill_started == earliest_backfill()); // ReplicatedPG::on_activate set it to min(peer_info[*].last_backfill)
     new_backfill = false;
 
-    // initialize BackfillIntervals (with proper sort order)
+    // initialize BackfillIntervals (with proper sort order), members of PG
     for (set<pg_shard_t>::iterator i = backfill_targets.begin();
 	 i != backfill_targets.end();
 	 ++i) { // peer targets, set begin = end = last_backfill
-      peer_backfill_info[*i].reset(peer_info[*i].last_backfill,
-				   get_sort_bitwise());
+      peer_backfill_info[*i].reset(peer_info[*i].last_backfill, get_sort_bitwise());
     }
 
-    // primary, set begin = end = last_backfill_started
+    // begin = end = last_backfill_started, which is the min(last_backfill) of backfill_targets
     backfill_info.reset(last_backfill_started, get_sort_bitwise());
 
-    // initialize comparators
+    // initialize comparators, members of ReplicatedPG
     backfills_in_flight = set<hobject_t, hobject_t::Comparator>(
       hobject_t::Comparator(get_sort_bitwise()));
     pending_backfill_updates = map<hobject_t, pg_stat_t, hobject_t::Comparator>(
@@ -11104,12 +11107,12 @@ void ReplicatedPG::update_range(
     if (last_update_applied >= info.log_tail) {
       bi->version = last_update_applied;
     } else {
-      osr->flush();
+      osr->flush(); // flush currently on-queue FileStore::Op in FileStore::OpSequencer
       bi->version = info.last_update;
     }
 
     // setup BackfillInterval::objects
-    scan_range(local_min, local_max, bi, handle);
+    scan_range(local_min, local_max, bi, handle); // bi->version is not used here
   }
 
   // update BackfillInterval::objects according to the pg log entries
@@ -11180,6 +11183,7 @@ void ReplicatedPG::scan_range(
 
   vector<hobject_t> ls;
   ls.reserve(max);
+  
   // get a vector of objects that min <= ls.size() <= max, and set next start object
   int r = pgbackend->objects_list_partial(bi->begin, min, max, &ls, &bi->end);
   assert(r >= 0);
@@ -11193,7 +11197,7 @@ void ReplicatedPG::scan_range(
     if (is_primary())
       obc = object_contexts.lookup(*p);
     if (obc) {
-      bi->objects[*p] = obc->obs.oi.version;
+      bi->objects[*p] = obc->obs.oi.version; // on disk version
       dout(20) << "  " << *p << " " << obc->obs.oi.version << dendl;
     } else { // try to construct ObjectContext from disk
       bufferlist bl;

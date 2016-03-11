@@ -305,9 +305,10 @@ private:
 
       // get max for journal _or_ op queues
       uint64_t seq = 0;
-      if (!q.empty())
+      if (!q.empty()) // list<Op*>
 	seq = q.back()->op;
-      if (!jq.empty() && jq.back() > seq)
+      
+      if (!jq.empty() && jq.back() > seq) // list<uint64_t>
 	seq = jq.back();
 
       if (seq) {

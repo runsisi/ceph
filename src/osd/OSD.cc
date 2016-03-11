@@ -8907,13 +8907,13 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
     
     int started = 0;
 
-    // do recovering or backfilling
+    // do recovering or backfilling, send MOSDPGPush or MOSDPGPull
     bool more = pg->start_recovery_ops(max, handle, &started);
     
     dout(10) << "do_recovery started " << started << "/" << max << " on " << *pg << dendl;
     
     // If no recovery op is started, don't bother to manipulate the RecoveryCtx
-    if (!started && (more || !pg->have_unfound())) {
+    if (!started && (more || !pg->have_unfound())) { // TODO: 'more' is redundent
       pg->unlock();
       goto out;
     }

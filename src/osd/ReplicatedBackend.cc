@@ -73,8 +73,8 @@ void ReplicatedBackend::run_recovery_op(
 {
   RPGHandle *h = static_cast<RPGHandle *>(_h);
   
-  send_pushes(priority, h->pushes);
-  send_pulls(priority, h->pulls);
+  send_pushes(priority, h->pushes); // MOSDPGPush
+  send_pulls(priority, h->pulls); // MOSDPGPull
   
   delete h;
 }
@@ -2050,7 +2050,7 @@ void ReplicatedBackend::send_pushes(int prio, map<pg_shard_t, vector<PushOp> > &
       continue;
     
     vector<PushOp>::iterator j = i->second.begin();
-    while (j != i->second.end()) { // iterate PushOp and may construct multiple MOSDPGPush msgs
+    while (j != i->second.end()) { // iterate vector<PushOp> and may construct multiple MOSDPGPush msgs
       uint64_t cost = 0;
       uint64_t pushes = 0;
       MOSDPGPush *msg = new MOSDPGPush();
