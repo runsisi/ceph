@@ -3115,7 +3115,7 @@ void ReplicatedPG::do_scan(
   op->mark_started();
 
   switch (m->op) {
-  case MOSDPGScan::OP_SCAN_GET_DIGEST:
+  case MOSDPGScan::OP_SCAN_GET_DIGEST: // sent in ReplicatedPG::recover_backfill
     {
       double ratio, full_ratio;
       if (osd->too_full_for_backfill(&ratio, &full_ratio)) {
@@ -3135,6 +3135,8 @@ void ReplicatedPG::do_scan(
       bi.begin = m->begin;
       // No need to flush, there won't be any in progress writes occuring
       // past m->begin
+
+      // scan start from bi.begin
       scan_range(
 	cct->_conf->osd_backfill_scan_min, // default is 64
 	cct->_conf->osd_backfill_scan_max, // default is 512
@@ -3145,13 +3147,14 @@ void ReplicatedPG::do_scan(
 	MOSDPGScan::OP_SCAN_DIGEST,
 	pg_whoami,
 	get_osdmap()->get_epoch(), m->query_epoch,
-	spg_t(info.pgid.pgid, get_primary().shard), bi.begin, bi.end);
+	spg_t(info.pgid.pgid, get_primary().shard), 
+	bi.begin, bi.end);
       ::encode(bi.objects, reply->get_data());
       osd->send_message_osd_cluster(reply, m->get_connection());
     }
     break;
 
-  case MOSDPGScan::OP_SCAN_DIGEST:
+  case MOSDPGScan::OP_SCAN_DIGEST: // sent by backfill target
     {
       pg_shard_t from = m->from;
 
@@ -3170,6 +3173,8 @@ void ReplicatedPG::do_scan(
       if (waiting_on_backfill.erase(from)) {
 	if (waiting_on_backfill.empty()) {
 	  assert(peer_backfill_info.size() == backfill_targets.size());
+
+          // corresponding to PG::start_recovery_op, dec counters
 	  finish_recovery_op(hobject_t::get_max());
 	}
       } else {
@@ -10623,8 +10628,7 @@ bool ReplicatedPG::all_peer_done() const
        i != backfill_targets.end();
        ++i) {
     pg_shard_t bt = *i;
-    map<pg_shard_t, BackfillInterval>::const_iterator piter =
-      peer_backfill_info.find(bt);
+    map<pg_shard_t, BackfillInterval>::const_iterator piter = peer_backfill_info.find(bt);
     assert(piter != peer_backfill_info.end());
     const BackfillInterval& pbi = piter->second;
     // See if peer has more to process
@@ -10676,7 +10680,6 @@ int ReplicatedPG::recover_backfill(
 
   // Initialize from prior backfill state
   if (new_backfill) { // only be set by ReplicatedPG::on_activate
-    // on_activate() was called prior to getting here
     assert(last_backfill_started == earliest_backfill()); // ReplicatedPG::on_activate set it to min(peer_info[*].last_backfill)
     new_backfill = false;
 
@@ -10747,14 +10750,15 @@ int ReplicatedPG::recover_backfill(
 				    earliest_peer_backfill(), // min BackfillInterval::begin in peers
 				    get_sort_bitwise());
   while (ops < max) {
-    if (cmp(backfill_info.begin, earliest_peer_backfill(), get_sort_bitwise()) <= 0 && // i am lagged behind
-	!backfill_info.extends_to_end() && // end != max
-	backfill_info.empty()) { // no objects
+    if (cmp(backfill_info.begin, earliest_peer_backfill(), get_sort_bitwise()) <= 0 && // peers have made progress
+	!backfill_info.extends_to_end() && // end != max, still have objects to backfill from us
+	backfill_info.empty()) { // no objects, all objects during this interval has been backfilled
+      // the previous backfill interval has been finished, start a new backfill interval
       hobject_t next = backfill_info.end;
       backfill_info.reset(next, get_sort_bitwise()); // begin = end = next
       backfill_info.end = hobject_t::get_max(); // end = max
 
-      // update BackfillInterval::objects and BackfillInterval::version
+      // collect BackfillInterval::objects
       update_range(&backfill_info, handle);
 
       // set BackfillInterval::begin to the first object of BackfillInterval::objects
@@ -10775,7 +10779,8 @@ int ReplicatedPG::recover_backfill(
       BackfillInterval& pbi = peer_backfill_info[bt];
 
       dout(20) << " peer shard " << bt << " backfill " << pbi << dendl;
-      
+
+      // check if this backfill target need to start a new backfill interval
       if (cmp(pbi.begin, backfill_info.begin, get_sort_bitwise()) <= 0 &&
 	  !pbi.extends_to_end() && pbi.empty()) {
 	dout(10) << " scanning peer osd." << bt << " from " << pbi.end << dendl;
@@ -10786,7 +10791,7 @@ int ReplicatedPG::recover_backfill(
 	MOSDPGScan *m = new MOSDPGScan(
 	  MOSDPGScan::OP_SCAN_GET_DIGEST, pg_whoami, e, e,
 	  spg_t(info.pgid.pgid, bt.shard),
-	  pbi.end, // new BackfillInterval starts from the end of last BackfillInterval
+	  pbi.end, // peer will scan a collection of objects start from pbi.end, and send us the new <begin, end>
 	  hobject_t()); // not used when MOSDPGScan used as a request
 	osd->send_message_osd_cluster(bt.osd, m, get_osdmap()->get_epoch());
         
@@ -10800,15 +10805,19 @@ int ReplicatedPG::recover_backfill(
     if (sent_scan) {
       ops++;
 
-      // inc counter
+      // inc counter, will dec in ReplicatedPG::do_scan
       start_recovery_op(hobject_t::get_max()); // XXX: was pbi.end
       break;
     }
+
+    // peers have no need to scan, becz 1) the last scanned interval has not finished, or 2) backfill has finished
 
     if (backfill_info.empty() && all_peer_done()) {
       dout(10) << " reached end for both local and all peers" << dendl;
       break;
     }
+
+    // ok, let's start this backfill interval
 
     // Get object within set of peers to operate on and
     // the set of targets for which that object applies.
@@ -10821,6 +10830,7 @@ int ReplicatedPG::recover_backfill(
 	   ++i) {
         pg_shard_t bt = *i;
         BackfillInterval& pbi = peer_backfill_info[bt];
+        
         if (pbi.begin == check)
           check_targets.insert(bt);
       }
