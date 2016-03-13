@@ -10855,7 +10855,7 @@ int ReplicatedPG::recover_backfill(
       // are cheap and not replied to unlike real recovery_ops,
       // and we can't increment ops without requeueing ourself
       // for recovery.
-    } else { // min(peer_backfill_info[*].begin) >= min(peer_info[*].last_backfill
+    } else { // min(peer_backfill_info[*].begin) >= min(peer_info[*].last_backfill)
       eversion_t& obj_v = backfill_info.objects.begin()->second;
 
       vector<pg_shard_t> need_ver_targs, missing_targs, keep_ver_targs, skip_targs;
