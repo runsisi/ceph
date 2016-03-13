@@ -2460,6 +2460,7 @@ void PG::start_recovery_op(const hobject_t& soid)
   osd->osd->start_recovery_op(this, soid); // inc OSD::recovery_ops_active by one
 }
 
+// 'dequeue' default to false
 void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
 {
   dout(10) << "finish_recovery_op " << soid
@@ -6344,7 +6345,7 @@ PG::RecoveryState::Backfilling::Backfilling(my_context ctx)
   context< RecoveryMachine >().log_enter(state_name);
   PG *pg = context< RecoveryMachine >().pg;
   pg->backfill_reserved = true;
-  pg->osd->queue_for_recovery(pg);
+  pg->osd->queue_for_recovery(pg); // queue PG on OSDService::recovery_wq
   pg->state_clear(PG_STATE_BACKFILL_TOOFULL);
   pg->state_clear(PG_STATE_BACKFILL_WAIT);
   pg->state_set(PG_STATE_BACKFILL);
@@ -6403,7 +6404,7 @@ PG::RecoveryState::WaitRemoteBackfillReserved::WaitRemoteBackfillReserved(my_con
   context< RecoveryMachine >().log_enter(state_name);
   PG *pg = context< RecoveryMachine >().pg;
   pg->state_set(PG_STATE_BACKFILL_WAIT);
-  post_event(RemoteBackfillReserved());
+  post_event(RemoteBackfillReserved()); // silently transit into Backfilling
 }
 
 boost::statechart::result
@@ -6423,7 +6424,7 @@ PG::RecoveryState::WaitRemoteBackfillReserved::react(const RemoteBackfillReserve
 	spg_t(pg->info.pgid.pgid, backfill_osd_it->shard),
 	pg->get_osdmap()->get_epoch(),
 	pg->get_backfill_priority()),
-      con.get());
+      con.get()); // queue RequestBackfillPrio peering evt on other side
     }
     ++backfill_osd_it;
   } else {
@@ -6487,7 +6488,7 @@ PG::RecoveryState::WaitLocalBackfillReserved::WaitLocalBackfillReserved(my_conte
     new QueuePeeringEvt<LocalBackfillReserved>(
       pg, pg->get_osdmap()->get_epoch(),
       LocalBackfillReserved()),
-    pg->get_backfill_priority());
+    pg->get_backfill_priority()); // silently transit into WaitRemoteBackfillReserved
 }
 
 void PG::RecoveryState::WaitLocalBackfillReserved::exit()

@@ -3175,7 +3175,7 @@ void ReplicatedPG::do_scan(
 	  assert(peer_backfill_info.size() == backfill_targets.size());
 
           // corresponding to PG::start_recovery_op, dec counters
-	  finish_recovery_op(hobject_t::get_max());
+	  finish_recovery_op(hobject_t::get_max()); // requeue on front of OSD::recovery_wq
 	}
       } else {
 	// we canceled backfill for a while due to a too full, and this
@@ -10686,11 +10686,12 @@ int ReplicatedPG::recover_backfill(
     // initialize BackfillIntervals (with proper sort order), members of PG
     for (set<pg_shard_t>::iterator i = backfill_targets.begin();
 	 i != backfill_targets.end();
-	 ++i) { // peer targets, set begin = end = last_backfill
+	 ++i) { // peer targets, set begin = end = peer_info[*i].last_backfill
       peer_backfill_info[*i].reset(peer_info[*i].last_backfill, get_sort_bitwise());
     }
 
-    // begin = end = last_backfill_started, which is the min(last_backfill) of backfill_targets
+    // begin = end = last_backfill_started, i.e. min(peer_info[*].last_backfill, 
+    // i.e. min(peer_backfill_info[*i].begin)
     backfill_info.reset(last_backfill_started, get_sort_bitwise());
 
     // initialize comparators, members of ReplicatedPG
@@ -10823,7 +10824,7 @@ int ReplicatedPG::recover_backfill(
     // the set of targets for which that object applies.
     hobject_t check = earliest_peer_backfill(); // min(peer_backfill_info[*].begin)
 
-    // backfill_info.begin has set to last_backfill_started above
+    // backfill_info.begin has set to last_backfill_started (min(peer_info[*].last_backfill)) above
     if (cmp(check, backfill_info.begin, get_sort_bitwise()) < 0) { // min(peer_backfill_info[*].begin) < backfill_info.begin
       set<pg_shard_t> check_targets;
       for (set<pg_shard_t>::iterator i = backfill_targets.begin();
@@ -10847,7 +10848,7 @@ int ReplicatedPG::recover_backfill(
         assert(pbi.begin == check);
 
         to_remove.push_back(boost::make_tuple(check, pbi.objects.begin()->second, bt));
-        pbi.pop_front();
+        pbi.pop_front(); // remove the first object
       }
            
       last_backfill_started = check; // TODO: why ???
@@ -10957,7 +10958,7 @@ int ReplicatedPG::recover_backfill(
     pending_backfill_updates[*i] = stat;
   }
        
-  for (unsigned i = 0; i < to_remove.size(); ++i) {
+  for (unsigned i = 0; i < to_remove.size(); ++i) { // send MOSDSubOp with op = CEPH_OSD_OP_DELETE
     handle.reset_tp_timeout();
 
     // ordered before any subsequent updates
@@ -10975,7 +10976,10 @@ int ReplicatedPG::recover_backfill(
     prep_backfill_object_push(to_push[i].get<0>(), to_push[i].get<1>(),
 	    to_push[i].get<2>(), to_push[i].get<3>(), h);
   }
-  pgbackend->run_recovery_op(h, cct->_conf->osd_recovery_op_priority);
+
+  // call ReplicatedBackend::send_pushes and ReplicatedBackend::send_pulls, the same 
+  // as ReplicatedPG::recover_primary and ReplicatedPG::recover_replicas
+  pgbackend->run_recovery_op(h, cct->_conf->osd_recovery_op_priority); // default 3
 
   dout(5) << "backfill_pos is " << backfill_pos << dendl;
   for (set<hobject_t, hobject_t::Comparator>::iterator i = backfills_in_flight.begin();
@@ -11030,7 +11034,7 @@ int ReplicatedPG::recover_backfill(
     pg_info_t& pinfo = peer_info[bt];
 
     // move forward info.last_backfill for peers
-    if (cmp(new_last_backfill, pinfo.last_backfill, get_sort_bitwise()) > 0) {
+    if (cmp(new_last_backfill, pinfo.last_backfill, get_sort_bitwise()) > 0) { // made progress
       // update pinfo.last_backfill to new_last_backfill locally
       pinfo.set_last_backfill(new_last_backfill, get_sort_bitwise());
 

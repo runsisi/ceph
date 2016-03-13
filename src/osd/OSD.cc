@@ -8991,7 +8991,7 @@ void OSD::finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue)
   recovery_oids[pg->info.pgid].erase(soid);
 #endif
 
-  if (dequeue)
+  if (dequeue) // PG::finish_recovery_op default this parameter to false
     recovery_wq._dequeue(pg);
   else {
     recovery_wq._queue_front(pg);
