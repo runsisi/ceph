@@ -10823,6 +10823,7 @@ int ReplicatedPG::recover_backfill(
     // the set of targets for which that object applies.
     hobject_t check = earliest_peer_backfill(); // min(peer_backfill_info[*].begin)
 
+    // backfill_info.begin has set to last_backfill_started above
     if (cmp(check, backfill_info.begin, get_sort_bitwise()) < 0) { // min(peer_backfill_info[*].begin) < backfill_info.begin
       set<pg_shard_t> check_targets;
       for (set<pg_shard_t>::iterator i = backfill_targets.begin();
@@ -10849,12 +10850,12 @@ int ReplicatedPG::recover_backfill(
         pbi.pop_front();
       }
            
-      last_backfill_started = check;
+      last_backfill_started = check; // TODO: why ???
       // Don't increment ops here because deletions
       // are cheap and not replied to unlike real recovery_ops,
       // and we can't increment ops without requeueing ourself
       // for recovery.
-    } else { // min(peer_backfill_info[*].begin) >= backfill_info.begin
+    } else { // min(peer_backfill_info[*].begin) >= min(peer_info[*].last_backfill
       eversion_t& obj_v = backfill_info.objects.begin()->second;
 
       vector<pg_shard_t> need_ver_targs, missing_targs, keep_ver_targs, skip_targs;
