@@ -7925,7 +7925,8 @@ void OSD::handle_pg_create(OpRequestRef op)
       // create an instance of PG and initialize it, the recovery machine
       // will be initialized to state Initial
       pg = _create_lock_pg(
-	osdmap, pgid, true, false, false,
+	osdmap, pgid, true, false, 
+	false, // backfill
 	0, creating_pgs[pgid].acting, whoami,
 	creating_pgs[pgid].acting, whoami,
 	history, pi,

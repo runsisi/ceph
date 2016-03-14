@@ -1892,7 +1892,7 @@ void PG::activate(ObjectStore::Transaction& t,
 	    get_osdmap()->get_epoch(), // should be (version_t)get_osdmap()->get_epoch()
 	    info);
 	}
-      } else if (
+      } else if ( // refer to PG::init to see info.last_backfill
 	pg_log.get_tail() > pi.last_update ||
 	pi.last_backfill == hobject_t() ||
 	force_restart_backfill ||
@@ -2474,6 +2474,7 @@ void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
   assert(recovering_oids.count(soid));
   recovering_oids.erase(soid);
 #endif
+
   // TODOSAM: osd->osd-> not good
   osd->osd->finish_recovery_op(this, soid, dequeue);
 }
@@ -2955,7 +2956,7 @@ void PG::init(
 
   if (backfill) {
     dout(10) << __func__ << ": Setting backfill" << dendl;
-    info.set_last_backfill(hobject_t(), get_sort_bitwise());
+    info.set_last_backfill(hobject_t(), get_sort_bitwise()); // ctor initialized it to hobject_t::get_max()
     info.last_complete = info.last_update;
     pg_log.mark_log_for_rewrite(); // mark to remove all old pg log entries
   }

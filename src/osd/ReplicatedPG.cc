@@ -10675,19 +10675,18 @@ int ReplicatedPG::recover_backfill(
   assert(!backfill_targets.empty());
 
   // Initialize from prior backfill state
-  if (new_backfill) { // only be set by ReplicatedPG::on_activate
+  if (new_backfill) { // only be set by ReplicatedPG::on_activate, refer to PG::activate to see info.last_backfill
     assert(last_backfill_started == earliest_backfill()); // ReplicatedPG::on_activate set it to min(peer_info[*].last_backfill)
     new_backfill = false;
 
     // initialize BackfillIntervals (with proper sort order), members of PG
     for (set<pg_shard_t>::iterator i = backfill_targets.begin();
 	 i != backfill_targets.end();
-	 ++i) { // peer targets, set begin = end = peer_info[*i].last_backfill, all objects in peer_backfill_info[*i].objects cleared
+	 ++i) { // set begin = end = peer_info[*i].last_backfill, all objects cleared
       peer_backfill_info[*i].reset(peer_info[*i].last_backfill, get_sort_bitwise());
     }
 
-    // begin = end = last_backfill_started, i.e. min(peer_info[*].last_backfill, 
-    // i.e. min(peer_backfill_info[*i].begin), all objects in backfill_info.objects cleared
+    // set begin = end = last_backfill_started, i.e. min(peer_info[*].last_backfill), all objects cleared
     backfill_info.reset(last_backfill_started, get_sort_bitwise());
 
     // initialize comparators, members of ReplicatedPG
@@ -10721,9 +10720,9 @@ int ReplicatedPG::recover_backfill(
   }
 
   // update our local interval to cope with recent changes
-  backfill_info.begin = last_backfill_started;
+  backfill_info.begin = last_backfill_started; // used for update_range to set start hobject_t to collect below
 
-  // collect objects start from backfill_info.begin and update BackfillInterval::version to info.last_update
+  // collect objects start from backfill_info.begin and update version to info.last_update
   update_range(&backfill_info, handle);
 
   int ops = 0;
@@ -10734,11 +10733,13 @@ int ReplicatedPG::recover_backfill(
   for (set<pg_shard_t>::iterator i = backfill_targets.begin();
        i != backfill_targets.end();
        ++i) {
-    // trim objects then reset begin to the first object for each backfill_target
+    // trim objects that has been backfilled then reset begin to the first object that
+    // has not been backfilled yet for each backfill_target
     peer_backfill_info[*i].trim_to(
       MAX_HOBJ(peer_info[*i].last_backfill, last_backfill_started, get_sort_bitwise()));
   }
-  // trim objects then reset begin to the first object
+  // trim objects that has been backfilled then reset begin to the first object that 
+  // has not been backfilled yet
   backfill_info.trim_to(last_backfill_started);
 
   // min begin of me and all backfill_targets
@@ -10746,8 +10747,8 @@ int ReplicatedPG::recover_backfill(
 				    earliest_peer_backfill(), // min begin of backfill_targets
 				    get_sort_bitwise());
   while (ops < max) {
-    // compare us with backfill_target
-    if (cmp(backfill_info.begin, earliest_peer_backfill(), get_sort_bitwise()) <= 0 &&
+    // compare begin between us and backfill_targets
+    if (cmp(backfill_info.begin, earliest_peer_backfill(), get_sort_bitwise()) <= 0 && // backfill_targets made progress
 	!backfill_info.extends_to_end() && // end != max
 	backfill_info.empty()) { // empty objects set, begin == end
       // scan a new interval on primary
@@ -10778,7 +10779,7 @@ int ReplicatedPG::recover_backfill(
 
       dout(20) << " peer shard " << bt << " backfill " << pbi << dendl;
 
-      // compare backfill_target with us
+      // compare begin between backfill_target and us
       if (cmp(pbi.begin, backfill_info.begin, get_sort_bitwise()) <= 0 &&
 	  !pbi.extends_to_end() && 
 	  pbi.empty()) {
