@@ -228,6 +228,7 @@ private:
     if (is_primary()) {
       _do_pull_response(op);
     } else {
+      // write objects
       _do_push(op);
     }
   }

@@ -334,10 +334,11 @@ void PGMonitor::create_pending()
   pending_inc.version = pg_map.version + 1;
   if (pg_map.version == 0) {
     // pull initial values from first leader mon's config
-    pending_inc.full_ratio = g_conf->mon_osd_full_ratio;
+    pending_inc.full_ratio = g_conf->mon_osd_full_ratio; // default .95
     if (pending_inc.full_ratio > 1.0)
       pending_inc.full_ratio /= 100.0;
-    pending_inc.nearfull_ratio = g_conf->mon_osd_nearfull_ratio;
+    
+    pending_inc.nearfull_ratio = g_conf->mon_osd_nearfull_ratio; // default .85
     if (pending_inc.nearfull_ratio > 1.0)
       pending_inc.nearfull_ratio /= 100.0;
   } else {

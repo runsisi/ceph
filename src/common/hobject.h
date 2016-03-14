@@ -413,7 +413,7 @@ public:
   }
 
   bool is_no_gen() const {
-    return generation == NO_GEN;
+    return generation == NO_GEN; // UINT64_MAX
   }
 
   bool is_no_shard() const {

@@ -615,14 +615,14 @@ void OSDService::agent_stop()
 
 float OSDService::get_full_ratio()
 {
-  float full_ratio = cct->_conf->osd_failsafe_full_ratio;
+  float full_ratio = cct->_conf->osd_failsafe_full_ratio; // default .97
   if (full_ratio > 1.0) full_ratio /= 100.0;
   return full_ratio;
 }
 
 float OSDService::get_nearfull_ratio()
 {
-  float nearfull_ratio = cct->_conf->osd_failsafe_nearfull_ratio;
+  float nearfull_ratio = cct->_conf->osd_failsafe_nearfull_ratio; // default .90
   if (nearfull_ratio > 1.0) nearfull_ratio /= 100.0;
   return nearfull_ratio;
 }
@@ -640,8 +640,8 @@ void OSDService::check_nearfull_warning(const osd_stat_t &osd_stat)
   // completely filling the disk) it's far more important to know how
   // much space is available to use than how much we've already used.
   float ratio = ((float)(osd_stat.kb - osd_stat.kb_avail)) / ((float)osd_stat.kb);
-  float nearfull_ratio = get_nearfull_ratio();
-  float full_ratio = get_full_ratio();
+  float nearfull_ratio = get_nearfull_ratio(); // .90
+  float full_ratio = get_full_ratio(); // .97
   cur_ratio = ratio;
 
   if (full_ratio > 0 && ratio > full_ratio) {
@@ -655,7 +655,7 @@ void OSDService::check_nearfull_warning(const osd_stat_t &osd_stat)
 
   if (cur_state != new_state) {
     cur_state = new_state;
-  } else if (now - last_msg < cct->_conf->osd_op_complaint_time) {
+  } else if (now - last_msg < cct->_conf->osd_op_complaint_time) { // default 30
     return;
   }
   last_msg = now;
@@ -665,6 +665,7 @@ void OSDService::check_nearfull_warning(const osd_stat_t &osd_stat)
     clog->warn() << "OSD near full (" << (int)(ratio * 100) << "%)";
 }
 
+// called in ReplicatedPG::do_op to drop requests
 bool OSDService::check_failsafe_full()
 {
   Mutex::Locker l(full_status_lock);
@@ -8889,6 +8890,8 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
 
   if (max <= 0) { // we have reached the max of allowed active recovery ops, requeue
     dout(10) << "do_recovery raced and failed to start anything; requeuing " << *pg << dendl;
+
+    // push back of OSD::recovery_queue with the ThreadPool::_lock is held
     recovery_wq.queue(pg);
     return;
   } else { // ok, we can start recovery now
@@ -8907,13 +8910,14 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
     
     int started = 0;
 
-    // do recovering or backfilling, send MOSDPGPush or MOSDPGPull
+    // do the real recovering or backfilling, 'more' means there is work in progress
     bool more = pg->start_recovery_ops(max, handle, &started);
     
     dout(10) << "do_recovery started " << started << "/" << max << " on " << *pg << dendl;
     
     // If no recovery op is started, don't bother to manipulate the RecoveryCtx
     if (!started && (more || !pg->have_unfound())) { // TODO: 'more' is redundent
+      // ReplicatedPG::recover_backfill may start 0 op while set work_in_progress(i.e. 'more') to true
       pg->unlock();
       goto out;
     }
@@ -8947,7 +8951,7 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
 
  out:
   recovery_wq.lock();
-  if (max > 0) {
+  if (max > 0) { // has inced at the very beginning
     assert(recovery_ops_active >= max);
     recovery_ops_active -= max;
   }

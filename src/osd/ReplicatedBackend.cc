@@ -901,6 +901,8 @@ void ReplicatedBackend::_do_push(OpRequestRef op)
        i != m->pushes.end();
        ++i) {
     replies.push_back(PushReplyOp());
+
+    // write object
     handle_push(from, *i, &(replies.back()), t);
   }
 
@@ -918,6 +920,7 @@ void ReplicatedBackend::_do_push(OpRequestRef op)
 
   t->register_on_applied(
     new ObjectStore::C_DeleteTransaction(t));
+  
   get_parent()->queue_transaction(t);
 }
 
@@ -1820,11 +1823,14 @@ void ReplicatedBackend::submit_push_data(
   if (first && complete) {
     target_oid = recovery_info.soid;
   } else {
+    // construct a unique temp hobject_t oid
     target_oid = get_parent()->get_temp_recovery_object(recovery_info.version,
 							recovery_info.soid.snap);
     if (first) {
       dout(10) << __func__ << ": Adding oid "
 	       << target_oid << " in the temp collection" << dendl;
+
+      // insert into PGBackend::temp_contents set
       add_temp_obj(target_oid);
     }
   }
@@ -1835,15 +1841,18 @@ void ReplicatedBackend::submit_push_data(
     t->truncate(coll, ghobject_t(target_oid), recovery_info.size);
     t->omap_setheader(coll, ghobject_t(target_oid), omap_header);
   }
+  
   uint64_t off = 0;
   uint32_t fadvise_flags = CEPH_OSD_OP_FLAG_FADVISE_SEQUENTIAL;
   if (cache_dont_need)
     fadvise_flags |= CEPH_OSD_OP_FLAG_FADVISE_DONTNEED;
+  
   for (interval_set<uint64_t>::const_iterator p = intervals_included.begin();
        p != intervals_included.end();
        ++p) {
     bufferlist bit;
     bit.substr_of(data_included, off, p.get_len());
+    
     t->write(coll, ghobject_t(target_oid),
 	     p.get_start(), p.get_len(), bit, fadvise_flags);
     off += p.get_len();
@@ -1858,12 +1867,14 @@ void ReplicatedBackend::submit_push_data(
     if (!first) {
       dout(10) << __func__ << ": Removing oid "
 	       << target_oid << " from the temp collection" << dendl;
-      clear_temp_obj(target_oid);
+      clear_temp_obj(target_oid); // remove from PGBackend::temp_contents
+      
       t->remove(coll, ghobject_t(recovery_info.soid));
       t->collection_move_rename(coll, ghobject_t(target_oid),
 				coll, ghobject_t(recovery_info.soid));
     }
 
+    // copy clone data 
     submit_push_complete(recovery_info, t);
   }
 }
@@ -1880,6 +1891,7 @@ void ReplicatedBackend::submit_push_complete(ObjectRecoveryInfo &recovery_info,
 	 ++q) {
       dout(15) << " clone_range " << p->first << " "
 	       << q.get_start() << "~" << q.get_len() << dendl;
+      
       t->clone_range(coll, ghobject_t(p->first), ghobject_t(recovery_info.soid),
 		     q.get_start(), q.get_len(), q.get_start());
     }
@@ -2014,10 +2026,11 @@ void ReplicatedBackend::handle_push(
   bufferlist data;
   data.claim(pop.data);
   bool first = pop.before_progress.first;
-  bool complete = pop.after_progress.data_complete &&
-    pop.after_progress.omap_complete;
+  bool complete = pop.after_progress.data_complete && pop.after_progress.omap_complete;
 
   response->soid = pop.recovery_info.soid;
+
+  // write pop.recovery_info.soid
   submit_push_data(pop.recovery_info,
 		   first,
 		   complete,

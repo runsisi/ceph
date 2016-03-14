@@ -335,6 +335,7 @@ void PGMap::redo_full_sets()
   }
 }
 
+// PGMap::full_osds will be used in OSDMonitor::tick
 void PGMap::register_nearfull_status(int osd, const osd_stat_t& s)
 {
   float ratio = ((float)s.kb_used) / ((float)s.kb);

@@ -109,7 +109,8 @@ int PGBackend::objects_list_partial(
   // though, which would be filtered).
   ghobject_t _next;
   if (!begin.is_min())
-    _next = ghobject_t(begin, 0, get_parent()->whoami_shard().shard);
+    _next = ghobject_t(begin, 0, get_parent()->whoami_shard().shard); // generation == 0
+  
   ls->reserve(max);
   int r = 0;
   while (!_next.is_max() && ls->size() < (unsigned)min) {
@@ -131,7 +132,7 @@ int PGBackend::objects_list_partial(
       if (i->is_pgmeta() || i->hobj.is_temp()) {
 	continue;
       }
-      if (i->is_no_gen()) {
+      if (i->is_no_gen()) { // generateion == NO_GEN
 	ls->push_back(i->hobj);
       }
     }
