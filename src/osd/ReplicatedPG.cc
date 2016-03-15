@@ -3213,7 +3213,7 @@ void ReplicatedPG::do_backfill(OpRequestRef op)
 	  new CephPeeringEvt(
 	    get_osdmap()->get_epoch(),
 	    get_osdmap()->get_epoch(),
-	    RecoveryDone())));
+	    RecoveryDone()))); // sliently transit into RepNotRecovering
     }
     // fall-thru
 
@@ -3241,7 +3241,8 @@ void ReplicatedPG::do_backfill(OpRequestRef op)
     {
       assert(is_primary());
       assert(cct->_conf->osd_kill_backfill_at != 3);
-      
+
+      // dec counter and requeue PG on recovery_wq
       finish_recovery_op(hobject_t::get_max());
     }
     break;
@@ -10192,7 +10193,8 @@ bool ReplicatedPG::start_recovery_ops(
       }
       deferred_backfill = true;
     } else {
-      // do backfill, note: work_in_progress may set to true when started ops == 0
+      // do backfill, note: work_in_progress may set to true when started ops == 0 (i.e. when get read lock 
+      // of ObjectContext::rwstate failed for the first object to backfill)
       started += recover_backfill(max - started, handle, &work_in_progress);
     }
   }
@@ -10662,6 +10664,22 @@ bool ReplicatedPG::all_peer_done() const
  * in the event that client io created objects since the last scan.  For this reason, we call
  * update_range() again before continuing backfill.
  */
+
+/*
+ * Backfill
+ *
+ * peer_info[backfill_target].last_backfill == info.last_backfill on the peer.
+ *
+ * objects prior to peer_info[backfill_target].last_backfill
+ *   - are on the peer
+ *   - are included in the peer stats
+ *
+ * objects in (last_backfill, last_backfill_started]
+ *   - are on the peer or are in backfills_in_flight
+ *   - are not included in pg stats (yet)
+ *   - have their stats in pending_backfill_updates on the primary
+ */
+
 int ReplicatedPG::recover_backfill(
   int max,
   ThreadPool::TPHandle &handle, bool *work_started) // 'work_started': to indicate there is work in progress
@@ -10719,7 +10737,7 @@ int ReplicatedPG::recover_backfill(
 	   << dendl;
   }
 
-  // update our local interval to cope with recent changes
+  // update our local interval to cope with recent changes, will be reset by backfill_info.trim_to below
   backfill_info.begin = last_backfill_started; // used for update_range to set start hobject_t to collect below
 
   // collect objects start from backfill_info.begin and update version to info.last_update
@@ -10733,22 +10751,23 @@ int ReplicatedPG::recover_backfill(
   for (set<pg_shard_t>::iterator i = backfill_targets.begin();
        i != backfill_targets.end();
        ++i) {
-    // trim objects that has been backfilled then reset begin to the first object that
+    // trim objects that has been backfilled then adjust begin to the first object that
     // has not been backfilled yet for each backfill_target
     peer_backfill_info[*i].trim_to(
       MAX_HOBJ(peer_info[*i].last_backfill, last_backfill_started, get_sort_bitwise()));
   }
-  // trim objects that has been backfilled then reset begin to the first object that 
+  // trim objects that has been backfilled then adjust begin to the first object that 
   // has not been backfilled yet
   backfill_info.trim_to(last_backfill_started);
 
-  // min begin of me and all backfill_targets
-  hobject_t backfill_pos = MIN_HOBJ(backfill_info.begin, // begin of mine
+  // min(backfill_info.begin, peer_backfill_info[*].begin), i.e. backfill start position
+  hobject_t backfill_pos = MIN_HOBJ(backfill_info.begin,
 				    earliest_peer_backfill(), // min begin of backfill_targets
 				    get_sort_bitwise());
   while (ops < max) {
     // compare begin between us and backfill_targets
-    if (cmp(backfill_info.begin, earliest_peer_backfill(), get_sort_bitwise()) <= 0 && // backfill_targets made progress
+    if (cmp(backfill_info.begin, earliest_peer_backfill(), get_sort_bitwise()) <= 0 && // backfill_targets made progress 
+                                                                                        // or the first time to collect
 	!backfill_info.extends_to_end() && // end != max
 	backfill_info.empty()) { // empty objects set, begin == end
       // scan a new interval on primary
@@ -10765,8 +10784,7 @@ int ReplicatedPG::recover_backfill(
     }
 
     // TODO: useless, to be removed
-    backfill_pos = MIN_HOBJ(backfill_info.begin, earliest_peer_backfill(),
-			    get_sort_bitwise());
+    backfill_pos = MIN_HOBJ(backfill_info.begin, earliest_peer_backfill(), get_sort_bitwise());
 
     dout(20) << "   my backfill interval " << backfill_info << dendl;
 
@@ -10825,8 +10843,9 @@ int ReplicatedPG::recover_backfill(
     // the set of targets for which that object applies.
     hobject_t check = earliest_peer_backfill(); // min(peer_backfill_info[*].begin)
 
-    // backfill_info.begin has set to last_backfill_started (min(peer_info[*].last_backfill)) above
     if (cmp(check, backfill_info.begin, get_sort_bitwise()) < 0) { // min(peer_backfill_info[*].begin) < backfill_info.begin
+      // case1: the object exists on backfill_target, but does not exist on us, delete it
+      
       set<pg_shard_t> check_targets;
       
       for (set<pg_shard_t>::iterator i = backfill_targets.begin();
@@ -10850,15 +10869,19 @@ int ReplicatedPG::recover_backfill(
         assert(pbi.begin == check);
 
         to_remove.push_back(boost::make_tuple(check, pbi.objects.begin()->second, bt));
-        pbi.pop_front(); // remove the first object
+        
+        pbi.pop_front(); // adjust pbi.begin to the next object to begin with
       }
            
-      last_backfill_started = check; // TODO: why ???
+      last_backfill_started = check;
+      
       // Don't increment ops here because deletions
       // are cheap and not replied to unlike real recovery_ops,
       // and we can't increment ops without requeueing ourself
       // for recovery.
-    } else { // min(peer_backfill_info[*].begin) >= min(peer_info[*].last_backfill)
+    } else { // min(peer_backfill_info[*].begin) >= backfill_info.begin
+      // case 2: the object exists on us or maybe on backfill_target
+      
       eversion_t& obj_v = backfill_info.objects.begin()->second;
 
       vector<pg_shard_t> need_ver_targs, missing_targs, keep_ver_targs, skip_targs;
@@ -10869,26 +10892,36 @@ int ReplicatedPG::recover_backfill(
 	BackfillInterval& pbi = peer_backfill_info[bt];
         
         // Find all check peers that have the wrong version
-	if (check == backfill_info.begin && check == pbi.begin) {
+	if (check == backfill_info.begin && check == pbi.begin) { // object both on backfill_target and us
 	  if (pbi.objects.begin()->second != obj_v) {
 	    need_ver_targs.push_back(bt);
 	  } else {
 	    keep_ver_targs.push_back(bt);
 	  }
-        } else {
+        } else { // pbi.begin > backfill_info.begin
 	  pg_info_t& pinfo = peer_info[bt];
 
           // Only include peers that we've caught up to their backfill line
 	  // otherwise, they only appear to be missing this object
 	  // because their pbi.begin > backfill_info.begin.
           if (cmp(backfill_info.begin, pinfo.last_backfill, get_sort_bitwise()) > 0)
+            // pinfo.last_backfill < backfill_info.begin < pbi.begin, missing on this backfill_target
 	    missing_targs.push_back(bt);
 	  else
+            // backfill_info.begin <= pinfo.last_backfill < pbi.begin, has already backfilled
 	    skip_targs.push_back(bt);
 	}
       }
 
-      if (!keep_ver_targs.empty()) {
+      // ok, summarize case 2 for backfill_targets
+
+      // the object: min(backfill_info.begin, peer_backfill_info[*].begin), for here backfill_info.begin should be more precise
+      // need_ver_targs: backfill_target has the object, but without correct version
+      // missing_targs: backfill_target does not have the object
+      // keep_ver_targs: backfill_target has the object, and with correct version
+      // skip_targs: backfill_target has the object backfilled (via push or keep, it's irrelevent)
+
+      if (!keep_ver_targs.empty()) { // the object with correct version already exists on backfill_target(s)
         // These peers have version obj_v
 	dout(20) << " BACKFILL keeping " << check
 		 << " with ver " << obj_v
@@ -10896,78 +10929,87 @@ int ReplicatedPG::recover_backfill(
 	//assert(!waiting_for_degraded_object.count(check));
       }
       
-      if (!need_ver_targs.empty() || !missing_targs.empty()) {
-	ObjectContextRef obc = get_object_context(backfill_info.begin, false);
+      if (!need_ver_targs.empty() || !missing_targs.empty()) { 
+        // the object does not exist or without correct version on backfill_target(s), we need to backfill them
+
+        ObjectContextRef obc = get_object_context(backfill_info.begin, false);
 	assert(obc);
+        
 	if (obc->get_recovery_read()) {
-	  if (!need_ver_targs.empty()) {
+	  if (!need_ver_targs.empty()) { // without correct version
 	    dout(20) << " BACKFILL replacing " << check
 		   << " with ver " << obj_v
 		   << " to peers " << need_ver_targs << dendl;
 	  }
-	  if (!missing_targs.empty()) {
+          
+	  if (!missing_targs.empty()) { // does not exist
 	    dout(20) << " BACKFILL pushing " << backfill_info.begin
 	         << " with ver " << obj_v
 	         << " to peers " << missing_targs << dendl;
 	  }
 
-          // all = need + missing
+          // all push targets = need_ver_targs + missing_targs
 	  vector<pg_shard_t> all_push = need_ver_targs;
-	  all_push.insert(all_push.end(), missing_targs.begin(), missing_targs.end());
+	  all_push.insert(all_push.end(), missing_targs.begin(), missing_targs.end()); // final backfill_targets
 
 	  to_push.push_back(
 	    boost::tuple<hobject_t, eversion_t, ObjectContextRef, vector<pg_shard_t> >
 	    (backfill_info.begin, obj_v, obc, all_push));
+          
 	  // Count all simultaneous pushes of the same object as a single op
 	  ops++;
 	} else {
 	  *work_started = true;
+          
 	  dout(20) << "backfill blocking on " << backfill_info.begin
 		   << "; could not get rw_manager lock" << dendl;
 	  break;
 	}
       }
+      
       dout(20) << "need_ver_targs=" << need_ver_targs
 	       << " keep_ver_targs=" << keep_ver_targs << dendl;
       dout(20) << "backfill_targets=" << backfill_targets
 	       << " missing_targs=" << missing_targs
 	       << " skip_targs=" << skip_targs << dendl;
 
-      last_backfill_started = backfill_info.begin;
-      
-      add_to_stat.insert(backfill_info.begin); // XXX: Only one for all pushes?
-      backfill_info.pop_front(); // pop an object and reset begin
-      vector<pg_shard_t> check_targets = need_ver_targs;
+      last_backfill_started = backfill_info.begin; // note down the latest object that we have started the backfill op
+      add_to_stat.insert(backfill_info.begin); // note down all objects we are to backfill      
+      backfill_info.pop_front(); // adjust backfill_info.begin, point to the next object to begin with
+
+      vector<pg_shard_t> check_targets = need_ver_targs; // need + keep, i.e. those have the object with correct or wrong version
       check_targets.insert(check_targets.end(), keep_ver_targs.begin(), keep_ver_targs.end());
       for (vector<pg_shard_t>::iterator i = check_targets.begin();
 	   i != check_targets.end();
 	   ++i) {
         pg_shard_t bt = *i;
         BackfillInterval& pbi = peer_backfill_info[bt];
-        pbi.pop_front();
+        
+        pbi.pop_front(); // adjust pbi.begin, point to the next object to begin
       }
     }
   }
 
-  // min (backfill_info.begin, peer_backfill_info[*].begin)
-  backfill_pos = MIN_HOBJ(backfill_info.begin, 
-                          earliest_peer_backfill(), // min(peer_backfill_info[*].begin)
-			  get_sort_bitwise());
+  // note: backfill_info.begin adjusted above in case 2, and peer_backfill_info[*].begin adjusted above in case 1
+  backfill_pos = MIN_HOBJ(backfill_info.begin, earliest_peer_backfill(), get_sort_bitwise()); // the next object to begin with
 
   for (set<hobject_t, hobject_t::BitwiseComparator>::iterator i = add_to_stat.begin();
        i != add_to_stat.end();
-       ++i) {
+       ++i) { // need + missing + keep
     ObjectContextRef obc = get_object_context(*i, false);
     assert(obc);
     pg_stat_t stat;
-    add_object_context_to_pg_stat(obc, &stat);
+    
+    add_object_context_to_pg_stat(obc, &stat); // add delta stats
     pending_backfill_updates[*i] = stat;
   }
        
-  for (unsigned i = 0; i < to_remove.size(); ++i) { // send MOSDSubOp with op = CEPH_OSD_OP_DELETE
+  for (unsigned i = 0; i < to_remove.size(); ++i) {
+    // send MOSDSubOp with op = CEPH_OSD_OP_DELETE to delete objects on backfill_target(s) while not on us
+    
     handle.reset_tp_timeout();
 
-    // ordered before any subsequent updates
+    // send MOSDSubOp(CEPH_OSD_OP_DELETE), ordered before any subsequent updates
     send_remove_op(to_remove[i].get<0>(), // hobject_t
                 to_remove[i].get<1>(), // eversion_t
                 to_remove[i].get<2>()); // pg_shard_t
@@ -10981,7 +11023,7 @@ int ReplicatedPG::recover_backfill(
   for (unsigned i = 0; i < to_push.size(); ++i) {
     handle.reset_tp_timeout();
     
-    // backfill object by recovering
+    // backfill objects by recovering, the objects to push were inserted into ReplicatedPG::backfills_in_flight
     prep_backfill_object_push(to_push[i].get<0>(), to_push[i].get<1>(),
 	    to_push[i].get<2>(), to_push[i].get<3>(), h);
   }
@@ -10992,21 +11034,24 @@ int ReplicatedPG::recover_backfill(
 
   dout(5) << "backfill_pos is " << backfill_pos << dendl;
 
-  // backfills_in_flight populated in prep_backfill_object_push
+  // backfills_in_flight populated in prep_backfill_object_push, these objects are to be pushed to backfill_targets,
+  // i.e. objects need to push to need_ver_targs + missing_targs
   for (set<hobject_t, hobject_t::Comparator>::iterator i = backfills_in_flight.begin();
        i != backfills_in_flight.end();
        ++i) {
     dout(20) << *i << " is still in flight" << dendl;
   }
 
-  hobject_t next_backfill_to_complete = backfills_in_flight.empty() ?
-    backfill_pos : *(backfills_in_flight.begin());
+  // for remove, point to the next object to begin, for add, point to the first object to backfill inflight
+  hobject_t next_backfill_to_complete = backfills_in_flight.empty() ? backfill_pos : *(backfills_in_flight.begin());
   
   hobject_t new_last_backfill = earliest_backfill(); // min(peer_info[*].last_backfill)
   dout(10) << "starting new_last_backfill at " << new_last_backfill << dendl;
-  
+
+  // pending_backfill_updates includes all object we are to remove or backfill
   for (map<hobject_t, pg_stat_t, hobject_t::Comparator>::iterator i = pending_backfill_updates.begin();
-       i != pending_backfill_updates.end() && cmp(i->first, next_backfill_to_complete, get_sort_bitwise()) < 0;
+       i != pending_backfill_updates.end() && 
+       cmp(i->first, next_backfill_to_complete, get_sort_bitwise()) < 0; // until to the first object to backfill inflight (to_push)
        pending_backfill_updates.erase(i++)) {
     dout(20) << " pending_backfill_update " << i->first << dendl;
     assert(cmp(i->first, new_last_backfill, get_sort_bitwise()) > 0);
@@ -11018,22 +11063,25 @@ int ReplicatedPG::recover_backfill(
       pg_info_t& pinfo = peer_info[bt];
       
       //Add stats to all peers that were missing object
-      if (cmp(i->first, pinfo.last_backfill, get_sort_bitwise()) > 0)
+      if (cmp(i->first, pinfo.last_backfill, get_sort_bitwise()) > 0) // this will exclude the skip_targs
         pinfo.stats.add(i->second);
     }
          
     new_last_backfill = i->first;
   }
+       
+  // above should skip those 'remove' or 'keep' objects until to the first object to backfill inflight (i.e. to_push)
   dout(10) << "possible new_last_backfill at " << new_last_backfill << dendl;
 
   // either pending or nothing
   assert(!pending_backfill_updates.empty() || new_last_backfill == last_backfill_started);
   
-  if (pending_backfill_updates.empty() && backfill_pos.is_max()) {
+  if (pending_backfill_updates.empty() && backfill_pos.is_max()) { // no pending and the next object to start with is max
+    // note: the second test condition is to distinguish the circumstance that we have sent scan request for backfill_targets
     assert(backfills_in_flight.empty());
     
-    new_last_backfill = backfill_pos;
-    last_backfill_started = backfill_pos;
+    new_last_backfill = backfill_pos; // max
+    last_backfill_started = backfill_pos; // max
   }
   
   dout(10) << "final new_last_backfill at " << new_last_backfill << dendl;
@@ -11047,7 +11095,7 @@ int ReplicatedPG::recover_backfill(
     pg_shard_t bt = *i;
     pg_info_t& pinfo = peer_info[bt];
 
-    // move forward info.last_backfill for peers
+    // notify backfill_targets to update info.last_backfill and info.stats
     if (cmp(new_last_backfill, pinfo.last_backfill, get_sort_bitwise()) > 0) { // made progress
       // update pinfo.last_backfill to new_last_backfill locally, will be updated remotely via
       // MOSDPGBackfill below
@@ -11055,26 +11103,27 @@ int ReplicatedPG::recover_backfill(
 
       epoch_t e = get_osdmap()->get_epoch();
       MOSDPGBackfill *m = NULL;
+      
       if (pinfo.last_backfill.is_max()) { // backfill finished
         m = new MOSDPGBackfill(
 	  MOSDPGBackfill::OP_BACKFILL_FINISH,
 	  e,
 	  e,
-	  spg_t(info.pgid.pgid, bt.shard)); // queue RecoveryDone peering evt and update info.last_backfill on other side
+	  spg_t(info.pgid.pgid, bt.shard)); // queue RecoveryDone peering evt and update info.last_backfill and info.stats on other side
         // Use default priority here, must match sub_op priority
         /* pinfo.stats might be wrong if we did log-based recovery on the
          * backfilled portion in addition to continuing backfill.
          */
         pinfo.stats = info.stats;
 
-        // inc recovery_ops_active for PG and OSD, will dec in do_backfill
+        // inc counter, will dec in do_backfill
         start_recovery_op(hobject_t::get_max());
       } else { // backfill in-progress
         m = new MOSDPGBackfill(
 	  MOSDPGBackfill::OP_BACKFILL_PROGRESS,
 	  e,
 	  e,
-	  spg_t(info.pgid.pgid, bt.shard));
+	  spg_t(info.pgid.pgid, bt.shard)); // update info.last_backfill and info.stats on other side
         // Use default priority here, must match sub_op priority
       }
 

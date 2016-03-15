@@ -2476,7 +2476,7 @@ void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
 #endif
 
   // TODOSAM: osd->osd-> not good
-  osd->osd->finish_recovery_op(this, soid, dequeue);
+  osd->osd->finish_recovery_op(this, soid, dequeue); // dec counter and requeue PG on recovery_wq
 }
 
 static void split_replay_queue(

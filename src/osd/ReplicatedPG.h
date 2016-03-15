@@ -1085,8 +1085,8 @@ protected:
    *   - are not included in pg stats (yet)
    *   - have their stats in pending_backfill_updates on the primary
    */
-  set<hobject_t, hobject_t::Comparator> backfills_in_flight;
-  map<hobject_t, pg_stat_t, hobject_t::Comparator> pending_backfill_updates;
+  set<hobject_t, hobject_t::Comparator> backfills_in_flight; // objects to push to backfill_targets inflight
+  map<hobject_t, pg_stat_t, hobject_t::Comparator> pending_backfill_updates; // push(maybe keep) or remove object
 
   void dump_recovery_info(Formatter *f) const {
     f->open_array_section("backfill_targets");
@@ -1143,7 +1143,7 @@ protected:
   }
 
   /// last backfill operation started
-  hobject_t last_backfill_started;
+  hobject_t last_backfill_started; // the latest object that the backfill op has started
   bool new_backfill;
 
   int prep_object_replica_pushes(const hobject_t& soid, eversion_t v,

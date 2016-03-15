@@ -720,7 +720,7 @@ public:
     void pop_front() {
       assert(!objects.empty());
       objects.erase(objects.begin());
-      trim();
+      trim(); // adjust begin
     }
 
     /// dump

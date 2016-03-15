@@ -2035,7 +2035,7 @@ reprotect_and_return_err:
     }
 
     uint64_t snap_id;
-    int r = ictx->md_ctx.selfmanaged_snap_create(&snap_id);
+    int r = ictx->md_ctx.selfmanaged_snap_create(&snap_id); // allocate a snapid from mon
     if (r < 0) {
       lderr(ictx->cct) << "failed to create snap id: " << cpp_strerror(-r)
 		       << dendl;

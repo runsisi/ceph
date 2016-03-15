@@ -8878,7 +8878,8 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
   
   int max = MIN(cct->_conf->osd_recovery_max_active - recovery_ops_active, // default is 3
       cct->_conf->osd_recovery_max_single_start); // default is 1
-  if (max > 0) {
+      
+  if (max > 0) { // max ops we are allowed to start
     dout(10) << "do_recovery can start " << max << " (" << recovery_ops_active << "/" << cct->_conf->osd_recovery_max_active
 	     << " rops)" << dendl;
     recovery_ops_active += max;  // take them now, return them if we don't use them.
@@ -8917,8 +8918,9 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
     dout(10) << "do_recovery started " << started << "/" << max << " on " << *pg << dendl;
     
     // If no recovery op is started, don't bother to manipulate the RecoveryCtx
-    if (!started && (more || !pg->have_unfound())) { // TODO: 'more' is redundent
+    if (!started && (more || !pg->have_unfound())) {
       // ReplicatedPG::recover_backfill may start 0 op while set work_in_progress(i.e. 'more') to true
+      
       pg->unlock();
       goto out;
     }
@@ -8926,20 +8928,22 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
     PG::RecoveryCtx rctx = create_context();
     rctx.handle = &handle;
 
+    // ok, started || (!more && pg->have_unfound())
+
     /*
      * if we couldn't start any recovery ops and things are still
      * unfound, see if we can discover more missing object locations.
      * It may be that our initial locations were bad and we errored
      * out while trying to pull.
      */
-    if (!more && pg->have_unfound()) {
+    if (!more && pg->have_unfound()) { // no work in progress and started == 0 (or 'more' will be true)
       // iterate PG::might_have_unfound to request FULLLOG 
       pg->discover_all_missing(*rctx.query_map);
       
       if (rctx.query_map->empty()) { // no new recovery source
 	dout(10) << "do_recovery  no luck, giving up on this pg for now" << dendl;
 	recovery_wq.lock();
-	recovery_wq._dequeue(pg);
+	recovery_wq._dequeue(pg); // TODO: not on queue already ???
 	recovery_wq.unlock();
       }
     }
@@ -8952,7 +8956,7 @@ void OSD::do_recovery(PG *pg, ThreadPool::TPHandle &handle)
 
  out:
   recovery_wq.lock();
-  if (max > 0) { // has inced at the very beginning
+  if (max > 0) { // added at the very beginning
     assert(recovery_ops_active >= max);
     recovery_ops_active -= max;
   }
