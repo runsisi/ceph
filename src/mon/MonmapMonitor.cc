@@ -48,9 +48,11 @@ void MonmapMonitor::create_initial()
   pending_map.epoch = 1;
 }
 
+// called by PaxosService::refresh
 void MonmapMonitor::update_from_paxos(bool *need_bootstrap)
 {
   version_t version = get_last_committed();
+  
   if (version <= mon->monmap->get_epoch())
     return;
 

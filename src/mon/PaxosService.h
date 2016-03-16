@@ -629,13 +629,17 @@ public:
       op->mark_event(service_name + ":wait_for_active");
 
     if (!is_proposing()) {
-      paxos->wait_for_active(op, c);
+      paxos->wait_for_active(op, c); // push back of Paxos::waiting_for_active
       return;
     }
-    wait_for_finished_proposal(op, c);
+
+    // we are proposing
+    wait_for_finished_proposal(op, c); // push back of PaxosService::waiting_for_finished_proposal
   }
   void wait_for_active_ctx(Context *c) {
     MonOpRequestRef o;
+
+    // push back of Paxos::waiting_for_active or PaxosService::waiting_for_finished_proposal
     wait_for_active(o, c);
   }
 
@@ -878,7 +882,7 @@ public:
    * @returns Our last committed version
    */
   version_t get_last_committed() const{
-    return cached_last_committed;
+    return cached_last_committed; // PaxosService::refresh will update this value from backend store
   }
 
   /**

@@ -633,7 +633,7 @@ private:
     void finish(int r) {
       if (r == -ECANCELED)
 	return;
-      paxos->collect_timeout();
+      paxos->collect_timeout(); // call Monitor::bootstrap
     }
   };
 
@@ -1088,10 +1088,10 @@ public:
    * @param name A name for the paxos service. It serves as the naming space
    * of the underlying persistent storage for this service.
    */
-  Paxos(Monitor *m, const string &name) 
+  Paxos(Monitor *m, const string &name)
 		 : mon(m),
 		   logger(NULL),
-		   paxos_name(name),
+		   paxos_name(name), // initialized to "paxos" in Monitor::Monitor
 		   state(STATE_RECOVERING),
 		   first_committed(0),
 		   last_pn(0),

@@ -376,7 +376,7 @@ void ReplicatedPG::maybe_kick_recovery(
   const hobject_t &soid)
 {
   eversion_t v;
-  if (!missing_loc.needs_recovery(soid, &v))
+  if (!missing_loc.needs_recovery(soid, &v)) // not in PG::missing_loc.needs_recovery_map, i.e. this object is not missing
     return;
 
   map<hobject_t, ObjectContextRef, hobject_t::BitwiseComparator>::const_iterator p = recovering.find(soid);
@@ -384,15 +384,18 @@ void ReplicatedPG::maybe_kick_recovery(
     dout(7) << "object " << soid << " v " << v << ", already recovering." << dendl;
   } else if (missing_loc.is_unfound(soid)) {
     dout(7) << "object " << soid << " v " << v << ", is unfound." << dendl;
-  } else {
+  } else { // ok, need to recover this object
     dout(7) << "object " << soid << " v " << v << ", recovering." << dendl;
     PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op();
     h->cache_dont_need = false;
-    if (is_missing_object(soid)) {
+    
+    if (is_missing_object(soid)) { // missing on primary
       recover_missing(soid, v, cct->_conf->osd_client_op_priority, h);
-    } else {
+    } else { // missing on replica(s)
       prep_object_replica_pushes(soid, v, h);
     }
+
+    // send_pushes & send_pulls
     pgbackend->run_recovery_op(h, cct->_conf->osd_client_op_priority);
   }
 }
@@ -1683,23 +1686,20 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   }
 
   // blocked on snap?
-  map<hobject_t, snapid_t>::iterator blocked_iter =
-    objects_blocked_on_degraded_snap.find(head);
+  map<hobject_t, snapid_t>::iterator blocked_iter = objects_blocked_on_degraded_snap.find(head);
   if (write_ordered && blocked_iter != objects_blocked_on_degraded_snap.end()) {
     hobject_t to_wait_on(head);
     to_wait_on.snap = blocked_iter->second;
     wait_for_degraded_object(to_wait_on, op);
     return;
   }
-  map<hobject_t, ObjectContextRef>::iterator blocked_snap_promote_iter =
-    objects_blocked_on_snap_promotion.find(head);
-  if (write_ordered && 
-      blocked_snap_promote_iter != objects_blocked_on_snap_promotion.end()) {
-    wait_for_blocked_object(
-      blocked_snap_promote_iter->second->obs.oi.soid,
-      op);
+  
+  map<hobject_t, ObjectContextRef>::iterator blocked_snap_promote_iter = objects_blocked_on_snap_promotion.find(head);
+  if (write_ordered && blocked_snap_promote_iter != objects_blocked_on_snap_promotion.end()) {
+    wait_for_blocked_object(blocked_snap_promote_iter->second->obs.oi.soid, op);
     return;
   }
+  
   if (write_ordered && objects_blocked_on_cache_full.count(head)) {
     block_write_on_full_cache(head, op);
     return;
@@ -1734,8 +1734,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     // purposes here it doesn't matter which one we get.
     eversion_t replay_version;
     version_t user_version;
-    bool got = pg_log.get_log().get_request(
-      m->get_reqid(), &replay_version, &user_version);
+    bool got = pg_log.get_log().get_request(m->get_reqid(), &replay_version, &user_version);
     if (got) {
       dout(3) << __func__ << " dup " << m->get_reqid()
 	      << " was " << replay_version << dendl;
@@ -9166,6 +9165,7 @@ void ReplicatedPG::put_snapset_context(SnapSetContext *ssc)
  */
 enum { PULL_NONE, PULL_OTHER, PULL_YES };
 
+// only called in ReplicatedPG::maybe_kick_recovery, and ReplicatedPG::recover_primary
 int ReplicatedPG::recover_missing(
   const hobject_t &soid, eversion_t v,
   int priority,
@@ -10437,6 +10437,7 @@ int ReplicatedPG::recover_primary(int max, ThreadPool::TPHandle &handle)
   return started;
 }
 
+// only called in ReplicatedPG::maybe_kick_recovery, and ReplicatedPG::recover_replicas
 int ReplicatedPG::prep_object_replica_pushes(
   const hobject_t& soid, eversion_t v,
   PGBackend::RecoveryHandle *h)
@@ -11144,6 +11145,7 @@ int ReplicatedPG::recover_backfill(
   return ops;
 }
 
+// only called in ReplicatedPG::recover_backfill
 void ReplicatedPG::prep_backfill_object_push(
   hobject_t oid, eversion_t v,
   ObjectContextRef obc,
@@ -11159,12 +11161,13 @@ void ReplicatedPG::prep_backfill_object_push(
     map<pg_shard_t, pg_missing_t>::iterator bpm = peer_missing.find(peers[i]);
     assert(bpm != peer_missing.end());
     
-    bpm->second.add(oid, eversion_t(), eversion_t());
+    bpm->second.add(oid, eversion_t(), eversion_t()); // add to peer_missing
   }
 
   assert(!recovering.count(oid));
 
-  start_recovery_op(oid);
+  start_recovery_op(oid); // inc counter
+  
   recovering.insert(make_pair(oid, obc));
 
   // We need to take the read_lock here in order to flush in-progress writes

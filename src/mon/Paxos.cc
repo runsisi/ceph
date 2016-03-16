@@ -166,16 +166,17 @@ void Paxos::collect(version_t oldpn)
   }
 
   // pick new pn
-  accepted_pn = get_new_proposal_number(MAX(accepted_pn, oldpn));
+  accepted_pn = get_new_proposal_number(MAX(accepted_pn, oldpn)); // a global unique pn
   accepted_pn_from = last_committed;
-  num_last = 1;
+  num_last = 1; // reset to 1
+  
   dout(10) << "collect with pn " << accepted_pn << dendl;
 
   // send collect
   for (set<int>::const_iterator p = mon->get_quorum().begin();
        p != mon->get_quorum().end();
        ++p) {
-    if (*p == mon->rank) continue;
+    if (*p == mon->rank) continue; // myself
     
     MMonPaxos *collect = new MMonPaxos(mon->get_epoch(), MMonPaxos::OP_COLLECT,
 				       ceph_clock_now(g_ceph_context));
@@ -186,9 +187,9 @@ void Paxos::collect(version_t oldpn)
   }
 
   // set timeout event
-  collect_timeout_event = new C_CollectTimeout(this);
-  mon->timer.add_event_after(g_conf->mon_accept_timeout_factor *
-			     g_conf->mon_lease,
+  collect_timeout_event = new C_CollectTimeout(this); // call Monitor::bootstrap
+  mon->timer.add_event_after(g_conf->mon_accept_timeout_factor * // default 2.0
+			     g_conf->mon_lease, // default 5
 			     collect_timeout_event);
 }
 
@@ -212,6 +213,7 @@ void Paxos::handle_collect(MonOpRequestRef op)
             << " (theirs: " << collect->first_committed
             << "; ours: " << last_committed << ") -- bootstrap!" << dendl;
     op->mark_paxos_event("need to bootstrap");
+    
     mon->bootstrap();
     return;
   }
@@ -228,9 +230,9 @@ void Paxos::handle_collect(MonOpRequestRef op)
   if (collect->pn > accepted_pn) {
     // ok, accept it
     accepted_pn = collect->pn;
-    accepted_pn_from = collect->pn_from;
-    dout(10) << "accepting pn " << accepted_pn << " from " 
-	     << accepted_pn_from << dendl;
+    accepted_pn_from = collect->pn_from; // debug only
+    
+    dout(10) << "accepting pn " << accepted_pn << " from " << accepted_pn_from << dendl;
   
     MonitorDBStore::TransactionRef t(new MonitorDBStore::Transaction);
     t->put(get_name(), "accepted_pn", accepted_pn);
@@ -246,7 +248,7 @@ void Paxos::handle_collect(MonOpRequestRef op)
     logger->inc(l_paxos_collect_bytes, t->get_bytes());
     utime_t start = ceph_clock_now(NULL);
 
-    get_store()->apply_transaction(t);
+    get_store()->apply_transaction(t); // record the newly accepted pn in db
 
     utime_t end = ceph_clock_now(NULL);
     logger->tinc(l_paxos_collect_latency, end - start);
@@ -256,19 +258,22 @@ void Paxos::handle_collect(MonOpRequestRef op)
 	     << ", we already accepted " << accepted_pn
 	     << " from " << accepted_pn_from << dendl;
   }
+
+  // even if we can not accept this propose, we should reply
   last->pn = accepted_pn;
   last->pn_from = accepted_pn_from;
 
   // share whatever committed values we have
   if (collect->last_committed < last_committed)
+    // share txns with peer in between (collect->last_committed, last_committed]
     share_state(last, collect->first_committed, collect->last_committed);
 
   // do we have an accepted but uncommitted value?
   //  (it'll be at last_committed+1)
   bufferlist bl;
-  if (collect->last_committed <= last_committed &&
-      get_store()->exists(get_name(), last_committed+1)) {
+  if (collect->last_committed <= last_committed && get_store()->exists(get_name(), last_committed+1)) {
     get_store()->get(get_name(), last_committed+1, bl);
+    
     assert(bl.length() > 0);
     dout(10) << " sharing our accepted but uncommitted value for " 
 	     << last_committed+1 << " (" << bl.length() << " bytes)" << dendl;
@@ -276,6 +281,7 @@ void Paxos::handle_collect(MonOpRequestRef op)
 
     version_t v = get_store()->get(get_name(), "pending_v");
     version_t pn = get_store()->get(get_name(), "pending_pn");
+    
     if (v && pn && v == last_committed + 1) {
       last->uncommitted_pn = pn;
     } else {
@@ -283,6 +289,7 @@ void Paxos::handle_collect(MonOpRequestRef op)
       // under!  use the pn value we just had...  :(
       dout(10) << "WARNING: no pending_pn on disk, using previous accepted_pn " << previous_pn
 	       << " and crossing our fingers" << dendl;
+      
       last->uncommitted_pn = previous_pn;
     }
 
@@ -312,6 +319,7 @@ void Paxos::share_state(MMonPaxos *m, version_t peer_first_committed,
 
   dout(10) << "share_state peer has fc " << peer_first_committed 
 	   << " lc " << peer_last_committed << dendl;
+  
   version_t v = peer_last_committed + 1;
 
   // include incrementals
@@ -319,12 +327,14 @@ void Paxos::share_state(MMonPaxos *m, version_t peer_first_committed,
   for ( ; v <= last_committed; v++) {
     if (get_store()->exists(get_name(), v)) {
       get_store()->get(get_name(), v, m->values[v]);
+      
       assert(m->values[v].length());
       dout(10) << " sharing " << v << " ("
 	       << m->values[v].length() << " bytes)" << dendl;
       bytes += m->values[v].length() + 16;  // paxos_ + 10 digits = 16
     }
   }
+  
   logger->inc(l_paxos_share_state);
   logger->inc(l_paxos_share_state_keys, m->values.size());
   logger->inc(l_paxos_share_state_bytes, bytes);
@@ -344,6 +354,8 @@ void Paxos::share_state(MMonPaxos *m, version_t peer_first_committed,
  * be. All all this is done tightly wrapped in a transaction to ensure we
  * enjoy the atomicity guarantees given by our awesome k/v store.
  */
+// called by Paxos::handle_last and Paxos::handle_commit
+// apply txns sent by peer and update last_committed and first_committed accordingly
 bool Paxos::store_state(MMonPaxos *m)
 {
   MonitorDBStore::TransactionRef t(new MonitorDBStore::Transaction);
@@ -352,8 +364,7 @@ bool Paxos::store_state(MMonPaxos *m)
 
   // build map of values to store
   // we want to write the range [last_committed, m->last_committed] only.
-  if (start != m->values.end() &&
-      start->first > last_committed + 1) {
+  if (start != m->values.end() && start->first > last_committed + 1) {
     // ignore everything if values start in the future.
     dout(10) << "store_state ignoring all values, they start at " << start->first
 	     << " > last_committed+1" << dendl;
@@ -387,6 +398,7 @@ bool Paxos::store_state(MMonPaxos *m)
     for (it = start; it != end; ++it) {
       // write the bufferlist as the version's value
       t->put(get_name(), it->first, it->second);
+      
       // decode the bufferlist and append it to the transaction we will shortly
       // apply.
       decode_append_transaction(t, it->second);
@@ -401,6 +413,7 @@ bool Paxos::store_state(MMonPaxos *m)
       uncommitted_value.clear();
     }
   }
+  
   if (!t->empty()) {
     dout(30) << __func__ << " transaction dump:\n";
     JSONFormatter f(true);
@@ -413,7 +426,7 @@ bool Paxos::store_state(MMonPaxos *m)
     logger->inc(l_paxos_store_state_keys, t->get_keys());
     utime_t start = ceph_clock_now(NULL);
 
-    get_store()->apply_transaction(t);
+    get_store()->apply_transaction(t); // submit txn synchronously
 
     utime_t end = ceph_clock_now(NULL);
     logger->tinc(l_paxos_store_state_latency, end - start);
@@ -479,6 +492,7 @@ void Paxos::handle_last(MonOpRequestRef op)
             << " (theirs: " << last->first_committed
             << "; ours: " << last_committed << ") -- bootstrap!" << dendl;
     op->mark_paxos_event("need to bootstrap");
+    
     mon->bootstrap();
     return;
   }
@@ -501,22 +515,26 @@ void Paxos::handle_last(MonOpRequestRef op)
 	      << ") is too low for our first_committed (" << first_committed
 	      << ") -- bootstrap!" << dendl;
       op->mark_paxos_event("need to bootstrap");
+      
       mon->bootstrap();
       return;
     }
+    
     if (p->second < last_committed) {
       // share committed values
       dout(10) << " sending commit to mon." << p->first << dendl;
+      
       MMonPaxos *commit = new MMonPaxos(mon->get_epoch(),
 					MMonPaxos::OP_COMMIT,
 					ceph_clock_now(g_ceph_context));
+
       share_state(commit, peer_first_committed[p->first], p->second);
       mon->messenger->send_message(commit, mon->monmap->get_inst(p->first));
     }
   }
 
   // do they accept your pn?
-  if (last->pn > accepted_pn) {
+  if (last->pn > accepted_pn) { // peer has accepted an propse from others
     // no, try again.
     dout(10) << " they had a higher pn than us, picking a new one." << dendl;
 
@@ -524,7 +542,7 @@ void Paxos::handle_last(MonOpRequestRef op)
     mon->timer.cancel_event(collect_timeout_event);
     collect_timeout_event = 0;
 
-    collect(last->pn);
+    collect(last->pn); // regenerate a new global unique pn, send MMonPaxos::OP_COLLECT to all peers in quorum
   } else if (last->pn == accepted_pn) {
     // yes, they accepted our pn.  great.
     num_last++;
@@ -562,8 +580,7 @@ void Paxos::handle_last(MonOpRequestRef op)
       // almost...
 
       // did we learn an old value?
-      if (uncommitted_v == last_committed+1 &&
-	  uncommitted_value.length()) {
+      if (uncommitted_v == last_committed+1 && uncommitted_value.length()) {
 	dout(10) << "that's everyone.  begin on old learned value" << dendl;
 	state = STATE_UPDATING_PREVIOUS;
 	begin(uncommitted_value);
@@ -593,6 +610,7 @@ void Paxos::collect_timeout()
   collect_timeout_event = 0;
   logger->inc(l_paxos_collect_timeout);
   assert(mon->is_leader());
+  
   mon->bootstrap();
 }
 
@@ -792,6 +810,7 @@ void Paxos::handle_accept(MonOpRequestRef op)
     // yay, commit!
     dout(10) << " got majority, committing, done with update" << dendl;
     op->mark_paxos_event("commit_start");
+    
     commit_start();
   }
 }
@@ -807,6 +826,7 @@ void Paxos::accept_timeout()
   mon->bootstrap();
 }
 
+// queued by Paxos::commit_start
 struct C_Committed : public Context {
   Paxos *paxos;
   C_Committed(Paxos *p) : paxos(p) {}
@@ -817,6 +837,7 @@ struct C_Committed : public Context {
   }
 };
 
+// called by Paxos::begin and Paxos::handle_accept
 void Paxos::commit_start()
 {
   dout(10) << __func__ << " " << (last_committed+1) << dendl;
@@ -845,7 +866,7 @@ void Paxos::commit_start()
 
   get_store()->queue_transaction(t, new C_Committed(this));
 
-  if (is_updating_previous())
+  if (is_updating_previous()) // set in Paxos::handle_last
     state = STATE_WRITING_PREVIOUS;
   else if (is_updating())
     state = STATE_WRITING;
@@ -859,6 +880,7 @@ void Paxos::commit_start()
   }
 }
 
+// callback of Paxos::C_Committed
 void Paxos::commit_finish()
 {
   dout(20) << __func__ << " " << (last_committed+1) << dendl;
@@ -887,6 +909,7 @@ void Paxos::commit_finish()
     if (*p == mon->rank) continue;
 
     dout(10) << " sending commit to mon." << *p << dendl;
+    
     MMonPaxos *commit = new MMonPaxos(mon->get_epoch(), MMonPaxos::OP_COMMIT,
 				      ceph_clock_now(g_ceph_context));
     commit->values[last_committed] = new_value;
@@ -910,12 +933,13 @@ void Paxos::commit_finish()
   state = STATE_REFRESH;
 
   if (do_refresh()) {
-    commit_proposal();
+    commit_proposal(); // finish callbacks populated by PaxosService::propose_pending
+    
     if (mon->get_quorum().size() > 1) {
       extend_lease();
     }
 
-    finish_contexts(g_ceph_context, waiting_for_commit);
+    finish_contexts(g_ceph_context, waiting_for_commit); // not populated by anyone
 
     assert(g_conf->paxos_kill_at != 10);
 
@@ -939,10 +963,11 @@ void Paxos::handle_commit(MonOpRequestRef op)
   }
 
   op->mark_paxos_event("store_state");
-  store_state(commit);
+  
+  store_state(commit); // submit the new txns
 
   if (do_refresh()) {
-    finish_contexts(g_ceph_context, waiting_for_commit);
+    finish_contexts(g_ceph_context, waiting_for_commit); // never populated by anyone
   }
 }
 
@@ -1008,6 +1033,7 @@ void Paxos::warn_on_future_time(utime_t t, entity_name_t from)
 
 }
 
+// called by Paxos::handle_last, Paxos::commit_finish, and Paxos::handle_commit
 bool Paxos::do_refresh()
 {
   bool need_bootstrap = false;
@@ -1030,6 +1056,7 @@ bool Paxos::do_refresh()
   return true;
 }
 
+// called in Paxos::commit_finish
 void Paxos::commit_proposal()
 {
   dout(10) << __func__ << dendl;
@@ -1037,7 +1064,8 @@ void Paxos::commit_proposal()
   assert(is_refresh());
 
   list<Context*> ls;
-  ls.swap(committing_finishers);
+  ls.swap(committing_finishers); // assigned in Paxos::propose_pending
+  
   finish_contexts(g_ceph_context, ls);
 }
 
@@ -1397,25 +1425,25 @@ void Paxos::dispatch(MonOpRequestRef op)
       // NOTE: these ops are defined in messages/MMonPaxos.h
       switch (pm->op) {
 	// learner
-      case MMonPaxos::OP_COLLECT:
+      case MMonPaxos::OP_COLLECT: // sent by Paxos::collect
 	handle_collect(op);
 	break;
-      case MMonPaxos::OP_LAST:
+      case MMonPaxos::OP_LAST: // sent by Paxos::handle_collect
 	handle_last(op);
 	break;
-      case MMonPaxos::OP_BEGIN:
+      case MMonPaxos::OP_BEGIN: // sent by Paxos::begin
 	handle_begin(op);
 	break;
-      case MMonPaxos::OP_ACCEPT:
+      case MMonPaxos::OP_ACCEPT: // sent by Paxos::handle_begin
 	handle_accept(op);
 	break;		
-      case MMonPaxos::OP_COMMIT:
+      case MMonPaxos::OP_COMMIT: // sent by Paxos::commit_finish or Paxos::handle_last
 	handle_commit(op);
 	break;
-      case MMonPaxos::OP_LEASE:
+      case MMonPaxos::OP_LEASE: // sent by Paxos::extend_lease
 	handle_lease(op);
 	break;
-      case MMonPaxos::OP_LEASE_ACK:
+      case MMonPaxos::OP_LEASE_ACK: // sent by Paxos::handle_lease
 	handle_lease_ack(op);
 	break;
       default:
@@ -1506,7 +1534,9 @@ void Paxos::propose_pending()
 
   pending_proposal.reset();
 
-  committing_finishers.swap(pending_finishers);
+  // will be called in Paxos::commit_proposal
+  committing_finishers.swap(pending_finishers); // pending_finishers populated in PaxosService::propose_pending
+
   state = STATE_UPDATING;
   begin(bl);
 }
@@ -1515,7 +1545,7 @@ void Paxos::queue_pending_finisher(Context *onfinished)
 {
   dout(5) << __func__ << " " << onfinished << dendl;
   assert(onfinished);
-  pending_finishers.push_back(onfinished);
+  pending_finishers.push_back(onfinished); // mainly used in Paxos::propose_pending to assign to Paxos::committing_finishers
 }
 
 MonitorDBStore::TransactionRef Paxos::get_pending_transaction()

@@ -793,6 +793,7 @@ void Monitor::init_paxos()
   refresh_from_paxos(NULL);
 }
 
+// called by Monitor::init_paxos and Paxos::do_refresh
 void Monitor::refresh_from_paxos(bool *need_bootstrap)
 {
   dout(10) << __func__ << dendl;
@@ -802,7 +803,7 @@ void Monitor::refresh_from_paxos(bool *need_bootstrap)
   if (r >= 0) {
     try {
       bufferlist::iterator p = bl.begin();
-      ::decode(fingerprint, p);
+      ::decode(fingerprint, p); // a uuid, note: not the fsid of ceph cluster
     }
     catch (buffer::error& e) {
       dout(10) << __func__ << " failed to decode cluster_fingerprint" << dendl;
@@ -814,6 +815,7 @@ void Monitor::refresh_from_paxos(bool *need_bootstrap)
   for (int i = 0; i < PAXOS_NUM; ++i) {
     paxos_service[i]->refresh(need_bootstrap);
   }
+  
   for (int i = 0; i < PAXOS_NUM; ++i) {
     paxos_service[i]->post_refresh();
   }
@@ -2662,8 +2664,7 @@ void Monitor::handle_command(MonOpRequestRef op)
   }
 
   if (mon_cmd->is_obsolete() ||
-      (cct->_conf->mon_debug_deprecated_as_obsolete
-       && mon_cmd->is_deprecated())) {
+      (cct->_conf->mon_debug_deprecated_as_obsolete && mon_cmd->is_deprecated())) {
     reply_command(op, -ENOTSUP,
                   "command is obsolete; please check usage and/or man page",
                   0);

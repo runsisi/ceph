@@ -34,6 +34,8 @@ static ostream& _prefix(std::ostream *_dout, Monitor *mon, Paxos *paxos, string 
 		<< ").paxosservice(" << service_name << " " << fc << ".." << lc << ") ";
 }
 
+// mainly called in Monitor::dispatch_op (which called by Monitor::_ms_dispatch, for interval interaction of ceph cluster) and 
+// Monitor::handle_command (which called by Monitor::dispatch_op, for external client commands) and 
 bool PaxosService::dispatch(MonOpRequestRef op)
 {
   assert(op->is_type_service() || op->is_type_command());
@@ -115,6 +117,7 @@ bool PaxosService::dispatch(MonOpRequestRef op)
   return true;
 }
 
+// called by Monitor::refresh_from_paxos
 void PaxosService::refresh(bool *need_bootstrap)
 {
   // update cached versions
@@ -122,15 +125,17 @@ void PaxosService::refresh(bool *need_bootstrap)
   cached_last_committed = mon->store->get(get_service_name(), last_committed_name);
 
   version_t new_format = get_value("format_version");
+  
   if (new_format != format_version) {
     dout(1) << __func__ << " upgraded, format " << format_version << " -> " << new_format << dendl;
     on_upgrade();
   }
+  
   format_version = new_format;
 
   dout(10) << __func__ << dendl;
 
-  update_from_paxos(need_bootstrap);
+  update_from_paxos(need_bootstrap); // only MonmapMonitor will update 'need_bootstrap'
 }
 
 void PaxosService::post_refresh()
@@ -218,8 +223,9 @@ void PaxosService::propose_pending()
 
   // apply to paxos
   proposing = true;
-  paxos->queue_pending_finisher(new C_Committed(this));
-  paxos->trigger_propose();
+  paxos->queue_pending_finisher(new C_Committed(this)); // push back of Paxos::pending_finishers
+  
+  paxos->trigger_propose(); // call Paxos::propose_pending if paxos->is_active
 }
 
 bool PaxosService::should_stash_full()
@@ -235,6 +241,7 @@ bool PaxosService::should_stash_full()
 	  (get_last_committed() - latest_full > (unsigned)g_conf->paxos_stash_full_interval));
 }
 
+// only called by Monitor::_reset
 void PaxosService::restart()
 {
   dout(10) << "restart" << dendl;
@@ -265,17 +272,24 @@ void PaxosService::election_finished()
   _active();
 }
 
+// called by:
+// PaxosService::election_finished
+// C_Active::finish
+// C_Committed::finish
 void PaxosService::_active()
 {
+  // PaxosService::proposing can only be set by PaxosService::propose_pending and reset by
+  // PaxosService::restart and PaxosService::C_Committed::fisnish
   if (is_proposing()) {
     dout(10) << "_acting - proposing" << dendl;
     return;
   }
   if (!is_active()) {
     dout(10) << "_active - not active" << dendl;
-    wait_for_active_ctx(new C_Active(this));
+    wait_for_active_ctx(new C_Active(this)); // we are not proposing, so we have to wait paxos to become active
     return;
   }
+  
   dout(10) << "_active" << dendl;
 
   remove_legacy_versions();
@@ -385,7 +399,8 @@ void PaxosService::trim(MonitorDBStore::TransactionRef t,
       t->erase(get_service_name(), full_key);
     }
   }
-  if (g_conf->mon_compact_on_trim) {
+  
+  if (g_conf->mon_compact_on_trim) { // default true
     dout(20) << " compacting prefix " << get_service_name() << dendl;
     t->compact_range(get_service_name(), stringify(from - 1), stringify(to));
   }

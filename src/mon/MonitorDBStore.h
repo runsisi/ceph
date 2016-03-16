@@ -291,6 +291,7 @@ class MonitorDBStore
 	break;
       }
     }
+         
     int r = db->submit_transaction_sync(dbt);
     if (r >= 0) {
       while (!compact.empty()) {

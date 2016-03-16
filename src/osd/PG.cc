@@ -494,8 +494,9 @@ bool PG::search_for_missing(
 bool PG::MissingLoc::readable_with_acting(
   const hobject_t &hoid,
   const set<pg_shard_t> &acting) const {
-  if (!needs_recovery(hoid)) return true;
-  if (!missing_loc.count(hoid)) return false;
+  if (!needs_recovery(hoid)) return true; // in needs_recovery_map
+  if (!missing_loc.count(hoid)) return false; // in needs_recovery_map, but not in missing_loc
+  
   const set<pg_shard_t> &locs = missing_loc.find(hoid)->second;
   dout(10) << __func__ << ": locs:" << locs << dendl;
   set<pg_shard_t> have_acting;

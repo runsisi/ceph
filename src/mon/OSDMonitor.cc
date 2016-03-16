@@ -2718,8 +2718,7 @@ void OSDMonitor::tick()
   if (update_pools_status())
     do_propose = true;
 
-  if (do_propose ||
-      !pending_inc.new_pg_temp.empty())  // also propose if we adjusted pg_temp
+  if (do_propose || !pending_inc.new_pg_temp.empty())  // also propose if we adjusted pg_temp
     propose_pending();
 }
 
