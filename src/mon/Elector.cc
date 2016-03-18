@@ -87,6 +87,7 @@ void Elector::start()
     int r = mon->store->apply_transaction(t);
     assert(r >= 0);
   }
+  
   start_stamp = ceph_clock_now(g_ceph_context);
   electing_me = true;
   acked_me[mon->rank] = CEPH_FEATURES_ALL;
@@ -130,7 +131,7 @@ void Elector::reset_timer(double plus)
   // set the timer
   cancel_timer();
   expire_event = new C_ElectionExpire(this);
-  mon->timer.add_event_after(g_conf->mon_lease + plus,
+  mon->timer.add_event_after(g_conf->mon_lease + plus, // default 5
 			     expire_event);
 }
 
@@ -155,7 +156,7 @@ void Elector::expire()
   } else {
     // whoever i deferred to didn't declare victory quickly enough.
     if (mon->has_ever_joined)
-      start();
+      start(); // restart the election
     else
       mon->bootstrap();
   }
@@ -487,6 +488,7 @@ void Elector::dispatch(MonOpRequestRef op)
   }
 }
 
+// only called by admin command
 void Elector::start_participating()
 {
   if (!participating) {

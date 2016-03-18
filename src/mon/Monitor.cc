@@ -613,10 +613,11 @@ int Monitor::preinit()
   read_features();
 
   // have we ever joined a quorum?
+  // the backstore was written in MonmapMonitor::on_active
   has_ever_joined = (store->get(MONITOR_NAME, "joined") != 0);
   dout(10) << "has_ever_joined = " << (int)has_ever_joined << dendl;
 
-  if (!has_ever_joined) {
+  if (!has_ever_joined) { // has never joined, may try to 
     // impose initial quorum restrictions?
     list<string> initial_members;
     get_str_list(g_conf->mon_initial_members, initial_members);
@@ -630,9 +631,10 @@ int Monitor::preinit()
       dout(10) << " monmap is " << *monmap << dendl;
       dout(10) << " extra probe peers " << extra_probe_peers << dendl;
     }
-  } else if (!monmap->contains(name)) {
+  } else if (!monmap->contains(name)) { // removed from a previous mon quorum
     derr << "not in monmap and have been in a quorum before; "
          << "must have been removed" << dendl;
+    
     if (g_conf->mon_force_quorum_join) {
       dout(0) << "we should have died but "
               << "'mon_force_quorum_join' is set -- allowing boot" << dendl;
@@ -930,11 +932,12 @@ void Monitor::bootstrap()
   int newrank = monmap->get_rank(messenger->get_myaddr());
   if (newrank < 0 && rank >= 0) {
     // was i ever part of the quorum?
-    if (has_ever_joined) {
+    if (has_ever_joined) { // get from backstore in Monitor::preinit
       dout(0) << " removed from monmap, suicide." << dendl;
       exit(0);
     }
   }
+  
   if (newrank != rank) {
     dout(0) << " my rank is now " << newrank << " (was " << rank << ")" << dendl;
     messenger->set_myname(entity_name_t::MON(newrank));
@@ -947,7 +950,7 @@ void Monitor::bootstrap()
   // reset
   state = STATE_PROBING;
 
-  _reset();
+  _reset(); // Paxos::restart
 
   // sync store
   if (g_conf->mon_compact_on_bootstrap) {
@@ -971,10 +974,12 @@ void Monitor::bootstrap()
   // probe monitors
   dout(10) << "probing other monitors" << dendl;
   for (unsigned i = 0; i < monmap->size(); i++) {
-    if ((int)i != rank)
+    if ((int)i != rank) // everyone contains in my current monmap except myself
       messenger->send_message(new MMonProbe(monmap->fsid, MMonProbe::OP_PROBE, name, has_ever_joined),
 			      monmap->get_inst(i));
   }
+
+  // extra_probe_peers populated in Monitor::_add_boostrap_peer_hint and Monitor::handle_probe_probe and Monitor::preinit
   for (set<entity_addr_t>::iterator p = extra_probe_peers.begin();
        p != extra_probe_peers.end();
        ++p) {
@@ -1041,6 +1046,7 @@ void Monitor::_reset()
 
   for (vector<PaxosService*>::iterator p = paxos_service.begin(); p != paxos_service.end(); ++p)
     (*p)->restart();
+  
   health_monitor->finish();
 }
 
@@ -1552,6 +1558,7 @@ void Monitor::probe_timeout(int r)
   dout(4) << "probe_timeout " << probe_timeout_event << dendl;
   assert(is_probing() || is_synchronizing());
   assert(probe_timeout_event);
+  
   probe_timeout_event = NULL;
   bootstrap();
 }
@@ -1594,11 +1601,13 @@ void Monitor::handle_probe_probe(MonOpRequestRef op)
 
   dout(10) << "handle_probe_probe " << m->get_source_inst() << *m
 	   << " features " << m->get_connection()->get_features() << dendl;
+  
   uint64_t missing = required_features & ~m->get_connection()->get_features();
   if (missing) {
     dout(1) << " peer " << m->get_source_addr() << " missing features "
 	    << missing << dendl;
     if (m->get_connection()->has_feature(CEPH_FEATURE_OSD_PRIMARY_AFFINITY)) {
+      // the peer will print out the error msg and then do nothing
       MMonProbe *r = new MMonProbe(monmap->fsid, MMonProbe::OP_MISSING_FEATURES,
 				   name, has_ever_joined);
       m->required_features = required_features;
@@ -1614,7 +1623,7 @@ void Monitor::handle_probe_probe(MonOpRequestRef op)
     // quorum-to-be) but fail to join a quorum before it moves past
     // us.  We need to be kicked back to bootstrap so we can
     // synchonize, not keep calling elections.
-    if (paxos->get_version() + 1 < m->paxos_first_version) {
+    if (paxos->get_version() + 1 < m->paxos_first_version) { // TODO: never set by OP_PROBE ???
       dout(1) << " peer " << m->get_source_addr() << " has first_committed "
 	      << "ahead of us, re-bootstrapping" << dendl;
       bootstrap();
@@ -1632,9 +1641,11 @@ void Monitor::handle_probe_probe(MonOpRequestRef op)
   m->get_connection()->send_message(r);
 
   // did we discover a peer here?
-  if (!monmap->contains(m->get_source_addr())) {
+  if (!monmap->contains(m->get_source_addr())) { // this peer does not exist in our current monmap
     dout(1) << " adding peer " << m->get_source_addr()
 	    << " to list of hints" << dendl;
+
+    // peers not in my monmap
     extra_probe_peers.insert(m->get_source_addr());
   }
 
@@ -1656,30 +1667,42 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
   // newer map, or they've joined a quorum and we haven't?
   bufferlist mybl;
   monmap->encode(mybl, m->get_connection()->get_features());
+  
   // make sure it's actually different; the checks below err toward
   // taking the other guy's map, which could cause us to loop.
-  if (!mybl.contents_equal(m->monmap_bl)) {
+  if (!mybl.contents_equal(m->monmap_bl)) { // we have different monmap with the peer, may accept its monmap as our monmap
     MonMap *newmap = new MonMap;
     newmap->decode(m->monmap_bl);
+    
     if (m->has_ever_joined && (newmap->get_epoch() > monmap->get_epoch() ||
 			       !has_ever_joined)) {
+      // the peer is/was in quorum, while i have never joined or lag behind, accept its monmap blindly
+      
       dout(10) << " got newer/committed monmap epoch " << newmap->get_epoch()
 	       << ", mine was " << monmap->get_epoch() << dendl;
       delete newmap;
+
+      // we accept the peer's newer monmap
       monmap->decode(m->monmap_bl);
 
       bootstrap();
       return;
     }
+    
     delete newmap;
   }
 
+  // the peer's monmap is not newer than us (the same or the peer is also a stray mon or its epoch is not newer than mine), 
+  // maybe we can try to learn something from it
+
   // rename peer?
   string peer_name = monmap->get_name(m->get_source_addr());
-  if (monmap->get_epoch() == 0 && peer_name.find("noname-") == 0) {
+  
+  if (monmap->get_epoch() == 0 && peer_name.find("noname-") == 0) { // stray mon
     dout(10) << " renaming peer " << m->get_source_addr() << " "
 	     << peer_name << " -> " << m->name << " in my monmap"
 	     << dendl;
+	     
     monmap->rename(peer_name, m->name);
 
     if (is_electing()) {
@@ -1693,8 +1716,9 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
   // new initial peer?
   if (monmap->get_epoch() == 0 &&
       monmap->contains(m->name) &&
-      monmap->get_addr(m->name).is_blank_ip()) {
+      monmap->get_addr(m->name).is_blank_ip()) { // the peer is an initial memeber
     dout(1) << " learned initial mon " << m->name << " addr " << m->get_source_addr() << dendl;
+    
     monmap->set_addr(m->name, m->get_source_addr());
 
     bootstrap();
@@ -1702,7 +1726,7 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
   }
 
   // end discover phase
-  if (!is_probing()) {
+  if (!is_probing()) { // STATE_PROBING is set in Monitor::Monitor or Monitor::bootstrap
     return;
   }
 
@@ -1714,6 +1738,8 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
   }
 
   entity_inst_t other = m->get_source_inst();
+
+  // sync_last_committed_floor set in Monitor::sync_start
 
   if (m->paxos_last_version < sync_last_committed_floor) {
     dout(10) << " peer paxos versions [" << m->paxos_first_version
@@ -1728,15 +1754,18 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
 	       << " vs my version " << paxos->get_version()
 	       << " (too far ahead)"
 	       << dendl;
+      
       cancel_probe_timeout();
       sync_start(other, true);
       return;
     }
-    if (paxos->get_version() + g_conf->paxos_max_join_drift < m->paxos_last_version) {
+    
+    if (paxos->get_version() + g_conf->paxos_max_join_drift < m->paxos_last_version) { // default 10
       dout(10) << " peer paxos version " << m->paxos_last_version
 	       << " vs my version " << paxos->get_version()
 	       << " (too far ahead)"
 	       << dendl;
+      
       cancel_probe_timeout();
       sync_start(other, false);
       return;
@@ -1744,7 +1773,7 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
   }
 
   // is there an existing quorum?
-  if (m->quorum.size()) {
+  if (m->quorum.size()) { // the peer is in an existing quorum
     dout(10) << " existing quorum " << m->quorum << dendl;
 
     dout(10) << " peer paxos version " << m->paxos_last_version
@@ -1752,8 +1781,7 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
              << " (ok)"
              << dendl;
 
-    if (monmap->contains(name) &&
-        !monmap->get_addr(name).is_blank_ip()) {
+    if (monmap->contains(name) && !monmap->get_addr(name).is_blank_ip()) {
       // i'm part of the cluster; just initiate a new election
       start_election();
     } else {
@@ -1761,9 +1789,10 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
       messenger->send_message(new MMonJoin(monmap->fsid, name, messenger->get_myaddr()),
                               monmap->get_inst(*m->quorum.begin()));
     }
-  } else {
+  } else { // the peer is outside the quorum
     if (monmap->contains(m->name)) {
       dout(10) << " mon." << m->name << " is outside the quorum" << dendl;
+      
       outside_quorum.insert(m->name);
     } else {
       dout(10) << " mostly ignoring mon." << m->name << ", not part of monmap" << dendl;
@@ -1772,9 +1801,11 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
 
     unsigned need = monmap->size() / 2 + 1;
     dout(10) << " outside_quorum now " << outside_quorum << ", need " << need << dendl;
+    
     if (outside_quorum.size() >= need) {
       if (outside_quorum.count(name)) {
         dout(10) << " that's enough to form a new quorum, calling election" << dendl;
+        
         start_election();
       } else {
         dout(10) << " that's enough to form a new quorum, but it does not include me; waiting" << dendl;
@@ -1785,11 +1816,14 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
   }
 }
 
+// called in Elector::bump_epoch
 void Monitor::join_election()
 {
   dout(10) << __func__ << dendl;
-  wait_for_paxos_write();
-  _reset();
+  wait_for_paxos_write(); // flush if paxos is in writing
+  
+  _reset(); // restart paxos
+  
   state = STATE_ELECTING;
 
   logger->inc(l_mon_num_elections);

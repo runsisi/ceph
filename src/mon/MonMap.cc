@@ -206,24 +206,30 @@ void MonMap::set_initial_members(CephContext *cct,
   unsigned i = 0;
   while (i < size()) {
     string n = get_name(i);
-    if (std::find(initial_members.begin(), initial_members.end(), n) != initial_members.end()) {
+    
+    if (std::find(initial_members.begin(), initial_members.end(), n) != initial_members.end()) { // this mon is an initial member
       lgeneric_dout(cct, 1) << " keeping " << n << " " << get_addr(i) << dendl;
+
       i++;
       continue;
     }
 
     lgeneric_dout(cct, 1) << " removing " << get_name(i) << " " << get_addr(i) << dendl;
+    
     if (removed)
       removed->insert(get_addr(i));
-    remove(n);
+    
+    remove(n); // remove those non-initial members
+    
     assert(!contains(n));
   }
 
   // add missing initial members
   for (list<string>::iterator p = initial_members.begin(); p != initial_members.end(); ++p) {
-    if (!contains(*p)) {
-      if (*p == my_name) {
+    if (!contains(*p)) { // this mon is not in current monmap
+      if (*p == my_name) { // i am the initial mon
 	lgeneric_dout(cct, 1) << " adding self " << *p << " " << my_addr << dendl;
+        
 	add(*p, my_addr);
       } else {
 	entity_addr_t a;
@@ -233,7 +239,9 @@ void MonMap::set_initial_members(CephContext *cct,
 	  if (!contains(a))
 	    break;
 	}
+        
 	lgeneric_dout(cct, 1) << " adding " << *p << " " << a << dendl;
+        
 	add(*p, a);
       }
       assert(contains(*p));

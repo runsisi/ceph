@@ -570,7 +570,7 @@ void Paxos::handle_last(MonOpRequestRef op)
     }
     
     // is that everyone?
-    if (num_last == mon->get_quorum().size()) {
+    if (num_last == mon->get_quorum().size()) { // quorum is set in win_election or lose_election, cleared in _reset
       // cancel timeout event
       mon->timer.cancel_event(collect_timeout_event);
       collect_timeout_event = 0;
@@ -615,7 +615,7 @@ void Paxos::collect_timeout()
 }
 
 
-// leader
+// leader, called by Paxos::handle_last and Paxos::propose_pending
 void Paxos::begin(bufferlist& v)
 {
   dout(10) << "begin for " << last_committed+1 << " " 
@@ -627,10 +627,10 @@ void Paxos::begin(bufferlist& v)
 
   // we must already have a majority for this to work.
   assert(mon->get_quorum().size() == 1 ||
-	 num_last > (unsigned)mon->monmap->size()/2);
+	 num_last > (unsigned)mon->monmap->size()/2); // quorum num must > monsize / 2
   
   // and no value, yet.
-  assert(new_value.length() == 0);
+  assert(new_value.length() == 0); // cleared in Paxos::commit_finish or Paxos::restart
 
   // accept it ourselves
   accepted.clear();
