@@ -91,8 +91,9 @@ public:
     while (1) {
       Mutex::Locker l(_lock);
 
-      if (_cct->_conf->heartbeat_interval) {
+      if (_cct->_conf->heartbeat_interval) { // default 5
         utime_t interval(_cct->_conf->heartbeat_interval, 0);
+        
         _cond.WaitInterval(_cct, _lock, interval);
       } else
         _cond.Wait(_lock);
@@ -105,7 +106,8 @@ public:
         _cct->_log->reopen_log_file();
         _reopen_logs = false;
       }
-      _cct->_heartbeat_map->check_touch_file();
+      
+      _cct->_heartbeat_map->check_touch_file(); // check if any worker is timed out
 
       // refresh the perf coutners
       _cct->refresh_perf_values();
@@ -542,12 +544,14 @@ void CephContext::init_crypto()
 void CephContext::start_service_thread()
 {
   ceph_spin_lock(&_service_thread_lock);
-  if (_service_thread) {
+  
+  if (_service_thread) { // already created
     ceph_spin_unlock(&_service_thread_lock);
     return;
   }
-  _service_thread = new CephContextServiceThread(this);
+  _service_thread = new CephContextServiceThread(this); // worker heartbeat check thread
   _service_thread->create();
+  
   ceph_spin_unlock(&_service_thread_lock);
 
   // make logs flush on_exit()
@@ -560,7 +564,8 @@ void CephContext::start_service_thread()
   _conf->call_all_observers();
 
   // start admin socket
-  if (_conf->admin_socket.length())
+  if (_conf->admin_socket.length()) // default "$run_dir/$cluster-$name.asok", changed to "" 
+                                    // for non-CODE_ENVIRONMENT_DAEMON code env in common_preinit
     _admin_socket->init(_conf->admin_socket);
 }
 

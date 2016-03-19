@@ -97,7 +97,8 @@ bool PaxosService::dispatch(MonOpRequestRef op)
   // update
   if (prepare_update(op)) {
     double delay = 0.0;
-    if (should_propose(delay)) {
+    
+    if (should_propose(delay)) { // check if we are too quick to propose, maybe delay a little
       if (delay == 0.0) {
 	propose_pending();
       } else {
@@ -176,11 +177,10 @@ bool PaxosService::should_propose(double& delay)
     delay = 0.0;
   else {
     utime_t now = ceph_clock_now(g_ceph_context);
-    if ((now - paxos->last_commit_time) > g_conf->paxos_propose_interval)
-      delay = (double)g_conf->paxos_min_wait;
+    if ((now - paxos->last_commit_time) > g_conf->paxos_propose_interval) // default 1.0
+      delay = (double)g_conf->paxos_min_wait; // default 0.05
     else
-      delay = (double)(g_conf->paxos_propose_interval + paxos->last_commit_time
-		       - now);
+      delay = (double)(g_conf->paxos_propose_interval + paxos->last_commit_time - now);
   }
   return true;
 }
@@ -189,7 +189,7 @@ bool PaxosService::should_propose(double& delay)
 void PaxosService::propose_pending()
 {
   dout(10) << "propose_pending" << dendl;
-  assert(have_pending);
+  assert(have_pending); // set in PaxosService::_active
   assert(!proposing);
   assert(mon->is_leader());
   assert(is_active());
@@ -297,8 +297,10 @@ void PaxosService::_active()
   // create pending state?
   if (mon->is_leader() && is_active()) {
     dout(7) << "_active creating new pending" << dendl;
+    
     if (!have_pending) {
-      create_pending();
+      create_pending(); // create a ready to propose pending map with epoch increased
+      
       have_pending = true;
     }
 

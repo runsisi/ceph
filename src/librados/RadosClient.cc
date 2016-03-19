@@ -186,7 +186,7 @@ int librados::RadosClient::ping_monitor(const string mon_id, string *result)
 
 int librados::RadosClient::connect()
 {
-  common_init_finish(cct);
+  common_init_finish(cct); // create heartbeat check thread
 
   int err;
 

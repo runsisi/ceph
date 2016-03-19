@@ -74,20 +74,25 @@ bool HeartbeatMap::_check(const heartbeat_handle_d *h, const char *who, time_t n
 		    << " had timed out after " << h->grace << dendl;
     healthy = false;
   }
+  
   was = h->suicide_timeout.read();
   if (was && was < now) {
     ldout(m_cct, 1) << who << " '" << h->name << "'"
 		    << " had suicide timed out after " << h->suicide_grace << dendl;
     assert(0 == "hit suicide timeout");
   }
+  
   return healthy;
 }
 
+// mainly called by ThreadPool::TPHandle::reset_tp_timeout
 void HeartbeatMap::reset_timeout(heartbeat_handle_d *h, time_t grace, time_t suicide_grace)
 {
   ldout(m_cct, 20) << "reset_timeout '" << h->name << "' grace " << grace
 		   << " suicide " << suicide_grace << dendl;
+  
   time_t now = time(NULL);
+  
   _check(h, "reset_timeout", now);
 
   h->timeout.set(now + grace);
@@ -97,6 +102,7 @@ void HeartbeatMap::reset_timeout(heartbeat_handle_d *h, time_t grace, time_t sui
     h->suicide_timeout.set(now + suicide_grace);
   else
     h->suicide_timeout.set(0);
+  
   h->suicide_grace = suicide_grace;
 }
 
@@ -113,8 +119,10 @@ bool HeartbeatMap::is_healthy()
 {
   int unhealthy = 0;
   int total = 0;
+  
   m_rwlock.get_read();
   time_t now = time(NULL);
+  
   if (m_cct->_conf->heartbeat_inject_failure) {
     ldout(m_cct, 0) << "is_healthy injecting failure for next " << m_cct->_conf->heartbeat_inject_failure << " seconds" << dendl;
     m_inject_unhealthy_until = now + m_cct->_conf->heartbeat_inject_failure;
@@ -131,12 +139,16 @@ bool HeartbeatMap::is_healthy()
        p != m_workers.end();
        ++p) {
     heartbeat_handle_d *h = *p;
+    
     if (!_check(h, "is_healthy", now)) {
       healthy = false;
-      unhealthy++;
+      
+      unhealthy++; // currently unhealthy workers
     }
-    total++;
+    
+    total++; // total workers in current HeartbeatMap
   }
+       
   m_rwlock.put_read();
 
   m_unhealthy_workers.set(unhealthy);
@@ -144,6 +156,7 @@ bool HeartbeatMap::is_healthy()
 
   ldout(m_cct, 20) << "is_healthy = " << (healthy ? "healthy" : "NOT HEALTHY")
     << ", total workers: " << total << ", number of unhealthy: " << unhealthy << dendl;
+  
   return healthy;
 }
 
@@ -159,8 +172,9 @@ int HeartbeatMap::get_total_workers() const
 
 void HeartbeatMap::check_touch_file()
 {
-  if (is_healthy()) {
-    string path = m_cct->_conf->heartbeat_file;
+  if (is_healthy()) { // iterate all workers to see if any worker is timed out
+    string path = m_cct->_conf->heartbeat_file; // default ""
+    
     if (path.length()) {
       int fd = ::open(path.c_str(), O_WRONLY|O_CREAT, 0644);
       if (fd >= 0) {

@@ -257,8 +257,7 @@ int main(int argc, const char **argv)
     }
   }
 
-  global_init(&def_args, args,
-              CEPH_ENTITY_TYPE_MON, CODE_ENVIRONMENT_DAEMON, flags);
+  global_init(&def_args, args, CEPH_ENTITY_TYPE_MON, CODE_ENVIRONMENT_DAEMON, flags);
   ceph_heap_profiler_init();
 
   uuid_d fsid;
@@ -298,7 +297,7 @@ int main(int argc, const char **argv)
     exit(1);
   }
 
-  if (g_conf->mon_data.empty()) {
+  if (g_conf->mon_data.empty()) { // default "/var/lib/ceph/mon/$cluster-$id" 
     cerr << "must specify '--mon-data=foo' data path" << std::endl;
     usage();
   }
@@ -339,6 +338,7 @@ int main(int argc, const char **argv)
     // resolve public_network -> public_addr
     pick_addresses(g_ceph_context, CEPH_PICK_ADDRESS_PUBLIC);
 
+    // we are mkfs, so CINIT_FLAG_NO_DAEMON_ACTIONS is set, so only init_crypto
     common_init_finish(g_ceph_context, flags);
 
     bufferlist monmapbl, osdmapbl;
@@ -346,7 +346,7 @@ int main(int argc, const char **argv)
     MonMap monmap;
 
     // load or generate monmap
-    if (g_conf->monmap.length()) {
+    if (g_conf->monmap.length()) { // the cli specified an monmap
       int err = monmapbl.read_file(g_conf->monmap.c_str(), &error);
       if (err < 0) {
 	cerr << argv[0] << ": error reading " << g_conf->monmap << ": " << error << std::endl;
@@ -362,7 +362,7 @@ int main(int argc, const char **argv)
 	cerr << argv[0] << ": error decoding monmap " << g_conf->monmap << ": " << e.what() << std::endl;
 	exit(1);
       }      
-    } else {
+    } else { // the cli does not specify a monmap
       int err = monmap.build_initial(g_ceph_context, cerr);
       if (err < 0) {
 	cerr << argv[0] << ": warning: no initial monitors; must use admin socket to feed hints" << std::endl;
@@ -511,6 +511,7 @@ int main(int argc, const char **argv)
       }
       global_init_postfork_start(g_ceph_context);
     }
+    
     common_init_finish(g_ceph_context);
     global_init_chdir(g_ceph_context);
     if (preload_erasure_code() < 0)
@@ -531,6 +532,7 @@ int main(int argc, const char **argv)
     derr << "unable to read magic from mon data" << dendl;
     prefork.exit(1);
   }
+  
   string magic(magicbl.c_str(), magicbl.length()-1);  // ignore trailing \n
   if (strcmp(magic.c_str(), CEPH_MON_ONDISK_MAGIC)) {
     derr << "mon fs magic '" << magic << "' != current '" << CEPH_MON_ONDISK_MAGIC << "'" << dendl;
@@ -601,6 +603,7 @@ int main(int argc, const char **argv)
     } else {
       derr << "unable to obtain a monmap: " << cpp_strerror(err) << dendl;
     }
+    
     if (!extract_monmap.empty()) {
       int r = mapbl.write_file(extract_monmap.c_str());
       if (r < 0) {
@@ -608,6 +611,7 @@ int main(int argc, const char **argv)
 	derr << "error writing monmap to " << extract_monmap << ": " << cpp_strerror(r) << dendl;
 	prefork.exit(1);
       }
+      
       derr << "wrote monmap to " << extract_monmap << dendl;
       prefork.exit(0);
     }
@@ -616,26 +620,29 @@ int main(int argc, const char **argv)
   // this is what i will bind to
   entity_addr_t ipaddr;
 
-  if (monmap.contains(g_conf->name.get_id())) {
-    ipaddr = monmap.get_addr(g_conf->name.get_id());
+  if (monmap.contains(g_conf->name.get_id())) { // i am already in the monmap
+    ipaddr = monmap.get_addr(g_conf->name.get_id()); // my addr in monmap
 
     // print helpful warning if the conf file doesn't match
     entity_addr_t conf_addr;
     std::vector <std::string> my_sections;
     g_conf->get_my_sections(my_sections);
+    
     std::string mon_addr_str;
     if (g_conf->get_val_from_conf_file(my_sections, "mon addr",
-				       mon_addr_str, true) == 0) {
+				       mon_addr_str, true) == 0) { // my addr is also specified in ceph.conf
+      // check if the addr in ceph.conf and in monmap match
       if (conf_addr.parse(mon_addr_str.c_str()) && (ipaddr != conf_addr)) {
 	derr << "WARNING: 'mon addr' config option " << conf_addr
 	     << " does not match monmap file" << std::endl
 	     << "         continuing with monmap configuration" << dendl;
       }
     }
-  } else {
+  } else { // no monmap exist in backstore or i am not in the monmap
     dout(0) << g_conf->name << " does not exist in monmap, will attempt to join an existing cluster" << dendl;
 
     pick_addresses(g_ceph_context, CEPH_PICK_ADDRESS_PUBLIC);
+    
     if (!g_conf->public_addr.is_blank_ip()) {
       ipaddr = g_conf->public_addr;
       if (ipaddr.get_port() == 0)
@@ -649,6 +656,7 @@ int main(int argc, const char **argv)
 	derr << argv[0] << ": error generating initial monmap: "
              << cpp_strerror(err) << dendl;
 	usage();
+        
 	prefork.exit(1);
       }
       if (tmpmap.contains(g_conf->name.get_id())) {
@@ -656,6 +664,7 @@ int main(int argc, const char **argv)
       } else {
 	derr << "no public_addr or public_network specified, and " << g_conf->name
 	     << " not present in monmap or ceph.conf" << dendl;
+        
 	prefork.exit(1);
       }
     }

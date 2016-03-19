@@ -36,6 +36,7 @@ enum common_init_flags_t {
   CINIT_FLAG_NO_CLOSE_STDERR = 0x4,
 
   // don't do anything daemonish, like create /var/run/ceph, or print a banner
+  // only set by ceph-conf, ceph-mon(--mkfs, --inject-monmap, --extract-monmap)
   CINIT_FLAG_NO_DAEMON_ACTIONS = 0x8,
 };
 

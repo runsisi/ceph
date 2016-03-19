@@ -85,15 +85,19 @@ void MonmapMonitor::create_pending()
   pending_map = *mon->monmap;
   pending_map.epoch++;
   pending_map.last_changed = ceph_clock_now(g_ceph_context);
+  
   dout(10) << "create_pending monmap epoch " << pending_map.epoch << dendl;
 }
 
+// note: the pending map has been updated by prepare_xxx before encoding this 
+// pending map to propose
 void MonmapMonitor::encode_pending(MonitorDBStore::TransactionRef t)
 {
   dout(10) << "encode_pending epoch " << pending_map.epoch << dendl;
 
   assert(mon->monmap->epoch + 1 == pending_map.epoch ||
 	 pending_map.epoch == 1);  // special case mkfs!
+	 
   bufferlist bl;
   pending_map.encode(bl, mon->get_quorum_features());
 
@@ -417,12 +421,15 @@ bool MonmapMonitor::prepare_join(MonOpRequestRef op)
 {
   MMonJoin *join = static_cast<MMonJoin*>(op->get_req());
   dout(0) << "adding/updating " << join->name << " at " << join->addr << " to monitor cluster" << dendl;
+
   if (pending_map.contains(join->name))
     pending_map.remove(join->name);
   if (pending_map.contains(join->addr))
     pending_map.remove(pending_map.get_name(join->addr));
+
   pending_map.add(join->name, join->addr);
   pending_map.last_changed = ceph_clock_now(g_ceph_context);
+
   return true;
 }
 

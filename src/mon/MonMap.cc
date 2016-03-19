@@ -197,6 +197,7 @@ int MonMap::build_from_host_list(std::string hostlist, std::string prefix)
   return 0;
 }
 
+// called in Monitor::preinit and monmaptool
 void MonMap::set_initial_members(CephContext *cct,
 				 list<std::string>& initial_members,
 				 string my_name, const entity_addr_t& my_addr,
@@ -226,14 +227,15 @@ void MonMap::set_initial_members(CephContext *cct,
 
   // add missing initial members
   for (list<string>::iterator p = initial_members.begin(); p != initial_members.end(); ++p) {
-    if (!contains(*p)) { // this mon is not in current monmap
-      if (*p == my_name) { // i am the initial mon
+    if (!contains(*p)) { // this name is not in current monmap
+      if (*p == my_name) { // this is my name
 	lgeneric_dout(cct, 1) << " adding self " << *p << " " << my_addr << dendl;
         
 	add(*p, my_addr);
-      } else {
+      } else { // not my name
 	entity_addr_t a;
 	a.set_family(AF_INET);
+        
 	for (int n=1; ; n++) {
 	  a.set_nonce(n);
 	  if (!contains(a))
@@ -242,7 +244,7 @@ void MonMap::set_initial_members(CephContext *cct,
         
 	lgeneric_dout(cct, 1) << " adding " << *p << " " << a << dendl;
         
-	add(*p, a);
+	add(*p, a); // add with blank ip
       }
       assert(contains(*p));
     }
@@ -253,6 +255,7 @@ void MonMap::set_initial_members(CephContext *cct,
 int MonMap::build_initial(CephContext *cct, ostream& errout)
 {
   const md_config_t *conf = cct->_conf;
+  
   // file?
   if (!conf->monmap.empty()) {
     int r;

@@ -70,7 +70,10 @@ void global_pre_init(std::vector < const char * > *alt_def_args,
   std::string cluster = "ceph";
   CephInitParameters iparams = ceph_argparse_early_args(args, module_type, flags,
 							&cluster, &conf_file_list);
+
+  // change default opts by code_env
   CephContext *cct = common_preinit(iparams, code_env, flags);
+
   cct->_conf->cluster = cluster;
   global_init_set_globals(cct);
   md_config_t *conf = cct->_conf;
@@ -126,7 +129,8 @@ void global_init(std::vector < const char * > *alt_def_args,
   if (g_conf->fatal_signal_handlers)
     install_standard_sighandlers();
 
-  if (g_conf->log_flush_on_exit)
+  if (g_conf->log_flush_on_exit) // default true, common_preinit(called in global_pre_init above) 
+                                 // has reset this to false for library use
     g_ceph_context->_log->set_flush_on_exit();
 
   // consider --setuser root a no-op, even if we're not root
@@ -144,8 +148,7 @@ void global_init(std::vector < const char * > *alt_def_args,
   }
 
   // drop privileges?
-  if (g_conf->setgroup.length() ||
-      g_conf->setuser.length()) {
+  if (g_conf->setgroup.length() || g_conf->setuser.length()) {
     uid_t uid = 0;  // zero means no change; we can only drop privs here.
     gid_t gid = 0;
     if (g_conf->setuser.length()) {
@@ -164,6 +167,7 @@ void global_init(std::vector < const char * > *alt_def_args,
 	gid = p->pw_gid;
       }
     }
+    
     if (g_conf->setgroup.length() > 0) {
       gid = atoi(g_conf->setgroup.c_str());
       if (!gid) {
@@ -179,8 +183,8 @@ void global_init(std::vector < const char * > *alt_def_args,
 	gid = g->gr_gid;
       }
     }
-    if ((uid || gid) &&
-	g_conf->setuser_match_path.length()) {
+    
+    if ((uid || gid) &&	g_conf->setuser_match_path.length()) {
       struct stat st;
       int r = ::stat(g_conf->setuser_match_path.c_str(), &st);
       if (r < 0) {
@@ -220,7 +224,7 @@ void global_init(std::vector < const char * > *alt_def_args,
     dout(0) << "set uid:gid to " << uid << ":" << gid << dendl;
   }
 
-  if (g_conf->run_dir.length() &&
+  if (g_conf->run_dir.length() && // default "/var/run/ceph"
       code_env == CODE_ENVIRONMENT_DAEMON &&
       !(flags & CINIT_FLAG_NO_DAEMON_ACTIONS)) {
     int r = ::mkdir(g_conf->run_dir.c_str(), 0755);

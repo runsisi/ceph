@@ -117,6 +117,7 @@ void common_init_finish(CephContext *cct, int flags)
 {
   cct->init_crypto();
 
+  // only set by ceph-conf, ceph-mon(--mkfs, --inject-monmap, --extract-monmap)
   if (!(flags & CINIT_FLAG_NO_DAEMON_ACTIONS))
-    cct->start_service_thread();
+    cct->start_service_thread(); // create worker heartbeat check thread
 }

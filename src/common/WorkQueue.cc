@@ -59,8 +59,7 @@ void ThreadPool::TPHandle::suspend_tp_timeout()
 
 void ThreadPool::TPHandle::reset_tp_timeout()
 {
-  cct->get_heartbeat_map()->reset_timeout(
-    hb, grace, suicide_grace);
+  cct->get_heartbeat_map()->reset_timeout(hb, grace, suicide_grace);
 }
 
 ThreadPool::~ThreadPool()

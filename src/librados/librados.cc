@@ -2262,9 +2262,11 @@ static CephContext *rados_create_cct(const char * const clustername,
 {
   // missing things compared to global_init:
   // g_ceph_context, g_conf, g_lockdep, signal handlers
-  CephContext *cct = common_preinit(*iparams, CODE_ENVIRONMENT_LIBRARY, 0);
+  CephContext *cct = common_preinit(*iparams, CODE_ENVIRONMENT_LIBRARY, 0); // change default opts by code env
+
   if (clustername)
     cct->_conf->cluster = clustername;
+  
   cct->_conf->parse_env(); // environment variables override
   cct->_conf->apply_changes(NULL);
 
@@ -2275,10 +2277,12 @@ static CephContext *rados_create_cct(const char * const clustername,
 extern "C" int rados_create(rados_t *pcluster, const char * const id)
 {
   CephInitParameters iparams(CEPH_ENTITY_TYPE_CLIENT);
+  
   if (id) {
     iparams.name.set(CEPH_ENTITY_TYPE_CLIENT, id);
   }
-  CephContext *cct = rados_create_cct("ceph", &iparams);
+  
+  CephContext *cct = rados_create_cct("ceph", &iparams); // change default opts
 
   tracepoint(librados, rados_create_enter, id);
   *pcluster = reinterpret_cast<rados_t>(new librados::RadosClient(cct));
@@ -2344,7 +2348,9 @@ extern "C" int rados_connect(rados_t cluster)
 {
   tracepoint(librados, rados_connect_enter, cluster);
   librados::RadosClient *client = (librados::RadosClient *)cluster;
+  
   int retval = client->connect();
+  
   tracepoint(librados, rados_connect_exit, retval);
   return retval;
 }

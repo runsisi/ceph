@@ -1786,6 +1786,8 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
       start_election();
     } else {
       dout(10) << " ready to join, but i'm not in the monmap or my addr is blank, trying to join" << dendl;
+
+      // will be handled by MonmapMonitor::prepare_update
       messenger->send_message(new MMonJoin(monmap->fsid, name, messenger->get_myaddr()),
                               monmap->get_inst(*m->quorum.begin()));
     }
