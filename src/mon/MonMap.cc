@@ -228,10 +228,10 @@ void MonMap::set_initial_members(CephContext *cct,
   // add missing initial members
   for (list<string>::iterator p = initial_members.begin(); p != initial_members.end(); ++p) {
     if (!contains(*p)) { // this name is not in current monmap
-      if (*p == my_name) { // this is my name
+      if (*p == my_name) { // this is my name, i.e. i am one of the initial members
 	lgeneric_dout(cct, 1) << " adding self " << *p << " " << my_addr << dendl;
         
-	add(*p, my_addr);
+	add(*p, my_addr); // TODO: remove from removed ???
       } else { // not my name
 	entity_addr_t a;
 	a.set_family(AF_INET);
@@ -246,6 +246,7 @@ void MonMap::set_initial_members(CephContext *cct,
         
 	add(*p, a); // add with blank ip
       }
+      
       assert(contains(*p));
     }
   }

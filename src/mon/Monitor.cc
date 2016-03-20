@@ -767,7 +767,7 @@ int Monitor::init()
   // i'm ready!
   messenger->add_dispatcher_tail(this);
 
-
+  // probe other monitors
   bootstrap();
 
   // encode command sets

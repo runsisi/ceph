@@ -114,7 +114,9 @@ int SimpleMessenger::_send_message(Message *m, const entity_inst_t& dest)
   }
 
   lock.Lock();
-  Pipe *pipe = _lookup_pipe(dest.addr);
+  Pipe *pipe = _lookup_pipe(dest.addr); // lookup in SimpleMessenger::rank_pipe under the lock of SimpleMessenger::lock
+
+  // Pipe has a ref to PipeConnection, PipeConnection has a pointer to Pipe
   submit_message(m, (pipe ? pipe->connection_state.get() : NULL),
                  dest.addr, dest.name.type(), true);
   lock.Unlock();
@@ -360,9 +362,10 @@ Pipe *SimpleMessenger::connect_rank(const entity_addr_t& addr,
   
   ldout(cct,10) << "connect_rank to " << addr << ", creating pipe and registering" << dendl;
   
-  // create pipe
+  // create pipe and get a ref to conn, if conn is NULL then new it
   Pipe *pipe = new Pipe(this, Pipe::STATE_CONNECTING,
 			static_cast<PipeConnection*>(con));
+  
   pipe->pipe_lock.Lock();
   pipe->set_peer_type(type);
   pipe->set_peer_addr(addr);
@@ -372,7 +375,8 @@ Pipe *SimpleMessenger::connect_rank(const entity_addr_t& addr,
     pipe->_send(first);
   pipe->pipe_lock.Unlock();
   pipe->register_pipe();
-  pipes.insert(pipe);
+  
+  pipes.insert(pipe); // the newly created pipe is not inserted into rank_pipe yet
 
   return pipe;
 }
@@ -440,36 +444,52 @@ void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
   }
 
   // existing connection?
-  if (con) {
+  if (con) { // the pipe to the dest addr is existing and not closed
     Pipe *pipe = NULL;
+
+    // try to get the pipe associated with the conn
     bool ok = static_cast<PipeConnection*>(con)->try_get_pipe(&pipe);
-    if (!ok) {
+    
+    if (!ok) { // conn is failed, the failed flag is set in PipeConnection::clear_pipe
       ldout(cct,0) << "submit_message " << *m << " remote, " << dest_addr
 		   << ", failed lossy con, dropping message " << m << dendl;
+      
       m->put();
       return;
     }
-    while (pipe && ok) {
+
+    // the conn is not failed
+    
+    while (pipe && ok) { // the conn contains a pipe
       // we loop in case of a racing reconnect, either from us or them
+      
       pipe->pipe_lock.Lock(); // can't use a Locker because of the Pipe ref
+      
       if (pipe->state != Pipe::STATE_CLOSED) {
 	ldout(cct,20) << "submit_message " << *m << " remote, " << dest_addr << ", have pipe." << dendl;
+        
 	pipe->_send(m);
 	pipe->pipe_lock.Unlock();
 	pipe->put();
 	return;
       }
+
+      // pipe has been closed
+      
       Pipe *current_pipe;
-      ok = con->try_get_pipe(&current_pipe);
+      ok = con->try_get_pipe(&current_pipe); // try to see if the conn has created a new pipe
+      
       pipe->pipe_lock.Unlock();
-      if (current_pipe == pipe) {
+      
+      if (current_pipe == pipe) { // still the same pipe
 	ldout(cct,20) << "submit_message " << *m << " remote, " << dest_addr
 		      << ", had pipe " << pipe << ", but it closed." << dendl;
+        
 	pipe->put();
 	current_pipe->put();
 	m->put();
 	return;
-      } else {
+      } else { // the conn has created a new pipe or the conn has failed
 	pipe->put();
 	pipe = current_pipe;
       }
@@ -486,12 +506,14 @@ void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
 
   // remote, no existing pipe.
   const Policy& policy = get_policy(dest_type);
+  
   if (policy.server) {
     ldout(cct,20) << "submit_message " << *m << " remote, " << dest_addr << ", lossy server for target type "
 		  << ceph_entity_type_name(dest_type) << ", no session, dropping." << dendl;
     m->put();
   } else {
     ldout(cct,20) << "submit_message " << *m << " remote, " << dest_addr << ", new pipe." << dendl;
+    
     if (!already_locked) {
       /** We couldn't handle the Message without reference to global data, so
        *  grab the lock and do it again. If we got here, we know it's a non-lossy
@@ -499,6 +521,8 @@ void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
       Mutex::Locker l(lock);
       submit_message(m, con, dest_addr, dest_type, true);
     } else {
+      // create a pipe and connect to dest addr, setup the relationship between conn(may also be newly created) 
+      // and the newly created pipe
       connect_rank(dest_addr, dest_type, static_cast<PipeConnection*>(con), m);
     }
   }

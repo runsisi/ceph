@@ -85,7 +85,7 @@ Pipe::Pipe(SimpleMessenger *r, int st, PipeConnection *con)
     out_seq(0), in_seq(0), in_seq_acked(0) {
   if (con) {
     connection_state = con;
-    connection_state->reset_pipe(this);
+    connection_state->reset_pipe(this); // release old pipe and set PipeConnection::pipe to this new pipe
   } else {
     connection_state = new PipeConnection(msgr->cct, msgr);
     connection_state->pipe = get();
