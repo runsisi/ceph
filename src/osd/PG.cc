@@ -2235,6 +2235,7 @@ void PG::_activate_committed(epoch_t epoch, epoch_t activation_epoch)
       all_activated_and_committed();
   } else { // we are replica shard
     dout(10) << "_activate_committed " << epoch << " telling primary" << dendl;
+    
     MOSDPGInfo *m = new MOSDPGInfo(epoch); // MInfoRec
     pg_notify_t i = pg_notify_t(
       get_primary().shard, pg_whoami.shard,
@@ -6874,7 +6875,7 @@ PG::RecoveryState::Recovered::Recovered(my_context ctx)
   if (pg->acting != pg->up && !pg->choose_acting(auth_log_shard)) 
     assert(pg->want_acting.size());
 
-  // RecoveryState::Active::react(AllReplicasActivated) will set this field to true
+  // RecoveryState::Active::react(AllReplicasActivated) sets this field to true
   if (context< Active >().all_replicas_activated)
     post_event(GoClean()); // transit into state Clean, i.e. substate of Active
 }
@@ -7289,9 +7290,10 @@ boost::statechart::result PG::RecoveryState::Active::react(const AllReplicasActi
   // queue peering evt DoRecovery/RequestBackfill/AllReplicasRecovered accordingly,
   // note: current now we are still in state Activating, so the pending peering
   // evt is to be handled by state Activating, i.e.
-  // boost::statechart::transition< AllReplicasRecovered, Recovered >,
-  // boost::statechart::transition< DoRecovery, WaitLocalRecoveryReserved >,
-  // boost::statechart::transition< RequestBackfill, WaitLocalBackfillReserved >
+  // boost::statechart::transition< DoRecovery, WaitLocalRecoveryReserved >, // needs recovery
+  // boost::statechart::transition< RequestBackfill, WaitLocalBackfillReserved > // needs backfill
+  // boost::statechart::transition< AllReplicasRecovered, Recovered >, // nothing to be done
+  
   pg->on_activate();
 
   return discard_event();

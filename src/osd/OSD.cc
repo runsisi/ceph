@@ -9746,7 +9746,7 @@ int OSD::init_op_flags(OpRequestRef& op)
   // client flags have no bearing on whether an op is a read, write, etc.
   op->rmw_flags = 0;
 
-  // set bits based on op codes, called methods.
+  // set bits based on op codes, i.e. rmw_flags |= flags
   for (iter = m->ops.begin(); iter != m->ops.end(); ++iter) {
     if (ceph_osd_op_mode_modify(iter->op.op))
       op->set_write();
@@ -9817,6 +9817,7 @@ int OSD::init_op_flags(OpRequestRef& op)
 	    r = -EIO;
 	  return r;
 	}
+        
 	int flags = cls->get_method_flags(mname.c_str());
 	if (flags < 0) {
 	  if (flags == -ENOENT)
@@ -9825,6 +9826,7 @@ int OSD::init_op_flags(OpRequestRef& op)
 	    r = flags;
 	  return r;
 	}
+        
 	is_read = flags & CLS_METHOD_RD;
 	is_write = flags & CLS_METHOD_WR;
         bool is_promote = flags & CLS_METHOD_PROMOTE;

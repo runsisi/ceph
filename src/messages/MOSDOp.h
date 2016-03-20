@@ -460,8 +460,10 @@ struct ceph_osd_request_head {
 
   void finish_decode() {
     assert(!partial_decode_needed); // partial decoding required
+    
     if (!final_decode_needed)
       return; // Message is already final decoded
+
     assert(header.version >= 7);
 
     ::decode(client_inc, p);

@@ -1386,15 +1386,21 @@ void ReplicatedPG::do_request(
 
   // PG::start_peering_interval cleared PG_STATE_ACTIVE, PG_STATE_PEERED and others
   if (!is_peered()) { // is PG_STATE_ACTIVE or PG_STATE_PEERED
+    // PG_STATE_ACTIVE or PG_STATE_PEERED set in PG::_activate_committed (for replica) 
+    // or RecoveryState::Active::react(AllReplicasActivated) (for primary)
+    
     // Delay unless PGBackend says it's ok
-    if (pgbackend->can_handle_while_inactive(op)) { // for replicated backend we can handle pull op at any time      
+    if (pgbackend->can_handle_while_inactive(op)) { 
       // ec backend is always false, for replicated backend only ops below are allowed:
       // MSG_OSD_PG_PULL and CEPH_OSD_OP_PULL (subop of MSG_OSD_SUBOP, defined in rados.h)
+      
       bool handled = pgbackend->handle_message(op);
+      
       assert(handled);
       return;
     } else { // ok, we must wait until our state get into PG_STATE_ACTIVE or PG_STATE_PEERED
       waiting_for_peered.push_back(op);
+      
       op->mark_delayed("waiting for peered");
       return;
     }
@@ -1457,24 +1463,27 @@ void ReplicatedPG::do_request(
   // ok, pg backend did not handle the op
   switch (op->get_req()->get_type()) {
   case CEPH_MSG_OSD_OP:
-    if (!is_active()) {
+    if (!is_active()) { // PG_STATE_PEERED
       dout(20) << " peered, not active, waiting for active on " << op << dendl;
+      
       waiting_for_active.push_back(op);
       op->mark_delayed("waiting for active");
       return;
     }
+    
     if (is_replay()) {
       dout(20) << " replay, waiting for active on " << op << dendl;
       waiting_for_active.push_back(op);
       op->mark_delayed("waiting for replay end");
       return;
     }
+    
     // verify client features
-    if ((pool.info.has_tiers() || pool.info.is_tier()) &&
-	!op->has_feature(CEPH_FEATURE_OSD_CACHEPOOL)) {
+    if ((pool.info.has_tiers() || pool.info.is_tier()) && !op->has_feature(CEPH_FEATURE_OSD_CACHEPOOL)) {
       osd->reply_op_error(op, -EOPNOTSUPP);
       return;
     }
+    
     do_op(op); // do it now
     break;
 
@@ -1564,7 +1573,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   m->finish_decode();
   m->clear_payload();
 
-  if (op->rmw_flags == 0) {
+  if (op->rmw_flags == 0) { // the client did not set op->rmw_flags, we init it according the carried ops here
     int r = osd->osd->init_op_flags(op);
     if (r) {
       osd->reply_op_error(op, r);
@@ -1577,6 +1586,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
       wait_for_all_missing(op);
       return;
     }
+    
     return do_pg_op(op);
   }
 
@@ -1591,6 +1601,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   if (m->get_oid().name.size() > max_name_len) {
     dout(4) << "do_op '" << m->get_oid().name << "' is longer than "
             << max_name_len << " bytes" << dendl;
+    
     osd->reply_op_error(op, -ENAMETOOLONG);
     return;
   }
@@ -1598,6 +1609,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   // blacklisted?
   if (get_osdmap()->is_blacklisted(m->get_source_addr())) {
     dout(10) << "do_op " << m->get_source_addr() << " is blacklisted" << dendl;
+    
     osd->reply_op_error(op, -EBLACKLISTED);
     return;
   }
@@ -1615,11 +1627,13 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 	     << *m << dendl;
     return;
   }
+
   if (!m->get_source().is_mds() && osd->check_failsafe_full()) {
     dout(10) << __func__ << " fail-safe full check failed, dropping request"
 	     << dendl;
     return;
   }
+  
   int64_t poolid = get_pgid().pool();
   if (op->may_write()) {
 

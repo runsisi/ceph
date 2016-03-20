@@ -1784,6 +1784,7 @@ public:
 
     struct Recovered : boost::statechart::state< Recovered, Active >, NamedState {
       typedef boost::mpl::list<
+        // GoClean posted in Recovered::Recovered or react(AllReplicasActivated) below
 	boost::statechart::transition< GoClean, Clean >,
 	boost::statechart::custom_reaction< AllReplicasActivated >
       > reactions;
