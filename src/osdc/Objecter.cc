@@ -3376,14 +3376,17 @@ void Objecter::list_nobjects(NListContext *list_context, Context *onfinish)
     ++list_context->current_pg; // update to the next pg
     list_context->current_pg_epoch = 0;
     list_context->cookie = collection_list_handle_t();
-    if (list_context->current_pg >= list_context->starting_pg_num) {
+    
+    if (list_context->current_pg >= list_context->starting_pg_num) { // reached the end of the pool
       list_context->at_end_of_pool = true; // reached the last pg of this pool
+      
       ldout(cct, 20) << " no more pgs; reached end of pool" << dendl;
     } else {
       ldout(cct, 20) << " move to next pg " << list_context->current_pg << dendl;
     }
   }
-  if (list_context->at_end_of_pool) {
+  
+  if (list_context->at_end_of_pool) { // has iterated all pgs in this pool
     // release the listing context's budget once all
     // OPs (in the session) are finished
     put_nlist_context_budget(list_context);
@@ -3398,30 +3401,37 @@ void Objecter::list_nobjects(NListContext *list_context, Context *onfinish)
   int pg_num = pool->get_pg_num();
   rwlock.unlock();
 
+  // init or update starting pg, the pg_num for the pool may have increased during 
+  // our iterating
+
   if (list_context->starting_pg_num == 0) {     // there can't be zero pgs!
     list_context->starting_pg_num = pg_num;
     list_context->sort_bitwise = osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE);
     ldout(cct, 20) << pg_num << " placement groups" << dendl;
   }
+  
   if (list_context->sort_bitwise != osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE)) {
     ldout(cct, 10) << " hobject sort order changed, restarting this pg" << dendl;
     list_context->cookie = collection_list_handle_t();
     list_context->sort_bitwise = osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE);
   }
+  
   if (list_context->starting_pg_num != pg_num) {
     // start reading from the beginning; the pgs have changed
     ldout(cct, 10) << " pg_num changed; restarting with " << pg_num << dendl;
     list_context->current_pg = 0;
     list_context->cookie = collection_list_handle_t(); // a typedef of hobject_t
     list_context->current_pg_epoch = 0;
-    list_context->starting_pg_num = pg_num;
+    list_context->starting_pg_num = pg_num; // pg_num increased
   }
-  assert(list_context->current_pg <= pg_num);
+  
+  assert(list_context->current_pg <= pg_num); // pg_num can only be increase monotonically
 
   ObjectOperation op;
   // construct a CEPH_OSD_OP_PGNLS or CEPH_OSD_OP_PGNLS_FILTER op
   op.pg_nls(list_context->max_entries, list_context->filter, list_context->cookie,
 	     list_context->current_pg_epoch);
+  
   list_context->bl.clear();
   C_NList *onack = new C_NList(list_context, onfinish, this);
   object_locator_t oloc(list_context->pool_id, list_context->nspace);
@@ -3570,6 +3580,7 @@ void Objecter::list_objects(ListContext *list_context, Context *onfinish)
   ObjectOperation op;
   op.pg_ls(list_context->max_entries, list_context->filter, list_context->cookie,
 	   list_context->current_pg_epoch); // op will have flag CEPH_OSD_FLAG_PGOP, but not used
+	   
   list_context->bl.clear();
   C_List *onack = new C_List(list_context, onfinish, this);
   object_locator_t oloc(list_context->pool_id, list_context->nspace);

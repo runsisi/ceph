@@ -460,7 +460,10 @@ struct ceph_osd_request_head {
 
   void finish_decode() {
     assert(!partial_decode_needed); // partial decoding required
-    
+
+    // this variable only be set in MOSDOp::MOSDOp, i.e. the default ctor, decode_message
+    // called in Pipe::read_message will alloc a MOSDOp msg with the default ctor and
+    // decode the first partial of the msg
     if (!final_decode_needed)
       return; // Message is already final decoded
 

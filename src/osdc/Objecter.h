@@ -207,7 +207,7 @@ struct ObjectOperation {
 
   // ------
 
-  // pg
+  // pg, called by Objecter::list_objects
   void pg_ls(uint64_t count, bufferlist& filter, collection_list_handle_t cookie, epoch_t start_epoch) {
     if (filter.length() == 0)
       add_pgls(CEPH_OSD_OP_PGLS, count, cookie, start_epoch);
@@ -216,6 +216,7 @@ struct ObjectOperation {
     flags |= CEPH_OSD_FLAG_PGOP;
   }
 
+  // called by Objecter::list_nobjects
   void pg_nls(uint64_t count, bufferlist& filter, collection_list_handle_t cookie, epoch_t start_epoch) {
     if (filter.length() == 0)
       add_pgls(CEPH_OSD_OP_PGNLS, count, cookie, start_epoch);
@@ -1395,7 +1396,7 @@ public:
       if (r >= 0) {
         objecter->_nlist_reply(list_context, r, final_finish, epoch);
       } else {
-        final_finish->complete(r);
+        final_finish->complete(r); // callback of the user
       }
     }
   };
@@ -2145,9 +2146,10 @@ public:
 		Context *onack,
 		epoch_t *reply_epoch,
                 int *ctx_budget) {
-    Op *o = new Op(object_t(), oloc,
-		   op.ops, flags | global_op_flags.read() | CEPH_OSD_FLAG_READ,
+    Op *o = new Op(object_t(), oloc, op.ops, 
+		   flags | global_op_flags.read() | CEPH_OSD_FLAG_READ,
 		   onack, NULL, NULL);
+    
     // only pg_read will set target.precalc_pgid to true, which means 
     // we are access the specified pg, then in _calc_target target.base_pgid will
     // be used while target.base_oid won't
@@ -2164,6 +2166,7 @@ public:
       // budget is tracked by listing context
       o->ctx_budgeted = true;
     }
+    
     return op_submit(o, ctx_budget);
   }
 

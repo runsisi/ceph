@@ -335,14 +335,14 @@ void PGMap::redo_full_sets()
   }
 }
 
-// PGMap::full_osds will be used in OSDMonitor::tick
+// called in PGMap::apply_incremental, PGMap::redo_full_sets and PGMap::update_osd
 void PGMap::register_nearfull_status(int osd, const osd_stat_t& s)
 {
   float ratio = ((float)s.kb_used) / ((float)s.kb);
 
   if (full_ratio > 0 && ratio > full_ratio) {
     // full
-    full_osds.insert(osd);
+    full_osds.insert(osd); // PGMap::full_osds will be used in OSDMonitor::tick
     nearfull_osds.erase(osd);
   } else if (nearfull_ratio > 0 && ratio > nearfull_ratio) {
     // nearfull
@@ -421,12 +421,14 @@ void PGMap::update_osd(int osd, bufferlist& bl)
   bufferlist::iterator p = bl.begin();
   ceph::unordered_map<int32_t,osd_stat_t>::iterator o = osd_stat.find(osd);
   epoch_t old_lec = 0;
+  
   if (o != osd_stat.end()) {
     ceph::unordered_map<int32_t,epoch_t>::iterator i = osd_epochs.find(osd);
     if (i != osd_epochs.end())
       old_lec = i->second;
     stat_osd_sub(o->second);
   }
+  
   osd_stat_t& r = osd_stat[osd];
   ::decode(r, p);
   stat_osd_add(r);

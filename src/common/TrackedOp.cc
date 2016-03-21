@@ -256,6 +256,7 @@ void OpTracker::get_age_ms_histogram(pow2_hist_t *h)
                                                                !i.end(); ++i) {
       utime_t age = now - (*i)->get_initiated();
       uint32_t ms = (long)(age * 1000.0);
+      
       h->add(ms);
     }
   }

@@ -332,7 +332,8 @@ void PGMonitor::create_pending()
 {
   pending_inc = PGMap::Incremental();
   pending_inc.version = pg_map.version + 1;
-  if (pg_map.version == 0) {
+  
+  if (pg_map.version == 0) { // the initial pgmap, set the default value
     // pull initial values from first leader mon's config
     pending_inc.full_ratio = g_conf->mon_osd_full_ratio; // default .95
     if (pending_inc.full_ratio > 1.0)
@@ -345,6 +346,7 @@ void PGMonitor::create_pending()
     pending_inc.full_ratio = pg_map.full_ratio;
     pending_inc.nearfull_ratio = pg_map.nearfull_ratio;
   }
+  
   dout(10) << "create_pending v " << pending_inc.version << dendl;
 }
 
@@ -1829,22 +1831,26 @@ bool PGMonitor::prepare_command(MonOpRequestRef op)
       r = -EINVAL;
       goto reply;
     }
+    
     if (!pg_map.pg_stat.count(pgid)) {
       ss << "pg " << pgid << " dne";
       r = -ENOENT;
       goto reply;
     }
+    
     if (pg_map.creating_pgs.count(pgid)) {
       ss << "pg " << pgid << " already creating";
       r = 0;
       goto reply;
     }
+    
     {
       pg_stat_t& s = pending_inc.pg_stat_updates[pgid];
       s.state = PG_STATE_CREATING;
       s.created = epoch;
       s.last_change = ceph_clock_now(g_ceph_context);
     }
+    
     ss << "pg " << pgidstr << " now creating, ok";
     goto update;
   } else if (prefix == "pg set_full_ratio" ||
@@ -1856,11 +1862,13 @@ bool PGMonitor::prepare_command(MonOpRequestRef op)
       r = -EINVAL;
       goto reply;
     }
+    
     string op = prefix.substr(3, string::npos);
     if (op == "set_full_ratio")
       pending_inc.full_ratio = n;
     else if (op == "set_nearfull_ratio")
       pending_inc.nearfull_ratio = n;
+    
     goto update;
   } else {
     r = -EINVAL;

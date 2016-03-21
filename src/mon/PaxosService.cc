@@ -100,12 +100,14 @@ bool PaxosService::dispatch(MonOpRequestRef op)
     
     if (should_propose(delay)) { // check if we are too quick to propose, maybe delay a little
       if (delay == 0.0) {
-	propose_pending();
+	propose_pending(); // encode pending map and propose via paxos
       } else {
 	// delay a bit
 	if (!proposal_timer) {
-	  proposal_timer = new C_Propose(this);
+	  proposal_timer = new C_Propose(this); // will re-call propose_pending if timed out
+          
 	  dout(10) << " setting proposal_timer " << proposal_timer << " with delay of " << delay << dendl;
+          
 	  mon->timer.add_event_after(delay, proposal_timer);
 	} else { 
 	  dout(10) << " proposal_timer already set" << dendl;
@@ -194,8 +196,9 @@ void PaxosService::propose_pending()
   assert(mon->is_leader());
   assert(is_active());
 
-  if (proposal_timer) {
+  if (proposal_timer) { // the is a previous delayed propose, cancel it directly
     dout(10) << " canceling proposal_timer " << proposal_timer << dendl;
+    
     mon->timer.cancel_event(proposal_timer);
     proposal_timer = NULL;
   }
@@ -231,6 +234,7 @@ void PaxosService::propose_pending()
 bool PaxosService::should_stash_full()
 {
   version_t latest_full = get_version_latest_full();
+  
   /* @note The first member of the condition is moot and it is here just for
    *	   clarity's sake. The second member would end up returing true
    *	   nonetheless because, in that event,
@@ -238,7 +242,7 @@ bool PaxosService::should_stash_full()
    */
   return (!latest_full ||
 	  (latest_full <= get_trim_to()) ||
-	  (get_last_committed() - latest_full > (unsigned)g_conf->paxos_stash_full_interval));
+	  (get_last_committed() - latest_full > (unsigned)g_conf->paxos_stash_full_interval)); // default 25
 }
 
 // only called by Monitor::_reset

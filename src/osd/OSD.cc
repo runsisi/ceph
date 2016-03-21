@@ -616,17 +616,24 @@ void OSDService::agent_stop()
 float OSDService::get_full_ratio()
 {
   float full_ratio = cct->_conf->osd_failsafe_full_ratio; // default .97
-  if (full_ratio > 1.0) full_ratio /= 100.0;
+  
+  if (full_ratio > 1.0) 
+    full_ratio /= 100.0;
+  
   return full_ratio;
 }
 
 float OSDService::get_nearfull_ratio()
 {
   float nearfull_ratio = cct->_conf->osd_failsafe_nearfull_ratio; // default .90
-  if (nearfull_ratio > 1.0) nearfull_ratio /= 100.0;
+  
+  if (nearfull_ratio > 1.0) 
+    nearfull_ratio /= 100.0;
+  
   return nearfull_ratio;
 }
 
+// called by OSDService::update_osd_stat
 void OSDService::check_nearfull_warning(const osd_stat_t &osd_stat)
 {
   Mutex::Locker l(full_status_lock);
@@ -642,6 +649,7 @@ void OSDService::check_nearfull_warning(const osd_stat_t &osd_stat)
   float ratio = ((float)(osd_stat.kb - osd_stat.kb_avail)) / ((float)osd_stat.kb);
   float nearfull_ratio = get_nearfull_ratio(); // .90
   float full_ratio = get_full_ratio(); // .97
+  
   cur_ratio = ratio;
 
   if (full_ratio > 0 && ratio > full_ratio) {
@@ -658,6 +666,7 @@ void OSDService::check_nearfull_warning(const osd_stat_t &osd_stat)
   } else if (now - last_msg < cct->_conf->osd_op_complaint_time) { // default 30
     return;
   }
+  
   last_msg = now;
   if (cur_state == FULL)
     clog->error() << "OSD full dropping all updates " << (int)(ratio * 100) << "% full";
@@ -669,7 +678,7 @@ void OSDService::check_nearfull_warning(const osd_stat_t &osd_stat)
 bool OSDService::check_failsafe_full()
 {
   Mutex::Locker l(full_status_lock);
-  if (cur_state == FULL)
+  if (cur_state == FULL) // this state is set in OSDService::check_nearfull_warning
     return true;
   return false;
 }
@@ -679,13 +688,17 @@ bool OSDService::too_full_for_backfill(double *_ratio, double *_max_ratio)
   Mutex::Locker l(full_status_lock);
   double max_ratio;
   max_ratio = cct->_conf->osd_backfill_full_ratio; // default is 0.85
+  
   if (_ratio)
-    *_ratio = cur_ratio;
+    *_ratio = cur_ratio; // set in OSDService::check_nearfull_warning
+  
   if (_max_ratio)
     *_max_ratio = max_ratio;
+  
   return cur_ratio >= max_ratio;
 }
 
+// called by OSD::heartbeat
 void OSDService::update_osd_stat(vector<int>& hb_peers)
 {
   Mutex::Locker lock(stat_lock);
@@ -709,7 +722,7 @@ void OSDService::update_osd_stat(vector<int>& hb_peers)
   osd_stat.hb_in.swap(hb_peers);
   osd_stat.hb_out.clear();
 
-  check_nearfull_warning(osd_stat);
+  check_nearfull_warning(osd_stat); // update OSDService::cur_state, i.e. FULL/NEAR/NONE
 
   osd->op_tracker.get_age_ms_histogram(&osd_stat.op_queue_age_hist);
 
@@ -4208,6 +4221,7 @@ void OSD::heartbeat_check()
   }
 }
 
+// called by OSD::heartbeat_entry
 void OSD::heartbeat()
 {
   dout(30) << "heartbeat" << dendl;
@@ -4225,7 +4239,8 @@ void OSD::heartbeat()
        p != heartbeat_peers.end();
        ++p)
     hb_peers.push_back(p->first);
-  service.update_osd_stat(hb_peers);
+       
+  service.update_osd_stat(hb_peers); // call OSDService::check_nearfull_warning to update OSDService::cur_state
 
   dout(5) << "heartbeat: " << service.get_osd_stat() << dendl;
 
@@ -4239,7 +4254,9 @@ void OSD::heartbeat()
     i->second.last_tx = now;
     if (i->second.first_tx == utime_t())
       i->second.first_tx = now;
+
     dout(30) << "heartbeat sending ping to osd." << peer << dendl;
+    
     i->second.con_back->send_message(new MOSDPing(monc->get_fsid(),
 					  service.get_osdmap()->get_epoch(),
 					  MOSDPing::PING,
@@ -4253,6 +4270,7 @@ void OSD::heartbeat()
   }
 
   dout(30) << "heartbeat check" << dendl;
+  
   heartbeat_check();
 
   logger->set(l_osd_hb_to, heartbeat_peers.size());
@@ -4260,10 +4278,13 @@ void OSD::heartbeat()
   
   // hmm.. am i all alone?
   dout(30) << "heartbeat lonely?" << dendl;
+  
   if (heartbeat_peers.empty()) {
-    if (now - last_mon_heartbeat > cct->_conf->osd_mon_heartbeat_interval && is_active()) {
+    if (now - last_mon_heartbeat > cct->_conf->osd_mon_heartbeat_interval && is_active()) { // default 30
       last_mon_heartbeat = now;
+      
       dout(10) << "i have no heartbeat peers; checking mon for new map" << dendl;
+      
       osdmap_subscribe(osdmap->get_epoch() + 1, true);
     }
   }
@@ -9747,7 +9768,7 @@ int OSD::init_op_flags(OpRequestRef& op)
   op->rmw_flags = 0;
 
   // set bits based on op codes, i.e. rmw_flags |= flags
-  for (iter = m->ops.begin(); iter != m->ops.end(); ++iter) {
+  for (iter = m->ops.begin(); iter != m->ops.end(); ++iter) { // an OpRequest may contain a vector of OSDOp(s)
     if (ceph_osd_op_mode_modify(iter->op.op))
       op->set_write();
     if (ceph_osd_op_mode_read(iter->op.op))
@@ -9757,9 +9778,10 @@ int OSD::init_op_flags(OpRequestRef& op)
     if (iter->soid.oid.name.length())
       op->set_read();
 
-    // set PGOP flag if there are PG ops
-    if (ceph_osd_op_type_pg(iter->op.op))
-      op->set_pg_op();
+    // set PGOP flag if there are PG ops, i.e. PGLS, PGLS_FILTER, PG_HITSET_LS, 
+    // PG_HITSET_GET, PGNLS, PGNLS_FILTER
+    if (ceph_osd_op_type_pg(iter->op.op)) // has CEPH_OSD_OP_TYPE_PG
+      op->set_pg_op(); // ORed CEPH_OSD_RMW_FLAG_PGOP on OpRequest::rmw_flags
 
     if (ceph_osd_op_mode_cache(iter->op.op))
       op->set_cache();

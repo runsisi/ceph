@@ -864,6 +864,8 @@ bool ReplicatedPG::pg_op_must_wait(MOSDOp *op)
 {
   if (pg_log.get_missing().missing.empty())
     return false;
+  
+  // has missing objects and includes op of ObjectOperation::pg_ls or ObjectOperation::pg_nls
   for (vector<OSDOp>::iterator p = op->ops.begin(); p != op->ops.end(); ++p) {
     if (p->op.op == CEPH_OSD_OP_PGLS || p->op.op == CEPH_OSD_OP_PGNLS ||
 	p->op.op == CEPH_OSD_OP_PGLS_FILTER || p->op.op == CEPH_OSD_OP_PGNLS_FILTER) {
@@ -1570,7 +1572,10 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
   assert(m->get_type() == CEPH_MSG_OSD_OP);
 
+  // decode the remaining fields of the MOSDOp msg, the first part has been decoded by
+  // decode_message called in Pipe::read_message
   m->finish_decode();
+  
   m->clear_payload();
 
   if (op->rmw_flags == 0) { // the client did not set op->rmw_flags, we init it according the carried ops here
@@ -1581,8 +1586,10 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     }
   }
 
+   // this OpRequest includes PGOP OSDOp, i.e. PGLS, PGLS_FILTER, PG_HITSET_LS, 
+   // PG_HITSET_GET, PGNLS, PGNLS_FILTER
   if (op->includes_pg_op()) {
-    if (pg_op_must_wait(m)) {
+    if (pg_op_must_wait(m)) { // has missing objects and includes op of ObjectOperation::pg_ls or ObjectOperation::pg_nls
       wait_for_all_missing(op);
       return;
     }

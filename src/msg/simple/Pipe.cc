@@ -2119,6 +2119,8 @@ int Pipe::read_message(Message **pm, AuthSessionHandler* auth_handler)
 
   ldout(msgr->cct,20) << "reader got " << front.length() << " + " << middle.length() << " + " << data.length()
 	   << " byte message" << dendl;
+
+  // alloc a specific msg instance by the msg type (header.type) and decode the payload
   message = decode_message(msgr->cct, msgr->crcflags, header, footer, front, middle, data);
   if (!message) {
     ret = -EINVAL;

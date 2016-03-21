@@ -6194,7 +6194,9 @@ PG::RecoveryState::Primary::Primary(my_context ctx)
 boost::statechart::result PG::RecoveryState::Primary::react(const MNotifyRec& notevt)
 {
   dout(7) << "handle_pg_notify from osd." << notevt.from << dendl;
+  
   PG *pg = context< RecoveryMachine >().pg;
+  
   if (pg->peer_info.count(notevt.from) &&
       pg->peer_info[notevt.from].last_update == notevt.notify.info.last_update) {
     dout(10) << *pg << " got dup osd." << notevt.from << " info " << notevt.notify.info
@@ -7725,13 +7727,13 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
   epoch_t old_start = pg->info.history.last_epoch_started;
 
   // check if we can get something new from peers or prior set, if yes then merge PG::info.history
-  if (pg->proc_replica_info(
-	infoevt.from, infoevt.notify.info, infoevt.notify.epoch_sent)) { // got a new peer or old peer's new info
-    // we got something new ...
+  if (pg->proc_replica_info(infoevt.from, infoevt.notify.info, infoevt.notify.epoch_sent)) {
+    // got a new peer or old peer's new info, we got something new ...
+    
     unique_ptr<PriorSet> &prior_set = context< Peering >().prior_set;
 
     if (old_start < pg->info.history.last_epoch_started) {
-      // peer has a updated pg history, i.e. i am a newly (re-)joined osd into this group
+      // peer has a updated pg history, i.e. maybe i am a newly (re-)joined osd into this group
       dout(10) << " last_epoch_started moved forward, rebuilding prior" << dendl;
 
       // use the updated info.history.last_epoch_started(we do not need to search
@@ -7761,6 +7763,7 @@ boost::statechart::result PG::RecoveryState::GetInfo::react(const MNotifyRec& in
 
     dout(20) << "Adding osd: " << infoevt.from.osd << " peer features: "
       << hex << infoevt.features << dec << dendl;
+    
     pg->apply_peer_features(infoevt.features);
 
     // to see if we are to stay in GetInfo or transit into next state
