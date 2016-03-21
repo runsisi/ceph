@@ -1621,7 +1621,7 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
                   cct->_conf->osd_num_op_tracker_shard),        // default 32
   test_ops_hook(NULL),
   op_shardedwq(
-    cct->_conf->osd_op_num_shards,
+    cct->_conf->osd_op_num_shards, // default 5
     this,
     cct->_conf->osd_op_thread_timeout, // default is 15
     cct->_conf->osd_op_thread_suicide_timeout, // default is 150

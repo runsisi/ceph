@@ -631,15 +631,18 @@ bool AuthMonitor::preprocess_command(MonOpRequestRef op)
   } else if (prefix == "auth get" && !entity_name.empty()) {
     KeyRing keyring;
     EntityAuth entity_auth;
-    if(!mon->key_server.get_auth(entity, entity_auth)) {
+    
+    if(!mon->key_server.get_auth(entity, entity_auth)) { // get from KeyServer::data
       ss << "failed to find " << entity_name << " in keyring";
       r = -ENOENT;
     } else {
       keyring.add(entity, entity_auth);
+      
       if (f)
 	keyring.encode_formatted("auth", f.get(), rdata);
       else
 	keyring.encode_plaintext(rdata);
+      
       ss << "exported keyring for " << entity_name;
       r = 0;
     }

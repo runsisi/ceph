@@ -238,6 +238,8 @@ bool KeyServer::get_secret(const EntityName& name, CryptoKey& secret) const
 bool KeyServer::get_auth(const EntityName& name, EntityAuth& auth) const
 {
   Mutex::Locker l(lock);
+
+  // data is of type KeyServerData
   return data.get_auth(name, auth);
 }
 
