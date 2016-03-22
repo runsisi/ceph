@@ -86,10 +86,18 @@ void OpRequest::_unregistered() {
 bool OpRequest::check_rmw(int flag) {
   return rmw_flags & flag;
 }
+
+// CEPH_OSD_RMW_FLAG_READ or CEPH_OSD_RMW_FLAG_CLASS_READ
 bool OpRequest::may_read() { return need_read_cap() || need_class_read_cap(); }
+
+// CEPH_OSD_RMW_FLAG_WRITE or CEPH_OSD_RMW_FLAG_CLASS_WRITE
 bool OpRequest::may_write() { return need_write_cap() || need_class_write_cap(); }
+
+// CEPH_OSD_RMW_FLAG_CACHE, CACHE_FLUSH, CACHE_EVICT, CACHE_TRY_FLUSH
 bool OpRequest::may_cache() { return check_rmw(CEPH_OSD_RMW_FLAG_CACHE); }
+
 bool OpRequest::includes_pg_op() { return check_rmw(CEPH_OSD_RMW_FLAG_PGOP); }
+
 bool OpRequest::need_read_cap() {
   return check_rmw(CEPH_OSD_RMW_FLAG_READ);
 }

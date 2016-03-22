@@ -1329,40 +1329,55 @@ int librados::IoCtx::omap_rm_keys(const std::string& oid,
 }
 
 
-
+// called by librados::IoCtx::aio_operate, rados_write_op_operate, rados_aio_write_op_operate,
+// rados_read_op_operate, rados_aio_read_op_operate
 static int translate_flags(int flags)
 {
   int op_flags = 0;
   if (flags & librados::OPERATION_BALANCE_READS)
     op_flags |= CEPH_OSD_FLAG_BALANCE_READS;
+  
   if (flags & librados::OPERATION_LOCALIZE_READS)
     op_flags |= CEPH_OSD_FLAG_LOCALIZE_READS;
+  
   if (flags & librados::OPERATION_ORDER_READS_WRITES)
     op_flags |= CEPH_OSD_FLAG_RWORDERED;
+  
   if (flags & librados::OPERATION_IGNORE_CACHE)
     op_flags |= CEPH_OSD_FLAG_IGNORE_CACHE;
+  
   if (flags & librados::OPERATION_SKIPRWLOCKS)
     op_flags |= CEPH_OSD_FLAG_SKIPRWLOCKS;
+  
   if (flags & librados::OPERATION_IGNORE_OVERLAY)
     op_flags |= CEPH_OSD_FLAG_IGNORE_OVERLAY;
+  
   if (flags & librados::OPERATION_FULL_TRY)
     op_flags |= CEPH_OSD_FLAG_FULL_TRY;
 
   return op_flags;
 }
 
+// IoCtxImpl::operate: sync write
+// IoCtxImpl::aio_operate: aio write
+// IoCtxImpl::operate_read: sync read
+// IoCtxImpl::aio_operate_read: aio read
+
+// sync write
 int librados::IoCtx::operate(const std::string& oid, librados::ObjectWriteOperation *o)
 {
   object_t obj(oid);
   return io_ctx_impl->operate(obj, (::ObjectOperation*)o->impl, o->pmtime);
 }
 
+// sync read
 int librados::IoCtx::operate(const std::string& oid, librados::ObjectReadOperation *o, bufferlist *pbl)
 {
   object_t obj(oid);
   return io_ctx_impl->operate_read(obj, (::ObjectOperation*)o->impl, pbl);
 }
 
+// aio write
 int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 				 librados::ObjectWriteOperation *o)
 {
@@ -1370,15 +1385,20 @@ int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
   return io_ctx_impl->aio_operate(obj, (::ObjectOperation*)o->impl, c->pc,
 				  io_ctx_impl->snapc, 0);
 }
+
+// aio write with flags
 int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 				 ObjectWriteOperation *o, int flags)
 {
   object_t obj(oid);
+
+  // call IoCtxImpl::aio_operate, the same as rados_aio_write_op_operate 
   return io_ctx_impl->aio_operate(obj, (::ObjectOperation*)o->impl, c->pc,
 				  io_ctx_impl->snapc,
 				  translate_flags(flags));
 }
 
+// aio write with snap set
 int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 				 librados::ObjectWriteOperation *o,
 				 snap_t snap_seq, std::vector<snap_t>& snaps)
@@ -1388,16 +1408,21 @@ int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
   snv.resize(snaps.size());
   for (size_t i = 0; i < snaps.size(); ++i)
     snv[i] = snaps[i];
+  
   SnapContext snapc(snap_seq, snv);
+  
   return io_ctx_impl->aio_operate(obj, (::ObjectOperation*)o->impl, c->pc,
 				  snapc, 0);
 }
 
+// aio read
 int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 				 librados::ObjectReadOperation *o,
 				 bufferlist *pbl)
 {
   object_t obj(oid);
+
+  // call IoCtxImpl::aio_operate_read, the same as rados_aio_read_op_operate 
   return io_ctx_impl->aio_operate_read(obj, (::ObjectOperation*)o->impl, c->pc,
 				       0, pbl);
 }
@@ -1410,10 +1435,13 @@ int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 {
   object_t obj(oid);
   int op_flags = 0;
+  
   if (flags & OPERATION_BALANCE_READS)
     op_flags |= CEPH_OSD_FLAG_BALANCE_READS;
+  
   if (flags & OPERATION_LOCALIZE_READS)
     op_flags |= CEPH_OSD_FLAG_LOCALIZE_READS;
+  
   if (flags & OPERATION_ORDER_READS_WRITES)
     op_flags |= CEPH_OSD_FLAG_RWORDERED;
 
@@ -1421,11 +1449,13 @@ int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 				       op_flags, pbl);
 }
 
+// aio read with flags
 int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 				 librados::ObjectReadOperation *o,
 				 int flags, bufferlist *pbl)
 {
   object_t obj(oid);
+  
   return io_ctx_impl->aio_operate_read(obj, (::ObjectOperation*)o->impl, c->pc,
 				       translate_flags(flags), pbl);
 }
@@ -3862,10 +3892,12 @@ extern "C" int rados_aio_write(rados_ioctx_t io, const char *o,
   tracepoint(librados, rados_aio_write_enter, io, o, completion, buf, len, off);
   if (len > UINT_MAX/2)
     return -E2BIG;
+  
   librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
   object_t oid(o);
   bufferlist bl;
   bl.append(buf, len);
+  
   int retval = ctx->aio_write(oid, (librados::AioCompletionImpl*)completion,
 			bl, len, off);
   tracepoint(librados, rados_aio_write_exit, retval);
@@ -4481,7 +4513,9 @@ extern "C" int rados_write_op_operate(rados_write_op_t write_op,
   object_t obj(oid);
   ::ObjectOperation *oo = (::ObjectOperation *) write_op;
   librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
+  
   int retval = ctx->operate(obj, oo, mtime, translate_flags(flags));
+  
   tracepoint(librados, rados_write_op_operate_exit, retval);
   return retval;
 }
@@ -4498,7 +4532,9 @@ extern "C" int rados_aio_write_op_operate(rados_write_op_t write_op,
   ::ObjectOperation *oo = (::ObjectOperation *) write_op;
   librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
   librados::AioCompletionImpl *c = (librados::AioCompletionImpl*)completion;
+  
   int retval = ctx->aio_operate(obj, oo, c, ctx->snapc, translate_flags(flags));
+  
   tracepoint(librados, rados_aio_write_op_operate_exit, retval);
   return retval;
 }

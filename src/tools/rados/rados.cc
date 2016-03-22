@@ -1079,13 +1079,17 @@ static int do_lock_cmd(std::vector<const char*> &nargs,
 static int do_cache_flush(IoCtx& io_ctx, string oid)
 {
   ObjectReadOperation op;
-  op.cache_flush();
-  librados::AioCompletion *completion =
-    librados::Rados::aio_create_completion();
+  
+  op.cache_flush(); // encapsulate a flush op
+  
+  librados::AioCompletion *completion = librados::Rados::aio_create_completion();
+
+  // call IoCtxImpl::aio_operate to operate on this flush op
   io_ctx.aio_operate(oid.c_str(), completion, &op,
 		     librados::OPERATION_IGNORE_CACHE |
 		     librados::OPERATION_IGNORE_OVERLAY,
 		     NULL);
+  
   completion->wait_for_safe();
   int r = completion->get_return_value();
   completion->release();
@@ -1095,14 +1099,17 @@ static int do_cache_flush(IoCtx& io_ctx, string oid)
 static int do_cache_try_flush(IoCtx& io_ctx, string oid)
 {
   ObjectReadOperation op;
+  
   op.cache_try_flush();
-  librados::AioCompletion *completion =
-    librados::Rados::aio_create_completion();
+
+  librados::AioCompletion *completion = librados::Rados::aio_create_completion();
+  
   io_ctx.aio_operate(oid.c_str(), completion, &op,
 		     librados::OPERATION_IGNORE_CACHE |
 		     librados::OPERATION_IGNORE_OVERLAY |
 		     librados::OPERATION_SKIPRWLOCKS,
 		     NULL);
+  
   completion->wait_for_safe();
   int r = completion->get_return_value();
   completion->release();
@@ -1112,14 +1119,17 @@ static int do_cache_try_flush(IoCtx& io_ctx, string oid)
 static int do_cache_evict(IoCtx& io_ctx, string oid)
 {
   ObjectReadOperation op;
+  
   op.cache_evict();
-  librados::AioCompletion *completion =
-    librados::Rados::aio_create_completion();
+  
+  librados::AioCompletion *completion = librados::Rados::aio_create_completion();
+  
   io_ctx.aio_operate(oid.c_str(), completion, &op,
 		     librados::OPERATION_IGNORE_CACHE |
 		     librados::OPERATION_IGNORE_OVERLAY |
 		     librados::OPERATION_SKIPRWLOCKS,
 		     NULL);
+  
   completion->wait_for_safe();
   int r = completion->get_return_value();
   completion->release();
@@ -1129,29 +1139,37 @@ static int do_cache_evict(IoCtx& io_ctx, string oid)
 static int do_cache_flush_evict_all(IoCtx& io_ctx, bool blocking)
 {
   int errors = 0;
+
   io_ctx.set_namespace(all_nspaces);
+  
   try {
     librados::NObjectIterator i = io_ctx.nobjects_begin();
     librados::NObjectIterator i_end = io_ctx.nobjects_end();
+    
     for (; i != i_end; ++i) {
       int r;
       cout << i->get_nspace() << "\t" << i->get_oid() << "\t" << i->get_locator() << std::endl;
+      
       if (i->get_locator().size()) {
 	io_ctx.locator_set_key(i->get_locator());
       } else {
 	io_ctx.locator_set_key(string());
       }
+      
       io_ctx.set_namespace(i->get_nspace());
+      
       if (blocking)
 	r = do_cache_flush(io_ctx, i->get_oid());
       else
 	r = do_cache_try_flush(io_ctx, i->get_oid());
+      
       if (r < 0) {
 	cerr << "failed to flush " << i->get_nspace() << "/" << i->get_oid() << ": "
 	     << cpp_strerror(r) << std::endl;
 	++errors;
 	continue;
       }
+      
       r = do_cache_evict(io_ctx, i->get_oid());
       if (r < 0) {
 	cerr << "failed to evict " << i->get_nspace() << "/" << i->get_oid() << ": "

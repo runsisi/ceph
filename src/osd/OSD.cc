@@ -9783,7 +9783,7 @@ int OSD::init_op_flags(OpRequestRef& op)
     if (ceph_osd_op_type_pg(iter->op.op)) // has CEPH_OSD_OP_TYPE_PG
       op->set_pg_op(); // ORed CEPH_OSD_RMW_FLAG_PGOP on OpRequest::rmw_flags
 
-    if (ceph_osd_op_mode_cache(iter->op.op))
+    if (ceph_osd_op_mode_cache(iter->op.op)) // CACHE_FLUSH, CACHE_EVICT, CACHE_TRY_FLUSH
       op->set_cache();
 
     // check for ec base pool

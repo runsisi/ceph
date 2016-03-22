@@ -1642,7 +1642,9 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   }
   
   int64_t poolid = get_pgid().pool();
-  if (op->may_write()) {
+
+  // check write op validation
+  if (op->may_write()) { // CEPH_OSD_RMW_FLAG_WRITE or CEPH_OSD_RMW_FLAG_CLASS_WRITE
 
     const pg_pool_t *pi = get_osdmap()->get_pg_pool(poolid);
     if (!pi) {
@@ -1650,7 +1652,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     }
 
     // invalid?
-    if (m->get_snapid() != CEPH_NOSNAP) {
+    if (m->get_snapid() != CEPH_NOSNAP) { // write op needs a non-snap object as the target
       osd->reply_op_error(op, -EINVAL);
       return;
     }
@@ -1670,8 +1672,8 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   // order this op as a write?
   bool write_ordered =
     op->may_write() ||
-    op->may_cache() ||
-    m->has_flag(CEPH_OSD_FLAG_RWORDERED);
+    op->may_cache() || // CACHE_FLUSH, CACHE_EVICT, CACHE_TRY_FLUSH
+    m->has_flag(CEPH_OSD_FLAG_RWORDERED); // refer to OPERATION_ORDER_READS_WRITES
 
   dout(10) << "do_op " << *m
 	   << (op->may_write() ? " may_write" : "")
@@ -1685,11 +1687,12 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 		 CEPH_NOSNAP, m->get_pg().ps(),
 		 info.pgid.pool(), m->get_object_locator().nspace);
 
-
-  if (write_ordered &&
-      scrubber.write_blocked_by_scrub(head, get_sort_bitwise())) {
+  // objects in [scrubber.start, scrubber.end) are blocked by srubber
+  if (write_ordered && scrubber.write_blocked_by_scrub(head, get_sort_bitwise())) {
     dout(20) << __func__ << ": waiting for scrub" << dendl;
+
     waiting_for_active.push_back(op);
+
     op->mark_delayed("waiting for scrub");
     return;
   }

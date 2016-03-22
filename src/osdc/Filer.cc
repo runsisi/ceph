@@ -47,6 +47,7 @@ public:
     }
 
     bool probe_complete;
+    
     {
       probe->lock.Lock();
       if (r != 0) {
@@ -54,10 +55,13 @@ public:
       }
 
       probe_complete = filer->_probed(probe, oid, size, mtime);
+      
       assert(!probe->lock.is_locked_by_me());
     }
+    
     if (probe_complete) {
       probe->onfinish->complete(probe->err);
+      
       delete probe;
     }
   }  
@@ -135,6 +139,7 @@ void Filer::_probe(Probe *probe)
   for (std::vector<ObjectExtent>::iterator i = stat_extents.begin();
       i != stat_extents.end(); ++i) {
     C_Probe *c = new C_Probe(this, probe, i->oid);
+    
     objecter->stat(i->oid, i->oloc, probe->snapid, &c->size, &c->mtime,
 		   probe->flags | CEPH_OSD_FLAG_RWORDERED,
 		   new C_OnFinisher(c, finisher));
@@ -154,14 +159,17 @@ bool Filer::_probed(Probe *probe, const object_t& oid, uint64_t size, utime_t mt
 	   << " has size " << size << " mtime " << mtime << dendl;
 
   probe->known_size[oid] = size;
+  
   if (mtime > probe->max_mtime)
     probe->max_mtime = mtime;
 
   assert(probe->ops.count(oid));
+  
   probe->ops.erase(oid);
 
   if (!probe->ops.empty()) {
     probe->lock.Unlock();
+    
     return false;  // waiting for more!
   }
 
@@ -180,6 +188,7 @@ bool Filer::_probed(Probe *probe, const object_t& oid, uint64_t size, utime_t mt
 	 p != probe->probing.rend();
 	 ++p)
       r.push_back(*p);
+         
     probe->probing.swap(r);
   }
 

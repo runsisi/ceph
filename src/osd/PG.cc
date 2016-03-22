@@ -494,11 +494,16 @@ bool PG::search_for_missing(
 bool PG::MissingLoc::readable_with_acting(
   const hobject_t &hoid,
   const set<pg_shard_t> &acting) const {
-  if (!needs_recovery(hoid)) return true; // in needs_recovery_map
-  if (!missing_loc.count(hoid)) return false; // in needs_recovery_map, but not in missing_loc
+  if (!needs_recovery(hoid))
+    return true; // in needs_recovery_map
+  
+  if (!missing_loc.count(hoid))
+    return false; // in needs_recovery_map, but not in missing_loc
   
   const set<pg_shard_t> &locs = missing_loc.find(hoid)->second;
+  
   dout(10) << __func__ << ": locs:" << locs << dendl;
+  
   set<pg_shard_t> have_acting;
   for (set<pg_shard_t>::const_iterator i = locs.begin();
        i != locs.end();
@@ -506,7 +511,8 @@ bool PG::MissingLoc::readable_with_acting(
     if (acting.count(*i))
       have_acting.insert(*i);
   }
-  return (*is_readable)(have_acting);
+       
+  return (*is_readable)(have_acting); // for ReplicatedBackend: means have_acting includes myself
 }
 
 void PG::MissingLoc::add_batch_sources_info(

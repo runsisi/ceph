@@ -452,6 +452,8 @@ int librados::IoCtxImpl::write(const object_t& oid, bufferlist& bl,
   bufferlist mybl;
   mybl.substr_of(bl, 0, len);
   op.write(off, mybl);
+
+  // encapsulate a write op and write this encapsulated op
   return operate(oid, &op, NULL);
 }
 
@@ -464,6 +466,7 @@ int librados::IoCtxImpl::append(const object_t& oid, bufferlist& bl, size_t len)
   bufferlist mybl;
   mybl.substr_of(bl, 0, len);
   op.append(mybl);
+  
   return operate(oid, &op, NULL);
 }
 
@@ -474,6 +477,7 @@ int librados::IoCtxImpl::write_full(const object_t& oid, bufferlist& bl)
   ::ObjectOperation op;
   prepare_assert_ops(&op);
   op.write_full(bl);
+  
   return operate(oid, &op, NULL);
 }
 
@@ -486,9 +490,11 @@ int librados::IoCtxImpl::clone_range(const object_t& dst_oid,
   ::ObjectOperation wr;
   prepare_assert_ops(&wr);
   wr.clone_range(src_oid, src_offset, len, dst_offset);
+  
   return operate(dst_oid, &wr, NULL);
 }
 
+// sync write, with encapsulated op
 int librados::IoCtxImpl::operate(const object_t& oid, ::ObjectOperation *o,
 				 time_t *pmtime, int flags)
 {
@@ -516,6 +522,7 @@ int librados::IoCtxImpl::operate(const object_t& oid, ::ObjectOperation *o,
 
   int op = o->ops[0].op.op;
   ldout(client->cct, 10) << ceph_osd_op_name(op) << " oid=" << oid << " nspace=" << oloc.nspace << dendl;
+  
   Objecter::Op *objecter_op = objecter->prepare_mutate_op(oid, oloc,
 	                                                  *o, snapc, ut, flags,
 	                                                  NULL, oncommit, &ver);
@@ -533,6 +540,7 @@ int librados::IoCtxImpl::operate(const object_t& oid, ::ObjectOperation *o,
   return r;
 }
 
+// sync read, with encapsulated op
 int librados::IoCtxImpl::operate_read(const object_t& oid,
 				      ::ObjectOperation *o,
 				      bufferlist *pbl,
@@ -551,6 +559,7 @@ int librados::IoCtxImpl::operate_read(const object_t& oid,
 
   int op = o->ops[0].op.op;
   ldout(client->cct, 10) << ceph_osd_op_name(op) << " oid=" << oid << " nspace=" << oloc.nspace << dendl;
+  
   Objecter::Op *objecter_op = objecter->prepare_read_op(oid, oloc,
 	                                      *o, snap_seq, pbl, flags,
 	                                      onack, &ver);
@@ -568,6 +577,7 @@ int librados::IoCtxImpl::operate_read(const object_t& oid,
   return r;
 }
 
+// aio read, with encapsulated op
 int librados::IoCtxImpl::aio_operate_read(const object_t &oid,
 					  ::ObjectOperation *o,
 					  AioCompletionImpl *c,
@@ -582,10 +592,13 @@ int librados::IoCtxImpl::aio_operate_read(const object_t &oid,
   Objecter::Op *objecter_op = objecter->prepare_read_op(oid, oloc,
 		 *o, snap_seq, pbl, flags,
 		 onack, &c->objver);
+  
   c->tid = objecter->op_submit(objecter_op);
+  
   return 0;
 }
 
+// aio write, with encapsulated op
 int librados::IoCtxImpl::aio_operate(const object_t& oid,
 				     ::ObjectOperation *o, AioCompletionImpl *c,
 				     const SnapContext& snap_context, int flags)
@@ -599,14 +612,17 @@ int librados::IoCtxImpl::aio_operate(const object_t& oid,
   Context *oncommit = new C_aio_Safe(c);
 
   c->io = this;
-  queue_aio_write(c);
+  
+  queue_aio_write(c); // push back of IoCtxImpl::aio_write_list
 
+  // Objecter::prepare_mutate_op + Objecter::op_submit
   c->tid = objecter->mutate(oid, oloc, *o, snap_context, ut, flags, onack, oncommit,
 		            &c->objver);
 
   return 0;
 }
 
+// aio read, with bufferlist as receive buffer
 int librados::IoCtxImpl::aio_read(const object_t oid, AioCompletionImpl *c,
 				  bufferlist *pbl, size_t len, uint64_t off,
 				  uint64_t snapid)
@@ -620,12 +636,15 @@ int librados::IoCtxImpl::aio_read(const object_t oid, AioCompletionImpl *c,
   c->io = this;
   c->blp = pbl;
 
+  // alloc an Op which contains a read OSDOp  + Objecter::op_submit
   c->tid = objecter->read(oid, oloc,
 		 off, len, snapid, pbl, 0,
 		 onack, &c->objver);
+  
   return 0;
 }
 
+// aio read, with char* as receive buffer
 int librados::IoCtxImpl::aio_read(const object_t oid, AioCompletionImpl *c,
 				  char *buf, size_t len, uint64_t off,
 				  uint64_t snapid)
@@ -641,6 +660,7 @@ int librados::IoCtxImpl::aio_read(const object_t oid, AioCompletionImpl *c,
   c->bl.push_back(buffer::create_static(len, buf));
   c->blp = &c->bl;
 
+  // alloc an Op which contains a read OSDOp + Objecter::op_submit
   c->tid = objecter->read(oid, oloc,
 		 off, len, snapid, &c->bl, 0,
 		 onack, &c->objver);
@@ -699,8 +719,10 @@ int librados::IoCtxImpl::aio_write(const object_t &oid, AioCompletionImpl *c,
   Context *onsafe = new C_aio_Safe(c);
 
   c->io = this;
-  queue_aio_write(c);
+  
+  queue_aio_write(c); // push back of IoCtxImpl::aio_write_list
 
+  // alloc an Op which contains a write OSDOp + Objecter::op_submit
   c->tid = objecter->write(oid, oloc,
 		  off, len, snapc, bl, ut, 0,
 		  onack, onsafe, &c->objver);
@@ -725,6 +747,7 @@ int librados::IoCtxImpl::aio_append(const object_t &oid, AioCompletionImpl *c,
   c->io = this;
   queue_aio_write(c);
 
+  // alloc an Op which contains a write OSDOp + Objecter::op_submit
   c->tid = objecter->append(oid, oloc,
 		   len, snapc, bl, ut, 0,
 		   onack, onsafe, &c->objver);

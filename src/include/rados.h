@@ -336,7 +336,7 @@ static inline int ceph_osd_op_mode_modify(int op)
 {
 	return op & CEPH_OSD_OP_MODE_WR;
 }
-static inline int ceph_osd_op_mode_cache(int op)
+static inline int ceph_osd_op_mode_cache(int op) // CACHE_FLUSH, CACHE_EVICT, CACHE_TRY_FLUSH
 {
 	return op & CEPH_OSD_OP_MODE_CACHE;
 }
