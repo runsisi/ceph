@@ -328,6 +328,7 @@ public:
       is_recoverable.reset(_is_recoverable);
     }
     string gen_prefix() const { return pg->gen_prefix(); }
+    
     bool needs_recovery(
       const hobject_t &hoid,
       eversion_t *v = 0) const {
@@ -335,8 +336,10 @@ public:
 	needs_recovery_map.find(hoid);
       if (i == needs_recovery_map.end())
 	return false;
+      
       if (v)
 	*v = i->second.need; // which version we need to recovery
+	
       return true;
     }
     

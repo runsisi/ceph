@@ -126,17 +126,20 @@ struct PGLog {
     bool logged_req(const osd_reqid_t &r) const {
       return caller_ops.count(r) || extra_caller_ops.count(r);
     }
+    
     bool get_request(
       const osd_reqid_t &r,
       eversion_t *replay_version,
       version_t *user_version) const {
       assert(replay_version);
       assert(user_version);
+      
       ceph::unordered_map<osd_reqid_t,pg_log_entry_t*>::const_iterator p;
       p = caller_ops.find(r);
       if (p != caller_ops.end()) {
 	*replay_version = p->second->version;
 	*user_version = p->second->user_version;
+        
 	return true;
       }
 
@@ -151,9 +154,11 @@ struct PGLog {
 	  if (i->first == r) {
 	    *replay_version = p->second->version;
 	    *user_version = i->second;
+            
 	    return true;
 	  }
 	}
+             
 	assert(0 == "in extra_caller_ops but not extra_reqids");
       }
       return false;
@@ -401,6 +406,7 @@ public:
   //////////////////// get or set missing ////////////////////
 
   const pg_missing_t& get_missing() const { return missing; }
+  
   void resort_missing(bool sort_bitwise) {
     missing.resort(sort_bitwise);
   }

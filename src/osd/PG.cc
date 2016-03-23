@@ -496,6 +496,8 @@ bool PG::MissingLoc::readable_with_acting(
   const set<pg_shard_t> &acting) const {
   if (!needs_recovery(hoid))
     return true; // in needs_recovery_map
+
+  // the hobject_t needs recovery
   
   if (!missing_loc.count(hoid))
     return false; // in needs_recovery_map, but not in missing_loc
@@ -665,26 +667,32 @@ bool PG::needs_recovery() const
   if (missing.num_missing()) { // the primary shard has missing objects
     dout(10) << __func__ << " primary has " << missing.num_missing()
       << " missing" << dendl;
+    
     return true;
   }
 
   assert(!actingbackfill.empty());
   set<pg_shard_t>::const_iterator end = actingbackfill.end();
   set<pg_shard_t>::const_iterator a = actingbackfill.begin();
-  for (; a != end; ++a) { // iterate PG::actingbackfill to check if their have missing objects
-    if (*a == get_primary()) continue;
+  
+  for (; a != end; ++a) { // iterate PG::actingbackfill to check if they have missing objects to recover
+    if (*a == get_primary()) 
+      continue;
     
     pg_shard_t peer = *a;
     map<pg_shard_t, pg_missing_t>::const_iterator pm = peer_missing.find(peer);
+    
     if (pm == peer_missing.end()) {
       dout(10) << __func__ << " osd." << peer << " doesn't have missing set"
         << dendl;
+      
       continue;
     }
     
     if (pm->second.num_missing()) { // missing.size()
       dout(10) << __func__ << " osd." << peer << " has "
         << pm->second.num_missing() << " missing" << dendl;
+      
       return true;
     }
   }
@@ -1989,7 +1997,7 @@ void PG::activate(ObjectStore::Transaction& t,
 	 i != actingbackfill.end();
 	 ++i) {
       if (*i == get_primary()) {
-        // register missing objects of primary shard in PG::missing_loc
+        // iterating missing objects and insert into MissingLoc::needs_recovery_map
 	missing_loc.add_active_missing(missing);
 
         if (!missing.have_missing())
@@ -1997,7 +2005,7 @@ void PG::activate(ObjectStore::Transaction& t,
       } else {
 	assert(peer_missing.count(*i));
 
-        // add missing hobject_t to MissingLoc::needs_recovery_map
+        // iterating missing objects and insert into MissingLoc::needs_recovery_map
 	missing_loc.add_active_missing(peer_missing[*i]);
 
         if (!peer_missing[*i].have_missing() && peer_info[*i].last_backfill == hobject_t::get_max())
@@ -8242,6 +8250,7 @@ PG::RecoveryState::GetMissing::GetMissing(my_context ctx)
       // FIXME: we can do better here.  if last_update==last_complete we
       //        can infer the rest!
       dout(10) << " osd." << *i << " has no missing, identical log" << dendl;
+      
       pg->peer_missing[*i];
       continue;
     }

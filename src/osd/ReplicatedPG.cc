@@ -369,6 +369,7 @@ PerfCounters *ReplicatedPG::get_logger()
 
 bool ReplicatedPG::is_missing_object(const hobject_t& soid) const
 {
+  // PGLog::pg_missing_t::map<hobject_t, item> missing;
   return pg_log.get_missing().missing.count(soid);
 }
 
@@ -390,8 +391,10 @@ void ReplicatedPG::maybe_kick_recovery(
     h->cache_dont_need = false;
     
     if (is_missing_object(soid)) { // missing on primary
-      recover_missing(soid, v, cct->_conf->osd_client_op_priority, h);
+      // also called in ReplicatedG::recover_primary
+      recover_missing(soid, v, cct->_conf->osd_client_op_priority, h); // default 63
     } else { // missing on replica(s)
+      // also called in ReplicatedG::recover_replicas
       prep_object_replica_pushes(soid, v, h);
     }
 
@@ -405,7 +408,8 @@ void ReplicatedPG::wait_for_unreadable_object(
 {
   assert(is_unreadable_object(soid));
 
-  maybe_kick_recovery(soid);
+  maybe_kick_recovery(soid); // start recovering for this object
+  
   waiting_for_unreadable_object[soid].push_back(op);
   op->mark_delayed("waiting for missing object");
 }
@@ -424,8 +428,10 @@ bool ReplicatedPG::is_degraded_or_backfilling_object(const hobject_t& soid)
    */
   if (waiting_for_degraded_object.count(soid))
     return true;
+  
   if (pg_log.get_missing().missing.count(soid))
     return true;
+  
   assert(!actingbackfill.empty());
   for (set<pg_shard_t>::iterator i = actingbackfill.begin();
        i != actingbackfill.end();
@@ -452,6 +458,7 @@ void ReplicatedPG::wait_for_degraded_object(const hobject_t& soid, OpRequestRef 
   assert(is_degraded_or_backfilling_object(soid));
 
   maybe_kick_recovery(soid);
+  
   waiting_for_degraded_object[soid].push_back(op);
   op->mark_delayed("waiting for degraded object");
 }
@@ -466,6 +473,7 @@ void ReplicatedPG::block_write_on_full_cache(
   waiting_for_cache_not_full.push_back(op);
 }
 
+// called by ReplicatedPG::_rollback_to
 void ReplicatedPG::block_write_on_snap_rollback(
   const hobject_t& oid, ObjectContextRef obc, OpRequestRef op)
 {
@@ -478,6 +486,7 @@ void ReplicatedPG::block_write_on_snap_rollback(
   wait_for_blocked_object(obc->obs.oi.soid, op);
 }
 
+// called by ReplicatedPG::_rollback_to
 void ReplicatedPG::block_write_on_degraded_snap(
   const hobject_t& snap, OpRequestRef op)
 {
@@ -494,24 +503,29 @@ bool ReplicatedPG::maybe_await_blocked_snapset(
   OpRequestRef op)
 {
   ObjectContextRef obc;
+  
   obc = object_contexts.lookup(hoid.get_head());
   if (obc) {
     if (obc->is_blocked()) {
       wait_for_blocked_object(obc->obs.oi.soid, op);
+      
       return true;
     } else {
       return false;
     }
   }
+  
   obc = object_contexts.lookup(hoid.get_snapdir());
   if (obc) {
     if (obc->is_blocked()) {
       wait_for_blocked_object(obc->obs.oi.soid, op);
+      
       return true;
     } else {
       return false;
     }
   }
+  
   return false;
 }
 
@@ -1699,31 +1713,41 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 
   // missing object?
   if (is_unreadable_object(head)) {
+    // maybe kick recovering if the recovering for this object has not started yet, then push this op back 
+    // of waiting_for_unreadable_object[head]
     wait_for_unreadable_object(head, op);
+    
     return;
   }
 
   // degraded object?
   if (write_ordered && is_degraded_or_backfilling_object(head)) {
+    // maybe kick recovering if the recovering for this object has not started yet, then push this op back 
+    // of waiting_for_degraded_object[head]
     wait_for_degraded_object(head, op);
+    
     return;
   }
 
   // blocked on snap?
+  // objects_blocked_on_degraded_snap are populated in ReplicatedPG::block_write_on_degraded_snap
   map<hobject_t, snapid_t>::iterator blocked_iter = objects_blocked_on_degraded_snap.find(head);
   if (write_ordered && blocked_iter != objects_blocked_on_degraded_snap.end()) {
     hobject_t to_wait_on(head);
     to_wait_on.snap = blocked_iter->second;
+    
     wait_for_degraded_object(to_wait_on, op);
     return;
   }
-  
+
+  // objects_blocked_on_snap_promotion are populated in ReplicatedPG::block_write_on_snap_rollback
   map<hobject_t, ObjectContextRef>::iterator blocked_snap_promote_iter = objects_blocked_on_snap_promotion.find(head);
   if (write_ordered && blocked_snap_promote_iter != objects_blocked_on_snap_promotion.end()) {
     wait_for_blocked_object(blocked_snap_promote_iter->second->obs.oi.soid, op);
     return;
   }
-  
+
+  // objects_blocked_on_cache_full are populated in ReplicatedPG::block_write_on_full_cache(
   if (write_ordered && objects_blocked_on_cache_full.count(head)) {
     block_write_on_full_cache(head, op);
     return;
@@ -1758,10 +1782,12 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     // purposes here it doesn't matter which one we get.
     eversion_t replay_version;
     version_t user_version;
+    
     bool got = pg_log.get_log().get_request(m->get_reqid(), &replay_version, &user_version);
     if (got) {
       dout(3) << __func__ << " dup " << m->get_reqid()
 	      << " was " << replay_version << dendl;
+      
       if (already_complete(replay_version)) {
         // the request has completed
         // this can handle the situation that the reply message has been 
@@ -1771,15 +1797,19 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 	if (m->wants_ack()) {
 	  if (already_ack(replay_version)) {
 	    MOSDOpReply *reply = new MOSDOpReply(m, 0, get_osdmap()->get_epoch(), 0, false);
+            
 	    reply->add_flags(CEPH_OSD_FLAG_ACK);
 	    reply->set_reply_versions(replay_version, user_version);
+            
 	    osd->send_message_osd_client(reply, m->get_connection());
 	  } else {
 	    dout(10) << " waiting for " << replay_version << " to ack" << dendl;
 	    waiting_for_ack[replay_version].push_back(make_pair(op, user_version));
 	  }
 	}
+        
 	dout(10) << " waiting for " << replay_version << " to commit" << dendl;
+        
         // always queue ondisk waiters, so that we can requeue if needed
 	waiting_for_ondisk[replay_version].push_back(make_pair(op, user_version));
 	op->mark_delayed("waiting for ondisk");
@@ -1800,7 +1830,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 
   // io blocked on obc?
   if (!m->has_flag(CEPH_OSD_FLAG_FLUSH) &&
-      maybe_await_blocked_snapset(oid, op)) {
+      maybe_await_blocked_snapset(oid, op)) { // head or snapdir object blocked
     return;
   }
 
@@ -5977,6 +6007,7 @@ int ReplicatedPG::_rollback_to(OpContext *ctx, ceph_osd_op& op)
     block_write_on_degraded_snap(missing_oid, ctx->op);
     return ret;
   }
+  
   {
     ObjectContextRef promote_obc;
     switch (
