@@ -2246,6 +2246,7 @@ public:
   eversion_t get_next_version() const {
     eversion_t at_version(get_osdmap()->get_epoch(),
 			  pg_log.get_head().version+1);
+    
     assert(at_version > info.last_update);
     assert(at_version > pg_log.get_head());
     return at_version;

@@ -1877,8 +1877,11 @@ int librados::IoCtx::list_snaps(const std::string& oid,
   int r;
   if (io_ctx_impl->snap_seq != CEPH_SNAPDIR)
     return -EINVAL;
+  
   op.list_snaps(out_snaps, &r);
+
   bufferlist bl;
+
   int ret = operate(oid, &op, &bl);
   if (ret < 0)
     return ret;

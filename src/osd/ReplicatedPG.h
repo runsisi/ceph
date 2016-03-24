@@ -644,6 +644,7 @@ public:
       lock_to_release(NONE),
       on_finish(NULL),
       release_snapset_obc(false) { }
+      
     void reset_obs(ObjectContextRef obc) {
       new_obs = ObjectState(obc->obs.oi, obc->obs.exists);
       if (obc->ssc) {
@@ -651,6 +652,7 @@ public:
 	snapset = &obc->ssc->snapset;
       }
     }
+    
     ~OpContext() {
       assert(!op_t);
       assert(lock_to_release == NONE);
