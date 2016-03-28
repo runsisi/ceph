@@ -6586,6 +6586,8 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
   return result;
 }
 
+// ReplicatedPG::do_op -> ReplicatedPG::execute_ctx -> ReplicatedPG::prepare_transaction -> ReplicatedPG::finish_ctx
+
 // only ReplicatedPG::agent_maybe_evict call this interface with the third 
 // parameter set to false
 // and only ReplicatedPG::_scrub call this interface with the forth parameter
@@ -6791,7 +6793,7 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type,
   ctx->obc->obs = ctx->new_obs;
 
   if (soid.is_head() && !ctx->obc->obs.exists &&
-      (!maintain_ssc || ctx->cache_evict)) {
+      (!maintain_ssc || ctx->cache_evict)) { // CEPH_OSD_OP_CACHE_EVICT
     ctx->obc->ssc->exists = false;
     ctx->obc->ssc->snapset = SnapSet();
   } else {
@@ -8558,13 +8560,16 @@ void ReplicatedPG::remove_repop(RepGather *repop)
 ReplicatedPG::RepGather *ReplicatedPG::simple_repop_create(ObjectContextRef obc)
 {
   dout(20) << __func__ << " " << obc->obs.oi.soid << dendl;
+  
   vector<OSDOp> ops;
   ceph_tid_t rep_tid = osd->get_tid();
   osd_reqid_t reqid(osd->get_cluster_msgr_name(), 0, rep_tid);
+  
   OpContext *ctx = new OpContext(OpRequestRef(), reqid, ops, obc, this);
   ctx->op_t = pgbackend->get_transaction();
   ctx->mtime = ceph_clock_now(g_ceph_context);
-  RepGather *repop = new_repop(ctx, obc, rep_tid);
+  
+  RepGather *repop = new_repop(ctx, obc, rep_tid); // OpContext + ObjectContext + tid
   return repop;
 }
 
@@ -12060,14 +12065,14 @@ bool ReplicatedPG::agent_work(int start_max, int agent_flush_quota)
       continue;
     }
 
-    if (agent_state->evict_mode != TierAgentState::EVICT_MODE_IDLE &&
-	agent_maybe_evict(obc))
+    if (agent_state->evict_mode != TierAgentState::EVICT_MODE_IDLE && agent_maybe_evict(obc))
       ++started;
     else if (agent_state->flush_mode != TierAgentState::FLUSH_MODE_IDLE &&
              agent_flush_quota > 0 && agent_maybe_flush(obc)) {
       ++started;
       --agent_flush_quota;
     }
+    
     if (started >= start_max) {
       // If finishing early, set "next" to the next object
       if (++p != ls.end())
@@ -12076,8 +12081,9 @@ bool ReplicatedPG::agent_work(int start_max, int agent_flush_quota)
     }
   }
 
-  if (++agent_state->hist_age > g_conf->osd_agent_hist_halflife) {
+  if (++agent_state->hist_age > g_conf->osd_agent_hist_halflife) { // default 1000
     dout(20) << __func__ << " resetting atime and temp histograms" << dendl;
+    
     agent_state->hist_age = 0;
     agent_state->atime_hist.decay();
     agent_state->temp_hist.decay();
@@ -12103,6 +12109,7 @@ bool ReplicatedPG::agent_work(int start_max, int agent_flush_quota)
       total_started = 0;
     agent_state->start = next;
   }
+  
   agent_state->started = total_started;
 
   // See if we are starting from beginning
@@ -12244,13 +12251,14 @@ bool ReplicatedPG::agent_maybe_flush(ObjectContextRef& obc)
 struct C_AgentEvictStartStop : public Context {
   ReplicatedPGRef pg;
   C_AgentEvictStartStop(ReplicatedPG *p) : pg(p) {
-    pg->osd->agent_start_evict_op();
+    pg->osd->agent_start_evict_op(); // ++agent_ops
   }
   void finish(int r) {
-    pg->osd->agent_finish_evict_op();
+    pg->osd->agent_finish_evict_op(); // --agent_ops
   }
 };
 
+// calltrace: OSDService::agent_entry -> ReplicatedPG::agent_work
 bool ReplicatedPG::agent_maybe_evict(ObjectContextRef& obc)
 {
   const hobject_t& soid = obc->obs.oi.soid;
@@ -12337,21 +12345,28 @@ bool ReplicatedPG::agent_maybe_evict(ObjectContextRef& obc)
   }
 
   dout(10) << __func__ << " evicting " << obc->obs.oi << dendl;
-  RepGather *repop = simple_repop_create(obc);
+  
+  RepGather *repop = simple_repop_create(obc); // associates OpContext + ObjectContext + tid
+  
   OpContext *ctx = repop->ctx;
   Context *on_evict = new C_AgentEvictStartStop(this);
   ctx->on_finish = on_evict;
   ctx->lock_to_release = OpContext::W_LOCK;
   ctx->at_version = get_next_version();
   assert(ctx->new_obs.exists);
+  
   int r = _delete_oid(ctx, true);
+
   if (obc->obs.oi.is_omap())
     ctx->delta_stats.num_objects_omap--;
   ctx->delta_stats.num_evict++;
   ctx->delta_stats.num_evict_kb += SHIFT_ROUND_UP(obc->obs.oi.size, 10);
   assert(r == 0);
+  
   finish_ctx(ctx, pg_log_entry_t::DELETE, false);
+  
   simple_repop_submit(repop);
+  
   osd->logger->inc(l_osd_tier_evict);
   osd->logger->inc(l_osd_agent_evict);
   return true;

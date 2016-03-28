@@ -518,10 +518,11 @@ void OSDService::activate_map()
 {
   // wake/unwake the tiering agent
   agent_lock.Lock();
-  agent_active =
-    !osdmap->test_flag(CEPH_OSDMAP_NOTIERAGENT) &&
-    osd->is_active();
+  
+  agent_active = !osdmap->test_flag(CEPH_OSDMAP_NOTIERAGENT) && osd->is_active();
+  
   agent_cond.Signal();
+  
   agent_lock.Unlock();
 }
 
@@ -537,6 +538,7 @@ public:
 void OSDService::agent_entry()
 {
   dout(10) << __func__ << " start" << dendl;
+  
   agent_lock.Lock();
 
   while (!agent_stop_flag) {
@@ -545,6 +547,7 @@ void OSDService::agent_entry()
       agent_cond.Wait(agent_lock);
       continue;
     }
+    
     uint64_t level = agent_queue.rbegin()->first;
     set<PGRef>& top = agent_queue.rbegin()->second;
     dout(10) << __func__
@@ -556,8 +559,8 @@ void OSDService::agent_entry()
 	     << (agent_active ? " active" : " NOT ACTIVE")
 	     << dendl;
     dout(20) << __func__ << " oids " << agent_oids << dendl;
-    if (agent_ops >= g_conf->osd_agent_max_ops || top.empty() ||
-	!agent_active) {
+    
+    if (agent_ops >= g_conf->osd_agent_max_ops || top.empty() || !agent_active) { // default 4
       agent_cond.Wait(agent_lock);
       continue;
     }
@@ -566,27 +569,35 @@ void OSDService::agent_entry()
       agent_queue_pos = top.begin();
       agent_valid_iterator = true;
     }
+    
     PGRef pg = *agent_queue_pos;
     int max = g_conf->osd_agent_max_ops - agent_ops;
     int agent_flush_quota = max;
+    
     if (!flush_mode_high_count)
-      agent_flush_quota = g_conf->osd_agent_max_low_ops - agent_ops;
+      agent_flush_quota = g_conf->osd_agent_max_low_ops - agent_ops; // default 2
+
     dout(10) << "high_count " << flush_mode_high_count << " agent_ops " << agent_ops << " flush_quota " << agent_flush_quota << dendl;
+
     agent_lock.Unlock();
+
     if (!pg->agent_work(max, agent_flush_quota)) {
       dout(10) << __func__ << " " << pg->get_pgid()
 	<< " no agent_work, delay for " << g_conf->osd_agent_delay_time
 	<< " seconds" << dendl;
 
       osd->logger->inc(l_osd_tier_delay);
+      
       // Queue a timer to call agent_choose_mode for this pg in 5 seconds
       agent_timer_lock.Lock();
       Context *cb = new AgentTimeoutCB(pg);
       agent_timer.add_event_after(g_conf->osd_agent_delay_time, cb);
       agent_timer_lock.Unlock();
     }
+    
     agent_lock.Lock();
   }
+  
   agent_lock.Unlock();
   dout(10) << __func__ << " finish" << dendl;
 }
