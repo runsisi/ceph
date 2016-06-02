@@ -516,6 +516,8 @@ void Objecter::shutdown()
   }
 }
 
+// called by Objecter::_linger_submit, Objecter::handle_osd_map,
+// Objecter::_linger_ops_resend
 void Objecter::_send_linger(LingerOp *info,
 			    shunique_lock& sul)
 {
@@ -525,27 +527,39 @@ void Objecter::_send_linger(LingerOp *info,
   Context *oncommit = NULL;
   LingerOp::shared_lock watchl(info->watch_lock);
   bufferlist *poutbl = NULL;
+
   if (info->registered && info->is_watch) {
+
+    // info->registered set in Objecter::_linger_commit
+
     ldout(cct, 15) << "send_linger " << info->linger_id << " reconnect"
 		   << dendl;
+
     opv.push_back(OSDOp());
     opv.back().op.op = CEPH_OSD_OP_WATCH;
     opv.back().op.watch.cookie = info->get_cookie();
     opv.back().op.watch.op = CEPH_OSD_WATCH_OP_RECONNECT;
     opv.back().op.watch.gen = ++info->register_gen;
+
     oncommit = new C_Linger_Reconnect(this, info);
   } else {
     ldout(cct, 15) << "send_linger " << info->linger_id << " register"
 		   << dendl;
+
     opv = info->ops;
+
+    // Objecter::_linger_commit
     C_Linger_Commit *c = new C_Linger_Commit(this, info);
+
     if (!info->is_watch) {
       info->notify_id = 0;
       poutbl = &c->outbl;
     }
+
     oncommit = c;
   }
   watchl.unlock();
+
   Op *o = new Op(info->target.base_oid, info->target.base_oloc,
 		 opv, info->target.flags | CEPH_OSD_FLAG_READ,
 		 NULL, NULL,
@@ -560,13 +574,21 @@ void Objecter::_send_linger(LingerOp *info,
   o->tid = last_tid.inc();
 
   // do not resend this; we will send a new op to reregister
+
+  // Op::Op() always set Op::should_resend to true, for linger op, we
+  // always set this to false
   o->should_resend = false;
 
   if (info->register_tid) {
+
+    // info->register_tid is set in Objecter::_op_submit
+
     // repeat send.  cancel old registeration op, if any.
     OSDSession::unique_lock sl(info->session->lock);
+
     if (info->session->ops.count(info->register_tid)) {
       Op *o = info->session->ops[info->register_tid];
+
       _op_cancel_map_check(o);
       _cancel_linger_op(o);
     }
@@ -581,10 +603,15 @@ void Objecter::_send_linger(LingerOp *info,
   logger->inc(l_osdc_linger_send);
 }
 
+// callback of C_Linger_Commit which used by Objecter::_send_linger
 void Objecter::_linger_commit(LingerOp *info, int r, bufferlist& outbl)
 {
   LingerOp::unique_lock wl(info->watch_lock);
+
   ldout(cct, 10) << "_linger_commit " << info->linger_id << dendl;
+
+  // LingerOp::on_reg_commit is user callback, which is set in
+  // Objecter::linger_watch, Objecter::linger_notify
   if (info->on_reg_commit) {
     info->on_reg_commit->complete(r);
     info->on_reg_commit = NULL;
@@ -893,6 +920,7 @@ void Objecter::handle_watch_notify(MWatchNotify *m)
     ldout(cct, 7) << __func__ << " cookie " << m->cookie << " dne" << dendl;
     return;
   }
+
   LingerOp::unique_lock wl(info->watch_lock);
   if (m->opcode == CEPH_WATCH_EVENT_DISCONNECT) {
     if (!info->last_error) {
@@ -918,6 +946,9 @@ void Objecter::handle_watch_notify(MWatchNotify *m)
       info->on_notify_finish = NULL;
     }
   } else {
+
+    // Objecter::_do_watch_notify
+
     finisher->queue(new C_DoWatchNotify(this, info, m));
   }
 }
@@ -2160,9 +2191,11 @@ void Objecter::resend_mon_ops()
 void Objecter::op_submit(Op *op, ceph_tid_t *ptid, int *ctx_budget)
 {
   shunique_lock rl(rwlock, ceph::acquire_shared);
+
   ceph_tid_t tid = 0;
   if (!ptid)
     ptid = &tid;
+
   _op_submit_with_budget(op, rl, ptid, ctx_budget);
 }
 
@@ -3810,10 +3843,13 @@ int Objecter::delete_selfmanaged_snap(int64_t pool, snapid_t snap,
 				      Context *onfinish)
 {
   unique_lock wl(rwlock);
+
   ldout(cct, 10) << "delete_selfmanaged_snap; pool: " << pool << "; snap: "
 		 << snap << dendl;
+
   PoolOp *op = new PoolOp;
   if (!op) return -ENOMEM;
+
   op->tid = last_tid.inc();
   op->pool = pool;
   op->onfinish = onfinish;
@@ -3923,6 +3959,7 @@ void Objecter::pool_op_submit(PoolOp *op)
 				    [this, op]() {
 				      pool_op_cancel(op->tid, -ETIMEDOUT); });
   }
+
   _pool_op_submit(op);
 }
 
@@ -3931,12 +3968,16 @@ void Objecter::_pool_op_submit(PoolOp *op)
   // rwlock is locked unique
 
   ldout(cct, 10) << "pool_op_submit " << op->tid << dendl;
+
   MPoolOp *m = new MPoolOp(monc->get_fsid(), op->tid, op->pool,
 			   op->name, op->pool_op,
 			   op->auid, last_seen_osdmap_version);
+
   if (op->snapid) m->snapid = op->snapid;
   if (op->crush_rule) m->crush_rule = op->crush_rule;
+
   monc->send_mon_message(m);
+
   op->last_submit = ceph::mono_clock::now();
 
   logger->inc(l_osdc_poolop_send);

@@ -45,6 +45,10 @@ ImageCopyRequest<I>::ImageCopyRequest(I *local_image_ctx, I *remote_image_ctx,
 
 template <typename I>
 void ImageCopyRequest<I>::send() {
+
+  // calc map<remote snap id, vector<local snap id>> m_snap_map, which
+  // is used by object copy, and used by ObjectCopyRequest<I>::send_write_object
+  // eventually
   int r = compute_snap_map();
   if (r < 0) {
     finish(r);
@@ -59,14 +63,17 @@ void ImageCopyRequest<I>::cancel() {
   Mutex::Locker locker(m_lock);
 
   dout(20) << dendl;
+
   m_canceled = true;
 }
 
 template <typename I>
 void ImageCopyRequest<I>::send_update_max_object_count() {
   uint64_t max_objects = m_client_meta->sync_object_count;
+
   {
     RWLock::RLocker snap_locker(m_remote_image_ctx->snap_lock);
+
     max_objects = std::max(max_objects,
                            m_remote_image_ctx->get_object_count(CEPH_NOSNAP));
     for (auto snap_id : m_remote_image_ctx->snaps) {
@@ -77,8 +84,12 @@ void ImageCopyRequest<I>::send_update_max_object_count() {
 
   if (max_objects <= m_client_meta->sync_object_count) {
     send_object_copies();
+
     return;
   }
+
+  // the max object count to sync this time is lager than the ever
+  // synced, so update this count
 
   update_progress("UPDATE_MAX_OBJECT_COUNT");
 
@@ -94,6 +105,8 @@ void ImageCopyRequest<I>::send_update_max_object_count() {
   Context *ctx = create_context_callback<
     ImageCopyRequest<I>, &ImageCopyRequest<I>::handle_update_max_object_count>(
       this);
+
+  // update the max ever synced object count
   m_journaler->update_client(client_data_bl, ctx);
 }
 
@@ -128,9 +141,14 @@ void ImageCopyRequest<I>::send_object_copies() {
   CephContext *cct = m_local_image_ctx->cct;
 
   m_object_no = 0;
+
   if (m_sync_point->object_number) {
+
+    // re-sync from the last sync'ed object
+
     m_object_no = *m_sync_point->object_number + 1;
   }
+
   m_end_object_no = m_client_meta->sync_object_count;
 
   dout(20) << ": start_object=" << m_object_no << ", "
@@ -139,17 +157,31 @@ void ImageCopyRequest<I>::send_object_copies() {
   update_progress("COPY_OBJECT");
 
   bool complete;
+
   {
     Mutex::Locker locker(m_lock);
+
+    // default is 10
     for (int i = 0; i < cct->_conf->rbd_concurrent_management_ops; ++i) {
+
+      // try to start 10 object copies concurrently
+
       send_next_object_copy();
+
       if (m_ret_val < 0 && m_current_ops == 0) {
+
+        // already failed or started nothing
+
         break;
       }
     }
+
     complete = (m_current_ops == 0);
 
     if (!complete) {
+
+      // started object copies, need to add a timer event to update the sync point
+
       m_update_sync_ctx = new FunctionContext([this](int r) {
           this->send_update_sync_point();
       });
@@ -158,13 +190,20 @@ void ImageCopyRequest<I>::send_object_copies() {
 
   {
     Mutex::Locker timer_locker(*m_timer_lock);
+
     if (m_update_sync_ctx) {
+
+      // add the timer event to update the sync point
+
       m_timer->add_event_after(m_update_sync_point_interval,
                                m_update_sync_ctx);
     }
   }
 
   if (complete) {
+
+    // ok, started nothing,
+
     send_flush_sync_point();
   }
 }
@@ -175,12 +214,18 @@ void ImageCopyRequest<I>::send_next_object_copy() {
 
   if (m_canceled && m_ret_val == 0) {
     dout(10) << ": image copy canceled" << dendl;
+
     m_ret_val = -ECANCELED;
   }
 
   if (m_ret_val < 0 || m_object_no >= m_end_object_no) {
+
+    // failed or reached the last object, do not start a new object copy
+
     return;
   }
+
+  // start a new object copy
 
   uint64_t ono = m_object_no++;
 
@@ -190,8 +235,11 @@ void ImageCopyRequest<I>::send_next_object_copy() {
 
   Context *ctx = create_context_callback<
     ImageCopyRequest<I>, &ImageCopyRequest<I>::handle_object_copy>(this);
+
+  // m_snap_map calc'ed in ImageCopyRequest<I>::compute_snap_map
   ObjectCopyRequest<I> *req = ObjectCopyRequest<I>::create(
     m_local_image_ctx, m_remote_image_ctx, &m_snap_map, ono, ctx);
+
   req->send();
 }
 
@@ -201,8 +249,10 @@ void ImageCopyRequest<I>::handle_object_copy(int r) {
 
   int percent;
   bool complete;
+
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_current_ops > 0);
     --m_current_ops;
 
@@ -210,28 +260,44 @@ void ImageCopyRequest<I>::handle_object_copy(int r) {
 
     if (r < 0) {
       derr << ": object copy failed: " << cpp_strerror(r) << dendl;
+
       if (m_ret_val == 0) {
         m_ret_val = r;
       }
     }
 
+    // finished an object, try to start a next object to copy
     send_next_object_copy();
+
     complete = (m_current_ops == 0);
   }
 
   update_progress("COPY_OBJECT " + stringify(percent) + "%", false);
 
   if (complete) {
+
+    // started nothing and the in-flight object copies have finished
+
     bool do_flush = true;
+
     {
       Mutex::Locker timer_locker(*m_timer_lock);
       Mutex::Locker locker(m_lock);
+
       if (!m_updating_sync_point) {
+
+        // no sync point updating in progress
+
         if (m_update_sync_ctx != nullptr) {
           m_timer->cancel_event(m_update_sync_ctx);
           m_update_sync_ctx = nullptr;
         }
       } else {
+
+        // ImageCopyRequest<I>::send_update_sync_point is updating the
+        // sync point, wait until ImageCopyRequest<I>::handle_update_sync_point
+        // to do the flush
+
         do_flush = false;
       }
     }
@@ -249,18 +315,29 @@ void ImageCopyRequest<I>::send_update_sync_point() {
   m_update_sync_ctx = nullptr;
 
   if (m_canceled || m_ret_val < 0 || m_current_ops == 0) {
+
+    // no need to send sync point update, ImageCopyRequest<I>::handle_object_copy
+    // will do the flush
+
     return;
   }
 
   if (m_sync_point->object_number &&
       (m_object_no-1) == m_sync_point->object_number.get()) {
+
     // update sync point did not progress since last sync
+
     return;
   }
 
+  // need to update sync point
+
   m_updating_sync_point = true;
 
+  // used for reverting if failed
   m_client_meta_copy = *m_client_meta;
+
+  // we have finished copy object number: m_object_no - 1
   m_sync_point->object_number = m_object_no - 1;
 
   CephContext *cct = m_local_image_ctx->cct;
@@ -273,6 +350,7 @@ void ImageCopyRequest<I>::send_update_sync_point() {
   Context *ctx = create_context_callback<
     ImageCopyRequest<I>, &ImageCopyRequest<I>::handle_update_sync_point>(
       this);
+
   m_journaler->update_client(client_data_bl, ctx);
 }
 
@@ -282,19 +360,26 @@ void ImageCopyRequest<I>::handle_update_sync_point(int r) {
   ldout(cct, 20) << ": r=" << r << dendl;
 
   if (r < 0) {
+    // revert the change
     *m_client_meta = m_client_meta_copy;
+
     lderr(cct) << ": failed to update client data: " << cpp_strerror(r)
                << dendl;
   }
 
   bool complete;
+
   {
     Mutex::Locker l(m_lock);
+
     m_updating_sync_point = false;
 
     complete = m_current_ops == 0 || m_canceled || m_ret_val < 0;
 
     if (!complete) {
+
+      // prepare for the next sync point update
+
       m_update_sync_ctx = new FunctionContext([this](int r) {
           this->send_update_sync_point();
       });
@@ -303,11 +388,15 @@ void ImageCopyRequest<I>::handle_update_sync_point(int r) {
 
   if (!complete) {
     Mutex::Locker timer_lock(*m_timer_lock);
+
     if (m_update_sync_ctx) {
       m_timer->add_event_after(m_update_sync_point_interval,
                                m_update_sync_ctx);
     }
   } else {
+
+    // finished or canceled or failed
+
     send_flush_sync_point();
   }
 }
@@ -322,6 +411,9 @@ void ImageCopyRequest<I>::send_flush_sync_point() {
   update_progress("FLUSH_SYNC_POINT");
 
   m_client_meta_copy = *m_client_meta;
+
+  // in case ImageCopyRequest<I>::handle_update_sync_point reverted the
+  // update of m_client_meta, we need to re-update the m_client_meta
   if (m_object_no > 0) {
     m_sync_point->object_number = m_object_no - 1;
   } else {
@@ -337,6 +429,7 @@ void ImageCopyRequest<I>::send_flush_sync_point() {
   Context *ctx = create_context_callback<
     ImageCopyRequest<I>, &ImageCopyRequest<I>::handle_flush_sync_point>(
       this);
+
   m_journaler->update_client(client_data_bl, ctx);
 }
 
@@ -361,9 +454,12 @@ int ImageCopyRequest<I>::compute_snap_map() {
 
   librados::snap_t snap_id_start = 0;
   librados::snap_t snap_id_end;
+
   {
     RWLock::RLocker snap_locker(m_remote_image_ctx->snap_lock);
+
     snap_id_end = m_remote_image_ctx->get_snap_id(m_sync_point->snap_name);
+
     if (snap_id_end == CEPH_NOSNAP) {
       derr << ": failed to locate snapshot: "
            << m_sync_point->snap_name << dendl;
@@ -373,6 +469,7 @@ int ImageCopyRequest<I>::compute_snap_map() {
     if (!m_sync_point->from_snap_name.empty()) {
       snap_id_start = m_remote_image_ctx->get_snap_id(
         m_sync_point->from_snap_name);
+
       if (snap_id_start == CEPH_NOSNAP) {
         derr << ": failed to locate from snapshot: "
              << m_sync_point->from_snap_name << dendl;
@@ -381,16 +478,26 @@ int ImageCopyRequest<I>::compute_snap_map() {
     }
   }
 
+  // [from_snap_name, snap_name] -> [snap_id_start, snap_id_end]
+
   SnapIds snap_ids;
+
+  // snap_seqs is calc'ed by SnapshotCopyRequest<I>::handle_snap_create to
+  // denote the <remote snap id, local snap id> mapping
   for (auto it = m_client_meta->snap_seqs.begin();
        it != m_client_meta->snap_seqs.end(); ++it) {
+
+    // push front, so from new -> old
     snap_ids.insert(snap_ids.begin(), it->second);
+
     if (it->first < snap_id_start) {
       continue;
     } else if (it->first > snap_id_end) {
       break;
     }
 
+    // map<remote snap id, vector<local snap id>>, which is used by
+    // ObjectCopyRequest<I>::compute_diffs
     m_snap_map[it->first] = snap_ids;
   }
 

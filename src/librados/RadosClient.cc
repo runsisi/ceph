@@ -270,8 +270,11 @@ int librados::RadosClient::connect()
   messenger->start();
 
   ldout(cct, 1) << "setting wanted keys" << dendl;
+
   monclient.set_want_keys(CEPH_ENTITY_TYPE_MON | CEPH_ENTITY_TYPE_OSD);
+
   ldout(cct, 1) << "calling monclient init" << dendl;
+
   err = monclient.init();
   if (err) {
     ldout(cct, 0) << conf->name << " initialization error " << cpp_strerror(-err) << dendl;

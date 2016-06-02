@@ -59,6 +59,8 @@ JournalPlayer::JournalPlayer(librados::IoCtx &ioctx,
   m_cct = reinterpret_cast<CephContext *>(m_ioctx.cct());
 
   ObjectSetPosition commit_position;
+
+  // a list of ObjectPosition, i.e., a splay width of <object_num, tag id, entry id>
   m_journal_metadata->get_commit_position(&commit_position);
 
   if (!commit_position.object_positions.empty()) {
@@ -66,13 +68,18 @@ JournalPlayer::JournalPlayer(librados::IoCtx &ioctx,
 
     // start replay after the last committed entry's object
     uint8_t splay_width = m_journal_metadata->get_splay_width();
+
+    // the newer commit position always at the front of the
+    // commit position list, see JournalMetadata::committed
     auto &active_position = commit_position.object_positions.front();
+
     m_active_tag_tid = active_position.tag_tid;
     m_commit_position_valid = true;
     m_commit_position = active_position;
     m_splay_offset = active_position.object_number % splay_width;
     for (auto &position : commit_position.object_positions) {
       uint8_t splay_offset = position.object_number % splay_width;
+
       m_commit_positions[splay_offset] = position;
     }
   }
@@ -86,32 +93,45 @@ JournalPlayer::~JournalPlayer() {
     assert(m_fetch_object_numbers.empty());
     assert(!m_watch_scheduled);
   }
+
   m_replay_handler->put();
 }
 
 void JournalPlayer::prefetch() {
   Mutex::Locker locker(m_lock);
+
   assert(m_state == STATE_INIT);
   m_state = STATE_PREFETCH;
 
   m_active_set = m_journal_metadata->get_active_set();
   uint8_t splay_width = m_journal_metadata->get_splay_width();
+
   for (uint8_t splay_offset = 0; splay_offset < splay_width; ++splay_offset) {
+
+    // used to record our prefetch progress
+
     m_prefetch_splay_offsets.insert(splay_offset);
   }
 
   // compute active object for each splay offset (might be before
   // active set)
   std::map<uint8_t, uint64_t> splay_offset_to_objects;
+
   for (auto &position : m_commit_positions) {
     assert(splay_offset_to_objects.count(position.first) == 0);
+
+    // <splay offset, object number>
     splay_offset_to_objects[position.first] = position.second.object_number;
   }
 
   // prefetch the active object for each splay offset
   std::set<uint64_t> prefetch_object_numbers;
+
   for (uint8_t splay_offset = 0; splay_offset < splay_width; ++splay_offset) {
     uint64_t object_number = splay_offset;
+
+    // prefetch the last committed set of objects
+
     if (splay_offset_to_objects.count(splay_offset) != 0) {
       object_number = splay_offset_to_objects[splay_offset];
     }
@@ -122,7 +142,10 @@ void JournalPlayer::prefetch() {
   ldout(m_cct, 10) << __func__ << ": prefetching "
                    << prefetch_object_numbers.size() << " " << "objects"
                    << dendl;
+
   for (auto object_number : prefetch_object_numbers) {
+
+    // create a each ObjectPlayer to fetch the object
     fetch(object_number);
   }
 }
@@ -134,22 +157,27 @@ void JournalPlayer::prefetch_and_watch(double interval) {
     m_watch_interval = interval;
     m_watch_step = WATCH_STEP_FETCH_CURRENT;
   }
+
   prefetch();
 }
 
 void JournalPlayer::shut_down(Context *on_finish) {
   ldout(m_cct, 20) << __func__ << dendl;
+
   Mutex::Locker locker(m_lock);
 
   assert(!m_shut_down);
+
   m_shut_down = true;
   m_watch_enabled = false;
 
+  // will queue the on_finish on image_ctx.op_work_queue
   on_finish = utils::create_async_context_callback(
       m_journal_metadata, on_finish);
 
   if (m_watch_scheduled) {
     ObjectPlayerPtr object_player = get_object_player();
+
     switch (m_watch_step) {
     case WATCH_STEP_FETCH_FIRST:
       object_player = m_object_players.begin()->second;
@@ -165,8 +193,12 @@ void JournalPlayer::shut_down(Context *on_finish) {
   m_async_op_tracker.wait_for_ops(on_finish);
 }
 
+// Journal<I>::handle_replay_ready will be notified by
+// JournalPlayer::notify_entries_available and try to pop an entry to
+// process
 bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
   ldout(m_cct, 20) << __func__ << dendl;
+
   Mutex::Locker locker(m_lock);
 
   if (m_state != STATE_PLAYBACK) {
@@ -175,14 +207,22 @@ bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
   }
 
   if (!verify_playback_ready()) {
+
+    // playback is not ready, i.e., fetch in progress, no more entries etc.
+
     if (!is_object_set_ready()) {
+
+      // watch scheduled or has object fetch in progress
+
       m_handler_notified = false;
     } else {
       refetch(true);
     }
+
     return false;
   }
 
+  // get the first ObjectPlayer at the specified splay offset (i.e., m_splay_offset)
   ObjectPlayerPtr object_player = get_object_player();
   assert(object_player && !object_player->empty());
 
@@ -196,18 +236,28 @@ bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
     lderr(m_cct) << "missing prior journal entry: " << *entry << dendl;
 
     m_state = STATE_ERROR;
-    notify_complete(-ENOMSG);
+
+    notify_complete(-ENOMSG); // notify rbd replay handler to complete
+
     return false;
   }
 
+  // update m_splay_offset and m_watch_step
   advance_splay_object();
+
+  // remove current object player from m_object_players if no more entries
+  // in this object player and the object set this object player belongs
+  // does not equal the current active object set, create the next object
+  // player and fetch its entries if possible
   remove_empty_object_player(object_player);
 
   m_journal_metadata->reserve_entry_tid(entry->get_tag_tid(),
                                         entry->get_entry_tid());
+
   *commit_tid = m_journal_metadata->allocate_commit_tid(
     object_player->get_object_number(), entry->get_tag_tid(),
     entry->get_entry_tid());
+
   return true;
 }
 
@@ -216,15 +266,27 @@ void JournalPlayer::process_state(uint64_t object_number, int r) {
                    << "r=" << r << dendl;
 
   assert(m_lock.is_locked());
+
   if (r >= 0) {
     switch (m_state) {
     case STATE_PREFETCH:
+      // this is our first time to fetch, we fetch a set of objects,
+      // whenever we try to process an entry, i.e., in
+      // JournalPlayer::try_pop_front, if all entries in this object
+      // have been processed we always try to fetch the next object
+      // at the same splay offset, only an object instead of a set
+      // of objects in prefetch state
       ldout(m_cct, 10) << "PREFETCH" << dendl;
       r = process_prefetch(object_number);
       break;
     case STATE_PLAYBACK:
       ldout(m_cct, 10) << "PLAYBACK" << dendl;
-      r = process_playback(object_number);
+
+      // ok, an object fetched, let's see if the whole set of objects have
+      // been fetched, if it did then we can notify the rbd replay handler
+      // to do replay
+
+      r = process_playback(object_number); // always return 0
       break;
     case STATE_ERROR:
       ldout(m_cct, 10) << "ERROR" << dendl;
@@ -244,6 +306,7 @@ void JournalPlayer::process_state(uint64_t object_number, int r) {
 
 int JournalPlayer::process_prefetch(uint64_t object_number) {
   ldout(m_cct, 10) << __func__ << ": object_num=" << object_number << dendl;
+
   assert(m_lock.is_locked());
 
   uint8_t splay_width = m_journal_metadata->get_splay_width();
@@ -284,6 +347,8 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
         }
 
         ldout(m_cct, 20) << "skipping committed entry: " << entry << dendl;
+
+        // update m_allocated_entry_tids[tag_tid] to entry.get_entry_tid() + 1
         m_journal_metadata->reserve_entry_tid(entry.get_tag_tid(),
                                               entry.get_entry_tid());
         object_player->pop_front();
@@ -340,22 +405,32 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   }
 
   if (verify_playback_ready()) {
+
+    // let rbd replay handler registered in Journal<I>::handle_get_tags,
+    // i.e., Journal::handle_replay_ready, to process entries
+
     notify_entries_available();
   } else if (is_object_set_ready()) {
     refetch(false);
   }
+
   return 0;
 }
 
 int JournalPlayer::process_playback(uint64_t object_number) {
   ldout(m_cct, 10) << __func__ << ": object_num=" << object_number << dendl;
+
   assert(m_lock.is_locked());
 
   if (verify_playback_ready()) {
+
+    // a set of object fetched and there are entries to be processed
+
     notify_entries_available();
   } else if (is_object_set_ready()) {
     refetch(false);
   }
+
   return 0;
 }
 
@@ -373,13 +448,16 @@ bool JournalPlayer::verify_playback_ready() {
   assert(m_lock.is_locked());
 
   while (true) {
-    if (!is_object_set_ready()) {
+
+    // prune_tag may create new object player, so need to test if every iteration
+    if (!is_object_set_ready()) { // watch scheduled or object player fetch in progress
       ldout(m_cct, 10) << __func__ << ": waiting for full object set" << dendl;
       return false;
     }
 
     ObjectPlayerPtr object_player = get_object_player();
     assert(object_player);
+
     uint64_t object_num = object_player->get_object_number();
 
     // Verify is the active object player has another entry available
@@ -392,12 +470,14 @@ bool JournalPlayer::verify_playback_ready() {
       m_watch_prune_active_tag = false;
       object_player->front(&entry);
 
-      if (!m_active_tag_tid) {
+      if (!m_active_tag_tid) { // initialize m_active_tag_tid
         ldout(m_cct, 10) << __func__ << ": "
                          << "object_num=" << object_num << ", "
                          << "initial tag=" << entry.get_tag_tid()
                          << dendl;
+
         m_active_tag_tid = entry.get_tag_tid();
+
         return true;
       } else if (entry.get_tag_tid() < *m_active_tag_tid ||
                  (m_prune_tag_tid && entry.get_tag_tid() <= *m_prune_tag_tid)) {
@@ -405,7 +485,10 @@ bool JournalPlayer::verify_playback_ready() {
         ldout(m_cct, 10) << __func__ << ": detected stale entry: "
                          << "object_num=" << object_num << ", "
                          << "entry=" << entry << dendl;
-        prune_tag(entry.get_tag_tid());
+
+        // prune entries with the specified tag id
+        prune_tag(entry.get_tag_tid()); // will update or initialize m_prune_tag_tid
+
         continue;
       } else if (entry.get_tag_tid() > *m_active_tag_tid) {
         // new tag at current playback position -- implies that previous
@@ -415,23 +498,26 @@ bool JournalPlayer::verify_playback_ready() {
                          << "object_num=" << object_num << ", "
                          << "active_tag=" << *m_active_tag_tid << ", "
                          << "new_tag=" << entry.get_tag_tid() << dendl;
-        if (entry.get_entry_tid() == 0) {
+
+        if (entry.get_entry_tid() == 0) { // every tag has its own entry id set
           // first entry in new tag -- can promote to active
-          prune_active_tag(entry.get_tag_tid());
+          prune_active_tag(entry.get_tag_tid()); // prune entries with old m_active_tag_tid and update m_active_tag_tid to new tag id
+
           return true;
         } else {
-          // prune current active and wait for initial entry for new tag
+          // prune entries with current m_active_tag_tid and wait for initial entry for new tag
           prune_active_tag(boost::none);
+
           continue;
         }
-      } else {
+      } else { // entry.get_tag_tid() == m_active_tag_tid && entry.get_tag_tid() > m_prune_tag_tid
         ldout(m_cct, 20) << __func__ << ": "
                          << "object_num=" << object_num << ", "
                          << "entry: " << entry << dendl;
         assert(entry.get_tag_tid() == *m_active_tag_tid);
         return true;
       }
-    } else {
+    } else { // object player has no entries
       if (!m_active_tag_tid) {
         // waiting for our first entry
         ldout(m_cct, 10) << __func__ << ": waiting for first entry: "
@@ -446,6 +532,7 @@ bool JournalPlayer::verify_playback_ready() {
         ldout(m_cct, 10) << __func__ << ": assuming no more in-sequence entries: "
                          << "object_num=" << object_num << ", "
                          << "active_tag " << *m_active_tag_tid << dendl;
+
         prune_active_tag(boost::none);
         continue;
       } else if (object_player->refetch_required()) {
@@ -469,16 +556,18 @@ bool JournalPlayer::verify_playback_ready() {
       }
     }
   }
+
   return false;
 }
 
 void JournalPlayer::prune_tag(uint64_t tag_tid) {
   assert(m_lock.is_locked());
+
   ldout(m_cct, 10) << __func__ << ": pruning remaining entries for tag "
                    << tag_tid << dendl;
 
   // prune records that are at or below the largest prune tag tid
-  if (!m_prune_tag_tid || *m_prune_tag_tid < tag_tid) {
+  if (!m_prune_tag_tid || *m_prune_tag_tid < tag_tid) { // always update m_prune_tag_tid to the biggest
     m_prune_tag_tid = tag_tid;
   }
 
@@ -524,6 +613,7 @@ void JournalPlayer::prune_active_tag(const boost::optional<uint64_t>& tag_tid) {
   if (tag_tid) {
     m_active_tag_tid = tag_tid;
   }
+
   m_splay_offset = 0;
   m_watch_step = WATCH_STEP_FETCH_CURRENT;
 
@@ -554,9 +644,11 @@ ObjectPlayerPtr JournalPlayer::get_object_player(uint64_t object_number) const {
 
 void JournalPlayer::advance_splay_object() {
   assert(m_lock.is_locked());
+
   ++m_splay_offset;
   m_splay_offset %= m_journal_metadata->get_splay_width();
   m_watch_step = WATCH_STEP_FETCH_CURRENT;
+
   ldout(m_cct, 20) << __func__ << ": new offset "
                    << static_cast<uint32_t>(m_splay_offset) << dendl;
 }
@@ -568,6 +660,7 @@ bool JournalPlayer::remove_empty_object_player(const ObjectPlayerPtr &player) {
   uint8_t splay_width = m_journal_metadata->get_splay_width();
   uint64_t object_set = player->get_object_number() / splay_width;
   uint64_t active_set = m_journal_metadata->get_active_set();
+
   if (!player->empty() || object_set == active_set) {
     return false;
   } else if (player->refetch_required()) {
@@ -583,6 +676,9 @@ bool JournalPlayer::remove_empty_object_player(const ObjectPlayerPtr &player) {
     }
     return false;
   }
+
+  // no entries left in object and we have not reached the active set, so
+  // try to fetch the next object
 
   ldout(m_cct, 15) << __func__ << ": " << player->get_oid() << " empty"
                    << dendl;
@@ -617,6 +713,7 @@ void JournalPlayer::fetch(const ObjectPlayerPtr &object_player) {
   m_fetch_object_numbers.insert(object_num);
 
   ldout(m_cct, 10) << __func__ << ": " << oid << dendl;
+
   C_Fetch *fetch_ctx = new C_Fetch(this, object_num);
 
   object_player->fetch(fetch_ctx);
@@ -628,6 +725,7 @@ void JournalPlayer::handle_fetched(uint64_t object_num, int r) {
                    << ": r=" << r << dendl;
 
   Mutex::Locker locker(m_lock);
+
   assert(m_fetch_object_numbers.count(object_num) == 1);
   m_fetch_object_numbers.erase(object_num);
 
@@ -637,9 +735,16 @@ void JournalPlayer::handle_fetched(uint64_t object_num, int r) {
 
   if (r == 0) {
     ObjectPlayerPtr object_player = get_object_player(object_num);
+
+    // remove this object if it is empty and try to fetch the next object
+    // if we have not reached the active object set
     remove_empty_object_player(object_player);
   }
-  process_state(object_num, r);
+
+  // entries fetched for this object, let's see if we can finish our
+  // current set of objects fetch, if so then we can notify the rbd
+  // replay handler to process the fetched entries
+  process_state(object_num, r); // actually a name of process_object may be better
 }
 
 void JournalPlayer::refetch(bool immediate) {
@@ -665,7 +770,9 @@ void JournalPlayer::refetch(bool immediate) {
 
 void JournalPlayer::schedule_watch(bool immediate) {
   ldout(m_cct, 10) << __func__ << dendl;
+
   assert(m_lock.is_locked());
+
   if (m_watch_scheduled) {
     return;
   }
@@ -679,10 +786,13 @@ void JournalPlayer::schedule_watch(bool immediate) {
                      << *m_active_tag_tid << dendl;
 
     m_async_op_tracker.start_op();
+
     FunctionContext *ctx = new FunctionContext([this](int r) {
         handle_watch_assert_active(r);
       });
+
     m_journal_metadata->assert_active_tag(*m_active_tag_tid, ctx);
+
     return;
   }
 
@@ -690,7 +800,7 @@ void JournalPlayer::schedule_watch(bool immediate) {
   double watch_interval = m_watch_interval;
 
   switch (m_watch_step) {
-  case WATCH_STEP_FETCH_CURRENT:
+  case WATCH_STEP_FETCH_CURRENT: // first object player at m_splay_offset
     {
       object_player = get_object_player();
 
@@ -719,14 +829,18 @@ void JournalPlayer::schedule_watch(bool immediate) {
 
   ldout(m_cct, 20) << __func__ << ": scheduling watch on "
                    << object_player->get_oid() << dendl;
+
   Context *ctx = utils::create_async_context_callback(
     m_journal_metadata, new C_Watch(this, object_player->get_object_number()));
+
   object_player->watch(ctx, watch_interval);
 }
 
 void JournalPlayer::handle_watch(uint64_t object_num, int r) {
   ldout(m_cct, 10) << __func__ << ": r=" << r << dendl;
+
   Mutex::Locker locker(m_lock);
+
   assert(m_watch_scheduled);
   m_watch_scheduled = false;
 
@@ -761,6 +875,7 @@ void JournalPlayer::handle_watch_assert_active(int r) {
   ldout(m_cct, 10) << __func__ << ": r=" << r << dendl;
 
   Mutex::Locker locker(m_lock);
+
   assert(m_watch_scheduled);
   m_watch_scheduled = false;
 
@@ -776,26 +891,41 @@ void JournalPlayer::handle_watch_assert_active(int r) {
   if (!m_shut_down && m_watch_enabled) {
     schedule_watch(false);
   }
+
   m_async_op_tracker.finish_op();
 }
 
 void JournalPlayer::notify_entries_available() {
   assert(m_lock.is_locked());
+
   if (m_handler_notified) {
+
+    // previous notify in progress, either 1) rbd Journal replay handler
+    // is processing the entries and we should not notify it a second time,
+    // JournalPlayer::try_pop_front will tell us that it has finished
+    // the current process, or 2) we have notified the rbd Journal
+    // replay handler the whole replay process has completed
+
     return;
   }
+
   m_handler_notified = true;
 
   ldout(m_cct, 10) << __func__ << ": entries available" << dendl;
+
+  // Journal::handle_replay_ready
   m_journal_metadata->queue(new C_HandleEntriesAvailable(
     m_replay_handler), 0);
 }
 
 void JournalPlayer::notify_complete(int r) {
   assert(m_lock.is_locked());
+
   m_handler_notified = true;
 
   ldout(m_cct, 10) << __func__ << ": replay complete: r=" << r << dendl;
+
+  // Journal::handle_replay_complete
   m_journal_metadata->queue(new C_HandleComplete(
     m_replay_handler), r);
 }

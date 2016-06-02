@@ -77,34 +77,49 @@ bool ExclusiveLock<I>::is_lock_owner() const {
   return lock_owner;
 }
 
+// called by:
+// ImageWatcher::handle_payload
+// C_InvokeAsyncRequest::send_acquire_exclusive_lock
+// Operations<I>::prepare_image_update
 template <typename I>
 bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
   Mutex::Locker locker(m_lock);
 
   bool accept_requests = (!is_shutdown() && m_state == STATE_LOCKED &&
                           !m_request_blocked);
+
   *ret_val = m_request_blocked_ret_val;
 
   ldout(m_image_ctx.cct, 20) << this << " " << __func__ << "="
                              << accept_requests << dendl;
+
   return accept_requests;
 }
 
+// called by:
+// librbd::update_features
+// OpenLocalImageRequest<I>::send_lock_image
 template <typename I>
 void ExclusiveLock<I>::block_requests(int r) {
   Mutex::Locker locker(m_lock);
+
   assert(!m_request_blocked);
   m_request_blocked = true;
+
   m_request_blocked_ret_val = r;
 
   ldout(m_image_ctx.cct, 20) << this << " " << __func__ << dendl;
 }
 
+// called by:
+// librbd::update_features
 template <typename I>
 void ExclusiveLock<I>::unblock_requests() {
   Mutex::Locker locker(m_lock);
+
   assert(m_request_blocked);
   m_request_blocked = false;
+
   m_request_blocked_ret_val = 0;
 
   ldout(m_image_ctx.cct, 20) << this << " " << __func__ << dendl;
@@ -121,8 +136,13 @@ void ExclusiveLock<I>::init(uint64_t features, Context *on_init) {
     m_state = STATE_INITIALIZING;
   }
 
+  // block r/w until exclusive lock locked, see ExclusiveLock<I>::handle_acquire_lock
+
+  // ExclusiveLock<I>::handle_init_complete
   m_image_ctx.aio_work_queue->block_writes(new C_InitComplete(this, on_init));
+
   if ((features & RBD_FEATURE_JOURNALING) != 0) {
+    // block read too
     m_image_ctx.aio_work_queue->set_require_lock_on_read();
   }
 }
@@ -134,6 +154,7 @@ void ExclusiveLock<I>::shut_down(Context *on_shut_down) {
   {
     Mutex::Locker locker(m_lock);
     assert(!is_shutdown());
+
     execute_action(ACTION_SHUT_DOWN, on_shut_down);
   }
 
@@ -141,17 +162,23 @@ void ExclusiveLock<I>::shut_down(Context *on_shut_down) {
   handle_peer_notification();
 }
 
+// called by:
+// C_InvokeAsyncRequest::send_acquire_exclusive_lock
+// Operations<I>::prepare_image_update
 template <typename I>
 void ExclusiveLock<I>::try_lock(Context *on_tried_lock) {
   int r = 0;
   {
     Mutex::Locker locker(m_lock);
     assert(m_image_ctx.owner_lock.is_locked());
+
     if (is_shutdown()) {
       r = -ESHUTDOWN;
     } else if (m_state != STATE_LOCKED || !m_actions_contexts.empty()) {
       ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
+
       execute_action(ACTION_TRY_LOCK, on_tried_lock);
+
       return;
     }
   }
@@ -159,16 +186,25 @@ void ExclusiveLock<I>::try_lock(Context *on_tried_lock) {
   on_tried_lock->complete(r);
 }
 
+// called by:
+// AioImageRequestWQ::queue, AioImageRequestWQ::handle_refreshed
+// ExclusiveLock<I>::handle_release_lock
+// librbd::update_features, librbd::mirror_image_demote
+// Operations<I>::snap_set_limit
+// OpenLocalImageRequest<I>::send_lock_image
 template <typename I>
 void ExclusiveLock<I>::request_lock(Context *on_locked) {
   int r = 0;
+
   {
     Mutex::Locker locker(m_lock);
     assert(m_image_ctx.owner_lock.is_locked());
+
     if (is_shutdown()) {
       r = -ESHUTDOWN;
     } else if (m_state != STATE_LOCKED || !m_actions_contexts.empty()) {
       ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
+
       execute_action(ACTION_REQUEST_LOCK, on_locked);
       return;
     }
@@ -185,10 +221,12 @@ void ExclusiveLock<I>::release_lock(Context *on_released) {
   {
     Mutex::Locker locker(m_lock);
     assert(m_image_ctx.owner_lock.is_locked());
+
     if (is_shutdown()) {
       r = -ESHUTDOWN;
     } else if (m_state != STATE_UNLOCKED || !m_actions_contexts.empty()) {
       ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
+
       execute_action(ACTION_RELEASE_LOCK, on_released);
       return;
     }
@@ -317,6 +355,7 @@ void ExclusiveLock<I>::execute_action(Action action, Context *ctx) {
   assert(m_lock.is_locked());
 
   append_context(action, ctx);
+
   if (!is_transition_state()) {
     execute_next_action();
   }
@@ -326,6 +365,7 @@ template <typename I>
 void ExclusiveLock<I>::execute_next_action() {
   assert(m_lock.is_locked());
   assert(!m_actions_contexts.empty());
+
   switch (get_active_action()) {
   case ACTION_TRY_LOCK:
   case ACTION_REQUEST_LOCK:
@@ -393,6 +433,7 @@ void ExclusiveLock<I>::handle_init_complete() {
 template <typename I>
 void ExclusiveLock<I>::send_acquire_lock() {
   assert(m_lock.is_locked());
+
   if (m_state == STATE_LOCKED) {
     complete_active_action(STATE_LOCKED, 0);
     return;
@@ -439,6 +480,7 @@ void ExclusiveLock<I>::handle_acquiring_lock(int r) {
 template <typename I>
 void ExclusiveLock<I>::handle_acquire_lock(int r) {
   CephContext *cct = m_image_ctx.cct;
+
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
   if (r == -EBUSY || r == -EAGAIN) {
@@ -453,35 +495,55 @@ void ExclusiveLock<I>::handle_acquire_lock(int r) {
   m_image_ctx.state->handle_prepare_lock_complete();
   {
     m_lock.Lock();
+
     assert(m_state == STATE_ACQUIRING ||
            m_state == STATE_POST_ACQUIRING);
 
     Action action = get_active_action();
+
     assert(action == ACTION_TRY_LOCK || action == ACTION_REQUEST_LOCK);
+
     if (action == ACTION_REQUEST_LOCK && r < 0 && r != -EBLACKLISTED &&
         r != -EPERM) {
+
+      // we try to directly lock the image metadata object failed, try
+      // to notify the current lock owner to release it
+
       m_state = STATE_WAITING_FOR_PEER;
+
       m_lock.Unlock();
 
       // request the lock from a peer
       m_image_ctx.image_watcher->notify_request_lock();
+
       return;
     }
+
     m_lock.Unlock();
   }
 
   State next_state = (r < 0 ? STATE_UNLOCKED : STATE_LOCKED);
+
   if (r == -EAGAIN) {
+
+    // for ExclusiveLock::try_lock, the remote locker is still alive,
+    // see AcquireRequest<I>::handle_get_watchers
+
     r = 0;
   }
 
   if (next_state == STATE_LOCKED) {
+
+    // only unblock r/w on exclusive lock locked, see ExclusiveLock<I>::init
+
     m_image_ctx.image_watcher->notify_acquired_lock();
+
     m_image_ctx.aio_work_queue->clear_require_lock_on_read();
     m_image_ctx.aio_work_queue->unblock_writes();
   }
 
   Mutex::Locker locker(m_lock);
+
   complete_active_action(next_state, r);
 }
 
@@ -576,11 +638,15 @@ template <typename I>
 void ExclusiveLock<I>::send_release_lock() {
   assert(m_lock.is_locked());
   if (m_state == STATE_UNLOCKED) {
+
+    // did not own the lock, do need to release it
+
     complete_active_action(STATE_UNLOCKED, 0);
     return;
   }
 
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
+
   m_state = STATE_PRE_RELEASING;
 
   using el = ExclusiveLock<I>;
@@ -613,28 +679,38 @@ void ExclusiveLock<I>::handle_release_lock(int r) {
   m_image_ctx.state->handle_prepare_lock_complete();
 
   bool lock_request_needed = false;
+
   {
     Mutex::Locker locker(m_lock);
+
     ldout(m_image_ctx.cct, 10) << this << " " << __func__ << ": r=" << r
                                << dendl;
 
     assert(m_state == STATE_PRE_RELEASING ||
            m_state == STATE_RELEASING);
+
     if (r >= 0) {
       m_lock.Unlock();
+
       m_image_ctx.image_watcher->notify_released_lock();
+
+      // check if AioImageRequestWQ has queued writes or
+      // queued reads if lock required on read
       lock_request_needed = m_image_ctx.aio_work_queue->is_lock_request_needed();
+
       m_lock.Lock();
 
       m_cookie = "";
       m_watch_handle = 0;
     }
+
     complete_active_action(r < 0 ? STATE_LOCKED : STATE_UNLOCKED, r);
   }
 
   if (r >= 0 && lock_request_needed) {
     // if we have blocked IO -- re-request the lock
     RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
     request_lock(nullptr);
   }
 }
@@ -642,19 +718,31 @@ void ExclusiveLock<I>::handle_release_lock(int r) {
 template <typename I>
 void ExclusiveLock<I>::send_shutdown() {
   assert(m_lock.is_locked());
+
   if (m_state == STATE_UNLOCKED) {
+
+    // we do not own the exclusive lock, so no need to release it
+
     m_state = STATE_SHUTTING_DOWN;
+
     m_image_ctx.op_work_queue->queue(util::create_context_callback<
       ExclusiveLock<I>, &ExclusiveLock<I>::handle_shutdown>(this), 0);
+
     return;
   }
 
+  // release the owned exclusive lock
+
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
+
   assert(m_state == STATE_LOCKED);
   m_state = STATE_PRE_SHUTTING_DOWN;
 
   m_lock.Unlock();
+
+  // call ExclusiveLock<I>::send_shutdown_release
   m_image_ctx.op_work_queue->queue(new C_ShutDownRelease(this), 0);
+
   m_lock.Lock();
 }
 
@@ -671,6 +759,9 @@ void ExclusiveLock<I>::send_shutdown_release() {
     m_image_ctx, cookie,
     util::create_context_callback<el, &el::handle_shutdown_releasing>(this),
     util::create_context_callback<el, &el::handle_shutdown_released>(this));
+
+  // release exclusive lock: including cancel op requests, close journal,
+  // close object_map
   req->send();
 }
 
@@ -700,11 +791,15 @@ void ExclusiveLock<I>::handle_shutdown_released(int r) {
     lderr(cct) << "failed to shut down exclusive lock: " << cpp_strerror(r)
                << dendl;
   } else {
+
+    // see ReleaseRequest<I>::send_block_writes
+
     m_image_ctx.aio_work_queue->clear_require_lock_on_read();
     m_image_ctx.aio_work_queue->unblock_writes();
   }
 
   m_image_ctx.image_watcher->notify_released_lock();
+
   complete_shutdown(r);
 }
 
@@ -720,6 +815,7 @@ void ExclusiveLock<I>::handle_shutdown(int r) {
 
   m_image_ctx.aio_work_queue->clear_require_lock_on_read();
   m_image_ctx.aio_work_queue->unblock_writes();
+
   m_image_ctx.image_watcher->flush(util::create_context_callback<
     ExclusiveLock<I>, &ExclusiveLock<I>::complete_shutdown>(this));
 }

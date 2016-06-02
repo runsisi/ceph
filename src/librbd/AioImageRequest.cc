@@ -187,6 +187,7 @@ private:
 
 } // anonymous namespace
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
                                   Extents &&image_extents, char *buf,
@@ -195,6 +196,7 @@ void AioImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c, uint64_t off,
                                    size_t len, const char *buf, int op_flags) {
@@ -202,6 +204,7 @@ void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c, uint64_t off,
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
                                    Extents &&image_extents, bufferlist &&bl,
@@ -211,6 +214,7 @@ void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_discard(I *ictx, AioCompletion *c,
                                      uint64_t off, uint64_t len) {
@@ -218,6 +222,7 @@ void AioImageRequest<I>::aio_discard(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_flush(I *ictx, AioCompletion *c) {
   AioImageFlush<I> req(*ictx, c);
@@ -375,6 +380,7 @@ void AbstractAioImageWrite<I>::send_request() {
   uint64_t clip_len = 0;
   ObjectExtents object_extents;
   ::SnapContext snapc;
+
   {
     // prevent image size from changing between computing clip and recording
     // pending async operation
@@ -412,6 +418,7 @@ void AbstractAioImageWrite<I>::send_request() {
                          (journaling ? &requests : nullptr));
 
     if (journaling) {
+
       // in-flight ops are flushed prior to closing the journal
       assert(image_ctx.journal != NULL);
       journal_tid = append_journal_event(requests, m_synchronous);
@@ -442,6 +449,8 @@ void AbstractAioImageWrite<I>::send_object_requests(
     ldout(cct, 20) << " oid " << p->oid << " " << p->offset << "~" << p->length
                    << " from " << p->buffer_extents << dendl;
     C_AioRequest *req_comp = new C_AioRequest(aio_comp);
+
+    // pure virtual function, implemented by AioImageWrite and AioImageDiscard
     AioObjectRequestHandle *request = create_object_request(*p, snapc,
                                                             req_comp);
 

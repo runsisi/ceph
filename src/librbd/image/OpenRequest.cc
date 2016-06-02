@@ -319,10 +319,13 @@ Context *OpenRequest<I>::handle_v2_apply_metadata(int *result) {
 
   if (!metadata.empty()) {
     m_metadata.insert(metadata.begin(), metadata.end());
+
     m_last_metadata_key = metadata.rbegin()->first;
     if (boost::starts_with(m_last_metadata_key,
                            ImageCtx::METADATA_CONF_PREFIX)) {
+      // continue
       send_v2_apply_metadata();
+
       return nullptr;
     }
   }
@@ -335,12 +338,19 @@ Context *OpenRequest<I>::handle_v2_apply_metadata(int *result) {
 
 template <typename I>
 void OpenRequest<I>::send_register_watch() {
+  // setup admin socket and librbd cache
   m_image_ctx->init();
 
   if (m_image_ctx->read_only) {
+
+    // read_only is set in ctor of ImageCtx and will never be changed,
+    // see rbd_open_read_only
+
     send_refresh();
     return;
   }
+
+  // we did not open this image with read-only, so register a watch
 
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
@@ -348,6 +358,9 @@ void OpenRequest<I>::send_register_watch() {
   using klass = OpenRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_register_watch>(this);
+
+  // create ImageCtx::image_watcher and register the watch to handle
+  // requests under librbd/operation
   m_image_ctx->register_watch(ctx);
 }
 
@@ -369,12 +382,14 @@ Context *OpenRequest<I>::handle_register_watch(int *result) {
 template <typename I>
 void OpenRequest<I>::send_refresh() {
   CephContext *cct = m_image_ctx->cct;
+
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   using klass = OpenRequest<I>;
   RefreshRequest<I> *ctx = RefreshRequest<I>::create(
     *m_image_ctx, false,
     create_context_callback<klass, &klass::handle_refresh>(this));
+
   ctx->send();
 }
 
@@ -400,6 +415,9 @@ Context *OpenRequest<I>::send_set_snap(int *result) {
     return m_on_finish;
   }
 
+  // if we are to open a snapshot, then create a SetSnapRequest and
+  // execute it
+
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
@@ -407,7 +425,9 @@ Context *OpenRequest<I>::send_set_snap(int *result) {
   SetSnapRequest<I> *ctx = SetSnapRequest<I>::create(
     *m_image_ctx, m_image_ctx->snap_name,
     create_context_callback<klass, &klass::handle_set_snap>(this));
+
   ctx->send();
+
   return nullptr;
 }
 

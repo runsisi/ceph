@@ -134,6 +134,7 @@ int execute_peer_add(const po::variables_map &vm) {
 
   std::string remote_client_name = g_ceph_context->_conf->name.to_str();
   std::string remote_cluster;
+
   int r = get_remote_cluster_spec(
     vm, utils::get_positional_argument(vm, arg_index),
     &remote_client_name, &remote_cluster);
@@ -407,6 +408,7 @@ int execute_status(const po::variables_map &vm) {
 
   librbd::RBD rbd;
 
+  // <enum { MIRROR_IMAGE_STATUS_STATE_xxx }, int>
   std::map<librbd::mirror_image_status_state_t, int> states;
   r = rbd.mirror_image_status_summary(io_ctx, &states);
   if (r < 0) {

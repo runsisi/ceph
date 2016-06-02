@@ -20,8 +20,14 @@ void FutureImpl::init(const FutureImplPtr &prev_future) {
   // journal is consistent
   if (prev_future) {
     m_prev_future = prev_future;
+
+    // push back of FutureImpl::m_contexts if the previous future has not
+    // completed yet which means the previous will set m_consistent for us,
+    // else complete this callback directly
     m_prev_future->wait(&m_consistent_ack);
   } else {
+    // this is the first Future, no previous future to set m_consistent for us,
+    // so set m_consistent = true myself
     m_consistent_ack.complete(0);
   }
 }
@@ -33,7 +39,9 @@ void FutureImpl::flush(Context *on_safe) {
   FutureImplPtr prev_future;
   {
     Mutex::Locker locker(m_lock);
+
     complete = (m_safe && m_consistent);
+
     if (!complete) {
       if (on_safe != nullptr) {
         m_contexts.push_back(on_safe);
@@ -50,6 +58,9 @@ void FutureImpl::flush(Context *on_safe) {
   }
 
   if (complete && on_safe != NULL) {
+
+    // future completed
+
     on_safe->complete(m_return_value);
   } else if (!flush_handlers.empty()) {
     // attached to journal object -- instruct it to flush all entries through
@@ -78,6 +89,7 @@ void FutureImpl::wait(Context *on_safe) {
   assert(on_safe != NULL);
   {
     Mutex::Locker locker(m_lock);
+
     if (!m_safe || !m_consistent) {
       m_contexts.push_back(on_safe);
       return;
@@ -100,21 +112,29 @@ int FutureImpl::get_return_value() const {
 
 bool FutureImpl::attach(const FlushHandlerPtr &flush_handler) {
   Mutex::Locker locker(m_lock);
+
   assert(!m_flush_handler);
   m_flush_handler = flush_handler;
+
   return m_flush_state != FLUSH_STATE_NONE;
 }
 
 void FutureImpl::safe(int r) {
   m_lock.Lock();
+
   assert(!m_safe);
   m_safe = true;
+
   if (m_return_value == 0) {
     m_return_value = r;
   }
 
   m_flush_handler.reset();
+
   if (m_consistent) {
+
+    // finish all contexts on m_contexts
+
     finish_unlock();
   } else {
     m_lock.Unlock();
@@ -123,14 +143,20 @@ void FutureImpl::safe(int r) {
 
 void FutureImpl::consistent(int r) {
   m_lock.Lock();
+
   assert(!m_consistent);
   m_consistent = true;
+
   m_prev_future.reset();
+
   if (m_return_value == 0) {
     m_return_value = r;
   }
 
   if (m_safe) {
+
+    // finish all contexts on m_contexts
+
     finish_unlock();
   } else {
     m_lock.Unlock();
@@ -145,6 +171,7 @@ void FutureImpl::finish_unlock() {
   contexts.swap(m_contexts);
 
   m_lock.Unlock();
+
   for (Contexts::iterator it = contexts.begin();
        it != contexts.end(); ++it) {
     (*it)->complete(m_return_value);

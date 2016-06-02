@@ -672,13 +672,17 @@ public:
       async_read_result(0),
       inflightreads(0),
       lock_type(ObjectContext::RWState::RWNONE) {}
+
     void reset_obs(ObjectContextRef obc) {
       new_obs = ObjectState(obc->obs.oi, obc->obs.exists);
+
+      // TODO: obc->ssc always be non-null, see get_object_context ???
       if (obc->ssc) {
 	new_snapset = obc->ssc->snapset;
 	snapset = &obc->ssc->snapset;
       }
     }
+
     ~OpContext() {
       assert(!op_t);
       if (reply)
@@ -691,6 +695,7 @@ public:
 	delete i->second.second;
       }
     }
+
     uint64_t get_features() {
       if (op && op->get_req()) {
         return op->get_req()->get_connection()->get_features();
@@ -698,6 +703,7 @@ public:
       return -1ull;
     }
   };
+
   using OpContextUPtr = std::unique_ptr<OpContext>;
   friend struct OpContext;
 
@@ -794,16 +800,30 @@ protected:
      * to get the second.
      */
     if (write_ordered && ctx->op->may_read()) {
+
+      // write-ordered read
+
       ctx->lock_type = ObjectContext::RWState::RWEXCL;
     } else if (write_ordered) {
+
+      // write
+
       ctx->lock_type = ObjectContext::RWState::RWWRITE;
     } else {
+
+      // read
+
       assert(ctx->op->may_read());
       ctx->lock_type = ObjectContext::RWState::RWREAD;
     }
 
     if (ctx->snapset_obc) {
+
+      // we only get snapdir obc when the obc of the target object does not exist
+
       assert(!ctx->obc->obs.exists);
+
+      // get obc lock by lock type
       if (!ctx->lock_manager.get_lock_type(
 	    ctx->lock_type,
 	    ctx->snapset_obc->obs.oi.soid,
@@ -813,6 +833,8 @@ protected:
 	return false;
       }
     }
+
+    // get obc lock by lock type
     if (ctx->lock_manager.get_lock_type(
 	  ctx->lock_type,
 	  ctx->obc->obs.oi.soid,
@@ -821,6 +843,7 @@ protected:
       return true;
     } else {
       assert(!ctx->snapset_obc);
+
       ctx->lock_type = ObjectContext::RWState::RWNONE;
       return false;
     }
@@ -833,12 +856,15 @@ protected:
    */
   void close_op_ctx(OpContext *ctx) {
     release_object_locks(ctx->lock_manager);
+
     ctx->op_t.reset();
+
     for (auto p = ctx->on_finish.begin();
 	 p != ctx->on_finish.end();
 	 ctx->on_finish.erase(p++)) {
       (*p)();
     }
+
     delete ctx;
   }
 

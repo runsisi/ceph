@@ -215,7 +215,14 @@ private:
     inline void operator()(const Payload &payload) const {
       C_NotifyAck *ctx = new C_NotifyAck(image_watcher, notify_id,
                                                 handle);
+
+      // if handle_payload returns false, then the notify will be
+      // acked by ImageWatcher::handle_payload indirectly
+
       if (image_watcher->handle_payload(payload, ctx)) {
+
+        // handle the payload finished, reply the notification directly
+
         ctx->complete(0);
       }
     }

@@ -230,12 +230,19 @@ int Mirror::init()
 void Mirror::run()
 {
   dout(20) << "enter" << dendl;
+
   while (!m_stopping.read()) {
+
+    // list pools and get their corresponding mirroring peers
     m_local_cluster_watcher->refresh_pools();
+
     Mutex::Locker l(m_lock);
+
     if (!m_manual_stop) {
+      // each pool can have a list of peers, i.e., map<int64_t, Peers>
       update_replayers(m_local_cluster_watcher->get_pool_peers());
     }
+
     // TODO: make interval configurable
     m_cond.WaitInterval(g_ceph_context, m_lock, seconds(30));
   }
@@ -318,6 +325,7 @@ void Mirror::stop()
 
   m_manual_stop = true;
 
+  // admin op, stop all replayers
   for (auto it = m_replayers.begin(); it != m_replayers.end(); it++) {
     auto &replayer = it->second;
     replayer->stop(true);
@@ -337,6 +345,7 @@ void Mirror::restart()
 
   for (auto it = m_replayers.begin(); it != m_replayers.end(); it++) {
     auto &replayer = it->second;
+
     replayer->restart();
   }
 }
@@ -356,42 +365,78 @@ void Mirror::flush()
   }
 }
 
+// map<int64_t, Peers>, each pool can have a set of peers, each peer
+// is a tuple of <uuid, cluster name, client name>
 void Mirror::update_replayers(const PoolPeers &pool_peers)
 {
   dout(20) << "enter" << dendl;
+
   assert(m_lock.is_locked());
 
   // remove stale replayers before creating new replayers
   for (auto it = m_replayers.begin(); it != m_replayers.end();) {
+
+    // iterate map<PoolPeer, std::unique_ptr<Replayer> >, i.e., existing
+    // replayer for each pool
+
     auto &peer = it->first.second;
+
+    // check if the local pool still exists
     auto pool_peer_it = pool_peers.find(it->first.first);
+
     if (it->second->is_blacklisted()) {
+
+      // PoolWatcher::refresh returned -EBLACKLISTED
+
       derr << "removing blacklisted replayer for " << peer << dendl;
       // TODO: make async
+
       it = m_replayers.erase(it);
     } else if (pool_peer_it == pool_peers.end() ||
                pool_peer_it->second.find(peer) == pool_peer_it->second.end()) {
+
+      // local pool has been removed or the mirroring peer of the local pool has been removed
+
       dout(20) << "removing replayer for " << peer << dendl;
       // TODO: make async
+
       it = m_replayers.erase(it);
     } else {
       ++it;
     }
   }
 
+  // create new replayer instances for newly added peers
+
   for (auto &kv : pool_peers) {
+
+    // iterate map<pool id, set<peer_t>>, i.e., existing local pools
+
     for (auto &peer : kv.second) {
+
+      // iterate set<peer_t>, i.e., peers of local pool
+
+      // <pool id, peer_t>, each <pool id, peer_t> pair is associated
+      // with a Replayer instance
       PoolPeer pool_peer(kv.first, peer);
+
       if (m_replayers.find(pool_peer) == m_replayers.end()) {
+
         dout(20) << "starting replayer for " << peer << dendl;
+
+        // <pool + peer> -> Replayer
         unique_ptr<Replayer> replayer(new Replayer(m_threads, m_image_deleter,
                                                    m_image_sync_throttler,
                                                    kv.first, peer, m_args));
         // TODO: make async, and retry connecting within replayer
+
+        // 1) setup pool watcher, 2) setup periodic timer to drive pool watcher to
+        // refresh local pool images, 3) create replayer thread
         int r = replayer->init();
         if (r < 0) {
 	  continue;
         }
+
         m_replayers.insert(std::make_pair(pool_peer, std::move(replayer)));
       }
     }

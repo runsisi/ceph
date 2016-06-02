@@ -185,6 +185,7 @@ void ObjectWatcher<I>::acknowledge_notify(uint64_t notify_id, uint64_t handle,
                                           bufferlist &out) {
   ldout(m_cct, 15) << ": notify_id=" << notify_id << ", "
                    << "handle=" << handle << dendl;
+
   m_io_ctx.notify_ack(get_oid(), notify_id, handle, out);
 }
 

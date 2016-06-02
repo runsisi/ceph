@@ -36,11 +36,16 @@ SyncPointCreateRequest<I>::SyncPointCreateRequest(I *remote_image_ctx,
   : m_remote_image_ctx(remote_image_ctx), m_mirror_uuid(mirror_uuid),
     m_journaler(journaler), m_client_meta(client_meta), m_on_finish(on_finish),
     m_client_meta_copy(*client_meta) {
+  // we have pruned the sync points in ImageSync<I>::send_prune_catch_up_sync_point,
+  // so we can only have one sync point at most
   assert(m_client_meta->sync_points.size() < 2);
 
   // initialize the updated client meta with the new sync point
   m_client_meta_copy.sync_points.emplace_back();
   if (m_client_meta_copy.sync_points.size() > 1) {
+
+    // from the master sync point
+
     m_client_meta_copy.sync_points.back().from_snap_name =
       m_client_meta_copy.sync_points.front().snap_name;
   }
@@ -56,7 +61,12 @@ void SyncPointCreateRequest<I>::send_update_client() {
   uuid_d uuid_gen;
   uuid_gen.generate_random();
 
+  // the new sync point, a tuple of <snap_name, from_snap_name, object_number>,
+  // always update the sync point at the back, because we may need to
+  // re-update the client if the snapshot name has already been taken, see
+  // SyncPointCreateRequest<I>::handle_create_snap
   MirrorPeerSyncPoint &sync_point = m_client_meta_copy.sync_points.back();
+
   sync_point.snap_name = SNAP_NAME_PREFIX + "." + m_mirror_uuid + "." +
                          uuid_gen.to_string();
 
@@ -69,6 +79,10 @@ void SyncPointCreateRequest<I>::send_update_client() {
   Context *ctx = create_context_callback<
     SyncPointCreateRequest<I>, &SyncPointCreateRequest<I>::handle_update_client>(
       this);
+
+  // the remote Journaler instance was created by ImageReplayer<I>::start,
+  // and initialized in ImageReplayer<I>::init_remote_journaler after
+  // the bootstrap process, so the client is a mirror peer client
   m_journaler->update_client(client_data_bl, ctx);
 }
 
@@ -96,6 +110,7 @@ void SyncPointCreateRequest<I>::send_refresh_image() {
   Context *ctx = create_context_callback<
     SyncPointCreateRequest<I>, &SyncPointCreateRequest<I>::handle_refresh_image>(
       this);
+
   m_remote_image_ctx->state->refresh(ctx);
 }
 
@@ -109,6 +124,7 @@ void SyncPointCreateRequest<I>::handle_refresh_image(int r) {
     return;
   }
 
+  // create the snapshot that the sync point points to
   send_create_snap();
 }
 
@@ -121,6 +137,7 @@ void SyncPointCreateRequest<I>::send_create_snap() {
   Context *ctx = create_context_callback<
     SyncPointCreateRequest<I>, &SyncPointCreateRequest<I>::handle_create_snap>(
       this);
+
   m_remote_image_ctx->operations->snap_create(
     sync_point.snap_name.c_str(), ctx);
 }
@@ -130,14 +147,22 @@ void SyncPointCreateRequest<I>::handle_create_snap(int r) {
   dout(20) << ": r=" << r << dendl;
 
   if (r == -EEXIST) {
+
+    // the snapshot name for sync point has been used, choose anther name
+
     send_update_client();
     return;
   } else if (r < 0) {
+
+    // the stale sync points in mirror peer client will be cleaned up
+    // by ImageSync<I>::send_prune_catch_up_sync_point
+
     derr << ": failed to create snapshot: " << cpp_strerror(r) << dendl;
     finish(r);
     return;
   }
 
+  // refresh image to get the created snapshot
   send_final_refresh_image();
 }
 
@@ -148,6 +173,7 @@ void SyncPointCreateRequest<I>::send_final_refresh_image() {
   Context *ctx = create_context_callback<
     SyncPointCreateRequest<I>,
     &SyncPointCreateRequest<I>::handle_final_refresh_image>(this);
+
   m_remote_image_ctx->state->refresh(ctx);
 }
 

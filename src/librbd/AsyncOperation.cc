@@ -40,6 +40,7 @@ void AsyncOperation::start_op(ImageCtx &image_ctx) {
   m_image_ctx = &image_ctx;
 
   ldout(m_image_ctx->cct, 20) << this << " " << __func__ << dendl;
+
   Mutex::Locker l(m_image_ctx->async_ops_lock);
   m_image_ctx->async_ops.push_front(&m_xlist_item);
 }

@@ -16,28 +16,45 @@ class ImageCtx;
 
 namespace operation {
 
+// pure virtual function:
+// send_op, create_event, should_complete
+// virtual function:
+// can_affect_io, send, finish
 template <typename ImageCtxT = ImageCtx>
 class Request : public AsyncRequest<ImageCtxT> {
 public:
   Request(ImageCtxT &image_ctx, Context *on_finish,
           uint64_t journal_op_tid = 0);
 
+  // call send_op() based on can_affect_io(), if this op affect the io,
+  // i.e., this is ResizeRequest or SnapshotCreateRequest, or if we can
+  // not journal it now, i.e., ImageCtx->journal is nullptr is the journal
+  // currently is replaying
   virtual void send();
 
 protected:
+  // call commit_op_event() based on can_affect_io()
   virtual void finish(int r) override;
+
+  // called by send and Request<I>::handle_op_event_safe
   virtual void send_op() = 0;
 
+  // only ResizeRequest and SnapshotCreateRequest override this and return true
   virtual bool can_affect_io() const {
     return false;
   }
+
   virtual journal::Event create_event(uint64_t op_tid) const = 0;
 
+  // T is a specific request type, either ResizeRequest or SnapshotCreateRequest
   template <typename T, Context*(T::*MF)(int*)>
   bool append_op_event(T *request) {
     ImageCtxT &image_ctx = this->m_image_ctx;
 
+    // only ResizeRequest or SnapshotCreateRequest overrides the can_affect_io
+    // and returns true
     assert(can_affect_io());
+
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
     if (image_ctx.journal != nullptr) {
@@ -51,6 +68,7 @@ protected:
         return true;
       }
     }
+
     return false;
   }
 
@@ -67,10 +85,12 @@ private:
     C_AppendOpEvent(Request *request, Context *on_safe)
       : request(request), on_safe(on_safe) {
     }
+
     virtual void finish(int r) override {
       if (r >= 0) {
         request->m_appended_op_event = true;
       }
+
       on_safe->complete(r);
     }
   };
@@ -87,7 +107,11 @@ private:
     }
   };
 
+  // only ResizeRequest and SnapshotCreateRequest will create the request
+  // with non-zero journal_op_tid constructed, see Operations<I>::execute_resize
+  // and Operations<I>::execute_snap_create
   uint64_t m_op_tid = 0;
+
   bool m_appended_op_event = false;
   bool m_committed_op_event = false;
 
