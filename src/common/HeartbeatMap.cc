@@ -55,6 +55,7 @@ heartbeat_handle_d *HeartbeatMap::add_worker(const string& name, pthread_t threa
                              "heartbeat_handle_d timeout");
   ANNOTATE_BENIGN_RACE_SIZED(&h->suicide_timeout, sizeof(h->suicide_timeout),
                              "heartbeat_handle_d suicide_timeout");
+
   m_workers.push_front(h);
   h->list_item = m_workers.begin();
   h->thread_id = thread_id;
@@ -82,14 +83,18 @@ bool HeartbeatMap::_check(const heartbeat_handle_d *h, const char *who, time_t n
 		    << " had timed out after " << h->grace << dendl;
     healthy = false;
   }
+
   was = h->suicide_timeout.read();
   if (was && was < now) {
     ldout(m_cct, 1) << who << " '" << h->name << "'"
 		    << " had suicide timed out after " << h->suicide_grace << dendl;
+
     pthread_kill(h->thread_id, SIGABRT);
     sleep(1);
+
     assert(0 == "hit suicide timeout");
   }
+
   return healthy;
 }
 
@@ -97,7 +102,9 @@ void HeartbeatMap::reset_timeout(heartbeat_handle_d *h, time_t grace, time_t sui
 {
   ldout(m_cct, 20) << "reset_timeout '" << h->name << "' grace " << grace
 		   << " suicide " << suicide_grace << dendl;
+
   time_t now = time(NULL);
+
   _check(h, "reset_timeout", now);
 
   h->timeout.set(now + grace);
@@ -107,12 +114,14 @@ void HeartbeatMap::reset_timeout(heartbeat_handle_d *h, time_t grace, time_t sui
     h->suicide_timeout.set(now + suicide_grace);
   else
     h->suicide_timeout.set(0);
+
   h->suicide_grace = suicide_grace;
 }
 
 void HeartbeatMap::clear_timeout(heartbeat_handle_d *h)
 {
   ldout(m_cct, 20) << "clear_timeout '" << h->name << "'" << dendl;
+
   time_t now = time(NULL);
   _check(h, "clear_timeout", now);
   h->timeout.set(0);

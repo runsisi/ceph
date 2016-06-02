@@ -230,7 +230,7 @@ int main(int argc, const char **argv)
     usage();
   }
 
-  // the store
+  // the store, default "filestore"
   string store_type = g_conf->osd_objectstore;
   {
     char fn[PATH_MAX];
@@ -246,6 +246,7 @@ int main(int argc, const char **argv)
       ::close(fd);
     }
   }
+
   ObjectStore *store = ObjectStore::create(g_ceph_context,
 					   store_type,
 					   g_conf->osd_data,
@@ -630,7 +631,11 @@ flushjournal_out:
 #endif
 
   // install signal handlers
+
+  // create pipe and signal handle thread
   init_async_signal_handler();
+
+  // only register signal handler for SIGHUP, SIGINT, SIGTERM
   register_async_signal_handler(SIGHUP, sighup_handler);
   register_async_signal_handler_oneshot(SIGINT, handle_osd_signal);
   register_async_signal_handler_oneshot(SIGTERM, handle_osd_signal);
@@ -640,6 +645,7 @@ flushjournal_out:
   if (g_conf->inject_early_sigterm)
     kill(getpid(), SIGTERM);
 
+  // wait msgr->stopped be set to true, i.e., msgr->shutdown() to be called
   ms_public->wait();
   ms_hb_front_client->wait();
   ms_hb_back_client->wait();

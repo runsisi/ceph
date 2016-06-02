@@ -214,6 +214,7 @@ private:
   typedef std::unordered_map<uint64_t, Event> Events;
   typedef std::unordered_map<uint64_t, Future> TidToFutures;
 
+  // used by Journal<I>::append_io_events
   struct C_IOEventSafe : public Context {
     Journal *journal;
     uint64_t tid;
@@ -227,6 +228,7 @@ private:
     }
   };
 
+  // used by Journal<I>::commit_op_event
   struct C_OpEventSafe : public Context {
     Journal *journal;
     uint64_t tid;
@@ -246,6 +248,7 @@ private:
     }
   };
 
+  // used by Journal<I>::handle_replay_ready
   struct C_ReplayProcessSafe : public Context {
     Journal *journal;
     ReplayEntry replay_entry;
@@ -258,6 +261,9 @@ private:
     }
   };
 
+  // created by
+  // member or Journal, i.e., Journal::m_replay_handler, this is for primary image replay
+  // NOTE: rbd::mirror::anon::ReplayHandler is for mirror image replay
   struct ReplayHandler : public ::journal::ReplayHandler {
     Journal *journal;
     ReplayHandler(Journal *_journal) : journal(_journal) {
@@ -294,14 +300,17 @@ private:
   int m_error_result;
   Contexts m_wait_for_state_contexts;
 
+  // registered by Journal<I>::handle_open
   ReplayHandler m_replay_handler;
   bool m_close_pending;
 
   Mutex m_event_lock;
   uint64_t m_event_tid;
+  // std::unordered_map<uint64_t, Event>
   Events m_events;
 
   atomic_t m_op_tid;
+  // std::unordered_map<uint64_t, Future>
   TidToFutures m_op_futures;
 
   bool m_processing_entry = false;
@@ -311,11 +320,13 @@ private:
 
   util::AsyncOpTracker m_async_journal_op_tracker;
 
+  // registered by Journal<I>::handle_initialized
   struct MetadataListener : public ::journal::JournalMetadataListener {
     Journal<ImageCtxT> *journal;
 
     MetadataListener(Journal<ImageCtxT> *journal) : journal(journal) { }
 
+    // will be notified by JournalMetadata::handle_refresh_complete
     void handle_update(::journal::JournalMetadata *) override {
       FunctionContext *ctx = new FunctionContext([this](int r) {
         journal->handle_metadata_updated();

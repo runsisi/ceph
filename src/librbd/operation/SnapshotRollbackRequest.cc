@@ -38,6 +38,7 @@ public:
 
   int send() override {
     I &image_ctx = this->m_image_ctx;
+
     CephContext *cct = image_ctx.cct;
     ldout(cct, 20) << "C_RollbackObject: " << __func__ << ": object_num="
                    << m_object_num << dendl;
@@ -51,6 +52,7 @@ public:
       util::create_rados_callback(this);
     image_ctx.data_ctx.aio_operate(oid, rados_completion, &op);
     rados_completion->release();
+
     return 0;
   }
 
@@ -76,9 +78,11 @@ SnapshotRollbackRequest<I>::SnapshotRollbackRequest(I &image_ctx,
 template <typename I>
 SnapshotRollbackRequest<I>::~SnapshotRollbackRequest() {
   I &image_ctx = this->m_image_ctx;
+
   if (m_blocking_writes) {
     image_ctx.io_work_queue->unblock_writes();
   }
+
   delete m_object_map;
 }
 
@@ -90,6 +94,7 @@ void SnapshotRollbackRequest<I>::send_op() {
 template <typename I>
 void SnapshotRollbackRequest<I>::send_block_writes() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
 
@@ -102,6 +107,7 @@ void SnapshotRollbackRequest<I>::send_block_writes() {
 template <typename I>
 Context *SnapshotRollbackRequest<I>::handle_block_writes(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -111,6 +117,7 @@ Context *SnapshotRollbackRequest<I>::handle_block_writes(int *result) {
   }
 
   send_resize_image();
+
   return nullptr;
 }
 
@@ -122,6 +129,7 @@ void SnapshotRollbackRequest<I>::send_resize_image() {
   {
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     current_size = image_ctx.get_image_size(CEPH_NOSNAP);
   }
 
@@ -136,6 +144,7 @@ void SnapshotRollbackRequest<I>::send_resize_image() {
   Context *ctx = create_context_callback<
     SnapshotRollbackRequest<I>,
     &SnapshotRollbackRequest<I>::handle_resize_image>(this);
+
   ResizeRequest<I> *req = ResizeRequest<I>::create(image_ctx, ctx, m_snap_size,
                                                    true, m_no_op_prog_ctx, 0, true);
   req->send();
@@ -144,6 +153,7 @@ void SnapshotRollbackRequest<I>::send_resize_image() {
 template <typename I>
 Context *SnapshotRollbackRequest<I>::handle_resize_image(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -154,6 +164,7 @@ Context *SnapshotRollbackRequest<I>::handle_resize_image(int *result) {
   }
 
   send_rollback_object_map();
+
   return nullptr;
 }
 
@@ -165,6 +176,7 @@ void SnapshotRollbackRequest<I>::send_rollback_object_map() {
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
     RWLock::WLocker object_map_lock(image_ctx.object_map_lock);
+
     if (image_ctx.object_map != nullptr) {
       CephContext *cct = image_ctx.cct;
       ldout(cct, 5) << this << " " << __func__ << dendl;
@@ -172,7 +184,11 @@ void SnapshotRollbackRequest<I>::send_rollback_object_map() {
       Context *ctx = create_context_callback<
         SnapshotRollbackRequest<I>,
         &SnapshotRollbackRequest<I>::handle_rollback_object_map>(this);
+
+      // create librbd::object_map::SnapshotRollbackRequest to rollback, i.e.,
+      // read the object_map of the snap and write to the HEAD object_map
       image_ctx.object_map->rollback(m_snap_id, ctx);
+
       return;
     }
   }
@@ -183,24 +199,31 @@ void SnapshotRollbackRequest<I>::send_rollback_object_map() {
 template <typename I>
 Context *SnapshotRollbackRequest<I>::handle_rollback_object_map(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": r=" << *result << dendl;
 
   assert(*result == 0);
+
   send_rollback_objects();
+
   return nullptr;
 }
 
 template <typename I>
 void SnapshotRollbackRequest<I>::send_rollback_objects() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
 
   RWLock::RLocker owner_locker(image_ctx.owner_lock);
+
   uint64_t num_objects;
+
   {
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     num_objects = Striper::get_num_objects(image_ctx.layout,
                                            image_ctx.get_current_size());
   }
@@ -208,17 +231,21 @@ void SnapshotRollbackRequest<I>::send_rollback_objects() {
   Context *ctx = create_context_callback<
     SnapshotRollbackRequest<I>,
     &SnapshotRollbackRequest<I>::handle_rollback_objects>(this);
+
   typename AsyncObjectThrottle<I>::ContextFactory context_factory(
     boost::lambda::bind(boost::lambda::new_ptr<C_RollbackObject<I> >(),
       boost::lambda::_1, &image_ctx, m_snap_id, boost::lambda::_2));
+
   AsyncObjectThrottle<I> *throttle = new AsyncObjectThrottle<I>(
     this, image_ctx, context_factory, ctx, &m_prog_ctx, 0, num_objects);
+
   throttle->start_ops(image_ctx.concurrent_management_ops);
 }
 
 template <typename I>
 Context *SnapshotRollbackRequest<I>::handle_rollback_objects(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -231,6 +258,7 @@ Context *SnapshotRollbackRequest<I>::handle_rollback_objects(int *result) {
     return this->create_context_finisher(*result);
   }
 
+  // load the snapshot's object_map from the disk
   return send_refresh_object_map();
 }
 
@@ -239,11 +267,14 @@ Context *SnapshotRollbackRequest<I>::send_refresh_object_map() {
   I &image_ctx = this->m_image_ctx;
 
   bool object_map_enabled;
+
   {
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     object_map_enabled = (image_ctx.object_map != nullptr);
   }
+
   if (!object_map_enabled) {
     return send_invalidate_cache();
   }
@@ -251,22 +282,27 @@ Context *SnapshotRollbackRequest<I>::send_refresh_object_map() {
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
 
+  // allocate an librbd::ObjectMap instance
   m_object_map = image_ctx.create_object_map(CEPH_NOSNAP);
 
   Context *ctx = create_context_callback<
     SnapshotRollbackRequest<I>,
     &SnapshotRollbackRequest<I>::handle_refresh_object_map>(this);
+
   m_object_map->open(ctx);
+
   return nullptr;
 }
 
 template <typename I>
 Context *SnapshotRollbackRequest<I>::handle_refresh_object_map(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": r=" << *result << dendl;
 
   assert(*result == 0);
+
   return send_invalidate_cache();
 }
 
@@ -275,6 +311,7 @@ Context *SnapshotRollbackRequest<I>::send_invalidate_cache() {
   I &image_ctx = this->m_image_ctx;
 
   apply();
+
   if (image_ctx.object_cacher == NULL) {
     return this->create_context_finisher(0);
   }
@@ -283,6 +320,7 @@ Context *SnapshotRollbackRequest<I>::send_invalidate_cache() {
   ldout(cct, 5) << this << " " << __func__ << dendl;
 
   RWLock::RLocker owner_lock(image_ctx.owner_lock);
+
   Context *ctx = create_context_callback<
     SnapshotRollbackRequest<I>,
     &SnapshotRollbackRequest<I>::handle_invalidate_cache>(this);
@@ -293,6 +331,7 @@ Context *SnapshotRollbackRequest<I>::send_invalidate_cache() {
 template <typename I>
 Context *SnapshotRollbackRequest<I>::handle_invalidate_cache(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -300,15 +339,19 @@ Context *SnapshotRollbackRequest<I>::handle_invalidate_cache(int *result) {
     lderr(cct) << "failed to invalidate cache: " << cpp_strerror(*result)
                << dendl;
   }
+
   return this->create_context_finisher(*result);
 }
 
+// called by
+// SnapshotRollbackRequest<I>::send_invalidate_cache
 template <typename I>
 void SnapshotRollbackRequest<I>::apply() {
   I &image_ctx = this->m_image_ctx;
 
   RWLock::RLocker owner_locker(image_ctx.owner_lock);
   RWLock::WLocker snap_locker(image_ctx.snap_lock);
+
   if (image_ctx.object_map != nullptr) {
     std::swap(m_object_map, image_ctx.object_map);
   }

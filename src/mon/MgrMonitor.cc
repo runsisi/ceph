@@ -30,6 +30,8 @@ void MgrMonitor::create_initial()
 {
 }
 
+// called by
+// PaxosService::refresh
 void MgrMonitor::update_from_paxos(bool *need_bootstrap)
 {
   version_t version = get_last_committed();
@@ -211,22 +213,30 @@ bool MgrMonitor::prepare_beacon(MonOpRequestRef op)
   return true;
 }
 
+// called by
+// MgrMonitor::update_from_paxos
 void MgrMonitor::check_subs()
 {
   const std::string type = "mgrmap";
   if (mon->session_map.subs.count(type) == 0)
     return;
+
   for (auto sub : *(mon->session_map.subs[type])) {
     check_sub(sub);
   }
 }
 
+// called by
+// MgrMonitor::check_subs
+// Monitor::handle_subscribe
 void MgrMonitor::check_sub(Subscription *sub)
 {
   if (sub->type == "mgrmap") {
     if (sub->next <= map.get_epoch()) {
       dout(20) << "Sending map to subscriber " << sub->session->con << dendl;
+
       sub->session->con->send_message(new MMgrMap(map));
+
       if (sub->onetime) {
         mon->session_map.remove_sub(sub);
       } else {
@@ -235,6 +245,7 @@ void MgrMonitor::check_sub(Subscription *sub)
     }
   } else {
     assert(sub->type == "mgrdigest");
+
     send_digests();
   }
 }

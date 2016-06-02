@@ -172,9 +172,14 @@ void PGMap::Incremental::generate_test_instances(list<PGMap::Incremental*>& o)
 
 // --
 
+// called by
+// PGMonitor::update_from_paxos
+// ClusterState::ingest_pgstats
+// ClusterState::notify_osdmap
 void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
 {
   assert(inc.version == version+1);
+
   version++;
 
   utime_t delta_t;
@@ -183,6 +188,7 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
   stamp = inc.stamp;
 
   pool_stat_t pg_sum_old = pg_sum;
+
   ceph::unordered_map<uint64_t, pool_stat_t> pg_pool_sum_old;
 
   bool ratios_changed = false;
@@ -190,10 +196,12 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
     full_ratio = inc.full_ratio;
     ratios_changed = true;
   }
+
   if (inc.nearfull_ratio != nearfull_ratio && inc.nearfull_ratio != -1) {
     nearfull_ratio = inc.nearfull_ratio;
     ratios_changed = true;
   }
+
   if (ratios_changed)
     redo_full_sets();
 
@@ -214,9 +222,12 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
       stat_pg_sub(update_pg, t->second);
       t->second = update_stat;
     }
+
     stat_pg_add(update_pg, update_stat);
   }
+
   assert(osd_stat.size() == osd_epochs.size());
+
   for (map<int32_t,osd_stat_t>::const_iterator p =
          inc.get_osd_stat_updates().begin();
        p != inc.get_osd_stat_updates().end();
@@ -232,7 +243,9 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
       stat_osd_sub(t->second);
       t->second = new_stats;
     }
+
     ceph::unordered_map<int32_t,epoch_t>::iterator i = osd_epochs.find(osd);
+
     map<int32_t,epoch_t>::const_iterator j = inc.get_osd_epochs().find(osd);
     assert(j != inc.get_osd_epochs().end());
 
@@ -246,23 +259,28 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
     // adjust [near]full status
     register_nearfull_status(osd, new_stats);
   }
+
   set<int64_t> deleted_pools;
   for (set<pg_t>::const_iterator p = inc.pg_remove.begin();
        p != inc.pg_remove.end();
        ++p) {
     const pg_t &removed_pg(*p);
+
     ceph::unordered_map<pg_t,pg_stat_t>::iterator s = pg_stat.find(removed_pg);
     if (s != pg_stat.end()) {
       stat_pg_sub(removed_pg, s->second);
       pg_stat.erase(s);
     }
+
     if (removed_pg.ps() == 0)
       deleted_pools.insert(removed_pg.pool());
   }
+
   for (set<int64_t>::iterator p = deleted_pools.begin();
        p != deleted_pools.end();
        ++p) {
     dout(20) << " deleted pool " << *p << dendl;
+
     deleted_pool(*p);
   }
 
@@ -272,6 +290,7 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
     ceph::unordered_map<int32_t,osd_stat_t>::iterator t = osd_stat.find(*p);
     if (t != osd_stat.end()) {
       stat_osd_sub(t->second);
+
       osd_stat.erase(t);
     }
 
@@ -282,6 +301,7 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
 
   // calculate a delta, and average over the last 2 deltas.
   pool_stat_t d = pg_sum;
+
   d.stats.sub(pg_sum_old.stats);
   pg_sum_deltas.push_back(make_pair(d, delta_t));
   stamp_delta += delta_t;
@@ -297,16 +317,22 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
 
   if (inc.osdmap_epoch)
     last_osdmap_epoch = inc.osdmap_epoch;
+
   if (inc.pg_scan)
     last_pg_scan = inc.pg_scan;
 
   min_last_epoch_clean = 0;  // invalidate
 }
 
+// called by
+// PGMap::apply_incremental
+// PGMap::calc_stats
+// PGMap::set_full_ratios
 void PGMap::redo_full_sets()
 {
   full_osds.clear();
   nearfull_osds.clear();
+
   for (ceph::unordered_map<int32_t, osd_stat_t>::iterator i = osd_stat.begin();
        i != osd_stat.end();
        ++i) {
@@ -314,6 +340,10 @@ void PGMap::redo_full_sets()
   }
 }
 
+// called by
+// PGMap::apply_incremental
+// PGMap::redo_full_sets
+// PGMap::update_osd
 void PGMap::register_nearfull_status(int osd, const osd_stat_t& s)
 {
   float ratio = ((float)s.kb_used) / ((float)s.kb);
@@ -333,6 +363,8 @@ void PGMap::register_nearfull_status(int osd, const osd_stat_t& s)
   }
 }
 
+// called by
+// PGMap::decode
 void PGMap::calc_stats()
 {
   num_pg_by_state.clear();
@@ -348,6 +380,7 @@ void PGMap::calc_stats()
        ++p) {
     stat_pg_add(p->first, p->second);
   }
+
   for (ceph::unordered_map<int32_t,osd_stat_t>::iterator p = osd_stat.begin();
        p != osd_stat.end();
        ++p)
@@ -358,19 +391,28 @@ void PGMap::calc_stats()
   min_last_epoch_clean = calc_min_last_epoch_clean();
 }
 
+// called by
+// PGMonitor::read_pgmap_full
+// PGMonitor::apply_pgmap_delta
 void PGMap::update_pg(pg_t pgid, bufferlist& bl)
 {
   bufferlist::iterator p = bl.begin();
+
   ceph::unordered_map<pg_t,pg_stat_t>::iterator s = pg_stat.find(pgid);
   epoch_t old_lec = 0, lec;
+
   if (s != pg_stat.end()) {
     old_lec = s->second.get_effective_last_epoch_clean();
+
     stat_pg_update(pgid, s->second, p);
+
     lec = s->second.get_effective_last_epoch_clean();
   } else {
     pg_stat_t& r = pg_stat[pgid];
     ::decode(r, p);
+
     stat_pg_add(pgid, r);
+
     lec = r.get_effective_last_epoch_clean();
   }
 
@@ -382,6 +424,8 @@ void PGMap::update_pg(pg_t pgid, bufferlist& bl)
     min_last_epoch_clean = 0;
 }
 
+// called by
+// PGMonitor::apply_pgmap_delta
 void PGMap::remove_pg(pg_t pgid)
 {
   ceph::unordered_map<pg_t,pg_stat_t>::iterator s = pg_stat.find(pgid);
@@ -389,24 +433,33 @@ void PGMap::remove_pg(pg_t pgid)
     if (min_last_epoch_clean &&
         s->second.get_effective_last_epoch_clean() == min_last_epoch_clean)
       min_last_epoch_clean = 0;
+
     stat_pg_sub(pgid, s->second);
+
     pg_stat.erase(s);
   }
 }
 
+// called by
+// PGMonitor::read_pgmap_full
+// PGMonitor::apply_pgmap_delta
 void PGMap::update_osd(int osd, bufferlist& bl)
 {
   bufferlist::iterator p = bl.begin();
   ceph::unordered_map<int32_t,osd_stat_t>::iterator o = osd_stat.find(osd);
   epoch_t old_lec = 0;
+
   if (o != osd_stat.end()) {
     ceph::unordered_map<int32_t,epoch_t>::iterator i = osd_epochs.find(osd);
     if (i != osd_epochs.end())
       old_lec = i->second;
+
     stat_osd_sub(o->second);
   }
+
   osd_stat_t& r = osd_stat[osd];
   ::decode(r, p);
+
   stat_osd_add(r);
 
   // adjust [near]full status
@@ -427,11 +480,14 @@ void PGMap::update_osd(int osd, bufferlist& bl)
   }
 }
 
+// called by
+// PGMonitor::apply_pgmap_delta
 void PGMap::remove_osd(int osd)
 {
   ceph::unordered_map<int32_t,osd_stat_t>::iterator o = osd_stat.find(osd);
   if (o != osd_stat.end()) {
     stat_osd_sub(o->second);
+
     osd_stat.erase(o);
 
     // remove these old osds from full/nearfull set(s), too
@@ -440,6 +496,11 @@ void PGMap::remove_osd(int osd)
   }
 }
 
+// called by
+// PGMap::apply_incremental
+// PGMap::calc_stats
+// PGMap::update_pg
+// PGMap::stat_pg_update
 void PGMap::stat_pg_add(const pg_t &pgid, const pg_stat_t &s,
                         bool sameosds)
 {
@@ -452,6 +513,7 @@ void PGMap::stat_pg_add(const pg_t &pgid, const pg_stat_t &s,
   if ((s.state & PG_STATE_CREATING) &&
       s.parent_split_bits == 0) {
     creating_pgs.insert(pgid);
+
     if (s.acting_primary >= 0) {
       creating_pgs_by_osd_epoch[s.acting_primary][s.mapping_epoch].insert(pgid);
     }
@@ -468,33 +530,47 @@ void PGMap::stat_pg_add(const pg_t &pgid, const pg_stat_t &s,
 
   for (vector<int>::const_iterator p = s.acting.begin(); p != s.acting.end(); ++p)
     pg_by_osd[*p].insert(pgid);
+
   for (vector<int>::const_iterator p = s.up.begin(); p != s.up.end(); ++p)
     pg_by_osd[*p].insert(pgid);
 }
 
+// called by
+// PGMap::apply_incremental
+// PGMap::remove_pg
+// PGMap::stat_pg_update
 void PGMap::stat_pg_sub(const pg_t &pgid, const pg_stat_t &s,
                         bool sameosds)
 {
   pool_stat_t& ps = pg_pool_sum[pgid.pool()];
+
   ps.sub(s);
+
   if (ps.is_zero())
     pg_pool_sum.erase(pgid.pool());
+
   pg_sum.sub(s);
 
   num_pg--;
+
   int end = --num_pg_by_state[s.state];
   assert(end >= 0);
+
   if (end == 0)
     num_pg_by_state.erase(s.state);
 
   if ((s.state & PG_STATE_CREATING) &&
       s.parent_split_bits == 0) {
     creating_pgs.erase(pgid);
+
     if (s.acting_primary >= 0) {
       map<epoch_t,set<pg_t> >& r = creating_pgs_by_osd_epoch[s.acting_primary];
+
       r[s.mapping_epoch].erase(pgid);
+
       if (r[s.mapping_epoch].empty())
 	r.erase(s.mapping_epoch);
+
       if (r.empty())
 	creating_pgs_by_osd_epoch.erase(s.acting_primary);
     }
@@ -508,25 +584,34 @@ void PGMap::stat_pg_sub(const pg_t &pgid, const pg_stat_t &s,
        ++p) {
     ceph::unordered_map<int,int>::iterator q = blocked_by_sum.find(*p);
     assert(q != blocked_by_sum.end());
+
     --q->second;
+
     if (q->second == 0)
       blocked_by_sum.erase(q);
   }
 
   for (vector<int>::const_iterator p = s.acting.begin(); p != s.acting.end(); ++p) {
     set<pg_t>& oset = pg_by_osd[*p];
+
     oset.erase(pgid);
+
     if (oset.empty())
       pg_by_osd.erase(*p);
   }
+
   for (vector<int>::const_iterator p = s.up.begin(); p != s.up.end(); ++p) {
     set<pg_t>& oset = pg_by_osd[*p];
+
     oset.erase(pgid);
+
     if (oset.empty())
       pg_by_osd.erase(*p);
   }
 }
 
+// called by
+// PGMap::update_pg
 void PGMap::stat_pg_update(const pg_t pgid, pg_stat_t& s,
                            bufferlist::iterator& blp)
 {
@@ -539,31 +624,47 @@ void PGMap::stat_pg_update(const pg_t pgid, pg_stat_t& s,
     s.blocked_by == n.blocked_by;
 
   stat_pg_sub(pgid, s, sameosds);
+
   s = n;
+
   stat_pg_add(pgid, n, sameosds);
 }
 
+// called by
+// PGMap::apply_incremental
+// PGMap::calc_stats
+// PGMap::update_osd
 void PGMap::stat_osd_add(const osd_stat_t &s)
 {
   num_osd++;
   osd_sum.add(s);
 }
 
+// called by
+// PGMap::apply_incremental
+// PGMap::update_osd
+// PGMap::remove_osd
 void PGMap::stat_osd_sub(const osd_stat_t &s)
 {
   num_osd--;
   osd_sum.sub(s);
 }
 
+// called by
+// PGMap::calc_stats
+// PGMap::get_min_last_epoch_clean
 epoch_t PGMap::calc_min_last_epoch_clean() const
 {
   if (pg_stat.empty())
     return 0;
 
   ceph::unordered_map<pg_t,pg_stat_t>::const_iterator p = pg_stat.begin();
+
   epoch_t min = p->second.get_effective_last_epoch_clean();
+
   for (++p; p != pg_stat.end(); ++p) {
     epoch_t lec = p->second.get_effective_last_epoch_clean();
+
     if (lec < min)
       min = lec;
   }
@@ -575,6 +676,7 @@ epoch_t PGMap::calc_min_last_epoch_clean() const
     if (i->second < min)
       min = i->second;
   }
+
   return min;
 }
 
@@ -648,6 +750,8 @@ void PGMap::decode(bufferlist::iterator &bl)
   calc_stats();
 }
 
+// called by
+// PGMonitor::upgrade_format
 void PGMap::dirty_all(Incremental& inc)
 {
   inc.osdmap_epoch = last_osdmap_epoch;
@@ -658,8 +762,10 @@ void PGMap::dirty_all(Incremental& inc)
   for (ceph::unordered_map<pg_t,pg_stat_t>::const_iterator p = pg_stat.begin(); p != pg_stat.end(); ++p) {
     inc.pg_stat_updates[p->first] = p->second;
   }
+
   for (ceph::unordered_map<int32_t, osd_stat_t>::const_iterator p = osd_stat.begin(); p != osd_stat.end(); ++p) {
     assert(osd_epochs.count(p->first));
+
     inc.update_stat(p->first,
                     inc.get_osd_epochs().find(p->first)->second,
                     p->second);
@@ -1180,8 +1286,10 @@ void PGMap::recovery_summary(Formatter *f, list<string> *psl,
   if (delta_sum.stats.sum.num_objects_degraded && delta_sum.stats.sum.num_object_copies > 0) {
     double pc = (double)delta_sum.stats.sum.num_objects_degraded /
                 (double)delta_sum.stats.sum.num_object_copies * (double)100.0;
+
     char b[20];
     snprintf(b, sizeof(b), "%.3lf", pc);
+
     if (f) {
       f->dump_unsigned("degraded_objects", delta_sum.stats.sum.num_objects_degraded);
       f->dump_unsigned("degraded_total", delta_sum.stats.sum.num_object_copies);
@@ -1190,14 +1298,18 @@ void PGMap::recovery_summary(Formatter *f, list<string> *psl,
       ostringstream ss;
       ss << delta_sum.stats.sum.num_objects_degraded
          << "/" << delta_sum.stats.sum.num_object_copies << " objects degraded (" << b << "%)";
+
       psl->push_back(ss.str());
     }
   }
+
   if (delta_sum.stats.sum.num_objects_misplaced && delta_sum.stats.sum.num_object_copies > 0) {
     double pc = (double)delta_sum.stats.sum.num_objects_misplaced /
                 (double)delta_sum.stats.sum.num_object_copies * (double)100.0;
+
     char b[20];
     snprintf(b, sizeof(b), "%.3lf", pc);
+
     if (f) {
       f->dump_unsigned("misplaced_objects", delta_sum.stats.sum.num_objects_misplaced);
       f->dump_unsigned("misplaced_total", delta_sum.stats.sum.num_object_copies);
@@ -1206,14 +1318,18 @@ void PGMap::recovery_summary(Formatter *f, list<string> *psl,
       ostringstream ss;
       ss << delta_sum.stats.sum.num_objects_misplaced
          << "/" << delta_sum.stats.sum.num_object_copies << " objects misplaced (" << b << "%)";
+
       psl->push_back(ss.str());
     }
   }
+
   if (delta_sum.stats.sum.num_objects_unfound && delta_sum.stats.sum.num_objects) {
     double pc = (double)delta_sum.stats.sum.num_objects_unfound /
                 (double)delta_sum.stats.sum.num_objects * (double)100.0;
+
     char b[20];
     snprintf(b, sizeof(b), "%.3lf", pc);
+
     if (f) {
       f->dump_unsigned("unfound_objects", delta_sum.stats.sum.num_objects_unfound);
       f->dump_unsigned("unfound_total", delta_sum.stats.sum.num_objects);
@@ -1222,6 +1338,7 @@ void PGMap::recovery_summary(Formatter *f, list<string> *psl,
       ostringstream ss;
       ss << delta_sum.stats.sum.num_objects_unfound
          << "/" << delta_sum.stats.sum.num_objects << " unfound (" << b << "%)";
+
       psl->push_back(ss.str());
     }
   }
@@ -2079,7 +2196,9 @@ void PGMap::dump_object_stat_sum(TextTable &tbl, Formatter *f,
   }
 }
 
-
+// static
+// called by
+// PGMonitor::check_osd_map
 void PGMapUpdater::check_osd_map(const OSDMap::Incremental &osd_inc,
                                  std::set<int> *need_check_down_pg_osds,
                                  std::map<int,utime_t> *last_osd_report,
@@ -2089,6 +2208,7 @@ void PGMapUpdater::check_osd_map(const OSDMap::Incremental &osd_inc,
   for (const auto &p : osd_inc.new_weight) {
     if (p.second == CEPH_OSD_OUT) {
       dout(10) << __func__ << "  osd." << p.first << " went OUT" << dendl;
+
       pending_inc->stat_osd_out(p.first);
     }
   }
@@ -2109,6 +2229,7 @@ void PGMapUpdater::check_osd_map(const OSDMap::Incremental &osd_inc,
       // clear out osd_stat slow request histogram
       dout(20) << __func__ << " clearing osd." << p.first
                << " request histogram" << dendl;
+
       pending_inc->stat_osd_down_up(p.first, *pg_map);
     }
 
@@ -2117,6 +2238,7 @@ void PGMapUpdater::check_osd_map(const OSDMap::Incremental &osd_inc,
       // it's osd_stat_t record.
       dout(10) << __func__ << "  osd." << p.first
                << " created or destroyed" << dendl;
+
       pending_inc->rm_stat(p.first);
 
       // and adjust full, nearfull set
@@ -2126,6 +2248,9 @@ void PGMapUpdater::check_osd_map(const OSDMap::Incremental &osd_inc,
   }
 }
 
+// static
+// called by
+// PGMapUpdater::register_new_pgs
 void PGMapUpdater::register_pg(
     const OSDMap &osd_map,
     pg_t pgid, epoch_t epoch,
@@ -2136,19 +2261,25 @@ void PGMapUpdater::register_pg(
   pg_t parent;
   int split_bits = 0;
   bool parent_found = false;
+
   if (!new_pool) {
     parent = pgid;
+
     while (1) {
       // remove most significant bit
       int msb = cbits(parent.ps());
       if (!msb)
 	break;
+
       parent.set_ps(parent.ps() & ~(1<<(msb-1)));
       split_bits++;
+
       dout(30) << " is " << pgid << " parent " << parent << " ?" << dendl;
+
       if (pg_map->pg_stat.count(parent) &&
           pg_map->pg_stat[parent].state != PG_STATE_CREATING) {
 	dout(10) << "  parent is " << parent << dendl;
+
 	parent_found = true;
 	break;
       }
@@ -2212,12 +2343,17 @@ void PGMapUpdater::register_pg(
   }
 }
 
+// static
+// called by
+// PGMonitor::check_osd_map
+// ClusterState::notify_osdmap
 void PGMapUpdater::register_new_pgs(
     const OSDMap &osd_map,
     PGMap *pg_map,
     PGMap::Incremental *pending_inc)
 {
   epoch_t epoch = osd_map.get_epoch();
+
   dout(10) << __func__ << " checking pg pools for osdmap epoch " << epoch
            << ", last_pg_scan " << pg_map->last_pg_scan << dendl;
 
@@ -2294,7 +2430,10 @@ void PGMapUpdater::register_new_pgs(
            << removed << " uncreated pgs" << dendl;
 }
 
-
+// static
+// called by
+// PGMonitor::check_osd_map
+// ClusterState::notify_osdmap
 void PGMapUpdater::update_creating_pgs(
     const OSDMap &osd_map,
     PGMap *pg_map,
@@ -2310,9 +2449,11 @@ void PGMapUpdater::update_creating_pgs(
        ++p) {
     pg_t pgid = *p;
     pg_t on = pgid;
+
     ceph::unordered_map<pg_t,pg_stat_t>::const_iterator q =
       pg_map->pg_stat.find(pgid);
     assert(q != pg_map->pg_stat.end());
+
     const pg_stat_t *s = &q->second;
 
     if (s->parent_split_bits)
@@ -2332,6 +2473,7 @@ void PGMapUpdater::update_creating_pgs(
         acting !=  s->acting ||
         acting_primary != s->acting_primary) {
       pg_stat_t *ns = &pending_inc->pg_stat_updates[pgid];
+
       if (osd_map.get_epoch() > ns->reported_epoch) {
 	dout(20) << __func__ << "  " << pgid << " "
 		 << " acting_primary: " << s->acting_primary
@@ -2362,6 +2504,7 @@ void PGMapUpdater::update_creating_pgs(
       }
     }
   }
+
   if (changed) {
     dout(10) << __func__ << " " << changed << " pgs changed primary" << dendl;
   }

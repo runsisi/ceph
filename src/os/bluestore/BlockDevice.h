@@ -26,6 +26,8 @@
 
 #define SPDK_PREFIX "spdk:"
 
+// created by
+// BlueFS::add_block_device
 /// track in-flight io
 struct IOContext {
   CephContext* cct;
@@ -40,6 +42,7 @@ struct IOContext {
 
   list<FS::aio_t> pending_aios;    ///< not yet submitted
   list<FS::aio_t> running_aios;    ///< submitting or submitted
+
   std::atomic_int num_pending = {0};
   std::atomic_int num_running = {0};
   std::atomic_int num_reading = {0};
@@ -57,11 +60,17 @@ struct IOContext {
     return num_pending.load();
   }
 
+  // wait until num_running && num_reading reach both 0
   void aio_wait();
 
+  // called by
+  // KernelDevice::_aio_thread
+  // KernelDevice::read
+  // NVMEDevice::io_complete
   void aio_wake() {
     if (num_waiting.load()) {
       std::lock_guard<std::mutex> l(lock);
+
       cond.notify_all();
     }
   }

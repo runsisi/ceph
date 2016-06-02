@@ -5,7 +5,12 @@
 #define dout_subsys ceph_subsys_auth
 
 
-
+// called by
+// MDSDaemon::ms_verify_authorizer
+// DaemonServer::ms_verify_authorizer
+// OSD::ms_verify_authorizer
+// called by
+// Pipe::accept eventually
 bool CephxAuthorizeHandler::verify_authorizer(CephContext *cct, KeyStore *keys,
 					      bufferlist& authorizer_data, bufferlist& authorizer_reply,
                                               EntityName& entity_name, uint64_t& global_id, AuthCapsInfo& caps_info, CryptoKey& session_key,  uint64_t *auid)
@@ -19,6 +24,8 @@ bool CephxAuthorizeHandler::verify_authorizer(CephContext *cct, KeyStore *keys,
 
   CephXServiceTicketInfo auth_ticket_info;
 
+  // get rotating key for specified service to decrypt the ticket info for
+  // service, during this process will verify if the ticket is valid
   bool isvalid = cephx_verify_authorizer(cct, keys, iter, auth_ticket_info, authorizer_reply);
 
   if (isvalid) {
@@ -26,6 +33,7 @@ bool CephxAuthorizeHandler::verify_authorizer(CephContext *cct, KeyStore *keys,
     entity_name = auth_ticket_info.ticket.name;
     global_id = auth_ticket_info.ticket.global_id;
     session_key = auth_ticket_info.session_key;
+
     if (auid) *auid = auth_ticket_info.ticket.auid;
   }
 

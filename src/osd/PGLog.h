@@ -154,6 +154,7 @@ public:
       reset_rollback_info_trimmed_to_riter();
       index(rhs.indexed_data);
     }
+
     IndexedLog &operator=(const IndexedLog &rhs) {
       this->~IndexedLog();
       new (this) IndexedLog(rhs);
@@ -167,6 +168,7 @@ public:
 	  h->trim(entry);
 	});
     }
+
     void roll_forward_to(eversion_t to, LogEntryHandler *h) {
       advance_can_rollback_to(
 	to,
@@ -652,6 +654,8 @@ public:
     mark_dirty_to(eversion_t::max());
   }
 
+  // called by
+  // PG::split_into
   void split_into(
       pg_t child_pgid,
       unsigned split_bits,
@@ -662,6 +666,8 @@ public:
     mark_dirty_to(eversion_t::max());
   }
 
+  // called by
+  // PrimaryLogPG::recover_got
   void recover_got(hobject_t oid, eversion_t v, pg_info_t &info) {
     if (missing.is_missing(oid, v)) {
       missing.got(oid, v);
@@ -738,6 +744,8 @@ protected:
    *    prior_version taking care to add a divergent_prior if
    *    necessary.
    */
+  // called by
+  // PGLog::_merge_divergent_entries
   template <typename missing_type>
   static void _merge_object_divergent_entries(
     const IndexedLog &log,               ///< [in] log to merge against
@@ -920,6 +928,10 @@ protected:
     }
   }
 
+  // called by
+  // PGLog::proc_replica_log
+  // PGLog::rewind_divergent_log
+  // PGLog::merge_log
   /// Merge all entries using above
   template <typename missing_type>
   static void _merge_divergent_entries(
@@ -981,6 +993,10 @@ public:
 		 pg_info_t &info, LogEntryHandler *rollbacker,
 		 bool &dirty_info, bool &dirty_big_info);
 
+  // called by
+  // PGLog::append_new_log_entries
+  // PGLog::merge_log
+  // PG::merge_new_log_entries
   template <typename missing_type>
   static bool append_log_entries_update_missing(
     const hobject_t &last_backfill,
@@ -992,13 +1008,16 @@ public:
     LogEntryHandler *rollbacker,
     const DoutPrefixProvider *dpp) {
     bool invalidate_stats = false;
+
     if (log && !entries.empty()) {
       assert(log->head < entries.begin()->version);
     }
+
     for (list<pg_log_entry_t>::const_iterator p = entries.begin();
 	 p != entries.end();
 	 ++p) {
       invalidate_stats = invalidate_stats || !p->is_error();
+
       if (log) {
 	ldpp_dout(dpp, 20) << "update missing, append " << *p << dendl;
 	log->add(*p);
@@ -1006,6 +1025,7 @@ public:
       if (p->soid <= last_backfill &&
 	  !p->is_error()) {
 	missing.add_next_event(*p);
+
 	if (rollbacker) {
 	  // hack to match PG::mark_all_unfound_lost
 	  if (maintain_rollback && p->is_lost_delete() && p->can_rollback()) {
@@ -1016,8 +1036,12 @@ public:
 	}
       }
     }
+
     return invalidate_stats;
   }
+
+  // called by
+  // PG::append_log_entries_update_missing
   bool append_new_log_entries(
     const hobject_t &last_backfill,
     bool last_backfill_bitwise,
@@ -1032,9 +1056,11 @@ public:
       missing,
       rollbacker,
       this);
+
     if (!entries.empty()) {
       mark_writeout_from(entries.begin()->version);
     }
+
     return invalidate_stats;
   }
 

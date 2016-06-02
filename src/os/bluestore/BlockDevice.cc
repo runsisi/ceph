@@ -33,18 +33,28 @@
 void IOContext::aio_wait()
 {
   std::unique_lock<std::mutex> l(lock);
+
   // see _aio_thread for waker logic
   ++num_waiting;
+
   while (num_running.load() > 0 || num_reading.load() > 0) {
     dout(10) << __func__ << " " << this
 	     << " waiting for " << num_running.load() << " aios and/or "
 	     << num_reading.load() << " readers to complete" << dendl;
+
+    // will be notified by IOContext::aio_wake, NVMEDevice.cc/io_complete,
+    // NVMEDevice::read
     cond.wait(l);
   }
+
   --num_waiting;
+
   dout(20) << __func__ << " " << this << " done" << dendl;
 }
 
+// called by
+// BlueFS::add_block_device
+// BlueStore::_open_bdev
 BlockDevice *BlockDevice::create(CephContext* cct, const string& path,
 				 aio_callback_t cb, void *cbpriv)
 {
@@ -69,15 +79,19 @@ BlockDevice *BlockDevice::create(CephContext* cct, const string& path,
 #endif
 
   derr << __func__ << " unknown backend " << type << dendl;
+
   ceph_abort();
+
   return NULL;
 }
 
 void BlockDevice::queue_reap_ioc(IOContext *ioc)
 {
   std::lock_guard<std::mutex> l(ioc_reap_lock);
+
   if (ioc_reap_count.load() == 0)
     ++ioc_reap_count;
+
   ioc_reap_queue.push_back(ioc);
 }
 
@@ -85,11 +99,14 @@ void BlockDevice::reap_ioc()
 {
   if (ioc_reap_count.load()) {
     std::lock_guard<std::mutex> l(ioc_reap_lock);
+
     for (auto p : ioc_reap_queue) {
       dout(20) << __func__ << " reap ioc " << p << dendl;
       delete p;
     }
+
     ioc_reap_queue.clear();
+
     --ioc_reap_count;
   }
 }

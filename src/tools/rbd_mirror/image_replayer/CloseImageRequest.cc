@@ -37,6 +37,7 @@ void CloseImageRequest<I>::close_image() {
 
   Context *ctx = create_context_callback<
     CloseImageRequest<I>, &CloseImageRequest<I>::handle_close_image>(this);
+
   (*m_image_ctx)->state->close(ctx);
 }
 

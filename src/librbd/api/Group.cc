@@ -245,6 +245,7 @@ int Group<I>::image_remove(librados::IoCtx& group_ioctx, const char *group_name,
 	       << dendl;
     return r;
   }
+
   string group_header_oid = util::group_header_name(group_id);
 
   ldout(cct, 20) << "adding image to group name " << group_name

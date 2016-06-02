@@ -60,6 +60,9 @@ using librbd::util::unique_lock_name;
 using managed_lock::util::decode_lock_cookie;
 using managed_lock::util::encode_lock_cookie;
 
+// derived by
+// ExclusiveLock
+// LeaderLock
 template <typename I>
 ManagedLock<I>::ManagedLock(librados::IoCtx &ioctx, ContextWQ *work_queue,
                             const string& oid, Watcher *watcher, Mode mode,
@@ -257,6 +260,7 @@ void ManagedLock<I>::break_lock(const managed_lock::Locker &locker,
       auto req = managed_lock::BreakRequest<I>::create(
         m_ioctx, m_work_queue, m_oid, locker, m_blacklist_on_break_lock,
         m_blacklist_expire_seconds, force_break_lock, on_finish);
+
       req->send();
       return;
     }
@@ -340,6 +344,7 @@ void ManagedLock<I>::execute_action(Action action, Context *ctx) {
   assert(m_lock.is_locked());
 
   append_context(action, ctx);
+
   if (!is_transition_state()) {
     execute_next_action();
   }
@@ -408,12 +413,14 @@ bool ManagedLock<I>::is_state_shutdown() const {
 template <typename I>
 void ManagedLock<I>::send_acquire_lock() {
   assert(m_lock.is_locked());
+
   if (m_state == STATE_LOCKED) {
     complete_active_action(STATE_LOCKED, 0);
     return;
   }
 
   ldout(m_cct, 10) << dendl;
+
   m_state = STATE_ACQUIRING;
 
   uint64_t watch_handle = m_watcher->get_watch_handle();
@@ -496,6 +503,7 @@ void ManagedLock<I>::revert_to_unlock_state(int r) {
         assert(ret == 0);
         complete_active_action(STATE_UNLOCKED, r);
       }));
+
   m_work_queue->queue(new C_SendLockRequest<ReleaseRequest<I>>(req));
 }
 
@@ -533,6 +541,7 @@ void ManagedLock<I>::send_reacquire_lock() {
       m_cookie, m_new_cookie, m_mode == EXCLUSIVE,
       create_context_callback<
         ManagedLock, &ManagedLock<I>::handle_reacquire_lock>(this));
+
   m_work_queue->queue(new C_SendLockRequest<ReacquireRequest<I>>(req));
 }
 
@@ -620,6 +629,8 @@ void ManagedLock<I>::handle_pre_release_lock(int r) {
       m_work_queue, m_oid, m_cookie,
       create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_release_lock>(this));
+
+  // ReleaseRequest::send
   m_work_queue->queue(new C_SendLockRequest<ReleaseRequest<I>>(req), 0);
 }
 

@@ -22,6 +22,9 @@ namespace image {
 using util::create_async_context_callback;
 using util::create_context_callback;
 
+// created by
+// librbd::image::RefreshRequest<I>::send_v2_refresh_parent
+// librbd::image::SetSnapRequest<I>::send_refresh_parent
 template <typename I>
 RefreshParentRequest<I>::RefreshParentRequest(I &child_image_ctx,
                                               const ParentInfo &parent_md,
@@ -36,6 +39,7 @@ bool RefreshParentRequest<I>::is_refresh_required(I &child_image_ctx,
                                                   const ParentInfo &parent_md) {
   assert(child_image_ctx.snap_lock.is_locked());
   assert(child_image_ctx.parent_lock.is_locked());
+
   return (is_open_required(child_image_ctx, parent_md) ||
           is_close_required(child_image_ctx, parent_md));
 }
@@ -73,8 +77,11 @@ void RefreshParentRequest<I>::apply() {
     // closing parent image
     m_child_image_ctx.clear_nonexistence_cache();
   }
+
   assert(m_child_image_ctx.snap_lock.is_wlocked());
   assert(m_child_image_ctx.parent_lock.is_wlocked());
+
+  // set parent image context of the child image context
   std::swap(m_child_image_ctx.parent, m_parent_image_ctx);
 }
 
@@ -84,6 +91,7 @@ void RefreshParentRequest<I>::finalize(Context *on_finish) {
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   m_on_finish = on_finish;
+
   if (m_parent_image_ctx != nullptr) {
     send_close_parent();
   } else {
@@ -142,6 +150,7 @@ Context *RefreshParentRequest<I>::handle_open_parent(int *result) {
   }
 
   send_set_parent_snap();
+
   return nullptr;
 }
 
@@ -154,8 +163,10 @@ void RefreshParentRequest<I>::send_set_parent_snap() {
 
   int r;
   std::string snap_name;
+
   {
     RWLock::RLocker snap_locker(m_parent_image_ctx->snap_lock);
+
     r = m_parent_image_ctx->get_snap_name(m_parent_md.spec.snap_id, &snap_name);
   }
 
@@ -170,6 +181,7 @@ void RefreshParentRequest<I>::send_set_parent_snap() {
     klass, &klass::handle_set_parent_snap, false>(this);
   SetSnapRequest<I> *req = SetSnapRequest<I>::create(
     *m_parent_image_ctx, snap_name, ctx);
+
   req->send();
 }
 

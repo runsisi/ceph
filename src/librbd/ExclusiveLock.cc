@@ -24,6 +24,10 @@ using namespace exclusive_lock;
 template <typename I>
 using ML = ManagedLock<I>;
 
+// created by
+// SetSnapRequest<I>::send_init_exclusive_lock
+// ImageCtx::create_exclusive_lock
+// librbd::lock_get_owners
 template <typename I>
 ExclusiveLock<I>::ExclusiveLock(I &image_ctx)
   : ML<I>(image_ctx.md_ctx, image_ctx.op_work_queue, image_ctx.header_oid,
@@ -35,6 +39,10 @@ ExclusiveLock<I>::ExclusiveLock(I &image_ctx)
   ML<I>::set_state_uninitialized();
 }
 
+// called by:
+// ImageWatcher::handle_payload
+// C_InvokeAsyncRequest::send_acquire_exclusive_lock
+// Operations<I>::prepare_image_update
 template <typename I>
 bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
   Mutex::Locker locker(ML<I>::m_lock);
@@ -48,11 +56,16 @@ bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
   return accept_requests;
 }
 
+// called by:
+// librbd::update_features
+// librbd::mirror_image_demote
+// OpenLocalImageRequest<I>::send_lock_image
 template <typename I>
 void ExclusiveLock<I>::block_requests(int r) {
   Mutex::Locker locker(ML<I>::m_lock);
 
   m_request_blocked_count++;
+
   if (m_request_blocked_ret_val == 0) {
     m_request_blocked_ret_val = r;
   }
@@ -60,12 +73,17 @@ void ExclusiveLock<I>::block_requests(int r) {
   ldout(m_image_ctx.cct, 20) << dendl;
 }
 
+// called by:
+// librbd::update_features
+// librbd::mirror_image_demote
 template <typename I>
 void ExclusiveLock<I>::unblock_requests() {
   Mutex::Locker locker(ML<I>::m_lock);
 
   assert(m_request_blocked_count > 0);
+
   m_request_blocked_count--;
+
   if (m_request_blocked_count == 0) {
     m_request_blocked_ret_val = 0;
   }
@@ -97,6 +115,9 @@ void ExclusiveLock<I>::shut_down(Context *on_shut_down) {
   handle_peer_notification(0);
 }
 
+// called by:
+// C_InvokeAsyncRequest::send_acquire_exclusive_lock
+// Operations<I>::prepare_image_update
 template <typename I>
 void ExclusiveLock<I>::handle_peer_notification(int r) {
   Mutex::Locker locker(ML<I>::m_lock);
@@ -137,6 +158,11 @@ void ExclusiveLock<I>::shutdown_handler(int r, Context *on_finish) {
   m_image_ctx.image_watcher->flush(on_finish);
 }
 
+// called by
+// ExclusiveLock<I>::shut_down
+// ImageWatcher<I>::handle_request_lock
+// ImageWatcher<I>::handle_payload(const AcquiredLockPayload)
+// ImageWatcher<I>::handle_payload(const ReleasedLockPayload)
 template <typename I>
 void ExclusiveLock<I>::pre_acquire_lock_handler(Context *on_finish) {
   ldout(m_image_ctx.cct, 10) << dendl;
