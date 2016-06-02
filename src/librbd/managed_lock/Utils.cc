@@ -29,6 +29,9 @@ bool decode_lock_cookie(const std::string &tag, uint64_t *handle) {
   return true;
 }
 
+// called by
+// ManagedLock<I>::send_acquire_lock
+// ManagedLock<I>::send_reacquire_lock
 std::string encode_lock_cookie(uint64_t watch_handle) {
   ceph_assert(watch_handle != 0);
   std::ostringstream ss;

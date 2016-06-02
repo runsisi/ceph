@@ -20,6 +20,8 @@
 namespace librbd {
 namespace operation {
 
+// created by
+// FlattenRequest<I>::send_op
 template <typename I>
 class C_FlattenObject : public C_AsyncObjectThrottle<I> {
 public:
@@ -53,6 +55,7 @@ public:
     }
 
     req->send();
+
     return 0;
   }
 
@@ -64,8 +67,10 @@ private:
 template <typename I>
 bool FlattenRequest<I>::should_complete(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " should_complete: " << " r=" << r << dendl;
+
   if (r == -ERESTART) {
     ldout(cct, 5) << "flatten operation interrupted" << dendl;
     return true;
@@ -75,6 +80,7 @@ bool FlattenRequest<I>::should_complete(int r) {
   }
 
   RWLock::RLocker owner_locker(image_ctx.owner_lock);
+
   switch (m_state) {
   case STATE_FLATTEN_OBJECTS:
     ldout(cct, 5) << "FLATTEN_OBJECTS" << dendl;
@@ -93,6 +99,7 @@ bool FlattenRequest<I>::should_complete(int r) {
     ceph_abort();
     break;
   }
+
   return false;
 }
 
@@ -104,12 +111,14 @@ void FlattenRequest<I>::send_op() {
   ldout(cct, 5) << this << " send" << dendl;
 
   m_state = STATE_FLATTEN_OBJECTS;
+
   typename AsyncObjectThrottle<I>::ContextFactory context_factory(
     boost::lambda::bind(boost::lambda::new_ptr<C_FlattenObject<I> >(),
       boost::lambda::_1, &image_ctx, m_snapc, boost::lambda::_2));
   AsyncObjectThrottle<I> *throttle = new AsyncObjectThrottle<I>(
     this, image_ctx, context_factory, this->create_callback_context(), &m_prog_ctx,
     0, m_overlap_objects);
+
   throttle->start_ops(image_ctx.concurrent_management_ops);
 }
 

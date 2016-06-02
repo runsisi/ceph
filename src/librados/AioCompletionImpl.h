@@ -149,12 +149,19 @@ struct librados::AioCompletionImpl {
     ceph_assert(ref > 0);
     int n = --ref;
     lock.Unlock();
+
     if (!n)
       delete this;
   }
 };
 
 namespace librados {
+// used by:
+// C_aio_linger_Complete::finish
+// librados::IoCtxImpl::C_aio_Ack::finish
+// librados::IoCtxImpl::C_aio_stat_Ack::finish
+// librados::IoCtxImpl::C_aio_stat2_Ack::finish
+// C_aio_watch_flush_Complete::finish
 struct C_AioComplete : public Context {
   AioCompletionImpl *c;
 

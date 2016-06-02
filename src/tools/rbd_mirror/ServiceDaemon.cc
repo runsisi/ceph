@@ -88,6 +88,8 @@ int ServiceDaemon<I>::init() {
   return 0;
 }
 
+// called by
+// ClusterWatcher::read_pool_peers
 template <typename I>
 void ServiceDaemon<I>::add_pool(int64_t pool_id, const std::string& pool_name) {
   dout(20) << "pool_id=" << pool_id << ", pool_name=" << pool_name << dendl;
@@ -153,6 +155,10 @@ void ServiceDaemon<I>::remove_callout(int64_t pool_id, uint64_t callout_id) {
   schedule_update_status();
 }
 
+// called by
+// InstanceReplayer<I>::start_image_replayers
+// PoolReplayer::handle_update
+// PoolReplayer::handle_post_acquire_leader
 template <typename I>
 void ServiceDaemon<I>::add_or_update_attribute(int64_t pool_id,
                                                const std::string& key,

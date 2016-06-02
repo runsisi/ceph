@@ -135,9 +135,11 @@ int check_mon_data_empty()
     derr << "opendir(" << mon_data << ") " << cpp_strerror(errno) << dendl;
     return -errno;
   }
+
   int code = 0;
   struct dirent *de = nullptr;
   errno = 0;
+
   while ((de = ::readdir(dir))) {
     if (string(".") != de->d_name &&
 	string("..") != de->d_name &&
@@ -146,6 +148,7 @@ int check_mon_data_empty()
       break;
     }
   }
+
   if (!de && errno) {
     derr << "readdir(" << mon_data << ") " << cpp_strerror(errno) << dendl;
     code = -errno;
@@ -493,11 +496,13 @@ int main(int argc, const char **argv)
   if (!(flags & CINIT_FLAG_NO_DAEMON_ACTIONS)) {
     if (global_init_prefork(g_ceph_context) >= 0) {
       string err_msg;
+
       err = prefork.prefork(err_msg);
       if (err < 0) {
         derr << err_msg << dendl;
         prefork.exit(err);
       }
+
       if (prefork.is_parent()) {
         err = prefork.parent_wait(err_msg);
         if (err < 0)
@@ -682,6 +687,7 @@ int main(int argc, const char **argv)
 				      0, Messenger::HAS_MANY_CONNECTIONS);
   if (!msgr)
     exit(1);
+
   msgr->set_cluster_protocol(CEPH_MON_PROTOCOL);
   msgr->set_default_send_priority(CEPH_MSG_PRIO_HIGH);
 
@@ -785,6 +791,7 @@ int main(int argc, const char **argv)
 
   if (g_conf()->daemonize) {
     global_init_postfork_finish(g_ceph_context);
+
     prefork.daemonize();
   }
 
@@ -824,5 +831,6 @@ int main(int argc, const char **argv)
   }
 
   prefork.signal_exit(0);
+
   return 0;
 }

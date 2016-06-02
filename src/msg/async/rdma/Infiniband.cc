@@ -133,8 +133,11 @@ Device::Device(CephContext *cct, ibv_device* d, struct ibv_context *dc)
   }
 }
 
+// called by
+// Infiniband::init
 void Device::binding_port(CephContext *cct, int port_num) {
   port_cnt = device_attr->phys_port_cnt;
+
   for (uint8_t i = 0; i < port_cnt; ++i) {
     Port *port = new Port(cct, ctxt, i+1);
     if (i + 1 == port_num && port->get_port_attr()->state == IBV_PORT_ACTIVE) {
@@ -146,6 +149,7 @@ void Device::binding_port(CephContext *cct, int port_num) {
     }
     delete port;
   }
+
   if (nullptr == active_port) {
     lderr(cct) << __func__ << "  port not found" << dendl;
     ceph_assert(active_port);
@@ -185,6 +189,7 @@ Infiniband::QueuePair::QueuePair(
 int Infiniband::QueuePair::init()
 {
   ldout(cct, 20) << __func__ << " started." << dendl;
+
   ibv_qp_init_attr qpia;
   memset(&qpia, 0, sizeof(qpia));
   qpia.send_cq = txcq->get_cq();
@@ -389,12 +394,14 @@ Infiniband::CompletionChannel::~CompletionChannel()
 int Infiniband::CompletionChannel::init()
 {
   ldout(cct, 20) << __func__ << " started." << dendl;
+
   channel = ibv_create_comp_channel(infiniband.device->ctxt);
   if (!channel) {
     lderr(cct) << __func__ << " failed to create receive completion channel: "
                           << cpp_strerror(errno) << dendl;
     return -1;
   }
+
   int rc = NetHandler(cct).set_nonblock(channel->fd);
   if (rc < 0) {
     ibv_destroy_comp_channel(channel);
@@ -459,7 +466,9 @@ int Infiniband::CompletionQueue::init()
     return -1;
   }
 
+  // set CompletionChannel::cq
   channel->bind_cq(cq);
+
   ldout(cct, 20) << __func__ << " successfully create cq=" << cq << dendl;
   return 0;
 }
@@ -473,6 +482,8 @@ int Infiniband::CompletionQueue::rearm_notify(bool solicite_only)
   return r;
 }
 
+// called by
+// RDMADispatcher::polling
 int Infiniband::CompletionQueue::poll_cq(int num_entries, ibv_wc *ret_wc_array) {
   int r = ibv_poll_cq(cq, num_entries, ret_wc_array);
   if (r < 0) {
@@ -886,6 +897,8 @@ void Infiniband::verify_prereq(CephContext *cct) {
    init_prereq = true;
 }
 
+// created as
+// a member variable of RDMAStack
 Infiniband::Infiniband(CephContext *cct)
   : cct(cct), lock("IB lock"),
     device_name(cct->_conf->ms_async_rdma_device_name),
@@ -893,9 +906,13 @@ Infiniband::Infiniband(CephContext *cct)
 {
   if (!init_prereq)
     verify_prereq(cct);
+
   ldout(cct, 20) << __func__ << " constructing Infiniband..." << dendl;
 }
 
+// called by
+// RDMAWorker::listen
+// RDMAWorker::connect
 void Infiniband::init()
 {
   Mutex::Locker l(lock);
@@ -910,6 +927,7 @@ void Infiniband::init()
   ceph_assert(device);
   device->binding_port(cct, port_num);
   ib_physical_port = device->active_port->get_port_num();
+
   pd = new ProtectionDomain(cct, device);
   ceph_assert(NetHandler(cct).set_nonblock(device->ctxt->async_fd) == 0);
 
@@ -991,6 +1009,8 @@ int Infiniband::get_tx_buffers(std::vector<Chunk*> &c, size_t bytes)
   return memory_manager->get_send_buffers(c, bytes);
 }
 
+// called by
+// RDMAConnectedSocketImpl::RDMAConnectedSocketImpl
 /**
  * Create a new QueuePair. This factory should be used in preference to
  * the QueuePair constructor directly, since this lets derivatives of
@@ -1059,16 +1079,20 @@ int Infiniband::post_chunks_to_rq(int num, ibv_qp *qp)
   return i;
 }
 
+// called by
+// RDMADispatcher::polling_start
 Infiniband::CompletionChannel* Infiniband::create_comp_channel(CephContext *c)
 {
   Infiniband::CompletionChannel *cc = new Infiniband::CompletionChannel(c, *this);
-  if (cc->init()) {
+  if (cc->init()) { // create ibv_comp_channel instance
     delete cc;
     return NULL;
   }
   return cc;
 }
 
+// called by
+// RDMADispatcher::polling_start
 Infiniband::CompletionQueue* Infiniband::create_comp_queue(
     CephContext *cct, CompletionChannel *cc)
 {
@@ -1081,6 +1105,8 @@ Infiniband::CompletionQueue* Infiniband::create_comp_queue(
   return cq;
 }
 
+// called by
+// RDMAConnectedSocketImpl::handle_connection
 // 1 means no valid buffer read, 0 means got enough buffer
 // else return < 0 means error
 int Infiniband::recv_msg(CephContext *cct, int sd, IBSYNMsg& im)
@@ -1088,6 +1114,7 @@ int Infiniband::recv_msg(CephContext *cct, int sd, IBSYNMsg& im)
   char msg[TCP_MSG_LEN];
   char gid[33];
   ssize_t r = ::read(sd, &msg, sizeof(msg));
+
   // Drop incoming qpt
   if (cct->_conf->ms_inject_socket_failures && sd >= 0) {
     if (rand() % cct->_conf->ms_inject_socket_failures == 0) {
@@ -1095,6 +1122,7 @@ int Infiniband::recv_msg(CephContext *cct, int sd, IBSYNMsg& im)
       return -EINVAL;
     }
   }
+
   if (r < 0) {
     r = -errno;
     lderr(cct) << __func__ << " got error " << r << ": "
@@ -1107,11 +1135,15 @@ int Infiniband::recv_msg(CephContext *cct, int sd, IBSYNMsg& im)
   } else { // valid message
     sscanf(msg, "%hu:%x:%x:%x:%s", &(im.lid), &(im.qpn), &(im.psn), &(im.peer_qpn),gid);
     wire_gid_to_gid(gid, &(im.gid));
+
     ldout(cct, 5) << __func__ << " recevd: " << im.lid << ", " << im.qpn << ", " << im.psn << ", " << im.peer_qpn << ", " << gid  << dendl;
   }
   return r;
 }
 
+// called by
+// RDMAConnectedSocketImpl::try_connect
+// RDMAConnectedSocketImpl::handle_connection
 int Infiniband::send_msg(CephContext *cct, int sd, IBSYNMsg& im)
 {
   int retry = 0;
@@ -1122,9 +1154,12 @@ int Infiniband::send_msg(CephContext *cct, int sd, IBSYNMsg& im)
 retry:
   gid_to_wire_gid(&(im.gid), gid);
   sprintf(msg, "%04x:%08x:%08x:%08x:%s", im.lid, im.qpn, im.psn, im.peer_qpn, gid);
+
   ldout(cct, 10) << __func__ << " sending: " << im.lid << ", " << im.qpn << ", " << im.psn
                  << ", " << im.peer_qpn << ", "  << gid  << dendl;
+
   r = ::write(sd, msg, sizeof(msg));
+
   // Drop incoming qpt
   if (cct->_conf->ms_inject_socket_failures && sd >= 0) {
     if (rand() % cct->_conf->ms_inject_socket_failures == 0) {

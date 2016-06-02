@@ -37,6 +37,8 @@ public:
 typedef std::multimap < utime_t, Context *> scheduled_map_t;
 typedef std::map < Context*, scheduled_map_t::iterator > event_lookup_map_t;
 
+// safe_callbacks default to true, safe callbacks determines whether callbacks are
+// called with the lock held, see SafeTimer::timer_thread
 SafeTimer::SafeTimer(CephContext *cct_, Mutex &l, bool safe_callbacks)
   : cct(cct_), lock(l),
     safe_callbacks(safe_callbacks),
@@ -53,21 +55,30 @@ SafeTimer::~SafeTimer()
 void SafeTimer::init()
 {
   ldout(cct,10) << "init" << dendl;
+
   thread = new SafeTimerThread(this);
+
   thread->create("safe_timer");
 }
 
 void SafeTimer::shutdown()
 {
   ldout(cct,10) << "shutdown" << dendl;
+
   if (thread) {
     ceph_assert(lock.is_locked());
     cancel_all_events();
+
     stopping = true;
+
     cond.Signal();
+
     lock.Unlock();
+
     thread->join();
+
     lock.Lock();
+
     delete thread;
     thread = NULL;
   }
@@ -76,7 +87,9 @@ void SafeTimer::shutdown()
 void SafeTimer::timer_thread()
 {
   lock.Lock();
+
   ldout(cct,10) << "timer_thread starting" << dendl;
+
   while (!stopping) {
     utime_t now = ceph_clock_now();
 
@@ -88,13 +101,17 @@ void SafeTimer::timer_thread()
 	break;
 
       Context *callback = p->second;
+
       events.erase(callback);
       schedule.erase(p);
+
       ldout(cct,10) << "timer_thread executing " << callback << dendl;
       
       if (!safe_callbacks)
 	lock.Unlock();
+
       callback->complete(0);
+
       if (!safe_callbacks)
 	lock.Lock();
     }
@@ -104,13 +121,18 @@ void SafeTimer::timer_thread()
       break;
 
     ldout(cct,20) << "timer_thread going to sleep" << dendl;
+
+    // will be notified by SafeTimer::add_event_at, SafeTimer::shutdown
     if (schedule.empty())
       cond.Wait(lock);
     else
       cond.WaitUntil(lock, schedule.begin()->first);
+
     ldout(cct,20) << "timer_thread awake" << dendl;
   }
+
   ldout(cct,10) << "timer_thread exiting" << dendl;
+
   lock.Unlock();
 }
 
@@ -159,10 +181,12 @@ bool SafeTimer::cancel_event(Context *callback)
   }
 
   ldout(cct,10) << "cancel_event " << p->second->first << " -> " << callback << dendl;
+
   delete p->first;
 
   schedule.erase(p->second);
   events.erase(p);
+
   return true;
 }
 
@@ -173,8 +197,11 @@ void SafeTimer::cancel_all_events()
 
   while (!events.empty()) {
     auto p = events.begin();
+
     ldout(cct,10) << " cancelled " << p->second->first << " -> " << p->first << dendl;
+
     delete p->first;
+
     schedule.erase(p->second);
     events.erase(p);
   }
@@ -184,6 +211,7 @@ void SafeTimer::dump(const char *caller) const
 {
   if (!caller)
     caller = "";
+
   ldout(cct,10) << "dump " << caller << dendl;
 
   for (scheduled_map_t::const_iterator s = schedule.begin();

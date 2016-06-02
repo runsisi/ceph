@@ -134,8 +134,11 @@ struct is_dynamic<dynamic_marker_t<T>> : public std::true_type {};
     auto _dout_cct = cct;						\
     std::ostream* _dout = &_dout_e->get_ostream();
 
+// specify the subsys explicitly, need to define dout_prefix explicitly, i.e., *_dout << prefix
 #define lsubdout(cct, sub, v)  dout_impl(cct, ceph_subsys_##sub, v) dout_prefix
+// dout_subsys should be defined at the beginning of the source file
 #define ldout(cct, v)  dout_impl(cct, dout_subsys, v) dout_prefix
+// default log level for ceph_subsys_, i.e., default subsys is 0/5
 #define lderr(cct) dout_impl(cct, ceph_subsys_, -1) dout_prefix
 
 #define ldpp_dout(dpp, v) 						\
@@ -143,6 +146,7 @@ struct is_dynamic<dynamic_marker_t<T>> : public std::true_type {};
     dout_impl(pdpp->get_cct(), ceph::dout::need_dynamic(pdpp->get_subsys()), v) \
       pdpp->gen_prefix(*_dout)
 
+// no prefix defined, i.e., only *_dout defined
 #define lgeneric_subdout(cct, sub, v) dout_impl(cct, ceph_subsys_##sub, v) *_dout
 #define lgeneric_dout(cct, v) dout_impl(cct, ceph_subsys_, v) *_dout
 #define lgeneric_derr(cct) dout_impl(cct, ceph_subsys_, -1) *_dout

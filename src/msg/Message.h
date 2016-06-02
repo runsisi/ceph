@@ -511,8 +511,10 @@ extern Message *decode_message(CephContext *cct, int crcflags,
 			       Connection* conn);
 inline ostream& operator<<(ostream& out, const Message& m) {
   m.print(out);
+
   if (m.get_header().version)
     out << " v" << m.get_header().version;
+
   return out;
 }
 

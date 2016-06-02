@@ -238,14 +238,17 @@ public:
 	    return left;
 	  });
       }
-    };
+    }; // struct SplitMerger
+
   public:
     using buffer_update_type = interval_map<
       uint64_t, BufferUpdateType, SplitMerger>;
+
     buffer_update_type buffer_updates;
 
     friend class PGTransaction;
-  };
+  }; // class ObjectOperation
+
   map<hobject_t, ObjectOperation> op_map;
 private:
   ObjectOperation &get_object_op_for_modify(const hobject_t &hoid) {
@@ -317,11 +320,14 @@ public:
     }
   }
 
+  // called by
+  // PrimaryLogPG::trim_object, which called by PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
   void update_snaps(
     const hobject_t &hoid,         ///< [in] object for snaps
     const set<snapid_t> &old_snaps,///< [in] old snaps value
     const set<snapid_t> &new_snaps ///< [in] new snaps value
     ) {
+    // PGTransaction::op_map[hoid]
     auto &op = get_object_op(hoid);
     ceph_assert(!op.updated_snaps);
     ceph_assert(op.buffer_updates.empty());
@@ -507,6 +513,10 @@ public:
     get_object_op_for_modify(hoid);
   }
 
+  // called by
+  // namespace ECTransaction::generate_transactions
+  // namespace ECTransaction::get_write_plan
+  // namespace ::generate_transaction
   /* Calls t() on all pair<hobject_t, ObjectOperation> & such that clone/rename
    * sinks are always called before clone sources
    *
@@ -561,7 +571,7 @@ public:
 	/* Leaf: pop and call t() */
 	auto opiter = op_map.find(cur);
 	if (opiter != op_map.end())
-	  t(*opiter);
+	  t(*opiter); // callback
 	stack.pop_front();
       } else {
 	/* Internal node: push children onto stack, remove edge,

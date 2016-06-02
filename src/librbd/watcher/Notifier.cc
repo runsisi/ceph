@@ -48,8 +48,11 @@ Notifier::~Notifier() {
   ceph_assert(m_pending_aio_notifies == 0);
 }
 
+// called by
+// ImageWatcher<I>::flush
 void Notifier::flush(Context *on_finish) {
   Mutex::Locker aio_notify_locker(m_aio_notify_lock);
+
   if (m_pending_aio_notifies == 0) {
     m_work_queue->queue(on_finish, 0);
     return;
@@ -62,11 +65,14 @@ void Notifier::notify(bufferlist &bl, NotifyResponse *response,
                       Context *on_finish) {
   {
     Mutex::Locker aio_notify_locker(m_aio_notify_lock);
+
     ++m_pending_aio_notifies;
 
     ldout(m_cct, 20) << "pending=" << m_pending_aio_notifies << dendl;
   }
 
+  // Notifier::handle_notify, queue on_finish on ImageCtx::op_work_queue and
+  // complete flush contexts
   C_AioNotify *ctx = new C_AioNotify(this, response, on_finish);
   librados::AioCompletion *comp = util::create_rados_callback(ctx);
   int r = m_ioctx.aio_notify(m_oid, comp, bl, NOTIFY_TIMEOUT, &ctx->out_bl);
@@ -74,6 +80,8 @@ void Notifier::notify(bufferlist &bl, NotifyResponse *response,
   comp->release();
 }
 
+// called by
+// Notifier::C_AioNotify::finish
 void Notifier::handle_notify(int r, Context *on_finish) {
   ldout(m_cct, 20) << "r=" << r << dendl;
 
@@ -86,6 +94,7 @@ void Notifier::handle_notify(int r, Context *on_finish) {
     for (auto ctx : m_aio_notify_flush_ctxs) {
       m_work_queue->queue(ctx, 0);
     }
+
     m_aio_notify_flush_ctxs.clear();
   }
 

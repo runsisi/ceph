@@ -77,6 +77,8 @@ private:
   typedef std::set<uint64_t> InFlightTids;
   typedef std::map<uint64_t, AppendBuffers> InFlightAppends;
 
+  // created by
+  // member of ObjectRecorder
   struct FlushHandler : public FutureImpl::FlushHandler {
     ObjectRecorder *object_recorder;
     FlushHandler(ObjectRecorder *o) : object_recorder(o) {}
@@ -86,14 +88,20 @@ private:
     void put() override {
       object_recorder->put();
     }
+    // called by
+    // FutureImpl::flush
     void flush(const FutureImplPtr &future) override {
       Mutex::Locker locker(*(object_recorder->m_lock));
+
       object_recorder->flush(future);
     }
   };
+  // created by
+  // ObjectRecorder::send_appends_aio
   struct C_AppendFlush : public Context {
     ObjectRecorder *object_recorder;
     uint64_t tid;
+
     C_AppendFlush(ObjectRecorder *o, uint64_t _tid)
         : object_recorder(o), tid(_tid) {
       object_recorder->get();

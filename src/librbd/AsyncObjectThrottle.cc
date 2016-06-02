@@ -23,23 +23,37 @@ AsyncObjectThrottle<T>::AsyncObjectThrottle(
 {
 }
 
+// called by
+// librbd::operation::FlattenRequest<I>::send_op
+// librbd::operation::ObjectMapIterateRequest<I>::send_verify_objects
+// librbd::operation::SnapshotRollbackRequest<I>::send_rollback_objects
+// librbd::operation::SnapshotUnprotectRequest<I>::send_scan_pool_children
+// librbd::operation::TrimRequest<I>::send_copyup_objects
+// librbd::operation::TrimRequest<I>::send_remove_objects
+// librbd::CopyupRequest::send_object_map
 template <typename T>
 void AsyncObjectThrottle<T>::start_ops(uint64_t max_concurrent) {
   ceph_assert(m_image_ctx.owner_lock.is_locked());
   bool complete;
+
   {
     Mutex::Locker l(m_lock);
+
     for (uint64_t i = 0; i < max_concurrent; ++i) {
       start_next_op();
+
       if (m_ret < 0 && m_current_ops == 0) {
 	break;
       }
     }
+
     complete = (m_current_ops == 0);
   }
+
   if (complete) {
     // avoid re-entrant callback
     m_image_ctx.op_work_queue->queue(m_ctx, m_ret);
+
     delete this;
   }
 }
@@ -47,17 +61,22 @@ void AsyncObjectThrottle<T>::start_ops(uint64_t max_concurrent) {
 template <typename T>
 void AsyncObjectThrottle<T>::finish_op(int r) {
   bool complete;
+
   {
     RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
     Mutex::Locker locker(m_lock);
+
     --m_current_ops;
+
     if (r < 0 && r != -ENOENT && m_ret == 0) {
       m_ret = r;
     }
 
     start_next_op();
+
     complete = (m_current_ops == 0);
   }
+
   if (complete) {
     m_ctx->complete(m_ret);
     delete this;
@@ -67,6 +86,7 @@ void AsyncObjectThrottle<T>::finish_op(int r) {
 template <typename T>
 void AsyncObjectThrottle<T>::start_next_op() {
   bool done = false;
+
   while (!done) {
     if (m_async_request != NULL && m_async_request->is_canceled() &&
         m_ret == 0) {
@@ -78,6 +98,7 @@ void AsyncObjectThrottle<T>::start_next_op() {
     }
 
     uint64_t ono = m_object_no++;
+
     C_AsyncObjectThrottle<T> *ctx = m_context_factory(*this, ono);
 
     int r = ctx->send();
@@ -89,9 +110,14 @@ void AsyncObjectThrottle<T>::start_next_op() {
       // op completed immediately
       delete ctx;
     } else {
+
+      // r == 0, the op is in-flight
+
       ++m_current_ops;
+
       done = true;
     }
+
     if (m_prog_ctx != NULL) {
       m_prog_ctx->update_progress(ono, m_end_object_no);
     }

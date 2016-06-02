@@ -87,6 +87,12 @@ void Watcher::C_NotifyAck::finish(int r) {
 #define dout_prefix *_dout << "librbd::Watcher: " << this << " " << __func__ \
                            << ": "
 
+// derived by
+// ImageWatcher
+// MirroringWatcher
+// InstanceWatcher
+// LeaderWatcher
+// MirrorStatusWatcher
 Watcher::Watcher(librados::IoCtx& ioctx, ContextWQ *work_queue,
                           const string& oid)
   : m_ioctx(ioctx), m_work_queue(work_queue), m_oid(oid),
@@ -101,6 +107,11 @@ Watcher::~Watcher() {
   ceph_assert(is_unregistered(m_watch_lock));
 }
 
+// called by
+// ImageCtx::register_watch
+// InstanceWatcher<I>::register_watch
+// LeaderWatcher<I>::register_watch
+// MirrorStatusWatcher<I>::init
 void Watcher::register_watch(Context *on_finish) {
   ldout(m_cct, 10) << dendl;
 
@@ -237,6 +248,8 @@ void Watcher::acknowledge_notify(uint64_t notify_id, uint64_t handle,
   m_ioctx.notify_ack(m_oid, notify_id, handle, out);
 }
 
+// called by
+// librbd::Watcher::handle_error
 void Watcher::rewatch() {
   ldout(m_cct, 10) << dendl;
 

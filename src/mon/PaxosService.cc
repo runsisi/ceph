@@ -33,6 +33,7 @@ bool PaxosService::dispatch(MonOpRequestRef op)
 {
   ceph_assert(op->is_type_service() || op->is_type_command());
   PaxosServiceMessage *m = static_cast<PaxosServiceMessage*>(op->get_req());
+
   op->mark_event("psvc:dispatch");
 
   dout(10) << __func__ << " " << m << " " << *m
@@ -66,6 +67,7 @@ bool PaxosService::dispatch(MonOpRequestRef op)
   // make sure our map is readable and up to date
   if (!is_readable(m->version)) {
     dout(10) << " waiting for paxos -> readable (v" << m->version << ")" << dendl;
+
     wait_for_readable(op, new C_RetryMessage(this, op), m->version);
     return true;
   }
@@ -83,6 +85,7 @@ bool PaxosService::dispatch(MonOpRequestRef op)
   // writeable?
   if (!is_writeable()) {
     dout(10) << " waiting for paxos -> writeable" << dendl;
+
     wait_for_writeable(op, new C_RetryMessage(this, op));
     return true;
   }
@@ -136,6 +139,8 @@ bool PaxosService::dispatch(MonOpRequestRef op)
   return true;
 }
 
+// called by
+// Monitor::refresh_from_paxos, which called by Paxos::do_refresh
 void PaxosService::refresh(bool *need_bootstrap)
 {
   // update cached versions
@@ -145,15 +150,20 @@ void PaxosService::refresh(bool *need_bootstrap)
   version_t new_format = get_value("format_version");
   if (new_format != format_version) {
     dout(1) << __func__ << " upgraded, format " << format_version << " -> " << new_format << dendl;
+
     on_upgrade();
   }
+
   format_version = new_format;
 
   dout(10) << __func__ << dendl;
 
+  // call specific PaxosService override
   update_from_paxos(need_bootstrap);
 }
 
+// called by
+// Monitor::refresh_from_paxos
 void PaxosService::post_refresh()
 {
   dout(10) << __func__ << dendl;
@@ -178,10 +188,13 @@ bool PaxosService::should_propose(double& delay)
       delay = (double)(g_conf()->paxos_propose_interval + paxos->last_commit_time
 		       - now);
   }
+
   return true;
 }
 
-
+// called by
+// OSDMonitor::tick, for OSDMonitor, leader only
+// and others
 void PaxosService::propose_pending()
 {
   dout(10) << __func__ << dendl;
@@ -192,7 +205,9 @@ void PaxosService::propose_pending()
 
   if (proposal_timer) {
     dout(10) << " canceling proposal_timer " << proposal_timer << dendl;
+
     mon->timer.cancel_event(proposal_timer);
+
     proposal_timer = NULL;
   }
 
@@ -211,6 +226,7 @@ void PaxosService::propose_pending()
     encode_full(t);
 
   encode_pending(t);
+
   have_pending = false;
 
   if (format_version > 0) {
@@ -219,6 +235,7 @@ void PaxosService::propose_pending()
 
   // apply to paxos
   proposing = true;
+
   /**
    * Callback class used to mark us as active once a proposal finishes going
    * through Paxos.
@@ -236,14 +253,17 @@ void PaxosService::propose_pending()
     void finish(int r) override {
       ps->proposing = false;
       if (r >= 0)
-	ps->_active();
+	ps->_active(); // PaxosService::_active which calls OSDMonitor::on_active(), etc.
       else if (r == -ECANCELED || r == -EAGAIN)
 	return;
       else
 	ceph_abort_msg("bad return value for C_Committed");
     }
   };
+
   paxos->queue_pending_finisher(new C_Committed(this));
+
+  // call Paxos::propose_pending
   paxos->trigger_propose();
 }
 
@@ -280,6 +300,9 @@ void PaxosService::restart()
   on_restart();
 }
 
+// called by
+// Monitor::_finish_svc_election
+// Monitor::win_election
 void PaxosService::election_finished()
 {
   dout(10) << __func__ << dendl;
@@ -290,12 +313,16 @@ void PaxosService::election_finished()
   _active();
 }
 
+// called by
+// PaxosService::propose_pending/C_Committed::finish, NOTE: not the same as Paxos.cc/C_Committed
+// PaxosService::election_finished
 void PaxosService::_active()
 {
   if (is_proposing()) {
     dout(10) << __func__ << " - proposing" << dendl;
     return;
   }
+
   if (!is_active()) {
     dout(10) << __func__ << " - not active" << dendl;
     /**
@@ -315,6 +342,7 @@ void PaxosService::_active()
 	  svc->_active();
       }
     };
+
     wait_for_active_ctx(new C_Active(this));
     return;
   }
@@ -325,12 +353,14 @@ void PaxosService::_active()
     dout(7) << __func__ << " creating new pending" << dendl;
     if (!have_pending) {
       create_pending();
+
       have_pending = true;
     }
 
     if (get_last_committed() == 0) {
       // create initial state
       create_initial();
+
       propose_pending();
       return;
     }

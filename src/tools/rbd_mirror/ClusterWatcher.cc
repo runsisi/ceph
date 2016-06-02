@@ -34,26 +34,34 @@ ClusterWatcher::ClusterWatcher(RadosRef cluster, Mutex &lock,
 {
 }
 
+// called by
+// Mirror::run
 const ClusterWatcher::PoolPeers& ClusterWatcher::get_pool_peers() const
 {
   ceph_assert(m_lock.is_locked());
   return m_pool_peers;
 }
 
+// called by
+// Mirror::run
 void ClusterWatcher::refresh_pools()
 {
   dout(20) << "enter" << dendl;
 
   PoolPeers pool_peers;
   PoolNames pool_names;
+
   read_pool_peers(&pool_peers, &pool_names);
 
   Mutex::Locker l(m_lock);
+
   m_pool_peers = pool_peers;
   // TODO: perhaps use a workqueue instead, once we get notifications
   // about config changes for existing pools
 }
 
+// called by
+// ClusterWatcher::refresh_pools
 void ClusterWatcher::read_pool_peers(PoolPeers *pool_peers,
 				     PoolNames *pool_names)
 {
@@ -75,6 +83,8 @@ void ClusterWatcher::read_pool_peers(PoolPeers *pool_peers,
     int64_t pool_id = kv.first;
     auto& pool_name = kv.second;
     int64_t base_tier;
+
+    // skip cache pools
     r = m_cluster->pool_get_base_tier(pool_id, &base_tier);
     if (r == -ENOENT) {
       dout(10) << "pool " << pool_name << " no longer exists" << dendl;

@@ -179,6 +179,7 @@ public:
   // printed.
   void Logv(const rocksdb::InfoLogLevel log_level, const char* format,
 	    va_list ap) override {
+    // v = 6 - x -1
     int v = rocksdb::NUM_INFO_LOG_LEVELS - log_level - 1;
     dout(ceph::dout::need_dynamic(v));
     char buf[65536];
@@ -187,6 +188,8 @@ public:
   }
 };
 
+// called by
+// BlueRocksEnv::NewLogger
 rocksdb::Logger *create_rocksdb_ceph_logger()
 {
   return new CephRocksdbLogger(g_ceph_context);
@@ -265,6 +268,10 @@ int RocksDBStore::ParseOptionsFromString(const string &opt_str, rocksdb::Options
   return 0;
 }
 
+// called by
+// MonitorDBStore::_open
+// BlueStore::_open_db
+// FileStore::mount
 int RocksDBStore::init(string _options_str)
 {
   options_str = _options_str;

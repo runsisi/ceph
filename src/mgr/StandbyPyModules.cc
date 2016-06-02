@@ -72,6 +72,8 @@ void StandbyPyModules::shutdown()
   modules.clear();
 }
 
+// called by
+// PyModuleRegistry::standby_start
 int StandbyPyModules::start_one(PyModuleRef py_module)
 {
   Mutex::Locker l(lock);

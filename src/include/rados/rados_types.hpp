@@ -33,6 +33,8 @@ struct snap_set_t {
   snap_set_t() : seq(0) {}
 };
 
+// only used for librados::IoCtxImpl::get_inconsistent_objects, i.e., for scrub to
+// list inconsistent objects
 struct object_id_t {
   std::string name;
   std::string nspace;

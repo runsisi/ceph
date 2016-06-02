@@ -218,6 +218,8 @@ void PosixWorker::initialize()
 {
 }
 
+// called by
+// Processor::bind
 int PosixWorker::listen(entity_addr_t &sa, const SocketOptions &opt,
                         ServerSocket *sock)
 {
@@ -276,6 +278,7 @@ int PosixWorker::connect(const entity_addr_t &addr, const SocketOptions &opts, C
   }
 
   net.set_priority(sd, opts.priority, addr.get_family());
+  // not connected yet
   *socket = ConnectedSocket(
       std::unique_ptr<PosixConnectedSocketImpl>(new PosixConnectedSocketImpl(net, addr, sd, !opts.nonblock)));
   return 0;

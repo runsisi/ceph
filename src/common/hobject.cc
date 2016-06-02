@@ -22,6 +22,9 @@ static void append_escaped(const string &in, string *out)
   }
 }
 
+// static
+// called by
+// SnapMapper::update_bits
 set<string> hobject_t::get_prefixes(
   uint32_t bits,
   uint32_t mask,
@@ -47,6 +50,7 @@ set<string> hobject_t::get_prefixes(
       to.insert(*j | (1U << i));
       to.insert(*j);
     }
+
     to.swap(from);
     to.clear();
   }
@@ -62,7 +66,9 @@ set<string> hobject_t::get_prefixes(
        i != from.end();
        ++i) {
     uint32_t revhash(hobject_t::_reverse_nibbles(*i));
+
     snprintf(buf, sizeof(buf), "%.*X", (int)(sizeof(revhash))*2, revhash);
+
     ret.insert(poolstr + string(buf, len/4));
   }
   return ret;
@@ -70,6 +76,7 @@ set<string> hobject_t::get_prefixes(
 
 string hobject_t::to_str() const
 {
+  // e.g., "0000000000000000.00B7CF30.2a.rbd%udata%e12072ae8944a%e00000000000000fd.."
   string out;
 
   char snap_with_hash[1000];
@@ -174,6 +181,7 @@ void hobject_t::decode(json_spirit::Value& v)
     else if (p.name_ == "namespace")
       nspace = p.value_.get_str();
   }
+
   build_hash_cache();
 }
 
@@ -236,10 +244,14 @@ static const char *decode_out_escaped(const char *in, string *out)
 
 ostream& operator<<(ostream& out, const hobject_t& o)
 {
+  // e.g., 0:c280c79e:::rbd_data.112774b0dc51.00000000000000ff:head
+
   if (o == hobject_t())
     return out << "MIN";
+
   if (o.is_max())
     return out << "MAX";
+
   out << o.pool << ':';
   out << std::hex;
   out.width(8);
@@ -265,6 +277,7 @@ bool hobject_t::parse(const string &s)
     *this = hobject_t();
     return true;
   }
+
   if (s == "MAX") {
     *this = hobject_t::get_max();
     return true;
@@ -273,11 +286,15 @@ bool hobject_t::parse(const string &s)
   const char *start = s.c_str();
   long long po;
   unsigned h;
+
   int r = sscanf(start, "%lld:%x:", &po, &h);
   if (r != 2)
     return false;
+
   for (; *start && *start != ':'; ++start) ;
+
   for (++start; *start && isxdigit(*start); ++start) ;
+
   if (*start != ':')
     return false;
 
@@ -285,25 +302,32 @@ bool hobject_t::parse(const string &s)
   const char *p = decode_out_escaped(start + 1, &ns);
   if (*p != ':')
     return false;
+
   p = decode_out_escaped(p + 1, &k);
+
   if (*p != ':')
     return false;
+
   p = decode_out_escaped(p + 1, &name);
   if (*p != ':')
     return false;
+
   start = p + 1;
 
   unsigned long long sn;
   if (strncmp(start, "head", 4) == 0) {
     sn = CEPH_NOSNAP;
     start += 4;
+
     if (*start != 0)
       return false;
   } else {
     r = sscanf(start, "%llx", &sn);
     if (r != 1)
       return false;
+
     for (++start; *start && isxdigit(*start); ++start) ;
+
     if (*start)
       return false;
   }

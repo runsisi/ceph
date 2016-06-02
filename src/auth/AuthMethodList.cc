@@ -28,8 +28,10 @@ AuthMethodList::AuthMethodList(CephContext *cct, std::string str)
   if (sup_list.empty()) {
     lderr(cct) << "WARNING: empty auth protocol list" << dendl;
   }
+
   for (list<string>::iterator iter = sup_list.begin(); iter != sup_list.end(); ++iter) {
     ldout(cct, 5) << "adding auth protocol: " << *iter << dendl;
+
     if (iter->compare("cephx") == 0) {
       auth_supported.push_back(CEPH_AUTH_CEPHX);
     } else if (iter->compare("none") == 0) {
@@ -39,6 +41,7 @@ AuthMethodList::AuthMethodList(CephContext *cct, std::string str)
       lderr(cct) << "WARNING: unknown auth protocol defined: " << *iter << dendl;
     }
   }
+
   if (auth_supported.empty()) {
     lderr(cct) << "WARNING: no auth protocol defined, use 'cephx' by default" << dendl;
     auth_supported.push_back(CEPH_AUTH_CEPHX);
@@ -52,9 +55,11 @@ bool AuthMethodList::is_supported_auth(int auth_type)
 
 int AuthMethodList::pick(const std::set<__u32>& supported)
 {
+  // reverse order, so cephx has the higher priority than none
   for (set<__u32>::const_reverse_iterator p = supported.rbegin(); p != supported.rend(); ++p)
     if (is_supported_auth(*p))
       return *p;
+
   return CEPH_AUTH_UNKNOWN;
 }
 

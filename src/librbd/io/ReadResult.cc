@@ -161,6 +161,8 @@ void ReadResult::set_clip_length(size_t length) {
   boost::apply_visitor(SetClipLengthVisitor(length), m_buffer);
 }
 
+// called by
+// librbd::io::AioCompletion::finalize
 void ReadResult::assemble_result(CephContext *cct) {
   boost::apply_visitor(AssembleResultVisitor(cct, m_destriper), m_buffer);
 }

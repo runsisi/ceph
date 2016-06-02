@@ -548,7 +548,7 @@ private:
   // =====================
 
 protected:
-  OSDriver osdriver;
+  OSDriver osdriver;  // as object store driver for SnapMapper backend
   SnapMapper snap_mapper;
   bool eio_errors_to_process = false;
 
@@ -599,6 +599,7 @@ protected:
 
 protected:
   PGLog  pg_log;
+
   static string get_info_key(spg_t pgid) {
     return stringify(pgid) + "_info";
   }
@@ -608,6 +609,7 @@ protected:
   static string get_epoch_key(spg_t pgid) {
     return stringify(pgid) + "_epoch";
   }
+
   ghobject_t    pgmeta_oid;
 
   // ------------------
@@ -693,6 +695,7 @@ protected:
 
     PG *pg;
     set<pg_shard_t> empty_set;
+
   public:
     boost::scoped_ptr<IsPGReadablePredicate> is_readable;
     boost::scoped_ptr<IsPGRecoverablePredicate> is_recoverable;
@@ -714,8 +717,10 @@ protected:
 	needs_recovery_map.find(hoid);
       if (i == needs_recovery_map.end())
 	return false;
+
       if (v)
 	*v = i->second.need;
+
       return true;
     }
     bool is_deleted(const hobject_t &hoid) const {
@@ -735,9 +740,11 @@ protected:
       auto mit = missing_loc.find(hoid);
       return mit == missing_loc.end() || !(*is_recoverable)(mit->second);
     }
+
     bool readable_with_acting(
       const hobject_t &hoid,
       const set<pg_shard_t> &acting) const;
+
     uint64_t num_unfound() const {
       uint64_t ret = 0;
       for (map<hobject_t, pg_missing_item>::const_iterator i =
@@ -750,6 +757,7 @@ protected:
 	if (mi == missing_loc.end() || !(*is_recoverable)(mi->second))
 	  ++ret;
       }
+
       return ret;
     }
 
@@ -766,6 +774,10 @@ protected:
       }
       return false;
     }
+
+    // called by
+    // PG::clear_primary_state
+    // PrimaryLogPG::_clear_recovery_state
     void clear() {
       needs_recovery_map.clear();
       missing_loc.clear();
@@ -773,6 +785,11 @@ protected:
       missing_by_count.clear();
     }
 
+    // called by
+    // PG::repair_object
+    // PrimaryLogPG::on_local_recover
+    // PrimaryLogPG::recover_primary
+    // PrimaryLogPG::prep_object_replica_pushes
     void add_location(const hobject_t &hoid, pg_shard_t location) {
       auto p = missing_loc.find(hoid);
       if (p == missing_loc.end()) {
@@ -783,6 +800,10 @@ protected:
       p->second.insert(location);
       _inc_count(p->second);
     }
+
+    // called by
+    // PrimaryLogPG::failed_push
+    // PrimaryLogPG::prep_object_replica_pushes
     void remove_location(const hobject_t &hoid, pg_shard_t location) {
       auto p = missing_loc.find(hoid);
       if (p != missing_loc.end()) {
@@ -825,6 +846,8 @@ protected:
     void add_missing(const hobject_t &hoid, eversion_t need, eversion_t have, bool is_delete=false) {
       needs_recovery_map[hoid] = pg_missing_item(need, have, is_delete);
     }
+
+    // never used
     void revise_need(const hobject_t &hoid, eversion_t need) {
       auto it = needs_recovery_map.find(hoid);
       ceph_assert(it != needs_recovery_map.end());
@@ -945,6 +968,8 @@ protected:
   int         role;    // 0 = primary, 1 = replica, -1=none.
   uint64_t    state;   // PG_STATE_*
 
+  // will be set to true by PG::start_peering_interval or Initial::react(Load) if we
+  // are not primary pg
   bool send_notify;    ///< true if we are non-primary and should notify the primary
 
 protected:
@@ -1305,9 +1330,11 @@ protected:
   bool is_acting_recovery_backfill(pg_shard_t osd) const {
     return acting_recovery_backfill.count(osd);
   }
+
   bool is_acting(pg_shard_t osd) const {
     return has_shard(pool.info.is_erasure(), acting, osd);
   }
+
   bool is_up(pg_shard_t osd) const {
     return has_shard(pool.info.is_erasure(), up, osd);
   }
@@ -1384,10 +1411,22 @@ protected:
   bool proc_replica_info(
     pg_shard_t from, const pg_info_t &info, epoch_t send_epoch);
 
+  // created by
+  // PG::merge_log
+  // PG::rewind_divergent_log
+  // PG::activate
+  // PG::append_log
+  // PG::append_log_entries_update_missing
+  // Stray::react(const MLogRec)
+  // PrimaryLogPG::on_local_recover
+  // PrimaryLogPG::on_removal
   struct PGLogEntryHandler : public PGLog::LogEntryHandler {
     PG *pg;
     ObjectStore::Transaction *t;
     PGLogEntryHandler(PG *pg, ObjectStore::Transaction *t) : pg(pg), t(t) {}
+
+    // remove/try_stash/rollback/rollforward/trim are defined by
+    // PGBackend, it's no difference between EC and Replicated
 
     // LogEntryHandler
     void remove(const hobject_t &hoid) override {
@@ -1396,10 +1435,17 @@ protected:
     void try_stash(const hobject_t &hoid, version_t v) override {
       pg->get_pgbackend()->try_stash(hoid, v, t);
     }
+
+    // rollback/rollforward/trim is only valid for can local rollback entry
+
+    // called by
+    // PGLog::_merge_object_divergent_entries
     void rollback(const pg_log_entry_t &entry) override {
       ceph_assert(entry.can_rollback());
       pg->get_pgbackend()->rollback(entry, t);
     }
+    // called by
+    // PGLog::IndexedLog::roll_forward_to
     void rollforward(const pg_log_entry_t &entry) override {
       pg->get_pgbackend()->rollforward(entry, t);
     }
@@ -1862,6 +1908,8 @@ protected:
       *out << "ActMap";
     }
   };
+
+  // Peering -> Active(initial->Activating)
   struct Activate : boost::statechart::event< Activate > {
     epoch_t activation_epoch;
     explicit Activate(epoch_t q) : boost::statechart::event< Activate >(),
@@ -1942,6 +1990,8 @@ protected:
   TrivialEvent(DeleteInterrupted)
 
   /* Encapsulates PG recovery process */
+  // created by
+  // PG::PG
   class RecoveryState {
     void start_handle(RecoveryCtx *new_ctx);
     void end_handle();
@@ -1953,6 +2003,11 @@ protected:
 
     /* States */
     struct Initial;
+
+    // created by
+    // RecoveryState::RecoveryState, which created by PG::PG
+    // RecoveryState::RecoveryState will call machine.initiate() to initialize
+    // the state machine, which creates the initial state object Initial
     class RecoveryMachine : public boost::statechart::state_machine< RecoveryMachine, Initial > {
       RecoveryState *state;
     public:
@@ -2004,7 +2059,8 @@ protected:
 	ceph_assert(state->rctx);
 	state->rctx->send_notify(to, info, pi);
       }
-    };
+    }; // class RecoveryMachine
+
     friend class RecoveryMachine;
 
     /* States */
@@ -2079,6 +2135,7 @@ protected:
 	boost::statechart::custom_reaction< IntervalFlush >,
 	boost::statechart::transition< boost::statechart::event_base, Crashed >
 	> reactions;
+
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const AdvMap&);
       boost::statechart::result react(const ActMap&);
@@ -2088,8 +2145,17 @@ protected:
       }
     };
 
-    struct Start;
+    // RecoveryMachine
+    //  Started:
+    //          Start -> (Primary or Stray immediately)
+    //          Primary
+    //                  Peering
+    //                  WaitActingChange
+    //                  Active
+    //          ReplicaActive
+    //          Stray
 
+    struct Start;
     struct Started : boost::statechart::state< Started, RecoveryMachine, Start >, NamedState {
       explicit Started(my_context ctx);
       void exit();
@@ -2108,6 +2174,7 @@ protected:
 	// crash
 	boost::statechart::transition< boost::statechart::event_base, Crashed >
 	> reactions;
+
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const AdvMap&);
       boost::statechart::result react(const IntervalFlush&);
@@ -2124,7 +2191,9 @@ protected:
       void exit();
 
       typedef boost::mpl::list <
+        // will be queued by Start::Start
 	boost::statechart::transition< MakePrimary, Primary >,
+	// will be queued by Start::Start
 	boost::statechart::transition< MakeStray, Stray >
 	> reactions;
     };
@@ -2157,6 +2226,8 @@ protected:
       boost::statechart::result react(const RequestScrub&);
     };
 
+    // transit from Primary by NeedActingChange evt, which was posted by
+    // PG::RecoveryState::GetLog::GetLog
     struct WaitActingChange : boost::statechart::state< WaitActingChange, Primary>,
 			      NamedState {
       typedef boost::mpl::list <
@@ -2166,6 +2237,7 @@ protected:
 	boost::statechart::custom_reaction< MInfoRec >,
 	boost::statechart::custom_reaction< MNotifyRec >
 	> reactions;
+
       explicit WaitActingChange(my_context ctx);
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const AdvMap&);
@@ -2190,6 +2262,7 @@ protected:
 	boost::statechart::transition< Activate, Active >,
 	boost::statechart::custom_reaction< AdvMap >
 	> reactions;
+
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const AdvMap &advmap);
     };
@@ -2222,6 +2295,7 @@ protected:
 	boost::statechart::custom_reaction< RemoteReservationRevoked>,
 	boost::statechart::custom_reaction< DoRecovery>
 	> reactions;
+
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const ActMap&);
       boost::statechart::result react(const AdvMap&);
@@ -2262,6 +2336,7 @@ protected:
 	boost::statechart::custom_reaction<SetForceRecovery>,
 	boost::statechart::custom_reaction<SetForceBackfill>
       > reactions;
+
       explicit Clean(my_context ctx);
       void exit();
       boost::statechart::result react(const boost::statechart::event_base&) {
@@ -2269,15 +2344,18 @@ protected:
       }
     };
 
+    // from Activating/Recovering by AllReplicasRecovered evt
     struct Recovered : boost::statechart::state< Recovered, Active >, NamedState {
       typedef boost::mpl::list<
 	boost::statechart::transition< GoClean, Clean >,
 	boost::statechart::transition< DoRecovery, WaitLocalRecoveryReserved >,
 	boost::statechart::custom_reaction< AllReplicasActivated >
       > reactions;
+
       explicit Recovered(my_context ctx);
       void exit();
       boost::statechart::result react(const AllReplicasActivated&) {
+        // -> Clean
 	post_event(GoClean());
 	return forward_event();
       }
@@ -2292,6 +2370,7 @@ protected:
 	boost::statechart::custom_reaction< RemoteReservationRevokedTooFull>,
 	boost::statechart::custom_reaction< RemoteReservationRevoked>
 	> reactions;
+
       explicit Backfilling(my_context ctx);
       boost::statechart::result react(const RemoteReservationRejected& evt) {
 	// for compat with old peers
@@ -2310,11 +2389,15 @@ protected:
 
     struct WaitRemoteBackfillReserved : boost::statechart::state< WaitRemoteBackfillReserved, Active >, NamedState {
       typedef boost::mpl::list<
+        // will be queued by WaitRemoteBackfillReserved::WaitRemoteBackfillReserved
 	boost::statechart::custom_reaction< RemoteBackfillReserved >,
+	// will be queued by OSD::handle_pg_backfill_reserve
 	boost::statechart::custom_reaction< RemoteReservationRejected >,
 	boost::statechart::custom_reaction< RemoteReservationRevoked >,
+	// will be queued by WaitRemoteBackfillReserved::react(RemoteBackfillReserved)
 	boost::statechart::transition< AllBackfillsReserved, Backfilling >
 	> reactions;
+
       set<pg_shard_t>::const_iterator backfill_osd_it;
       explicit WaitRemoteBackfillReserved(my_context ctx);
       void retry();
@@ -2328,6 +2411,7 @@ protected:
       typedef boost::mpl::list<
 	boost::statechart::transition< LocalBackfillReserved, WaitRemoteBackfillReserved >
 	> reactions;
+
       explicit WaitLocalBackfillReserved(my_context ctx);
       void exit();
     };
@@ -2338,6 +2422,7 @@ protected:
 	boost::statechart::custom_reaction< RemoteBackfillReserved >,
 	boost::statechart::custom_reaction< RemoteReservationRejected >
 	> reactions;
+
       explicit NotBackfilling(my_context ctx);
       void exit();
       boost::statechart::result react(const RemoteBackfillReserved& evt);
@@ -2364,6 +2449,7 @@ protected:
 
     struct ToDelete;
     struct RepNotRecovering;
+    // was transit from Stray::react(MLogRec) or Stray::react(MInfoRec)
     struct ReplicaActive : boost::statechart::state< ReplicaActive, Started, RepNotRecovering >, NamedState {
       explicit ReplicaActive(my_context ctx);
       void exit();
@@ -2385,12 +2471,14 @@ protected:
 	boost::statechart::custom_reaction< RecoveryDone >,
 	boost::statechart::transition<DeleteStart, ToDelete>
 	> reactions;
+
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const MInfoRec& infoevt);
       boost::statechart::result react(const MLogRec& logevt);
       boost::statechart::result react(const MTrim& trimevt);
       boost::statechart::result react(const ActMap&);
       boost::statechart::result react(const MQuery&);
+      // will call pg->activate
       boost::statechart::result react(const Activate&);
       boost::statechart::result react(const RecoveryDone&) {
 	return discard_event();
@@ -2417,6 +2505,9 @@ protected:
 
     struct RepRecovering : boost::statechart::state< RepRecovering, ReplicaActive >, NamedState {
       typedef boost::mpl::list<
+        // queued by
+        // OSD::handle_pg_recovery_reserve, for MRecoveryReserve::RELEASE
+        // PrimaryLogPG::do_backfill, for MOSDPGBackfill::OP_BACKFILL_FINISH
 	boost::statechart::transition< RecoveryDone, RepNotRecovering >,
 	// for compat with old peers
 	boost::statechart::transition< RemoteReservationRejected, RepNotRecovering >,
@@ -2425,6 +2516,7 @@ protected:
 	boost::statechart::custom_reaction< RemoteRecoveryPreempted >,
 	boost::statechart::custom_reaction< RemoteBackfillPreempted >
 	> reactions;
+
       explicit RepRecovering(my_context ctx);
       boost::statechart::result react(const RemoteRecoveryPreempted &evt);
       boost::statechart::result react(const BackfillTooFull &evt);
@@ -2434,12 +2526,15 @@ protected:
 
     struct RepWaitBackfillReserved : boost::statechart::state< RepWaitBackfillReserved, ReplicaActive >, NamedState {
       typedef boost::mpl::list<
+        // will be queued by RepNotRecovering::react(RequestBackfillPrio)
 	boost::statechart::custom_reaction< RemoteBackfillReserved >,
 	boost::statechart::custom_reaction< RejectRemoteReservation >,
+        // will be queued by RepNotRecovering::react(RequestBackfillPrio)
 	boost::statechart::custom_reaction< RemoteReservationRejected >,
 	boost::statechart::custom_reaction< RemoteReservationCanceled >,
 	boost::statechart::custom_reaction< RecoveryDone >
 	> reactions;
+
       explicit RepWaitBackfillReserved(my_context ctx);
       void exit();
       boost::statechart::result react(const RemoteBackfillReserved &evt);
@@ -2451,11 +2546,13 @@ protected:
 
     struct RepWaitRecoveryReserved : boost::statechart::state< RepWaitRecoveryReserved, ReplicaActive >, NamedState {
       typedef boost::mpl::list<
+        // RemoteRecoveryReserved will be queued by OSD::handle_pg_recovery_reserve
 	boost::statechart::custom_reaction< RemoteRecoveryReserved >,
 	// for compat with old peers
 	boost::statechart::custom_reaction< RemoteReservationRejected >,
 	boost::statechart::custom_reaction< RemoteReservationCanceled >
 	> reactions;
+
       explicit RepWaitRecoveryReserved(my_context ctx);
       void exit();
       boost::statechart::result react(const RemoteRecoveryReserved &evt);
@@ -2469,6 +2566,7 @@ protected:
 
     struct RepNotRecovering : boost::statechart::state< RepNotRecovering, ReplicaActive>, NamedState {
       typedef boost::mpl::list<
+        // will be queued by OSD::handle_pg_backfill_reserve, for MBackfillReserve::REQUEST
 	boost::statechart::custom_reaction< RequestRecoveryPrio >,
 	boost::statechart::custom_reaction< RequestBackfillPrio >,
 	boost::statechart::custom_reaction< RejectRemoteReservation >,
@@ -2478,6 +2576,7 @@ protected:
 	boost::statechart::custom_reaction< RemoteBackfillReserved >,
 	boost::statechart::transition< RecoveryDone, RepNotRecovering >  // for compat with pre-reservation peers
 	> reactions;
+
       explicit RepNotRecovering(my_context ctx);
       boost::statechart::result react(const RequestRecoveryPrio &evt);
       boost::statechart::result react(const RequestBackfillPrio &evt);
@@ -2503,6 +2602,7 @@ protected:
       explicit Recovering(my_context ctx);
       void exit();
       void release_reservations(bool cancel = false);
+      // -> Recovered
       boost::statechart::result react(const AllReplicasRecovered &evt);
       boost::statechart::result react(const DeferRecovery& evt);
       boost::statechart::result react(const UnfoundRecovery& evt);
@@ -2511,9 +2611,12 @@ protected:
 
     struct WaitRemoteRecoveryReserved : boost::statechart::state< WaitRemoteRecoveryReserved, Active >, NamedState {
       typedef boost::mpl::list <
+        // will be queued by WaitRemoteRecoveryReserved::WaitRemoteRecoveryReserved
 	boost::statechart::custom_reaction< RemoteRecoveryReserved >,
+	// will be queued by WaitRemoteRecoveryReserved::react(RemoteRecoveryReserved)
 	boost::statechart::transition< AllRemotesReserved, Recovering >
 	> reactions;
+
       set<pg_shard_t>::const_iterator remote_recovery_reservation_it;
       explicit WaitRemoteRecoveryReserved(my_context ctx);
       boost::statechart::result react(const RemoteRecoveryReserved &evt);
@@ -2522,9 +2625,11 @@ protected:
 
     struct WaitLocalRecoveryReserved : boost::statechart::state< WaitLocalRecoveryReserved, Active >, NamedState {
       typedef boost::mpl::list <
+        // will be queued by WaitLocalRecoveryReserved::WaitLocalRecoveryReserved
 	boost::statechart::transition< LocalRecoveryReserved, WaitRemoteRecoveryReserved >,
 	boost::statechart::custom_reaction< RecoveryTooFull >
 	> reactions;
+
       explicit WaitLocalRecoveryReserved(my_context ctx);
       void exit();
       boost::statechart::result react(const RecoveryTooFull &evt);
@@ -2533,6 +2638,7 @@ protected:
     struct Activating : boost::statechart::state< Activating, Active >, NamedState {
       typedef boost::mpl::list <
 	boost::statechart::transition< AllReplicasRecovered, Recovered >,
+	// queued by PG::scrub_finish, PrimaryLogPG::on_activate
 	boost::statechart::transition< DoRecovery, WaitLocalRecoveryReserved >,
 	boost::statechart::transition< RequestBackfill, WaitLocalBackfillReserved >
 	> reactions;
@@ -2553,10 +2659,14 @@ protected:
 	boost::statechart::custom_reaction< RecoveryDone >,
 	boost::statechart::transition<DeleteStart, ToDelete>
 	> reactions;
+
       boost::statechart::result react(const MQuery& query);
       boost::statechart::result react(const MLogRec& logevt);
       boost::statechart::result react(const MInfoRec& infoevt);
       boost::statechart::result react(const ActMap&);
+      // queued by
+      // OSD::handle_pg_recovery_reserve, for MRecoveryReserve::RELEASE
+      // PrimaryLogPG::do_backfill, for MOSDPGBackfill::OP_BACKFILL_FINISH
       boost::statechart::result react(const RecoveryDone&) {
 	return discard_event();
       }
@@ -2634,6 +2744,7 @@ protected:
 	boost::statechart::custom_reaction< MLogRec >,
 	boost::statechart::custom_reaction< GotLog >,
 	boost::statechart::custom_reaction< AdvMap >,
+	// posted by PG::RecoveryState::GetLog::GetLog
 	boost::statechart::transition< IsIncomplete, Incomplete >
 	> reactions;
       boost::statechart::result react(const AdvMap&);
@@ -2644,6 +2755,7 @@ protected:
 
     struct WaitUpThru;
 
+    // transit from PG::RecoveryState::GetLog::react(const GotLog)
     struct GetMissing : boost::statechart::state< GetMissing, Peering >, NamedState {
       set<pg_shard_t> peer_missing_requested;
 
@@ -2653,12 +2765,15 @@ protected:
       typedef boost::mpl::list <
 	boost::statechart::custom_reaction< QueryState >,
 	boost::statechart::custom_reaction< MLogRec >,
+	// evt posted by PG::RecoveryState::GetMissing::GetMissing, or
+	// PG::RecoveryState::GetMissing::react(const MLogRec)
 	boost::statechart::transition< NeedUpThru, WaitUpThru >
 	> reactions;
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const MLogRec& logevt);
     };
 
+    // transit from GetMissing by NeedUpThru evt
     struct WaitUpThru : boost::statechart::state< WaitUpThru, Peering >, NamedState {
       explicit WaitUpThru(my_context ctx);
       void exit();
@@ -2684,6 +2799,8 @@ protected:
       void exit();
     };
 
+    // transit from GetLog by IsIncomplete evt, which was posted by
+    // PG::RecoveryState::GetLog::GetLog
     struct Incomplete : boost::statechart::state< Incomplete, Peering>, NamedState {
       typedef boost::mpl::list <
 	boost::statechart::custom_reaction< AdvMap >,
@@ -2714,22 +2831,35 @@ protected:
     boost::optional<RecoveryCtx> rctx;
 
   public:
+    // called by
+    // PG::PG
     explicit RecoveryState(PG *pg)
       : machine(this, pg), pg(pg), orig_ctx(0) {
       machine.initiate();
     }
 
+    // called by
+    // PG::handle_peering_event
+    // PG::handle_advance_map
+    // PG::handle_activate_map
+    // PG::handle_loaded
+    // PG::handle_create
+    // PG::handle_query_state, with the second parameter set to 0
     void handle_event(const boost::statechart::event_base &evt,
 		      RecoveryCtx *rctx) {
       start_handle(rctx);
+
       machine.process_event(evt);
+
       end_handle();
     }
 
     void handle_event(PGPeeringEventRef evt,
 		      RecoveryCtx *rctx) {
       start_handle(rctx);
+
       machine.process_event(evt->get_event());
+
       end_handle();
     }
 
@@ -2764,6 +2894,7 @@ protected:
     const vector<int> &newacting,
     int new_up_primary,
     int new_acting_primary) {
+    // set acting, actingset
     actingset.clear();
     acting = newacting;
     for (uint8_t i = 0; i < acting.size(); ++i) {
@@ -2773,6 +2904,8 @@ protected:
 	    acting[i],
 	    pool.info.is_erasure() ? shard_id_t(i) : shard_id_t::NO_SHARD));
     }
+
+    // set up, upset
     upset.clear();
     up = newup;
     for (uint8_t i = 0; i < up.size(); ++i) {
@@ -2787,6 +2920,8 @@ protected:
       primary = pg_shard_t(new_acting_primary, shard_id_t::NO_SHARD);
       return;
     }
+
+    // ec pool
     up_primary = pg_shard_t();
     primary = pg_shard_t();
     for (uint8_t i = 0; i < up.size(); ++i) {
@@ -2870,12 +3005,27 @@ protected:
   void write_if_dirty(ObjectStore::Transaction& t);
 
   PGLog::IndexedLog projected_log;
+
   bool check_in_progress_op(
     const osd_reqid_t &r,
     eversion_t *version,
     version_t *user_version,
     int *return_code) const;
+
   eversion_t projected_last_update;
+
+  // called by
+  // PrimaryLogPG::record_write_error
+  // PrimaryLogPG::execute_ctx
+  // PrimaryLogPG::trim_object
+  // PrimaryLogPG::finish_promote
+  // PrimaryLogPG::try_flush_mark_clean
+  // PrimaryLogPG::handle_watch_timeout
+  // PrimaryLogPG::mark_all_unfound_lost
+  // PrimaryLogPG::hit_set_remove_all
+  // PrimaryLogPG::hit_set_persist
+  // PrimaryLogPG::agent_maybe_evict
+  // PrimaryLogPG::scrub_snapshot_metadata
   eversion_t get_next_version() const {
     eversion_t at_version(
       get_osdmap()->get_epoch(),

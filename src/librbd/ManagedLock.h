@@ -85,6 +85,9 @@ protected:
     ceph_assert(m_state == STATE_INITIALIZING || m_state == STATE_RELEASING);
     m_state = STATE_UNLOCKED;
   }
+
+  // called by
+  // ExclusiveLock<I>::post_acquire_lock_handler
   inline void set_state_waiting_for_lock() {
     ceph_assert(m_lock.is_locked());
     ceph_assert(m_state == STATE_ACQUIRING);
@@ -219,7 +222,9 @@ private:
   bool m_blacklist_on_break_lock;
   uint32_t m_blacklist_expire_seconds;
 
+  // ManagedLock<I>::send_acquire_lock
   std::string m_cookie;
+  // ManagedLock<I>::send_reacquire_lock
   std::string m_new_cookie;
 
   State m_state;

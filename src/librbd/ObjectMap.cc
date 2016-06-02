@@ -43,6 +43,8 @@ ObjectMap<I>::~ObjectMap() {
   delete m_update_guard;
 }
 
+// librbd::remove
+// static
 template <typename I>
 int ObjectMap<I>::aio_remove(librados::IoCtx &io_ctx, const std::string &image_id,
 			     librados::AioCompletion *c) {
@@ -52,19 +54,35 @@ int ObjectMap<I>::aio_remove(librados::IoCtx &io_ctx, const std::string &image_i
 template <typename I>
 std::string ObjectMap<I>::object_map_name(const std::string &image_id,
 				          uint64_t snap_id) {
+  // "rbd_object_map."
   std::string oid(RBD_OBJECT_MAP_PREFIX + image_id);
+
   if (snap_id != CEPH_NOSNAP) {
     std::stringstream snap_suffix;
+
+    // e.g., rbd_object_map.2cf512ae8944a.0000000000000030
     snap_suffix << "." << std::setfill('0') << std::setw(16) << std::hex
 		<< snap_id;
+
     oid += snap_suffix.str();
   }
+
+  // object map for HEAD image, no snapid suffix, for e.g.,
+  // rbd_object_map.2cf512ae8944a
   return oid;
 }
 
+// called by
+// librbd/image/CreateRequest.cc:validate_layout
+// librbd::object_map::CreateRequest<I>::send
+// librbd::Operations<I>::resize
+// librbd::Operations<I>::execute_resize
+// static
 template <typename I>
 bool ObjectMap<I>::is_compatible(const file_layout_t& layout, uint64_t size) {
   uint64_t object_count = Striper::get_num_objects(layout, size);
+
+  // 256000000
   return (object_count <= cls::rbd::MAX_OBJECT_MAP_OBJECT_COUNT);
 }
 
@@ -84,6 +102,11 @@ uint8_t ObjectMap<I>::operator[](uint64_t object_no) const
   return m_object_map[object_no];
 }
 
+// called by
+// ObjectReadRequest<I>::send
+// AbstractObjectWriteRequest::send
+// operations/TrimRequests.cc/C_RemoveObject::send
+// LibrbdWriteback::read
 template <typename I>
 bool ObjectMap<I>::object_may_exist(uint64_t object_no) const
 {
@@ -103,13 +126,22 @@ bool ObjectMap<I>::object_may_exist(uint64_t object_no) const
   }
 
   RWLock::RLocker l(m_image_ctx.object_map_lock);
+
   uint8_t state = (*this)[object_no];
+
+  // if state is OBJECT_NONEXISTENT, then it does not exist definitely
   bool exists = (state != OBJECT_NONEXISTENT);
+
   ldout(m_image_ctx.cct, 20) << "object_no=" << object_no << " r=" << exists
 			     << dendl;
-  return exists;
+
+  return exists; // exists false means does not exist, true means maybe exist
 }
 
+// called by
+// ObjectMap<I>::aio_update(..., T *callback_object), for external caller
+// ObjectMap<I>::aio_update(..., Context *on_finish), for
+//      librbd::operation::TrimRequest<I>::send_pre/post_copyup/remove
 template <typename I>
 bool ObjectMap<I>::update_required(const ceph::BitVector<2>::Iterator& it,
                                    uint8_t new_state) {
@@ -120,16 +152,24 @@ bool ObjectMap<I>::update_required(const ceph::BitVector<2>::Iterator& it,
       (new_state == OBJECT_NONEXISTENT && state != OBJECT_PENDING)) {
     return false;
   }
+
   return true;
 }
 
+// called by
+// librbd::SetSnapRequest<I>::send_open_object_map
+// librbd::exclusive_lock::AcquireRequest<I>::send_open_object_map
+// librbd::operation::SnapshotRollbackRequest<I>::send_refresh_object_map
 template <typename I>
 void ObjectMap<I>::open(Context *on_finish) {
   auto req = object_map::RefreshRequest<I>::create(
     m_image_ctx, &m_object_map, m_snap_id, on_finish);
+
   req->send();
 }
 
+// called by
+// librbd::exclusive_lock::ReleaseRequest<I>::send_close_journal
 template <typename I>
 void ObjectMap<I>::close(Context *on_finish) {
   if (m_snap_id != CEPH_NOSNAP) {
@@ -137,10 +177,14 @@ void ObjectMap<I>::close(Context *on_finish) {
     return;
   }
 
+  // unlock HEAD object_map, e.g., unlock rbd_object_map.2cf512ae8944a
   auto req = object_map::UnlockRequest<I>::create(m_image_ctx, on_finish);
+
   req->send();
 }
 
+// called by
+// librbd::operation::SnapshotRollbackRequest<I>::send_rollback_object_map
 template <typename I>
 bool ObjectMap<I>::set_object_map(ceph::BitVector<2> &target_object_map) {
   ceph_assert(m_image_ctx.owner_lock.is_locked());
@@ -157,11 +201,15 @@ void ObjectMap<I>::rollback(uint64_t snap_id, Context *on_finish) {
   ceph_assert(m_image_ctx.snap_lock.is_locked());
   ceph_assert(m_image_ctx.object_map_lock.is_wlocked());
 
+  // snap_id is the snapshot we want to rollback to
   object_map::SnapshotRollbackRequest *req =
     new object_map::SnapshotRollbackRequest(m_image_ctx, snap_id, on_finish);
+
   req->send();
 }
 
+// called by
+// librbd::operation::SnapshotCreateRequest<I>::send_create_object_map
 template <typename I>
 void ObjectMap<I>::snapshot_add(uint64_t snap_id, Context *on_finish) {
   ceph_assert(m_image_ctx.snap_lock.is_locked());
@@ -171,9 +219,12 @@ void ObjectMap<I>::snapshot_add(uint64_t snap_id, Context *on_finish) {
   object_map::SnapshotCreateRequest *req =
     new object_map::SnapshotCreateRequest(m_image_ctx, &m_object_map, snap_id,
                                           on_finish);
+
   req->send();
 }
 
+// called by
+// librbd::operation::SnapshotRemoveRequest<I>::send_remove_object_map
 template <typename I>
 void ObjectMap<I>::snapshot_remove(uint64_t snap_id, Context *on_finish) {
   ceph_assert(m_image_ctx.snap_lock.is_wlocked());
@@ -183,21 +234,27 @@ void ObjectMap<I>::snapshot_remove(uint64_t snap_id, Context *on_finish) {
   object_map::SnapshotRemoveRequest *req =
     new object_map::SnapshotRemoveRequest(m_image_ctx, &m_object_map, snap_id,
                                           on_finish);
+
   req->send();
 }
 
+// called by
+// librbd::operation::RebuildObjectMapRequest<I>::send_save_object_map
 template <typename I>
 void ObjectMap<I>::aio_save(Context *on_finish) {
   ceph_assert(m_image_ctx.owner_lock.is_locked());
   ceph_assert(m_image_ctx.snap_lock.is_locked());
   ceph_assert(m_image_ctx.test_features(RBD_FEATURE_OBJECT_MAP,
                                    m_image_ctx.snap_lock));
+
   RWLock::RLocker object_map_locker(m_image_ctx.object_map_lock);
 
   librados::ObjectWriteOperation op;
+
   if (m_snap_id == CEPH_NOSNAP) {
     rados::cls::lock::assert_locked(&op, RBD_LOCK_NAME, LOCK_EXCLUSIVE, "", "");
   }
+
   cls_client::object_map_save(&op, m_object_map);
 
   std::string oid(object_map_name(m_image_ctx.id, m_snap_id));
@@ -208,6 +265,10 @@ void ObjectMap<I>::aio_save(Context *on_finish) {
   comp->release();
 }
 
+// called by
+// librbd::operation::RebuildObjectMapRequest<I>::send_resize_object_map
+// librbd::operation::ResizeRequest<I>::send_grow_object_map
+// librbd::operation::ResizeRequest<I>::send_shrink_object_map
 template <typename I>
 void ObjectMap<I>::aio_resize(uint64_t new_size, uint8_t default_object_state,
 			      Context *on_finish) {
@@ -222,9 +283,13 @@ void ObjectMap<I>::aio_resize(uint64_t new_size, uint8_t default_object_state,
   object_map::ResizeRequest *req = new object_map::ResizeRequest(
     m_image_ctx, &m_object_map, m_snap_id, new_size, default_object_state,
     on_finish);
+
   req->send();
 }
 
+// called by
+// ObjectMap<I>::aio_update(..., T *callback_object), for snap_id == CEPH_NOSNAP
+// ObjectMap<I>::handle_detained_aio_update
 template <typename I>
 void ObjectMap<I>::detained_aio_update(UpdateOperation &&op) {
   CephContext *cct = m_image_ctx.cct;
@@ -233,7 +298,7 @@ void ObjectMap<I>::detained_aio_update(UpdateOperation &&op) {
   ceph_assert(m_image_ctx.snap_lock.is_locked());
   ceph_assert(m_image_ctx.object_map_lock.is_wlocked());
 
-  BlockGuardCell *cell;
+  BlockGuardCell *cell; // records a pointer to DetainedBlockExtent, reinterpret_cast to access the content
   int r = m_update_guard->detain({op.start_object_no, op.end_object_no},
                                  &op, &cell);
   if (r < 0) {
@@ -241,7 +306,8 @@ void ObjectMap<I>::detained_aio_update(UpdateOperation &&op) {
                << dendl;
     m_image_ctx.op_work_queue->queue(op.on_finish, r);
     return;
-  } else if (r > 0) {
+  } else if (r > 0) { // the op was emplaced back of BlockGuard::m_detained_block_extents[].block_operations,
+                      // i.e., the update has to be blocked
     ldout(cct, 20) << "detaining object map update due to in-flight update: "
                    << "start=" << op.start_object_no << ", "
 		   << "end=" << op.end_object_no << ", "
@@ -252,13 +318,17 @@ void ObjectMap<I>::detained_aio_update(UpdateOperation &&op) {
     return;
   }
 
+  // ok, not blocked, update object map immediately
+
   ldout(cct, 20) << "in-flight update cell: " << cell << dendl;
-  Context *on_finish = op.on_finish;
+
+  Context *on_finish = op.on_finish; // callback of the external caller
   Context *ctx = new FunctionContext([this, cell, on_finish](int r) {
       handle_detained_aio_update(cell, r, on_finish);
     });
+
   aio_update(CEPH_NOSNAP, op.start_object_no, op.end_object_no, op.new_state,
-             op.current_state, op.parent_trace, ctx);
+             op.current_state, op.parent_trace, ctx); // ObjectMap<I>::handle_detained_aio_update
 }
 
 template <typename I>
@@ -267,13 +337,20 @@ void ObjectMap<I>::handle_detained_aio_update(BlockGuardCell *cell, int r,
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "cell=" << cell << ", r=" << r << dendl;
 
+  // aip_update may failed, which will result Request::should_complete
+  // to invalidate the object map, which will finally call this callback,
+  // so the returned result for aio_update(CEPH_NOSNAP, ...) should be
+  // lost, we only get the return result of the invalidate request
+
   typename UpdateGuard::BlockOperations block_ops;
+  // get aio_update blocked by m_update_guard->detain
   m_update_guard->release(cell, &block_ops);
 
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     RWLock::WLocker object_map_locker(m_image_ctx.object_map_lock);
-    for (auto &op : block_ops) {
+
+    for (auto &op : block_ops) { // send any blocked aio_update
       detained_aio_update(std::move(op));
     }
   }
@@ -281,6 +358,9 @@ void ObjectMap<I>::handle_detained_aio_update(BlockGuardCell *cell, int r,
   on_finish->complete(r);
 }
 
+// called by
+// ObjectMap<I>::detained_aio_update
+// ObjectMap<I>::aio_update(..., T *callback_object)
 template <typename I>
 void ObjectMap<I>::aio_update(uint64_t snap_id, uint64_t start_object_no,
                               uint64_t end_object_no, uint8_t new_state,
@@ -301,6 +381,7 @@ void ObjectMap<I>::aio_update(uint64_t snap_id, uint64_t start_object_no,
                  << (current_state ?
                        stringify(static_cast<uint32_t>(*current_state)) : "")
 		 << "->" << static_cast<uint32_t>(new_state) << dendl;
+
   if (snap_id == CEPH_NOSNAP) {
     end_object_no = std::min(end_object_no, m_object_map.size());
     if (start_object_no >= end_object_no) {
@@ -318,6 +399,7 @@ void ObjectMap<I>::aio_update(uint64_t snap_id, uint64_t start_object_no,
     }
     if (it == end_it) {
       ldout(cct, 20) << "object map update not required" << dendl;
+
       m_image_ctx.op_work_queue->queue(on_finish, 0);
       return;
     }

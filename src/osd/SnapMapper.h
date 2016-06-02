@@ -27,6 +27,17 @@
 #include "include/object.h"
 #include "os/ObjectStore.h"
 
+// map_cacher.hpp defines three classes:
+// class Transaction;
+// class StoreDriver;
+// class MapCacher;
+
+// created by
+// OSD::recursive_remove_collection
+// member of PG
+// member of Scrub::Store
+// ceph_objectstore_tool.cc/ObjectStoreTool::get_object
+// ceph_objectstore_tool.cc/do_remove_object
 class OSDriver : public MapCacher::StoreDriver<std::string, bufferlist> {
   ObjectStore *os;
   ObjectStore::CollectionHandle ch;
@@ -35,9 +46,11 @@ class OSDriver : public MapCacher::StoreDriver<std::string, bufferlist> {
 public:
   class OSTransaction : public MapCacher::Transaction<std::string, bufferlist> {
     friend class OSDriver;
+
     coll_t cid;
     ghobject_t hoid;
     ObjectStore::Transaction *t;
+
     OSTransaction(
       const coll_t &cid,
       const ghobject_t &hoid,
@@ -74,7 +87,7 @@ public:
   int get_next(
     const std::string &key,
     pair<std::string, bufferlist> *next) override;
-};
+}; // class OSDriver
 
 /**
  * SnapMapper
@@ -98,15 +111,22 @@ public:
  * snap will sort together, and so that all objects in a pg for a
  * particular snap will group under up to 8 prefixes.
  */
+// created by
+// ceph_objectstore_tool.cc/do_remove_object
+// ceph_objectstore_tool.cc/ObjectStoreTool::get_object
+// as a member of PG
 class SnapMapper {
 public:
   CephContext* cct;
+
   struct object_snaps {
     hobject_t oid;
     std::set<snapid_t> snaps;
+
     object_snaps(hobject_t oid, const std::set<snapid_t> &snaps)
       : oid(oid), snaps(snaps) {}
     object_snaps() {}
+
     void encode(bufferlist &bl) const;
     void decode(bufferlist::const_iterator &bp);
   };
@@ -143,6 +163,7 @@ private:
     const hobject_t &oid,
     MapCacher::Transaction<std::string, bufferlist> *t);
 
+  // for assertion only
   // True if hoid belongs in this mapping based on mask_bits and match
   bool check(const hobject_t &hoid) const;
 
@@ -160,16 +181,19 @@ public:
     ceph_assert(r < (int)sizeof(buf));
     return string(buf, r) + '_';
   }
+
   uint32_t mask_bits;
   const uint32_t match;
-  string last_key_checked;
+  string last_key_checked; // never used
+
   const int64_t pool;
   const shard_id_t shard;
   const string shard_prefix;
+
   SnapMapper(
     CephContext* cct,
-    MapCacher::StoreDriver<std::string, bufferlist> *driver,
-    uint32_t match,  ///< [in] pgid
+    MapCacher::StoreDriver<std::string, bufferlist> *driver, // PG::osdriver
+    uint32_t match,  ///< [in] pgid, i.e., spg_t::m_seed, i.e., non raw seed
     uint32_t bits,   ///< [in] current split bits
     int64_t pool,    ///< [in] pool
     shard_id_t shard ///< [in] shard
@@ -179,20 +203,27 @@ public:
     update_bits(mask_bits);
   }
 
+  // used by
+  // SnapMapper::get_next_objects_to_trim
   set<string> prefixes;
   /// Update bits in case of pg split or merge
   void update_bits(
     uint32_t new_bits  ///< [in] new split bits
     ) {
     mask_bits = new_bits;
+
     set<string> _prefixes = hobject_t::get_prefixes(
       mask_bits,
       match,
       pool);
+
     prefixes.clear();
     for (set<string>::iterator i = _prefixes.begin();
 	 i != _prefixes.end();
 	 ++i) {
+      // will be used by SnapMapper::get_next_objects_to_trim to search
+      // snap mapping that belongs to this PG
+      // e.g., "0000000000000000.50"
       prefixes.insert(shard_prefix + *i);
     }
   }

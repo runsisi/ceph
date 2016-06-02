@@ -19,6 +19,9 @@ namespace image {
 using util::create_context_callback;
 using util::create_rados_callback;
 
+// created by
+// librbd::operation::DisableFeaturesRequest<I>::send_update_flags
+// librbd::operation::EnableFeaturesRequest<I>::send_update_flags
 template <typename I>
 SetFlagsRequest<I>::SetFlagsRequest(I *image_ctx, uint64_t flags,
 				    uint64_t mask, Context *on_finish)
@@ -37,7 +40,10 @@ void SetFlagsRequest<I>::send_set_flags() {
   ldout(cct, 20) << __func__ << dendl;
 
   RWLock::WLocker snap_locker(m_image_ctx->snap_lock);
+
   std::vector<uint64_t> snap_ids;
+
+  // HEAD + all snapshots, all flags are set on the omap entries of image header object
   snap_ids.push_back(CEPH_NOSNAP);
   for (auto it : m_image_ctx->snap_info) {
     snap_ids.push_back(it.first);
@@ -45,6 +51,7 @@ void SetFlagsRequest<I>::send_set_flags() {
 
   Context *ctx = create_context_callback<
     SetFlagsRequest<I>, &SetFlagsRequest<I>::handle_set_flags>(this);
+
   C_Gather *gather_ctx = new C_Gather(cct, ctx);
 
   for (auto snap_id : snap_ids) {
@@ -57,6 +64,7 @@ void SetFlagsRequest<I>::send_set_flags() {
     ceph_assert(r == 0);
     comp->release();
   }
+
   gather_ctx->activate();
 }
 
@@ -69,6 +77,7 @@ Context *SetFlagsRequest<I>::handle_set_flags(int *result) {
     lderr(cct) << "set_flags failed: " << cpp_strerror(*result)
 	       << dendl;
   }
+
   return m_on_finish;
 }
 

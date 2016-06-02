@@ -34,6 +34,8 @@ struct BlockExtent {
 struct BlockGuardCell {
 };
 
+// created by
+// ObjectMap<I>::ObjectMap, i.e., as a member of librbd::ObjectMap
 /**
  * Helper class to restrict and order concurrent IO to the same block. The
  * definition of a block is dependent upon the user of this class. It might
@@ -74,6 +76,7 @@ public:
     if (it != m_detained_block_extents.end()) {
       // request against an already detained block
       detained_block_extent = &(*it);
+
       if (block_operation != nullptr) {
         detained_block_extent->block_operations.emplace_back(
           std::move(*block_operation));
@@ -89,12 +92,15 @@ public:
         m_free_detained_block_extents.pop_front();
       } else {
         ldout(m_cct, 20) << "no free detained block cells" << dendl;
+
         m_detained_block_extent_pool.emplace_back();
         detained_block_extent = &m_detained_block_extent_pool.back();
       }
 
       detained_block_extent->block_extent = block_extent;
+
       m_detained_block_extents.insert(*detained_block_extent);
+
       *cell = reinterpret_cast<BlockGuardCell*>(detained_block_extent);
       return 0;
     }

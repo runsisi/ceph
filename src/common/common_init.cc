@@ -27,11 +27,18 @@
 #define _STR(x) #x
 #define STRINGIFY(x) _STR(x)
 
+// called by
+// global_pre_init
+// libcephd.cc/cephd_generate_secret_key
+// rados_create_cct
+// PoolReplayer::init_rados
+// libcephfs.cc/ceph_create
 CephContext *common_preinit(const CephInitParameters &iparams,
 			    enum code_environment_t code_env, int flags)
 {
   // set code environment
   ANNOTATE_BENIGN_RACE_SIZED(&g_code_env, sizeof(g_code_env), "g_code_env");
+
   g_code_env = code_env;
 
   // Create a configuration object
@@ -95,6 +102,8 @@ void complain_about_parse_errors(CephContext *cct,
 
 /* Please be sure that this can safely be called multiple times by the
  * same application. */
+// called by
+// all daemons, utils, and librados::RadosClient::connect
 void common_init_finish(CephContext *cct)
 {
   // only do this once per cct
@@ -103,10 +112,15 @@ void common_init_finish(CephContext *cct)
   }
   cct->_finished = true;
   cct->init_crypto();
+
   ZTracer::ztrace_init();
 
   int flags = cct->get_init_flags();
+
+  // this flag was set only by ceph-conf and ceph-mon
   if (!(flags & CINIT_FLAG_NO_DAEMON_ACTIONS))
+    // create service thread to reopen log files, heart beat and refresh perf counter,
+    // init admin socket
     cct->start_service_thread();
 
   if ((flags & CINIT_FLAG_DEFER_DROP_PRIVILEGES) &&

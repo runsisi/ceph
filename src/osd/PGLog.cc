@@ -40,12 +40,16 @@ void PGLog::IndexedLog::split_out_child(
   *target = IndexedLog(pg_log_t::split_out_child(child_pgid, split_bits));
   index();
   target->index();
+
   reset_rollback_info_trimmed_to_riter();
 }
 
+// called by
+// PGLog::trim
+// PG::append_log
 void PGLog::IndexedLog::trim(
   CephContext* cct,
-  eversion_t s,
+  eversion_t s,         // trim_to, i.e., trim entries in [:trim_to]
   set<eversion_t> *trimmed,
   set<string>* trimmed_dups,
   eversion_t *write_from_dups)
@@ -61,7 +65,7 @@ void PGLog::IndexedLog::trim(
 
   while (!log.empty()) {
     const pg_log_entry_t &e = *log.begin();
-    if (e.version > s)
+    if (e.version > s) // trim entries in [:s]
       break;
     lgeneric_subdout(cct, osd, 20) << "trim " << e << dendl;
     if (trimmed)
@@ -94,7 +98,7 @@ void PGLog::IndexedLog::trim(
 	e.version == rollback_info_trimmed_to_riter->version) {
       log.pop_front();
       rollback_info_trimmed_to_riter = log.rend();
-    } else {
+    } else { // no need to update rollback_info_trimmed_to_riter
       log.pop_front();
     }
 
@@ -149,11 +153,15 @@ ostream& PGLog::IndexedLog::print(ostream& out) const
 
 //////////////////// PGLog ////////////////////
 
+// called by
+// Stray::react(const MLogRec)
+// PrimaryLogPG::on_removal
 void PGLog::reset_backfill()
 {
   missing.clear();
 }
 
+// never called
 void PGLog::clear() {
   missing.clear();
   log.clear();
@@ -161,6 +169,9 @@ void PGLog::clear() {
   undirty();
 }
 
+// static
+// called by
+// OSD::RemoveWQ::_process
 void PGLog::clear_info_log(
   spg_t pgid,
   ObjectStore::Transaction *t) {
@@ -168,6 +179,10 @@ void PGLog::clear_info_log(
   t->remove(coll, pgid.make_pgmeta_oid());
 }
 
+// called by
+// PG::trim_log, which called by PG::RecoveryState::Recovered::Recovered
+// PG::append_log, which called by PrimaryLogPG::log_operation
+// OSD::handle_pg_trim, to handle MOSDPGTrim
 void PGLog::trim(
   eversion_t trim_to,
   pg_info_t &info,
@@ -191,6 +206,8 @@ void PGLog::trim(
   }
 }
 
+// called by
+// PG::proc_replica_log
 void PGLog::proc_replica_log(
   pg_info_t &oinfo,
   const pg_log_t &olog,
@@ -260,14 +277,16 @@ void PGLog::proc_replica_log(
     first_non_divergent->version;
 
   IndexedLog folog(olog);
+
   auto divergent = folog.rewind_from_head(lu);
+
   _merge_divergent_entries(
     folog,
     divergent,
     oinfo,
     olog.get_can_rollback_to(),
     omissing,
-    0,
+    0, // optional, LogEntryHandler *rollbacker
     this);
 
   if (lu < oinfo.last_update) {
@@ -293,6 +312,9 @@ void PGLog::proc_replica_log(
   }
 } // proc_replica_log
 
+// called by
+// PG::rewind_divergent_log
+// PGLog::merge_log
 /**
  * rewind divergent entries at the head of the log
  *
@@ -313,33 +335,41 @@ void PGLog::rewind_divergent_log(eversion_t newhead,
     info.last_complete = newhead;
 
   auto divergent = log.rewind_from_head(newhead);
-  if (!divergent.empty()) {
+  if (!divergent.empty()) { // divergent entries in [newhead, oldhead]
     mark_dirty_from(divergent.front().version);
   }
+
   for (auto &&entry: divergent) {
     dout(10) << "rewind_divergent_log future divergent " << entry << dendl;
   }
+
   info.last_update = newhead;
 
   _merge_divergent_entries(
-    log,
+    log,        // IndexedLog
     divergent,
     info,
     log.get_can_rollback_to(),
     missing,
-    rollbacker,
+    rollbacker, // PGLogEntryHandler instance on stack
     this);
 
   dirty_info = true;
   dirty_big_info = true;
 }
 
+// called by
+// PG::merge_log
 void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
                       pg_info_t &info, LogEntryHandler *rollbacker,
                       bool &dirty_info, bool &dirty_big_info)
 {
   dout(10) << "merge_log " << olog << " from osd." << fromosd
            << " into " << log << dendl;
+
+  // 1. extend on tail
+  // 2. throw divergent entries, i.e., shrink on head
+  // 3. extend on head
 
   // Check preconditions
 
@@ -363,18 +393,23 @@ void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
   eversion_t orig_tail = log.tail;
   if (olog.tail < log.tail) {
     dout(10) << "merge_log extending tail to " << olog.tail << dendl;
+
     list<pg_log_entry_t>::iterator from = olog.log.begin();
     list<pg_log_entry_t>::iterator to;
     eversion_t last;
     for (to = from;
 	 to != olog.log.end();
 	 ++to) {
-      if (to->version > log.tail)
+      if (to->version > log.tail) // extend [olog.log.begin(), log.tail]
 	break;
+
       log.index(*to);
+
       dout(15) << *to << dendl;
+
       last = to->version;
     }
+
     mark_dirty_to(last);
 
     // splice into our log.
@@ -382,6 +417,7 @@ void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
 		   olog.log, from, to);
 
     info.log_tail = log.tail = olog.tail;
+
     changed = true;
   }
 
@@ -397,6 +433,7 @@ void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
   // do we have divergent entries to throw out?
   if (olog.head < log.head) {
     rewind_divergent_log(olog.head, info, rollbacker, dirty_info, dirty_big_info);
+
     changed = true;
   }
 
@@ -419,11 +456,14 @@ void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
 	break;
       }
     }
+
     dout(20) << "merge_log cut point (usually last shared) is "
 	     << lower_bound << dendl;
+
     mark_dirty_from(lower_bound);
 
     auto divergent = log.rewind_from_head(lower_bound);
+
     // move aside divergent items
     for (auto &&oe: divergent) {
       dout(10) << "merge_log divergent " << oe << dendl;
@@ -587,12 +627,14 @@ void PGLog::check() {
 }
 
 // non-static
+// called by
+// PG::write_if_dirty
 void PGLog::write_log_and_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist> *km,
   const coll_t& coll,
-  const ghobject_t &log_oid,
-  bool require_rollback)
+  const ghobject_t &log_oid, // pgmeta_oid
+  bool require_rollback) // pool.info.require_rollback(), i.e., ec pool
 {
   if (is_dirty()) {
     dout(5) << "write_log_and_missing with: "
@@ -603,6 +645,7 @@ void PGLog::write_log_and_missing(
 	     << ", trimmed_dups: " << trimmed_dups
 	     << ", clear_divergent_priors: " << clear_divergent_priors
 	     << dendl;
+
     _write_log_and_missing(
       t, km, log, coll, log_oid,
       dirty_to,
@@ -613,7 +656,7 @@ void PGLog::write_log_and_missing(
       missing,
       !touched_log,
       require_rollback,
-      clear_divergent_priors,
+      clear_divergent_priors, // was set by read_log_and_missing
       dirty_to_dups,
       dirty_from_dups,
       write_from_dups,
@@ -626,6 +669,8 @@ void PGLog::write_log_and_missing(
 }
 
 // static
+// called by
+// ceph_objectstore_tool.cc/write_pg
 void PGLog::write_log_and_missing_wo_missing(
     ObjectStore::Transaction& t,
     map<string,bufferlist> *km,
@@ -643,10 +688,12 @@ void PGLog::write_log_and_missing_wo_missing(
 }
 
 // static
+// called by
+// ceph_objectstore_tool.cc/write_pg
 void PGLog::write_log_and_missing(
     ObjectStore::Transaction& t,
     map<string,bufferlist> *km,
-    pg_log_t &log,
+    pg_log_t &log,      // for member method, this is PGLog::log member variable of type IndexedLog
     const coll_t& coll,
     const ghobject_t &log_oid,
     const pg_missing_tracker_t &missing,
@@ -669,6 +716,8 @@ void PGLog::write_log_and_missing(
 }
 
 // static
+// called by
+// PGLog::write_log_and_missing_wo_missing, which called by ceph_objectstore_tool.cc/write_pg
 void PGLog::_write_log_and_missing_wo_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist> *km,
@@ -690,17 +739,21 @@ void PGLog::_write_log_and_missing_wo_missing(
   // dout(10) << "write_log_and_missing, clearing up to " << dirty_to << dendl;
   if (touch_log)
     t.touch(coll, log_oid);
+
   if (dirty_to != eversion_t()) {
     t.omap_rmkeyrange(
       coll, log_oid,
       eversion_t().get_key_name(), dirty_to.get_key_name());
+
     clear_up_to(log_keys_debug, dirty_to.get_key_name());
   }
+
   if (dirty_to != eversion_t::max() && dirty_from != eversion_t::max()) {
     // dout(10) << "write_log_and_missing, clearing from " << dirty_from << dendl;
     t.omap_rmkeyrange(
       coll, log_oid,
       dirty_from.get_key_name(), eversion_t::max().get_key_name());
+
     clear_after(log_keys_debug, dirty_from.get_key_name());
   }
 
@@ -709,6 +762,7 @@ void PGLog::_write_log_and_missing_wo_missing(
        ++p) {
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
+
     (*km)[p->get_key_name()].claim(bl);
   }
 
@@ -719,6 +773,7 @@ void PGLog::_write_log_and_missing_wo_missing(
        ++p) {
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
+
     (*km)[p->get_key_name()].claim(bl);
   }
 
@@ -784,6 +839,10 @@ void PGLog::_write_log_and_missing_wo_missing(
 }
 
 // static
+// called by
+// PGLog::write_log_and_missing, i.e., member method, which called by PG::write_if_dirty
+// PGLog::write_log_and_missing(..., log, ..., missing, ...), i.e., static, which
+//      called by ceph_objectstore_tool.cc/write_pg
 void PGLog::_write_log_and_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist>* km,
@@ -796,7 +855,7 @@ void PGLog::_write_log_and_missing(
   set<string> &&trimmed_dups,
   const pg_missing_tracker_t &missing,
   bool touch_log,
-  bool require_rollback,
+  bool require_rollback, // ec pool?
   bool clear_divergent_priors,
   eversion_t dirty_to_dups,
   eversion_t dirty_from_dups,
@@ -819,12 +878,15 @@ void PGLog::_write_log_and_missing(
 
   if (touch_log)
     t.touch(coll, log_oid);
+
   if (dirty_to != eversion_t()) {
     t.omap_rmkeyrange(
       coll, log_oid,
       eversion_t().get_key_name(), dirty_to.get_key_name());
+
     clear_up_to(log_keys_debug, dirty_to.get_key_name());
   }
+
   if (dirty_to != eversion_t::max() && dirty_from != eversion_t::max()) {
     //   dout(10) << "write_log_and_missing, clearing from " << dirty_from << dendl;
     t.omap_rmkeyrange(
@@ -838,6 +900,7 @@ void PGLog::_write_log_and_missing(
        ++p) {
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
+
     (*km)[p->get_key_name()].claim(bl);
   }
 
@@ -848,6 +911,7 @@ void PGLog::_write_log_and_missing(
        ++p) {
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
+
     (*km)[p->get_key_name()].claim(bl);
   }
 
@@ -898,7 +962,7 @@ void PGLog::_write_log_and_missing(
     (*km)[p->get_key_name()].claim(bl);
   }
 
-  if (clear_divergent_priors) {
+  if (clear_divergent_priors) { // was set by PG::read_log_and_missing
     //dout(10) << "write_log_and_missing: writing divergent_priors" << dendl;
     to_remove.insert("divergent_priors");
   }
@@ -908,6 +972,8 @@ void PGLog::_write_log_and_missing(
     (*km)["may_include_deletes_in_missing"] = bufferlist();
     *rebuilt_missing_with_deletes = false;
   }
+
+  // pg_missing_tracker_t
   missing.get_changed(
     [&](const hobject_t &obj) {
       string key = string("missing/") + obj.to_str();

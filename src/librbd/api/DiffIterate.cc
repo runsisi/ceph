@@ -68,7 +68,9 @@ public:
   }
 
   void send() {
+    // if under throttle then return immediately, else wait for throttle
     C_OrderedThrottle *ctx = m_diff_context.throttle.start_op(this);
+
     librados::AioCompletion *rados_completion =
       util::create_rados_callback(ctx);
 
@@ -93,11 +95,14 @@ protected:
     Diffs diffs;
     if (r == 0) {
       ldout(cct, 20) << "object " << m_oid << ": list_snaps complete" << dendl;
+
       compute_diffs(&diffs);
     } else if (r == -ENOENT) {
       ldout(cct, 20) << "object " << m_oid << ": list_snaps (not found)"
                      << dendl;
+
       r = 0;
+
       compute_parent_overlap(&diffs);
     } else {
       ldout(cct, 20) << "object " << m_oid << ": list_snaps failed: "
@@ -113,6 +118,7 @@ protected:
         }
       }
     }
+
     m_diff_context.throttle.end_op(r);
   }
 
@@ -157,6 +163,7 @@ private:
         diffs->push_back(boost::make_tuple(m_offset + q->offset, q->length,
                                            end_exists));
       }
+
       return;
     }
 
@@ -165,26 +172,34 @@ private:
       ldout(cct, 20) << "diff_iterate object " << m_oid << " extent "
                      << q->offset << "~" << q->length << " from "
                      << q->buffer_extents << dendl;
+
       uint64_t opos = q->offset;
+
       for (vector<pair<uint64_t,uint64_t> >::iterator r =
              q->buffer_extents.begin();
            r != q->buffer_extents.end(); ++r) {
         interval_set<uint64_t> overlap;  // object extents
+
         overlap.insert(opos, r->second);
         overlap.intersection_of(diff);
+
         ldout(cct, 20) << " opos " << opos
                        << " buf " << r->first << "~" << r->second
                        << " overlap " << overlap << dendl;
+
         for (interval_set<uint64_t>::iterator s = overlap.begin();
     	       s != overlap.end(); ++s) {
           uint64_t su_off = s.get_start() - opos;
           uint64_t logical_off = m_offset + r->first + su_off;
+
           ldout(cct, 20) << "   overlap extent " << s.get_start() << "~"
                          << s.get_len() << " logical " << logical_off << "~"
                          << s.get_len() << dendl;
+
           diffs->push_back(boost::make_tuple(logical_off, s.get_len(),
                            end_exists));
         }
+
         opos += r->second;
       }
       ceph_assert(opos == q->offset + q->length);
@@ -201,6 +216,7 @@ private:
                q->buffer_extents.begin();
              r != q->buffer_extents.end(); ++r) {
           interval_set<uint64_t> o;
+
           o.insert(m_offset + r->first, r->second);
           o.intersection_of(m_diff_context.parent_diff);
           ldout(m_cct, 20) << " reporting parent overlap " << o << dendl;
@@ -226,6 +242,13 @@ int simple_diff_cb(uint64_t off, size_t len, int exists, void *arg) {
 
 } // anonymous namespace
 
+// static
+// called by
+// Image::diff_iterate
+// Image::diff_iterate2
+// rbd_diff_iterate
+// rbd_diff_iterate2
+//
 template <typename I>
 int DiffIterate<I>::diff_iterate(I *ictx,
 				 const cls::rbd::SnapshotNamespace& from_snap_namespace,
@@ -281,14 +304,18 @@ int DiffIterate<I>::execute() {
   librados::snap_t end_snap_id;
   uint64_t from_size = 0;
   uint64_t end_size;
+
   {
     RWLock::RLocker md_locker(m_image_ctx.md_lock);
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     head_ctx.dup(m_image_ctx.data_ctx);
+
     if (m_from_snap_name) {
       from_snap_id = m_image_ctx.get_snap_id(m_from_snap_namespace, m_from_snap_name);
       from_size = m_image_ctx.get_image_size(from_snap_id);
     }
+
     end_snap_id = m_image_ctx.snap_id;
     end_size = m_image_ctx.get_image_size(end_snap_id);
   }
@@ -296,10 +323,12 @@ int DiffIterate<I>::execute() {
   if (from_snap_id == CEPH_NOSNAP) {
     return -ENOENT;
   }
+
   if (from_snap_id == end_snap_id) {
     // no diff.
     return 0;
   }
+
   if (from_snap_id >= end_snap_id) {
     return -EINVAL;
   }
@@ -307,14 +336,17 @@ int DiffIterate<I>::execute() {
   int r;
   bool fast_diff_enabled = false;
   BitVector<2> object_diff_state;
+
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     if (m_whole_object && (m_image_ctx.features & RBD_FEATURE_FAST_DIFF) != 0) {
       r = diff_object_map(from_snap_id, end_snap_id, &object_diff_state);
       if (r < 0) {
         ldout(cct, 5) << "fast diff disabled" << dendl;
       } else {
         ldout(cct, 5) << "fast diff enabled" << dendl;
+
         fast_diff_enabled = true;
       }
     }
@@ -330,21 +362,27 @@ int DiffIterate<I>::execute() {
   // check parent overlap only if we are comparing to the beginning of time
   DiffContext diff_context(m_image_ctx, m_callback, m_callback_arg,
                            m_whole_object, from_snap_id, end_snap_id);
+
   if (m_include_parent && from_snap_id == 0) {
     RWLock::RLocker l(m_image_ctx.snap_lock);
     RWLock::RLocker l2(m_image_ctx.parent_lock);
+
     uint64_t overlap = 0;
     m_image_ctx.get_parent_overlap(m_image_ctx.snap_id, &overlap);
     r = 0;
+
     if (m_image_ctx.parent && overlap > 0) {
       ldout(cct, 10) << " first getting parent diff" << dendl;
+
       DiffIterate diff_parent(*m_image_ctx.parent, {},
 			      nullptr, 0, overlap,
                               m_include_parent, m_whole_object,
                               &simple_diff_cb,
                               &diff_context.parent_diff);
+
       r = diff_parent.execute();
     }
+
     if (r < 0) {
       return r;
     }
@@ -372,11 +410,14 @@ int DiffIterate<I>::execute() {
 
       if (fast_diff_enabled) {
         const uint64_t object_no = p->second.front().objectno;
+
         if (object_diff_state[object_no] != OBJECT_DIFF_STATE_NONE) {
           bool updated = (object_diff_state[object_no] ==
                             OBJECT_DIFF_STATE_UPDATED);
+
           for (std::vector<ObjectExtent>::iterator q = p->second.begin();
                q != p->second.end(); ++q) {
+            // e.g., disk_usage_callback(uint64_t offset, size_t len, int exists, void *arg)
             r = m_callback(off + q->offset, q->length, updated, m_callback_arg);
             if (r < 0) {
               return r;
@@ -388,6 +429,7 @@ int DiffIterate<I>::execute() {
                                                      diff_context,
                                                      p->first.name, off,
                                                      p->second);
+        // for each oid to list_snaps
         diff_object->send();
 
         if (diff_context.throttle.pending_error()) {
@@ -405,6 +447,7 @@ int DiffIterate<I>::execute() {
   if (r < 0) {
     return r;
   }
+
   return 0;
 }
 
@@ -415,6 +458,7 @@ int DiffIterate<I>::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
   CephContext* cct = m_image_ctx.cct;
 
   bool diff_from_start = (from_snap_id == 0);
+
   if (from_snap_id == 0) {
     if (!m_image_ctx.snaps.empty()) {
       from_snap_id = m_image_ctx.snaps.back();
@@ -428,8 +472,10 @@ int DiffIterate<I>::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
   uint64_t next_snap_id = to_snap_id;
   BitVector<2> prev_object_map;
   bool prev_object_map_valid = false;
+
   while (true) {
     uint64_t current_size = m_image_ctx.size;
+
     if (current_snap_id != CEPH_NOSNAP) {
       std::map<librados::snap_t, SnapInfo>::const_iterator snap_it =
         m_image_ctx.snap_info.find(current_snap_id);
@@ -450,6 +496,7 @@ int DiffIterate<I>::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
       lderr(cct) << "diff_object_map: failed to retrieve image flags" << dendl;
       return r;
     }
+
     if ((flags & RBD_FLAG_FAST_DIFF_INVALID) != 0) {
       ldout(cct, 1) << "diff_object_map: cannot perform fast diff on invalid "
                     << "object map" << dendl;
@@ -465,6 +512,7 @@ int DiffIterate<I>::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
                  << dendl;
       return r;
     }
+
     ldout(cct, 20) << "diff_object_map: loaded object map " << oid << dendl;
 
     uint64_t num_objs = Striper::get_num_objects(m_image_ctx.layout,
@@ -474,6 +522,7 @@ int DiffIterate<I>::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
                     << object_map.size() << " < " << num_objs << dendl;
       return -EINVAL;
     }
+
     object_map.resize(num_objs);
     object_diff_state->resize(object_map.size());
 
@@ -498,6 +547,7 @@ int DiffIterate<I>::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
         *diff_it = OBJECT_DIFF_STATE_UPDATED;
       }
     }
+
     ldout(cct, 20) << "diff_object_map: computed overlap diffs" << dendl;
     auto end_it = object_map.end();
     if (object_map.size() > prev_object_map.size() &&
@@ -512,15 +562,18 @@ int DiffIterate<I>::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
         }
       }
     }
+
     ldout(cct, 20) << "diff_object_map: computed resize diffs" << dendl;
 
     if (current_snap_id == next_snap_id || next_snap_id > to_snap_id) {
       break;
     }
+
     current_snap_id = next_snap_id;
     prev_object_map = object_map;
     prev_object_map_valid = true;
   }
+
   return 0;
 }
 

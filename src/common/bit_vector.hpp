@@ -262,6 +262,8 @@ const bufferlist& BitVector<_b>::get_data() const {
   return m_data;
 }
 
+// called by
+// BitVector<_b>::get_data_extents
 template <uint8_t _b>
 void BitVector<_b>::compute_index(uint64_t offset, uint64_t *index, uint64_t *shift) {
   *index = offset / ELEMENTS_PER_BLOCK;
@@ -363,6 +365,8 @@ void BitVector<_b>::decode_data(bufferlist::const_iterator& it, uint64_t byte_of
   data.swap(m_data);
 }
 
+// called by
+// cls_rbd::object_map_update
 template <uint8_t _b>
 void BitVector<_b>::get_data_extents(uint64_t offset, uint64_t length,
 				     uint64_t *byte_offset,

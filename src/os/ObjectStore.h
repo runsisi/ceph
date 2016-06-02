@@ -545,6 +545,8 @@ public:
 	on_commit.splice(on_commit.end(), i.on_commit);
 	on_applied_sync.splice(on_applied_sync.end(), i.on_applied_sync);
       }
+
+      // wrappered into one callback
       *out_on_applied = C_Contexts::list_to_context(on_applied);
       *out_on_commit = C_Contexts::list_to_context(on_commit);
       *out_on_applied_sync = C_Contexts::list_to_context(on_applied_sync);
@@ -923,13 +925,24 @@ public:
 	using ceph::decode;
         decode(aset, data_bl_p);
       }
+
+      // called by
+      // BlueStore::_txc_add_transaction, for Transaction::OP_OMAP_SETKEYS
+      // KStore::_txc_add_transaction, for Transaction::OP_OMAP_SETKEYS
+      // MemStore::_do_transaction, for Transaction::OP_OMAP_SETKEYS
       void decode_attrset_bl(bufferlist *pbl) {
 	decode_str_str_map_to_bl(data_bl_p, pbl);
       }
+
       void decode_keyset(set<string> &keys){
 	using ceph::decode;
         decode(keys, data_bl_p);
       }
+
+      // called by
+      // BlueStore::_txc_add_transaction, for Transaction::OP_OMAP_RMKEYS
+      // KStore::_txc_add_transaction, for Transaction::OP_OMAP_RMKEYS
+      // MemStore::_do_transaction, for Transaction::OP_OMAP_RMKEYS
       void decode_keyset_bl(bufferlist *pbl){
         decode_str_set_to_bl(data_bl_p, pbl);
       }
@@ -1457,6 +1470,9 @@ public:
     return queue_transactions(ch, tls, op, handle);
   }
 
+  // called by
+  // ObjectStore::ObjectStore::queue_transactions(..., onreadable, ondisk, onreadable_sync, ...)
+  // contexts are registered back of txs
   virtual int queue_transactions(
     CollectionHandle& ch, vector<Transaction>& tls,
     TrackedOpRef op = TrackedOpRef(),
@@ -1477,6 +1493,7 @@ public:
     return 0;
   }
 
+  // only overrode by BlueStore
   virtual void get_db_statistics(Formatter *f) { }
   virtual void generate_db_histogram(Formatter *f) { }
   virtual void flush_cache() { }
@@ -1847,6 +1864,7 @@ public:
     map<string, bufferlist> *out ///< [out] Returned keys and values
     ) = 0;
 
+  // those two interfaces are not used
   /// Filters keys into out which are defined on oid
   virtual int omap_check_keys(
     CollectionHandle &c,     ///< [in] Collection containing oid

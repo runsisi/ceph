@@ -166,6 +166,9 @@ OpTracker::~OpTracker() {
   }
 }
 
+// called by
+// MDSRankDispatcher::handle_asok_command, for "dump_historic_ops"
+// OSD::asok_command, for "dump_historic_ops"
 bool OpTracker::dump_historic_ops(Formatter *f, bool by_duration, set<string> filters)
 {
   if (!tracking_enabled)
@@ -212,6 +215,12 @@ bool OpTracker::dump_historic_slow_ops(Formatter *f, set<string> filters)
   return true;
 }
 
+// called by
+// MDSRankDispatcher::handle_asok_command, for "dump_ops_in_flight"/"ops"
+// MDSRankDispatcher::handle_asok_command, for "dump_blocked_ops"
+// Monitor::do_admin_command, for "ops"
+// OSD::asok_command, for "dump_ops_in_flight"/"ops"
+// OSD::asok_command, for "dump_blocked_ops"
 bool OpTracker::dump_ops_in_flight(Formatter *f, bool print_only_blocked, set<string> filters)
 {
   if (!tracking_enabled)
@@ -219,7 +228,9 @@ bool OpTracker::dump_ops_in_flight(Formatter *f, bool print_only_blocked, set<st
 
   RWLock::RLocker l(lock);
   f->open_object_section("ops_in_flight"); // overall dump
+
   uint64_t total_ops_in_flight = 0;
+
   f->open_array_section("ops"); // list of TrackedOps
   utime_t now = ceph_clock_now();
   for (uint32_t i = 0; i < num_optracker_shards; i++) {
@@ -234,19 +245,26 @@ bool OpTracker::dump_ops_in_flight(Formatter *f, bool print_only_blocked, set<st
       f->open_object_section("op");
       op.dump(now, f);
       f->close_section(); // this TrackedOp
+
       total_ops_in_flight++;
     }
   }
+
   f->close_section(); // list of TrackedOps
+
   if (print_only_blocked) {
     f->dump_float("complaint_time", complaint_time);
     f->dump_int("num_blocked_ops", total_ops_in_flight);
   } else
     f->dump_int("num_ops", total_ops_in_flight);
+
   f->close_section(); // overall dump
+
   return true;
 }
 
+// called by
+// TrackedOp::tracking_start
 bool OpTracker::register_inflight_op(TrackedOp *i)
 {
   if (!tracking_enabled)
@@ -255,6 +273,7 @@ bool OpTracker::register_inflight_op(TrackedOp *i)
   RWLock::RLocker l(lock);
   uint64_t current_seq = ++seq;
   uint32_t shard_index = current_seq % num_optracker_shards;
+
   ShardedTrackingData* sdata = sharded_in_flight_list[shard_index];
   ceph_assert(NULL != sdata);
   {
@@ -262,6 +281,7 @@ bool OpTracker::register_inflight_op(TrackedOp *i)
     sdata->ops_in_flight_sharded.push_back(*i);
     i->seq = current_seq;
   }
+
   return true;
 }
 
@@ -300,6 +320,7 @@ bool OpTracker::visit_ops_in_flight(utime_t* oldest_secs,
   for (const auto sdata : sharded_in_flight_list) {
     ceph_assert(sdata);
     Mutex::Locker locker(sdata->ops_in_flight_lock_sharded);
+
     if (!sdata->ops_in_flight_sharded.empty()) {
       utime_t oldest_op_tmp =
 	sdata->ops_in_flight_sharded.front().get_initiated();
@@ -479,6 +500,7 @@ void TrackedOp::dump(utime_t now, Formatter *f) const
   f->dump_stream("initiated_at") << get_initiated();
   f->dump_float("age", now - get_initiated());
   f->dump_float("duration", get_duration());
+
   {
     f->open_object_section("type_data");
     _dump(f);

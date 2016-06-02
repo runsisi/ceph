@@ -51,6 +51,7 @@ void PyModuleRegistry::init()
     PyImport_AppendInittab("ceph_logger", PyModule::init_ceph_logger);
   }
   PyImport_AppendInittab("ceph_module", PyModule::init_ceph_module);
+
   Py_InitializeEx(0);
 
   // Let CPython know that we will be calling it back from other
@@ -66,7 +67,7 @@ void PyModuleRegistry::init()
 
   std::list<std::string> failed_modules;
 
-  std::set<std::string> module_names = probe_modules();
+  std::set<std::string> module_names = probe_modules(); // configured mgr python modules
   // Load python code
   for (const auto& module_name : module_names) {
     dout(1) << "Loading python module '" << module_name << "'" << dendl;
@@ -175,6 +176,8 @@ void PyModuleRegistry::standby_start(MonClient &mc)
   }
 }
 
+// called by
+// Mgr::init
 void PyModuleRegistry::active_start(
             DaemonStateIndex &ds, ClusterState &cs,
             const std::map<std::string, std::string> &kv_store,

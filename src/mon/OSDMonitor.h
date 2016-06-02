@@ -314,12 +314,16 @@ private:
     OSDMonitor *osdmon;
     PrimeTempJob(const OSDMap& om, OSDMonitor *m)
       : ParallelPGMapper::Job(&om), osdmon(m) {}
+
     void process(int64_t pool, unsigned ps_begin, unsigned ps_end) override {
       for (unsigned ps = ps_begin; ps < ps_end; ++ps) {
 	pg_t pgid(ps, pool);
+
+	// osdmap is next osdmap
 	osdmon->prime_pg_temp(*osdmap, pgid);
       }
     }
+
     void complete() override {}
   };
   void maybe_prime_pg_temp();

@@ -46,6 +46,7 @@ ImageSyncThrottler<I>::~ImageSyncThrottler() {
   ceph_assert(m_queue.empty());
 }
 
+// called by BootstrapRequest<I>::image_sync
 template <typename I>
 void ImageSyncThrottler<I>::start_op(const std::string &id, Context *on_start) {
   dout(20) << "id=" << id << dendl;
@@ -74,6 +75,8 @@ void ImageSyncThrottler<I>::start_op(const std::string &id, Context *on_start) {
   }
 }
 
+// called by
+// BootstrapRequest<I>::cancel
 template <typename I>
 bool ImageSyncThrottler<I>::cancel_op(const std::string &id) {
   dout(20) << "id=" << id << dendl;
@@ -198,6 +201,7 @@ const char** ImageSyncThrottler<I>::get_tracked_conf_keys() const {
     "rbd_mirror_concurrent_image_syncs",
     NULL
   };
+
   return KEYS;
 }
 

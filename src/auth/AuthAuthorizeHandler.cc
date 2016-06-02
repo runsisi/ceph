@@ -17,6 +17,10 @@
 #include "none/AuthNoneAuthorizeHandler.h"
 #include "common/Mutex.h"
 
+// called by
+// MDSDaemon::ms_verify_authorizer
+// DaemonServer::ms_verify_authorizer
+// OSD::ms_verify_authorizer
 AuthAuthorizeHandler *AuthAuthorizeHandlerRegistry::get_handler(int protocol)
 {
   if (!supported.is_supported_auth(protocol)) {
@@ -24,6 +28,7 @@ AuthAuthorizeHandler *AuthAuthorizeHandlerRegistry::get_handler(int protocol)
   }
   
   Mutex::Locker l(m_lock);
+
   map<int,AuthAuthorizeHandler*>::iterator iter = m_authorizers.find(protocol);
   if (iter != m_authorizers.end())
     return iter->second;

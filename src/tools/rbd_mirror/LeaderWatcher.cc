@@ -25,6 +25,8 @@ using librbd::util::create_async_context_callback;
 using librbd::util::create_context_callback;
 using librbd::util::create_rados_callback;
 
+// created by
+// Replayer::init
 template <typename I>
 LeaderWatcher<I>::LeaderWatcher(Threads<I> *threads, librados::IoCtx &io_ctx,
                                 leader_watcher::Listener *listener)
@@ -47,6 +49,8 @@ LeaderWatcher<I>::~LeaderWatcher() {
   delete m_leader_lock;
 }
 
+// called by
+// Replayer::init
 template <typename I>
 std::string LeaderWatcher<I>::get_instance_id() {
   return m_instance_id;
@@ -68,6 +72,7 @@ void LeaderWatcher<I>::init(Context *on_finish) {
   ceph_assert(m_on_finish == nullptr);
   m_on_finish = on_finish;
 
+  // create "rbd_mirror_leader" object
   create_leader_object();
 }
 
@@ -118,6 +123,7 @@ void LeaderWatcher<I>::register_watch() {
     m_work_queue, create_context_callback<
       LeaderWatcher<I>, &LeaderWatcher<I>::handle_register_watch>(this));
 
+  // watch on m_oid, i.e., RBD_MIRROR_LEADER
   librbd::Watcher::register_watch(ctx);
 }
 
@@ -262,6 +268,8 @@ bool LeaderWatcher<I>::is_leader(Mutex &lock) const {
   return leader;
 }
 
+// called by
+// Replayer::release_leader, which called by asok commands
 template <typename I>
 bool LeaderWatcher<I>::is_releasing_leader() const {
   Mutex::Locker locker(m_lock);
@@ -309,6 +317,8 @@ void LeaderWatcher<I>::release_leader() {
   release_leader_lock();
 }
 
+// called by
+// Replayer::print_status
 template <typename I>
 void LeaderWatcher<I>::list_instances(std::vector<std::string> *instance_ids) {
   dout(10) << dendl;
@@ -336,6 +346,11 @@ void LeaderWatcher<I>::cancel_timer_task() {
   m_timer_task = nullptr;
 }
 
+// called by
+// LeaderWatcher<I>::handle_break_leader_lock
+// LeaderWatcher<I>::handle_get_locker
+// LeaderWatcher<I>::handle_release_leader_lock
+// LeaderWatcher<I>::handle_notify_heartbeat
 template <typename I>
 void LeaderWatcher<I>::schedule_timer_task(const std::string &name,
                                            int delay_factor, bool leader,
@@ -376,9 +391,12 @@ void LeaderWatcher<I>::schedule_timer_task(const std::string &name,
 
   dout(10) << "scheduling " << name << " after " << after << " sec (task "
            << m_timer_task << ")" << dendl;
+
   m_threads->timer->add_event_after(after, m_timer_task);
 }
 
+// called by
+// LeaderLock::post_acquire_lock_handler
 template <typename I>
 void LeaderWatcher<I>::execute_timer_task(bool leader,
                                           TimerCallback timer_callback) {
@@ -419,6 +437,8 @@ void LeaderWatcher<I>::handle_post_acquire_leader_lock(int r,
   init_instances();
 }
 
+// called by
+// LeaderLock::pre_release_lock_handler
 template <typename I>
 void LeaderWatcher<I>::handle_pre_release_leader_lock(Context *on_finish) {
   dout(10) << dendl;
@@ -431,6 +451,8 @@ void LeaderWatcher<I>::handle_pre_release_leader_lock(Context *on_finish) {
   notify_listener();
 }
 
+// called by
+// LeaderLock::handle_post_release_leader_lock
 template <typename I>
 void LeaderWatcher<I>::handle_post_release_leader_lock(int r,
                                                        Context *on_finish) {
@@ -448,6 +470,8 @@ void LeaderWatcher<I>::handle_post_release_leader_lock(int r,
   notify_lock_released();
 }
 
+// called by
+// LeaderWatcher<I>::handle_acquire_leader_lock
 template <typename I>
 void LeaderWatcher<I>::break_leader_lock() {
   dout(10) << dendl;
@@ -519,6 +543,7 @@ void LeaderWatcher<I>::get_locker() {
   ceph_assert(m_lock.is_locked());
   ceph_assert(!m_timer_op_tracker.empty());
 
+  // LeaderWatcher<I>::handle_get_locker
   C_GetLocker *get_locker_ctx = new C_GetLocker(this);
   Context *ctx = create_async_context_callback(m_work_queue, get_locker_ctx);
 
@@ -597,6 +622,13 @@ void LeaderWatcher<I>::handle_get_locker(int r,
   m_work_queue->queue(ctx, 0);
 }
 
+// called by
+// LeaderWatcher<I>::handle_register_watch
+// LeaderWatcher<I>::break_leader_lock
+// LeaderWatcher<I>::handle_break_leader_lock
+// LeaderWatcher<I>::handle_get_locker
+// LeaderWatcher<I>::acquire_leader_lock(), i.e., above, the only caller with arg set to false
+// LeaderWatcher<I>::handle_lock_released
 template <typename I>
 void LeaderWatcher<I>::schedule_acquire_leader_lock(uint32_t delay_factor) {
   dout(10) << dendl;
@@ -663,6 +695,10 @@ void LeaderWatcher<I>::handle_acquire_leader_lock(int r) {
   notify_heartbeat();
 }
 
+// called by
+// LeaderWatcher<I>::release_leader
+// LeaderWatcher<I>::handle_acquire_leader_lock
+// LeaderWatcher<I>::handle_notify_heartbeat
 template <typename I>
 void LeaderWatcher<I>::release_leader_lock() {
   dout(10) << dendl;
@@ -673,6 +709,7 @@ void LeaderWatcher<I>::release_leader_lock() {
     m_work_queue, create_context_callback<
       LeaderWatcher<I>, &LeaderWatcher<I>::handle_release_leader_lock>(this));
 
+  // was acquired by LeaderWatcher<I>::handle_register_watch
   m_leader_lock->release_lock(ctx);
 }
 
@@ -691,6 +728,8 @@ void LeaderWatcher<I>::handle_release_leader_lock(int r) {
   schedule_acquire_leader_lock(1);
 }
 
+// called by
+// LeaderWatcher<I>::handle_post_acquire_leader_lock
 template <typename I>
 void LeaderWatcher<I>::init_status_watcher() {
   dout(10) << dendl;
@@ -759,6 +798,8 @@ void LeaderWatcher<I>::handle_shut_down_status_watcher(int r) {
   unregister_watch();
 }
 
+// called by
+// LeaderWatcher<I>::handle_init_status_watcher
 template <typename I>
 void LeaderWatcher<I>::init_instances() {
   dout(10) << dendl;

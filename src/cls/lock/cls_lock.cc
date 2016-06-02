@@ -37,6 +37,7 @@ CLS_NAME(lock)
 static int read_lock(cls_method_context_t hctx, const string& name, lock_info_t *lock)
 {
   bufferlist bl;
+  // "lock."
   string key = LOCK_PREFIX;
   key.append(name);
  
@@ -46,9 +47,11 @@ static int read_lock(cls_method_context_t hctx, const string& name, lock_info_t 
       *lock = lock_info_t();
       return 0;
     }
+
     if (r != -ENOENT) {
       CLS_ERR("error reading xattr %s: %d", key.c_str(), r);
     }
+
     return r;
   }
 
@@ -68,11 +71,13 @@ static int read_lock(cls_method_context_t hctx, const string& name, lock_info_t 
 
   while (iter != lock->lockers.end()) {
     map<locker_id_t, locker_info_t>::iterator next = iter;
+
     ++next;
 
     struct locker_info_t& info = iter->second;
     if (!info.expiration.is_zero() && info.expiration < now) {
       CLS_LOG(20, "expiring locker");
+
       lock->lockers.erase(iter);
     }
 
@@ -124,13 +129,19 @@ static int lock_obj(cls_method_context_t hctx,
 {
   bool exclusive = lock_type == LOCK_EXCLUSIVE;
   lock_info_t linfo;
+
+  // rados::cls::lock::Lock::set_renew will set flags LOCK_FLAG_RENEW, which
+  // only be called by RGWAsyncLockSystemObj::_send_request and RGWRados::lock_exclusive
   bool fail_if_exists = (flags & LOCK_FLAG_RENEW) == 0;
 
   CLS_LOG(20, "requested lock_type=%s fail_if_exists=%d", cls_lock_type_str(lock_type), fail_if_exists);
+
   if (lock_type != LOCK_EXCLUSIVE &&
       lock_type != LOCK_SHARED)
     return -EINVAL;
 
+  // for rbd, either image exclusive lock or object map lock, the
+  // name is always RBD_LOCK_NAME, i.e., "rbd_lock"
   if (name.empty())
     return -EINVAL;
 
@@ -140,13 +151,18 @@ static int lock_obj(cls_method_context_t hctx,
     CLS_ERR("Could not read lock info: %s", cpp_strerror(r).c_str());
     return r;
   }
+
   map<locker_id_t, locker_info_t>& lockers = linfo.lockers;
   map<locker_id_t, locker_info_t>::iterator iter;
 
+  // locker is identified by entity_name_t + cookie
   locker_id_t id;
   id.cookie = cookie;
+
   entity_inst_t inst;
+  // op->get_req()->get_orig_source_inst(), always return 0
   r = cls_get_request_origin(hctx, &inst);
+
   id.locker = inst.name;
   ceph_assert(r == 0);
 
@@ -154,27 +170,44 @@ static int lock_obj(cls_method_context_t hctx,
    * remove the locker entry and not check it later */
   if (lockers.size() && tag != linfo.tag) {
     CLS_LOG(20, "cannot take lock on object, conflicting tag");
+
     return -EBUSY;
   }
 
   ClsLockType existing_lock_type = linfo.lock_type;
+
   CLS_LOG(20, "existing_lock_type=%s", cls_lock_type_str(existing_lock_type));
+
   iter = lockers.find(id);
   if (iter != lockers.end()) {
+
+    // has already been locked with the same <entity_name_t, cookie>
+
     if (fail_if_exists) {
       return -EEXIST;
     } else {
+
+      // silently remove the old locker
+
       lockers.erase(iter); // remove old entry
     }
   }
 
   if (!lockers.empty()) {
     if (exclusive) {
+
+      // for exclusive lock, only one locker can exist
+
       CLS_LOG(20, "could not exclusive-lock object, already locked");
       return -EBUSY;
     }
 
+    // for shared lock, multiple lockers can co-exist
+
     if (existing_lock_type != lock_type) {
+
+      // exclusive lock vs shared lock can not co-exist on the same object
+
       CLS_LOG(20, "cannot take lock on object, conflicting lock type");
       return -EBUSY;
     }
@@ -182,12 +215,14 @@ static int lock_obj(cls_method_context_t hctx,
 
   linfo.lock_type = lock_type;
   linfo.tag = tag;
+
   utime_t expiration;
   if (!duration.is_zero()) {
     expiration = ceph_clock_now();
     expiration += duration;
 
   }
+
   struct locker_info_t info(expiration, inst.addr, description);
 
   linfo.lockers[id] = info;
@@ -212,6 +247,7 @@ static int lock_op(cls_method_context_t hctx,
                    bufferlist *in, bufferlist *out)
 {
   CLS_LOG(20, "lock_op");
+
   cls_lock_lock_op op;
   try {
     auto iter = in->cbegin();
@@ -256,6 +292,7 @@ static int remove_lock(cls_method_context_t hctx,
   if (iter == lockers.end()) { // no such key
     return -ENOENT;
   }
+
   lockers.erase(iter);
 
   r = write_lock(hctx, name, linfo);
@@ -331,7 +368,9 @@ static int break_lock(cls_method_context_t hctx,
 static int get_info(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 {
   CLS_LOG(20, "get_info");
+
   cls_lock_get_info_op op;
+
   try {
     auto iter = in->cbegin();
     decode(op, iter);

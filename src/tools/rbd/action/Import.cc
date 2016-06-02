@@ -563,6 +563,7 @@ public:
       std::cerr << "rbd: error writing to destination image at offset "
                 << m_offset << ": " << cpp_strerror(r) << std::endl;
     }
+
     m_throttle.end_op(r);
   }
 
@@ -843,6 +844,7 @@ static int do_import(librados::Rados &rados, librbd::RBD &rbd,
   uint64_t size = 0;
 
   bool from_stdin = !strcmp(path, "-");
+
   if (from_stdin) {
     fd = STDIN_FILENO;
     size = 1ULL << order;
@@ -858,11 +860,13 @@ static int do_import(librados::Rados &rados, librbd::RBD &rbd,
       std::cerr << "rbd: stat error " << path << std::endl;
       goto done;
     }
+
     if (S_ISDIR(stat_buf.st_mode)) {
       r = -EISDIR;
       std::cerr << "rbd: cannot import a directory" << std::endl;
       goto done;
     }
+
     if (stat_buf.st_size)
       size = (uint64_t)stat_buf.st_size;
 
@@ -877,6 +881,7 @@ static int do_import(librados::Rados &rados, librbd::RBD &rbd,
       ceph_assert(bdev_size >= 0);
       size = (uint64_t) bdev_size;
     }
+
 #ifdef HAVE_POSIX_FADVISE
     posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
 #endif

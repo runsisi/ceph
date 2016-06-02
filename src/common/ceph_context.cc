@@ -154,10 +154,13 @@ public:
         break;
       }
 
+      // initialized to false by ctor, set to true by CephContextServiceThread::reopen_logs
       if (_reopen_logs) {
         _cct->_log->reopen_log_file();
+
         _reopen_logs = false;
       }
+
       _cct->_heartbeat_map->check_touch_file();
 
       // refresh the perf coutners
@@ -166,6 +169,7 @@ public:
     return NULL;
   }
 
+  // called by CephContext::reopen_logs
   void reopen_logs()
   {
     Mutex::Locker l(_lock);
@@ -325,6 +329,7 @@ public:
       }
 
     }
+
     if (changed.count("crush_location")) {
       cct->crush_location.update_from_conf();
     }
@@ -572,6 +577,7 @@ CephContext::CephContext(uint32_t module_type_,
     crush_location(this),
     _cct_perf(NULL)
 {
+  // _conf->subsys was initialized by md_config_t::init_subsys
   _log = new ceph::logging::Log(&_conf->subsys);
   _log->start();
 
@@ -685,6 +691,9 @@ void CephContext::put() {
   }
 }
 
+// called by
+// common_init.cc/common_init_finish
+// libcephd.cc/cephd_generate_secret_key
 void CephContext::init_crypto()
 {
   if (_crypto_inited++ == 0) {
@@ -699,6 +708,8 @@ void CephContext::shutdown_crypto()
   }
 }
 
+// called by
+// common_init_finish
 void CephContext::start_service_thread()
 {
   {
@@ -720,6 +731,7 @@ void CephContext::start_service_thread()
   _conf.call_all_observers();
 
   // start admin socket
+  // default "$run_dir/$cluster-$name.asok"
   if (_conf->admin_socket.length())
     _admin_socket->init(_conf->admin_socket);
 }
@@ -731,20 +743,25 @@ void CephContext::reopen_logs()
     _service_thread->reopen_logs();
 }
 
+// called by
+// CephContext::~CephContext
 void CephContext::join_service_thread()
 {
   std::unique_lock<ceph::spinlock> lg(_service_thread_lock);
 
   CephContextServiceThread *thread = _service_thread;
+
   if (!thread) {
     return;
   }
+
   _service_thread = NULL;
 
   lg.unlock();
 
   thread->exit_thread();
   thread->join();
+
   delete thread;
 }
 

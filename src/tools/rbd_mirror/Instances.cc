@@ -24,6 +24,8 @@ using librbd::util::create_async_context_callback;
 using librbd::util::create_context_callback;
 using librbd::util::create_rados_callback;
 
+// created by
+// LeaderWatcher<I>::init_instances
 template <typename I>
 Instances<I>::Instances(Threads<I> *threads, librados::IoCtx &ioctx,
                         const std::string& instance_id,
@@ -37,6 +39,8 @@ template <typename I>
 Instances<I>::~Instances() {
 }
 
+// called by
+// LeaderWatcher<I>::init_instances
 template <typename I>
 void Instances<I>::init(Context *on_finish) {
   dout(10) << dendl;
@@ -180,7 +184,8 @@ void Instances<I>::list(std::vector<std::string> *instance_ids) {
   }
 }
 
-
+// called by
+// Instances<I>::init
 template <typename I>
 void Instances<I>::get_instances() {
   dout(10) << dendl;
@@ -238,6 +243,8 @@ void Instances<I>::handle_wait_for_ops(int r) {
   on_finish->complete(r);
 }
 
+// called by
+// Instances<I>::schedule_remove_task
 template <typename I>
 void Instances<I>::remove_instances(const utime_t& time) {
   ceph_assert(m_lock.is_locked());

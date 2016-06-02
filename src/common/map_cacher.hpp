@@ -18,6 +18,9 @@
 #include "common/sharedptr_registry.hpp"
 
 namespace MapCacher {
+
+// derived by
+// osd/SnapMapper.h/OSDriver::OSTransaction
 /**
  * Abstraction for ordering key updates
  */
@@ -41,6 +44,8 @@ public:
   virtual ~Transaction() {}
 };
 
+// derived by
+// osd/SnapMapper/OSDriver
 /**
  * Abstraction for fetching keys
  */
@@ -62,6 +67,9 @@ public:
   virtual ~StoreDriver() {}
 };
 
+// created by
+// member of Scrub::Store
+// member of SnapMapper
 /**
  * Uses SharedPtrRegistry to cache objects of in progress writes
  * allowing the user to read/write a consistent view of the map
@@ -73,7 +81,9 @@ private:
   StoreDriver<K, V> *driver;
 
   SharedPtrRegistry<K, boost::optional<V> > in_progress;
+
   typedef typename SharedPtrRegistry<K, boost::optional<V> >::VPtr VPtr;
+  // Context holding a VPtr instance
   typedef ContainerContext<set<VPtr> > TransHolder;
 
 public:
@@ -116,6 +126,7 @@ public:
 	return 0;
       }
     }
+
     ceph_abort(); // not reachable
     return -EINVAL;
   } ///< @return error value, 0 on success, -ENOENT if no more entries
@@ -131,10 +142,13 @@ public:
 	 ++i) {
       VPtr ip = in_progress.lookup_or_create(i->first, i->second);
       *ip = i->second;
+
       vptrs.insert(ip);
     }
+
     t->set_keys(keys);
-    t->add_callback(new TransHolder(vptrs));
+    // used to release vptrs
+    t->add_callback(new TransHolder(vptrs)); // t->register_on_applied
   }
 
   /// Adds operation removing keys to Transaction
@@ -151,8 +165,9 @@ public:
       *ip = empty;
       vptrs.insert(ip);
     }
+
     t->remove_keys(keys);
-    t->add_callback(new TransHolder(vptrs));
+    t->add_callback(new TransHolder(vptrs)); // t->register_on_applied
   }
 
   /// Gets keys, uses cached values for unstable keys
@@ -174,9 +189,11 @@ public:
 	to_get.insert(*i);
       }
     }
+
     int r = driver->get_keys(to_get, &_got);
     if (r < 0)
       return r;
+
     for (typename map<K, V>::iterator i = _got.begin();
 	 i != _got.end();
 	 ++i) {

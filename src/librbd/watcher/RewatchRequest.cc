@@ -20,6 +20,8 @@ namespace watcher {
 
 using std::string;
 
+// created by
+// librbd::Watcher::rewatch
 RewatchRequest::RewatchRequest(librados::IoCtx& ioctx, const string& oid,
                                RWLock &watch_lock,
                                librados::WatchCtx2 *watch_ctx,

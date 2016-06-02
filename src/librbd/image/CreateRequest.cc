@@ -30,6 +30,8 @@ using util::create_context_callback;
 
 namespace {
 
+// called by
+// CreateRequest<I>::send
 int validate_features(CephContext *cct, uint64_t features,
                        bool force_non_primary) {
   if (features & ~RBD_FEATURES_ALL) {
@@ -80,6 +82,9 @@ int validate_striping(CephContext *cct, uint8_t order, uint64_t stripe_unit,
 
 bool validate_layout(CephContext *cct, uint64_t size, file_layout_t &layout) {
   if (!librbd::ObjectMap<>::is_compatible(layout, size)) {
+
+    // object count > 256000000
+
     lderr(cct) << "image size not compatible with object map" << dendl;
     return false;
   }
@@ -113,6 +118,10 @@ int CreateRequest<I>::validate_order(CephContext *cct, uint8_t order) {
 #define dout_prefix *_dout << "librbd::image::CreateRequest: " << this << " " \
                            << __func__ << ": "
 
+// created by
+// librbd/image/CloneRequest.cc/CloneRequest<I>::send_create
+// librbd/internal.cc/create(…, skip_mirror_enable)
+// tools/rbd_mirror/image_replayer/CreateImageRequest.cc/CreateImageRequest<I>::create_image
 template<typename I>
 CreateRequest<I>::CreateRequest(IoCtx &ioctx, const std::string &image_name,
                                 const std::string &image_id, uint64_t size,
@@ -190,6 +199,9 @@ CreateRequest<I>::CreateRequest(IoCtx &ioctx, const std::string &image_name,
     m_layout.stripe_count = m_stripe_count;
   }
 
+  // if we are create a local mirror image, then the global image id of
+  // the remote image is provided, see
+  // rbd_mirror::image_replayer::CreateImageRequest<I>::create_image
   m_force_non_primary = !non_primary_global_image_id.empty();
 
   if (!m_data_pool.empty() && m_data_pool != ioctx.get_pool_name()) {
@@ -243,6 +255,7 @@ void CreateRequest<I>::send() {
   }
 
   if (((m_features & RBD_FEATURE_OBJECT_MAP) != 0) &&
+      // object_map restricts the image size with object count <= 256000000
       (!validate_layout(m_cct, m_size, m_layout))) {
     complete(-EINVAL);
     return;
@@ -486,6 +499,7 @@ void CreateRequest<I>::create_image() {
   if (m_data_pool_id != -1) {
     oss << stringify(m_io_ctx.get_id()) << ".";
   }
+
   oss << m_image_id;
   if (oss.str().length() > RBD_MAX_BLOCK_NAME_PREFIX_LENGTH) {
     lderr(m_cct) << "object prefix '" << oss.str() << "' too large" << dendl;
@@ -495,7 +509,11 @@ void CreateRequest<I>::create_image() {
   }
 
   librados::ObjectWriteOperation op;
+  // create image header object exclusively, i.e., return EEXIST if
+  // the object already exists, see PrimaryLogPG::do_osd_ops for CEPH_OSD_OP_CREATE
   op.create(true);
+
+  // add an rbd "create" cls op, encode args: size, order, features, object_prefix, data_pool_id
   cls_client::create_image(&op, m_size, m_order, m_features, oss.str(),
                            m_data_pool_id);
 
@@ -596,7 +614,14 @@ void CreateRequest<I>::handle_object_map_resize(int r) {
 
 template<typename I>
 void CreateRequest<I>::fetch_mirror_mode() {
+  // if we are creating a local mirror image, then the image features
+  // are the same as the remote primary image, see
+  // rbd_mirror::image_replayer::CreateImageRequest<I>::create_image
   if ((m_features & RBD_FEATURE_JOURNALING) == 0) {
+
+    // if journal feature is not enabled, then journal options and
+    // mirror options are not needed to considered
+
     complete(0);
     return;
   }
@@ -604,6 +629,8 @@ void CreateRequest<I>::fetch_mirror_mode() {
   ldout(m_cct, 20) << dendl;
 
   librados::ObjectReadOperation op;
+
+  // get miror mode of the pool which the newly created image resident in
   cls_client::mirror_mode_get_start(&op);
 
   using klass = CreateRequest<I>;
@@ -668,6 +695,12 @@ void CreateRequest<I>::journal_create() {
     this);
 
   librbd::journal::TagData tag_data;
+
+  // tags are always bundled with journal
+
+  // note: only ImageReplayer can create a new image which is non-primary,
+  // all other non-primary images are come from demotion if mirror is enabled
+  // for these images
   tag_data.mirror_uuid = (m_force_non_primary ? m_primary_mirror_uuid :
                           librbd::Journal<I>::LOCAL_MIRROR_UUID);
 
@@ -676,6 +709,11 @@ void CreateRequest<I>::journal_create() {
       m_io_ctx, m_image_id, m_journal_order, m_journal_splay_width,
       m_journal_pool, cls::journal::Tag::TAG_CLASS_NEW, tag_data,
       librbd::Journal<I>::IMAGE_CLIENT_ID, m_op_work_queue, ctx);
+
+  // create journal metadata object and allocate the initial tag then
+  // register image client
+  // the initial tag, tag.tag_data.mirror_uuid, can used to identify if
+  // we are a local mirror image, i.e., a non-primary image or a primary image
   req->send();
 }
 

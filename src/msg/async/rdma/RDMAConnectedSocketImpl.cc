@@ -19,6 +19,9 @@
 #undef dout_prefix
 #define dout_prefix *_dout << " RDMAConnectedSocketImpl "
 
+// created by
+// RDMAServerSocketImpl::accept
+// RDMAWorker::connect
 RDMAConnectedSocketImpl::RDMAConnectedSocketImpl(CephContext *cct, Infiniband* ib, RDMADispatcher* s,
 						 RDMAWorker *w)
   : cct(cct), connected(0), error(0), infiniband(ib),
@@ -62,6 +65,8 @@ RDMAConnectedSocketImpl::~RDMAConnectedSocketImpl()
   error = ECONNRESET;
 }
 
+// called by
+// RDMADispatcher::polling
 void RDMAConnectedSocketImpl::pass_wc(std::vector<ibv_wc> &&v)
 {
   Mutex::Locker l(lock);
@@ -69,6 +74,7 @@ void RDMAConnectedSocketImpl::pass_wc(std::vector<ibv_wc> &&v)
     wc = std::move(v);
   else
     wc.insert(wc.end(), v.begin(), v.end());
+
   notify();
 }
 
@@ -188,7 +194,9 @@ int RDMAConnectedSocketImpl::try_connect(const entity_addr_t& peer_addr, const S
   }
 
   ldout(cct, 20) << __func__ << " tcp_fd: " << tcp_fd << dendl;
+
   net.set_priority(tcp_fd, opts.priority, peer_addr.get_family());
+
   my_msg.peer_qpn = 0;
   r = infiniband->send_msg(cct, tcp_fd, my_msg);
   if (r < 0)
@@ -200,6 +208,7 @@ int RDMAConnectedSocketImpl::try_connect(const entity_addr_t& peer_addr, const S
 
 void RDMAConnectedSocketImpl::handle_connection() {
   ldout(cct, 20) << __func__ << " QP: " << my_msg.qpn << " tcp_fd: " << tcp_fd << " notify_fd: " << notify_fd << dendl;
+
   int r = infiniband->recv_msg(cct, tcp_fd, peer_msg);
   if (r <= 0) {
     if (r != -EAGAIN) {
@@ -218,13 +227,17 @@ void RDMAConnectedSocketImpl::handle_connection() {
 
   if (!is_server) {// syn + ack from server
     my_msg.peer_qpn = peer_msg.qpn;
+
     ldout(cct, 20) << __func__ << " peer msg :  < " << peer_msg.qpn << ", " << peer_msg.psn
                    <<  ", " << peer_msg.lid << ", " << peer_msg.peer_qpn << "> " << dendl;
+
     if (!connected) {
       r = activate();
       ceph_assert(!r);
     }
+
     notify();
+
     r = infiniband->send_msg(cct, tcp_fd, my_msg);
     if (r < 0) {
       ldout(cct, 1) << __func__ << " send client ack failed." << dendl;
@@ -237,6 +250,7 @@ void RDMAConnectedSocketImpl::handle_connection() {
         ldout(cct, 10) << __func__ << " server is already active." << dendl;
         return ;
       }
+
       r = activate();
       ceph_assert(!r);
       r = infiniband->send_msg(cct, tcp_fd, my_msg);
@@ -248,9 +262,12 @@ void RDMAConnectedSocketImpl::handle_connection() {
       }
     } else { // ack from client
       connected = 1;
+
       ldout(cct, 10) << __func__ << " handshake of rdma is done. server connected: " << connected << dendl;
+
       //cleanup();
       submit(false);
+
       notify();
     }
   }
@@ -260,6 +277,7 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
 {
   uint64_t i = 0;
   int r = ::read(notify_fd, &i, sizeof(i));
+
   ldout(cct, 20) << __func__ << " notify_fd : " << i << " in " << my_msg.qpn << " r = " << r << dendl;
   
   if (!active) {
@@ -271,6 +289,7 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
     ldout(cct, 1) << __func__ << " when ib not connected. len: " << len <<dendl;
     return -EAGAIN;
   }
+
   ssize_t read = 0;
   if (!buffers.empty())
     read = read_buffers(buf,len);
@@ -281,9 +300,11 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
     if (!buffers.empty()) {
       notify();
     }
+
     if (read > 0) {
       return read;
     }
+
     if (error) {
       return -error;
     } else {
@@ -292,19 +313,26 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
   }
 
   ldout(cct, 20) << __func__ << " poll queue got " << cqe.size() << " responses. QP: " << my_msg.qpn << dendl;
+
   for (size_t i = 0; i < cqe.size(); ++i) {
     ibv_wc* response = &cqe[i];
     ceph_assert(response->status == IBV_WC_SUCCESS);
     Chunk* chunk = reinterpret_cast<Chunk *>(response->wr_id);
+
     ldout(cct, 25) << __func__ << " chunk length: " << response->byte_len << " bytes." << chunk << dendl;
+
     chunk->prepare_read(response->byte_len);
+
     worker->perf_logger->inc(l_msgr_rdma_rx_bytes, response->byte_len);
+
     if (response->byte_len == 0) {
       dispatcher->perf_logger->inc(l_msgr_rdma_rx_fin);
+
       if (connected) {
         error = ECONNRESET;
         ldout(cct, 20) << __func__ << " got remote close msg..." << dendl;
       }
+
       dispatcher->post_chunk_to_pool(chunk);
     } else {
       if (read == (ssize_t)len) {
@@ -323,8 +351,10 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
   }
 
   worker->perf_logger->inc(l_msgr_rdma_rx_chunks, cqe.size());
+
   if (is_server && connected == 0) {
     ldout(cct, 20) << __func__ << " we do not need last handshake, QP: " << my_msg.qpn << " peer QP: " << peer_msg.qpn << dendl;
+
     connected = 1; //if so, we don't need the last handshake
     cleanup();
     submit(false);
@@ -336,6 +366,7 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
 
   if (read == 0 && error)
     return -error;
+
   return read == 0 ? -EAGAIN : read;
 }
 
@@ -418,9 +449,11 @@ ssize_t RDMAConnectedSocketImpl::send(bufferlist &bl, bool more)
       return -EPIPE;
     return -error;
   }
+
   size_t bytes = bl.length();
   if (!bytes)
     return 0;
+
   {
     Mutex::Locker l(lock);
     pending_bl.claim_append(bl);
@@ -429,6 +462,7 @@ ssize_t RDMAConnectedSocketImpl::send(bufferlist &bl, bool more)
       return bytes;
     }
   }
+
   ldout(cct, 20) << __func__ << " QP: " << my_msg.qpn << dendl;
   ssize_t r = submit(more);
   if (r < 0 && r != -EAGAIN)
@@ -440,10 +474,13 @@ ssize_t RDMAConnectedSocketImpl::submit(bool more)
 {
   if (error)
     return -error;
+
   Mutex::Locker l(lock);
   size_t bytes = pending_bl.length();
+
   ldout(cct, 20) << __func__ << " we need " << bytes << " bytes. iov size: "
                  << pending_bl.buffers().size() << dendl;
+
   if (!bytes)
     return 0;
 
@@ -463,6 +500,7 @@ ssize_t RDMAConnectedSocketImpl::submit(bool more)
     Chunk *current_chunk = tx_buffers[chunk_idx];
     while (start != end) {
       const uintptr_t addr = reinterpret_cast<uintptr_t>(start->c_str());
+
       unsigned copied = 0;
       while (copied < start->length()) {
         uint32_t r = current_chunk->write((char*)addr+copied, start->length() - copied);
@@ -472,9 +510,11 @@ ssize_t RDMAConnectedSocketImpl::submit(bool more)
         if (current_chunk->full()){
           if (++chunk_idx == tx_buffers.size())
             return total_copied;
+
           current_chunk = tx_buffers[chunk_idx];
         }
       }
+
       ++start;
     }
     ceph_assert(bytes == 0);
@@ -486,6 +526,7 @@ ssize_t RDMAConnectedSocketImpl::submit(bool more)
   std::list<bufferptr>::const_iterator copy_it = it;
   unsigned total = 0;
   unsigned need_reserve_bytes = 0;
+
   while (it != pending_bl.buffers().end()) {
     if (infiniband->is_tx_buffer(it->raw_c_str())) {
       if (need_reserve_bytes) {
@@ -493,17 +534,20 @@ ssize_t RDMAConnectedSocketImpl::submit(bool more)
         total += copied;
         if (copied < need_reserve_bytes)
           goto sending;
+
         need_reserve_bytes = 0;
       }
       ceph_assert(copy_it == it);
       tx_buffers.push_back(infiniband->get_tx_chunk_by_buffer(it->raw_c_str()));
       total += it->length();
+
       ++copy_it;
     } else {
       need_reserve_bytes += it->length();
     }
     ++it;
   }
+
   if (need_reserve_bytes)
     total += fill_tx_via_copy(tx_buffers, need_reserve_bytes, copy_it, it);
 
@@ -514,6 +558,7 @@ ssize_t RDMAConnectedSocketImpl::submit(bool more)
   bufferlist swapped;
   if (total < pending_bl.length()) {
     worker->perf_logger->inc(l_msgr_rdma_tx_parital_mem);
+
     pending_bl.splice(total, pending_bl.length()-total, &swapped);
     pending_bl.swap(swapped);
   } else {
@@ -531,9 +576,12 @@ ssize_t RDMAConnectedSocketImpl::submit(bool more)
   return pending_bl.length() ? -EAGAIN : 0;
 }
 
+// called by
+// RDMAConnectedSocketImpl::submit
 int RDMAConnectedSocketImpl::post_work_request(std::vector<Chunk*> &tx_buffers)
 {
   ldout(cct, 20) << __func__ << " QP: " << my_msg.qpn << " " << tx_buffers[0] << dendl;
+
   vector<Chunk*>::iterator current_buffer = tx_buffers.begin();
   ibv_sge isge[tx_buffers.size()];
   uint32_t current_sge = 0;
@@ -549,6 +597,7 @@ int RDMAConnectedSocketImpl::post_work_request(std::vector<Chunk*> &tx_buffers)
     isge[current_sge].addr = reinterpret_cast<uint64_t>((*current_buffer)->buffer);
     isge[current_sge].length = (*current_buffer)->get_offset();
     isge[current_sge].lkey = (*current_buffer)->mr->lkey;
+
     ldout(cct, 25) << __func__ << " sending buffer: " << *current_buffer << " length: " << isge[current_sge].length  << dendl;
 
     iswr[current_swr].wr_id = reinterpret_cast<uint64_t>(*current_buffer);
@@ -563,10 +612,14 @@ int RDMAConnectedSocketImpl::post_work_request(std::vector<Chunk*> &tx_buffers)
       }*/
 
     num++;
+
     worker->perf_logger->inc(l_msgr_rdma_tx_bytes, isge[current_sge].length);
+
     if (pre_wr)
       pre_wr->next = &iswr[current_swr];
+
     pre_wr = &iswr[current_swr];
+
     ++current_sge;
     ++current_swr;
     ++current_buffer;
@@ -608,9 +661,11 @@ void RDMAConnectedSocketImpl::fin() {
 void RDMAConnectedSocketImpl::cleanup() {
   if (con_handler && tcp_fd >= 0) {
     (static_cast<C_handle_connection*>(con_handler))->close();
+
     worker->center.submit_to(worker->center.get_id(), [this]() {
       worker->center.delete_file_event(tcp_fd, EVENT_READABLE);
     }, false);
+
     delete con_handler;
     con_handler = nullptr;
   }

@@ -331,11 +331,14 @@ private:
 
   Pipe *_lookup_pipe(const entity_addr_t& k) {
     ceph::unordered_map<entity_addr_t, Pipe*>::iterator p = rank_pipe.find(k);
+
     if (p == rank_pipe.end())
       return NULL;
+
     // see lock cribbing in Pipe::fault()
     if (p->second->state_closed)
       return NULL;
+
     return p->second;
   }
 

@@ -30,6 +30,8 @@ using librbd::util::create_rados_callback;
 
 namespace managed_lock {
 
+// created by
+// ManagedLock<I>::handle_pre_acquire_lock, which is callback of ManagedLock<I>::send_acquire_lock
 template <typename I>
 AcquireRequest<I>* AcquireRequest<I>::create(librados::IoCtx& ioctx,
                                              Watcher *watcher,
@@ -108,8 +110,8 @@ void AcquireRequest<I>::send_lock() {
 
   librados::ObjectWriteOperation op;
   rados::cls::lock::lock(&op, RBD_LOCK_NAME,
-                         m_exclusive ? LOCK_EXCLUSIVE : LOCK_SHARED, m_cookie,
-                         util::get_watcher_lock_tag(), "", utime_t(), 0);
+                         m_exclusive ? LOCK_EXCLUSIVE : LOCK_SHARED, m_cookie, // prefixed with "auto "
+                         util::get_watcher_lock_tag(), "", utime_t(), 0); // tag is "internal"
 
   using klass = AcquireRequest;
   librados::AioCompletion *rados_completion =
@@ -145,6 +147,7 @@ void AcquireRequest<I>::send_break_lock() {
 
   Context *ctx = create_context_callback<
     AcquireRequest<I>, &AcquireRequest<I>::handle_break_lock>(this);
+  // will not break lock if the current owner is alive
   auto req = BreakRequest<I>::create(
     m_ioctx, m_work_queue, m_oid, m_locker, m_exclusive,
     m_blacklist_on_break_lock, m_blacklist_expire_seconds, false, ctx);

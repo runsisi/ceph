@@ -369,6 +369,13 @@ public:
   entity_addrvec_t get_myaddrs() const { return messenger->get_myaddrs(); }
   AuthAuthorizer* build_authorizer(int service_id) const;
 
+  // called by
+  // Client::init
+  // librados::RadosClient::connect
+  // MDSDaemon::init
+  // MgrStandby::init
+  // OSD::init
+  // MDSUtility::init
   void set_want_keys(uint32_t want) {
     want_keys = want;
   }

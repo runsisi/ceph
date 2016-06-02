@@ -22,6 +22,9 @@ namespace image {
 using util::create_async_context_callback;
 using util::create_context_callback;
 
+// created by
+// librbd::image::RefreshRequest<I>::send_v2_refresh_parent
+// librbd::image::SetSnapRequest<I>::send_refresh_parent
 template <typename I>
 RefreshParentRequest<I>::RefreshParentRequest(
     I &child_image_ctx, const ParentInfo &parent_md,
@@ -32,6 +35,10 @@ RefreshParentRequest<I>::RefreshParentRequest(
     m_error_result(0) {
 }
 
+// static
+// called by
+// RefreshRequest<I>::send_v2_refresh_parent
+// SetSnapRequest<I>::send_refresh_parent
 template <typename I>
 bool RefreshParentRequest<I>::is_refresh_required(
     I &child_image_ctx, const ParentInfo &parent_md,
@@ -81,11 +88,16 @@ void RefreshParentRequest<I>::send() {
   if (is_open_required(m_child_image_ctx, m_parent_md, m_migration_info)) {
     send_open_parent();
   } else {
+    // parent opened, but parent has gone or overlap is 0, close it
+
     // parent will be closed (if necessary) during finalize
-    send_complete(0);
+    send_complete(0); // m_on_finish->complete(r); i.e., delete m_on_finish
   }
 }
 
+// called by
+// RefreshRequest<I>::apply
+// SetSnapRequest<I>::apply
 template <typename I>
 void RefreshParentRequest<I>::apply() {
   ceph_assert(m_child_image_ctx.snap_lock.is_wlocked());
@@ -93,15 +105,22 @@ void RefreshParentRequest<I>::apply() {
   std::swap(m_child_image_ctx.parent, m_parent_image_ctx);
 }
 
+// called by
+// RefreshRequest<I>::send_v2_finalize_refresh_parent
+// SetSnapRequest<I>::send_finalize_refresh_parent
 template <typename I>
 void RefreshParentRequest<I>::finalize(Context *on_finish) {
   CephContext *cct = m_child_image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
+  // m_on_finish has been deleted, but this instance was not destroyed,
+  // becoz the third template parameter for create_context_callback was set to false
   m_on_finish = on_finish;
+
   if (m_parent_image_ctx != nullptr) {
     send_close_parent();
   } else {
+    // m_on_finish->complete(r);
     send_complete(0);
   }
 }
@@ -180,7 +199,7 @@ void RefreshParentRequest<I>::send_close_parent() {
   using klass = RefreshParentRequest<I>;
   Context *ctx = create_async_context_callback(
     m_child_image_ctx, create_context_callback<
-      klass, &klass::handle_close_parent, false>(this));
+      klass, &klass::handle_close_parent, false>(this)); // do not destroy this instance
   CloseRequest<I> *req = CloseRequest<I>::create(m_parent_image_ctx, ctx);
   req->send();
 }

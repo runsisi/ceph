@@ -341,6 +341,7 @@ extern int ceph_release_from_features(uint64_t features);
 									    \
 	/** exec **/							    \
 	/* note: the RD bit here is wrong; see special-case below in helper */ \
+	/* the rmw flag will be set from class definitions by OSD::init_op_flags for class requests */ \
 	f(CALL,		__CEPH_OSD_OP(RD, EXEC, 1),	"call")		    \
 									    \
 	/** pg **/							    \

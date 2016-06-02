@@ -311,6 +311,7 @@ public:
 
   void combine_with_locator(object_locator_t& orig, string& obj) const {
     orig = redirect_locator;
+
     if (!redirect_object.empty())
       obj = redirect_object;
   }
@@ -578,6 +579,8 @@ struct spg_t {
     DECODE_FINISH(bl);
   }
 
+  // called by
+  // ScrubStore.cc/make_scrub_object
   ghobject_t make_temp_ghobject(const string& name) const {
     return ghobject_t(
       hobject_t(object_t(name), "", CEPH_NOSNAP,
@@ -617,6 +620,7 @@ class coll_t {
     TYPE_PG = 2,
     TYPE_PG_TEMP = 3,
   };
+
   type_t type;
   spg_t pgid;
   uint64_t removal_seq;  // note: deprecated, not encoded
@@ -1369,12 +1373,14 @@ public:
    * context.
    */
   map<snapid_t, pool_snap_info_t> snaps;
+
   /*
    * Alternatively, if we are defining non-pool snaps (e.g. via the
    * Ceph MDS), we must track @removed_snaps (since @snaps is not
    * used).  Snaps and removed_snaps are to be used exclusive of each
    * other!
    */
+  // used both for mds and rbd
   interval_set<snapid_t> removed_snaps;
 
   unsigned pg_num_mask, pgp_num_mask;
@@ -1536,6 +1542,7 @@ public:
   void set_snap_seq(snapid_t s) { snap_seq = s; }
   void set_snap_epoch(epoch_t e) { snap_epoch = e; }
 
+  // never called
   void set_stripe_width(uint32_t s) { stripe_width = s; }
   uint32_t get_stripe_width() const { return stripe_width; }
 
@@ -1546,9 +1553,18 @@ public:
     return !(get_type() == TYPE_ERASURE);
   }
 
+  // called by
+  // librados::RadosClient::pool_requires_alignment2
+  // PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_WRITE, CEPH_OSD_OP_ZERO,
+  // CEPH_OSD_OP_TRUNCATE,
+  // PrimaryLogPG::_write_copy_chunk
+  // PrimaryLogPG::get_copy_chunk_size
   bool requires_aligned_append() const {
     return is_erasure() && !has_flag(FLAG_EC_OVERWRITES);
   }
+
+  // set by
+  // OSDMonitor::prepare_pool_stripe_width
   uint64_t required_alignment() const { return stripe_width; }
 
   bool allows_ecoverwrites() const {
@@ -2468,6 +2484,14 @@ struct pg_info_t {
       last_backfill_bitwise(false)
   { }
   
+  // called by
+  // OSD::handle_pg_query, when no PG instance on this osd
+  // PG::activate
+  // PG::split_into
+  // PG::init
+  // PrimaryLogPG::do_backfill
+  // PrimaryLogPG::on_removal
+  // PrimaryLogPG::recover_backfill
   void set_last_backfill(hobject_t pos) {
     last_backfill = pos;
     last_backfill_bitwise = true;
@@ -3219,13 +3243,20 @@ inline ostream& operator<<(ostream& out, const pg_query_t& q) {
 }
 
 class PGBackend;
+// created by
+// as member of pg_log_entry_t
 class ObjectModDesc {
   bool can_local_rollback;
   bool rollback_info_completed;
 
   // version required to decode, reflected in encode/decode version
   __u8 max_required_version = 1;
+
 public:
+
+  // derived by
+  // PGBackend.cc/struct RollbackVisitor
+  // PGBackend.cc/struct Trimmer
   class Visitor {
   public:
     virtual void append(uint64_t old_offset) {}
@@ -3246,9 +3277,12 @@ public:
       version_t gen,
       const vector<pair<uint64_t, uint64_t> > &extents) {}
     virtual ~Visitor() {}
-  };
+  }; // class Visitor
+
   void visit(Visitor *visitor) const;
+
   mutable bufferlist bl;
+
   enum ModID {
     APPEND = 1,
     SETATTRS = 2,
@@ -3285,6 +3319,7 @@ public:
     swap(other.rollback_info_completed, rollback_info_completed);
     swap(other.max_required_version, max_required_version);
   }
+
   void append_id(ModID id) {
     using ceph::encode;
     uint8_t _id(id);
@@ -3316,6 +3351,9 @@ public:
     rollback_info_completed = true;
     return true;
   }
+
+  // called by
+  // PrimaryLogPG::mark_all_unfound_lost, for pg_log_entry_t::LOST_DELETE
   bool try_rmobject(version_t deletion_version) {
     if (!can_local_rollback || rollback_info_completed)
       return false;
@@ -3334,6 +3372,9 @@ public:
     append_id(CREATE);
     ENCODE_FINISH(bl);
   }
+
+  // called by
+  // ECTransaction::generate_transactions
   void update_snaps(const set<snapid_t> &old_snaps) {
     if (!can_local_rollback || rollback_info_completed)
       return;
@@ -3342,6 +3383,8 @@ public:
     encode(old_snaps, bl);
     ENCODE_FINISH(bl);
   }
+
+  // to support overwrite
   void rollback_extents(
     version_t gen, const vector<pair<uint64_t, uint64_t> > &extents) {
     ceph_assert(can_local_rollback);
@@ -3355,6 +3398,10 @@ public:
     ENCODE_FINISH(bl);
   }
 
+  // called by
+  // pg_log_entry_t::mark_unrollbackable, called by PrimaryLogPG::mark_all_unfound_lost
+  //            and ReplicatedBackend.cc/generate_transaction
+  // ObjectModDesc::claim_append
   // cannot be rolled back
   void mark_unrollbackable() {
     can_local_rollback = false;
@@ -3399,12 +3446,19 @@ struct pg_log_entry_t {
     DELETE = 3,   // deleted object
     //BACKLOG = 4,  // event invented by generate_backlog [obsolete]
     LOST_REVERT = 5, // lost new version, revert to an older version.
+    // PrimaryLogPG::do_command, for "mark_unfound_lost" "delete"
+    // PrimaryLogPG::mark_all_unfound_lost, which called by PrimaryLogPG::do_command
     LOST_DELETE = 6, // lost new version, revert to no object (deleted).
+    // has not been implemented, will assert, see PrimaryLogPG::mark_all_unfound_lost
     LOST_MARK = 7,   // lost new version, now EIO
+    // for cache tier only, see PrimaryLogPG::finish_promote
     PROMOTE = 8,     // promoted object from another tier
+    // for cache tier only, see PrimaryLogPG::try_flush_mark_clean
     CLEAN = 9,       // mark an object clean
+    // see pg_log_entry_t::reqid_is_indexed, PrimaryLogPG::record_write_error
     ERROR = 10,      // write that returned an error
   };
+
   static const char *get_op_name(int op) {
     switch (op) {
     case MODIFY:
@@ -3434,7 +3488,8 @@ struct pg_log_entry_t {
   }
 
   // describes state for a locally-rollbackable entry
-  ObjectModDesc mod_desc;
+  ObjectModDesc mod_desc; // will be populated by ECTransaction::generate_transactions
+
   bufferlist snaps;   // only for clone entries
   hobject_t  soid;
   osd_reqid_t reqid;  // caller+tid to uniquely identify request
@@ -3483,9 +3538,12 @@ struct pg_log_entry_t {
   }
 
   bool can_rollback() const {
-    return mod_desc.can_rollback();
+    return mod_desc.can_rollback(); // ModDesc::can_local_rollback
   }
 
+  // called by
+  // PrimaryLogPG::mark_all_unfound_lost
+  // ReplicatedBackend.cc/generate_transaction
   void mark_unrollbackable() {
     mod_desc.mark_unrollbackable();
   }
@@ -3583,8 +3641,9 @@ protected:
 
   // always <= can_rollback_to, indicates how far stashed rollback
   // data can be found
-  eversion_t rollback_info_trimmed_to;
-
+  eversion_t rollback_info_trimmed_to; // advanced by IndexedLog::advance_can_rollback_to
+                                       // stepped back by pg_log_t::rewind_from_head which called by
+                                       //       IndexedLog::rewind_from_head
 public:
   // the actual log
   mempool::osd_pglog::list<pg_log_entry_t> log;
@@ -3592,7 +3651,13 @@ public:
   // entries just for dup op detection ordered oldest to newest
   mempool::osd_pglog::list<pg_log_dup_t> dups;
 
+  // Giving a user-defined constructor, even though it does nothing, makes the type not
+  // an aggregate and also not trivial. If you want your class to be an aggregate or a
+  // trivial type (or by transitivity, a POD type), then you need to use = default
+  // http://stackoverflow.com/questions/20828907/the-new-keyword-default-in-c11
+  // http://stackoverflow.com/questions/4178175/what-are-aggregates-and-pods-and-how-why-are-they-special
   pg_log_t() = default;
+
   pg_log_t(const eversion_t &last_update,
 	   const eversion_t &log_tail,
 	   const eversion_t &can_rollback_to,
@@ -3625,9 +3690,21 @@ public:
     dups.clear();
   }
 
+  // called by
+  // PGLog::_write_log_and_missing_wo_missing
+  // PGLog::_write_log_and_missing
   eversion_t get_rollback_info_trimmed_to() const {
     return rollback_info_trimmed_to;
   }
+
+  // called by
+  // PGLog::proc_replica_log
+  // PGLog::rewind_divergent_log
+  // PGLog::merge_log
+  // PGLog::_write_log_and_missing_wo_missing
+  // PGLog::_write_log_and_missing
+  // PGLog::get_can_rollback_to
+  // PGLog::merge_old_entry
   eversion_t get_can_rollback_to() const {
     return can_rollback_to;
   }
@@ -3664,6 +3741,8 @@ public:
       std::move(childdups));
     }
 
+  // called by
+  // IndexedLog::rewind_from_head
   mempool::osd_pglog::list<pg_log_entry_t> rewind_from_head(eversion_t newhead) {
     ceph_assert(newhead >= tail);
 
@@ -3676,7 +3755,10 @@ public:
 	swap(divergent, log);
 	break;
       }
+
+      // step back to older entry
       --p;
+
       if (p->version.version <= newhead.version) {
 	/*
 	 * look at eversion.version here.  we want to avoid a situation like:
@@ -3686,12 +3768,15 @@ public:
 	 * i.e, same request, different version.  If the eversion.version is > the
 	 * lower_bound, we it is divergent.
 	 */
-	++p;
+	++p; // step forward one entry
+
+	// entries in [p, log.end()] are divergent
 	divergent.splice(divergent.begin(), log, p, log.end());
 	break;
       }
       ceph_assert(p->version > newhead);
     }
+
     head = newhead;
 
     if (can_rollback_to > newhead)
@@ -3879,6 +3964,8 @@ struct pg_missing_item {
 WRITE_CLASS_ENCODER_FEATURES(pg_missing_item)
 ostream& operator<<(ostream& out, const pg_missing_item &item);
 
+// derived by
+// class pg_missing_set
 class pg_missing_const_i {
 public:
   virtual const map<hobject_t, pg_missing_item> &
@@ -3904,6 +3991,7 @@ public:
     return true;
   }
 };
+
 template <>
 class ChangeTracker<true> {
   set<hobject_t> _changed;
@@ -3927,16 +4015,19 @@ public:
 
 template <bool TrackChanges>
 class pg_missing_set : public pg_missing_const_i {
-  using item = pg_missing_item;
+  using item = pg_missing_item; // eversion_t need, have
+
   map<hobject_t, item> missing;  // oid -> (need v, have v)
   map<version_t, hobject_t> rmissing;  // v -> oid
+
   ChangeTracker<TrackChanges> tracker;
 
 public:
   pg_missing_set() = default;
 
   template <typename missing_type>
-  pg_missing_set(const missing_type &m) {
+  pg_missing_set(const missing_type &m) { // construct from pg_missing_set<false>, i.e., pg_missing_t, see
+                                          // ceph_objectstore_tool/write_pg
     missing = m.get_items();
     rmissing = m.get_rmissing();
     may_include_deletes = m.get_may_include_deletes();
@@ -3949,34 +4040,54 @@ public:
   const map<hobject_t, item> &get_items() const override {
     return missing;
   }
+
   const map<version_t, hobject_t> &get_rmissing() const override {
+    // map<version_t, hobject_t>
     return rmissing;
   }
   bool get_may_include_deletes() const override {
     return may_include_deletes;
   }
   unsigned int num_missing() const override {
+    // map<hobject_t, item, hobject_t::ComparatorWithDefault>
     return missing.size();
   }
+
   bool have_missing() const override {
     return !missing.empty();
   }
+
+  // only PrimaryLogPG::pick_newest_available and PGLog::_write_log_and_missing
+  // call with parameter out set to not nullptr
   bool is_missing(const hobject_t& oid, pg_missing_item *out = nullptr) const override {
     auto iter = missing.find(oid);
+
     if (iter == missing.end())
       return false;
+
     if (out)
       *out = iter->second;
+
     return true;
   }
+
+  // called by
+  // PGLog::recover_got
+  // PrimaryLogPG::recover_primary, for pg_log_entry_t::LOST_REVERT
+  // PrimaryLogPG::prep_object_replica_pushes
   bool is_missing(const hobject_t& oid, eversion_t v) const override {
     map<hobject_t, item>::const_iterator m =
       missing.find(oid);
+
     if (m == missing.end())
       return false;
+
     const item &item(m->second);
     if (item.need > v)
       return false;
+
+    // v >= item.need, the v version object is missing definitely becoz
+    // the currently lower version is missing
     return true;
   }
   eversion_t get_oldest_need() const {
@@ -3990,6 +4101,7 @@ public:
 
   void claim(pg_missing_set& o) {
     static_assert(!TrackChanges, "Can't use claim with TrackChanges");
+
     missing.swap(o.missing);
     rmissing.swap(o.rmissing);
   }
@@ -3998,6 +4110,10 @@ public:
    * this needs to be called in log order as we extend the log.  it
    * assumes missing is accurate up through the previous log entry.
    */
+  // called by
+  // PG::activate
+  // PGLog::missing_add_event, which never called
+  // PGLog::append_log_entries_update_missing
   void add_next_event(const pg_log_entry_t& e) {
     map<hobject_t, item>::iterator missing_it;
     missing_it = missing.find(e.soid);
@@ -4023,6 +4139,9 @@ public:
     tracker.changed(e.soid);
   }
 
+  // called by
+  // PGLog::revise_need, which never called
+  // PGLog::_merge_object_divergent_entries
   void revise_need(hobject_t oid, eversion_t need, bool is_delete) {
     if (missing.count(oid)) {
       rmissing.erase(missing[oid].need.version);
@@ -4031,11 +4150,16 @@ public:
     } else {
       missing[oid] = item(need, eversion_t(), is_delete);
     }
+
     rmissing[need.version] = oid;
 
     tracker.changed(oid);
   }
 
+  // called by
+  // PGLog::_merge_object_divergent_entries
+  // PrimaryLogPG::begin_peer_recover
+  // PGLog::revise_have, which never called
   void revise_have(hobject_t oid, eversion_t have) {
     if (missing.count(oid)) {
       tracker.changed(oid);
@@ -4043,6 +4167,11 @@ public:
     }
   }
 
+  // called by
+  // pg_missing_set::split_into
+  // PG::repair_object
+  // PGLog::missing_add
+  // PrimaryLogPG::prep_backfill_object_push
   void add(const hobject_t& oid, eversion_t need, eversion_t have,
 	   bool is_delete) {
     missing[oid] = item(need, have, is_delete);
@@ -4075,6 +4204,8 @@ public:
     missing.erase(m);
   }
 
+  // called by
+  // PGLog::split_into
   void split_into(
     pg_t child_pgid,
     unsigned split_bits,
@@ -4178,6 +4309,7 @@ public:
       eversion_t(5, 6), eversion_t(5, 1), true);
     o.back()->may_include_deletes = true;
   }
+
   template <typename F>
   void get_changed(F &&f) const {
     tracker.get_changed(f);
@@ -4188,6 +4320,7 @@ public:
   bool is_clean() const {
     return tracker.is_clean();
   }
+
   template <typename missing_t>
   bool debug_verify_from_init(
     const missing_t &init_missing,
@@ -4231,6 +4364,7 @@ public:
     return ok;
   }
 };
+
 template <bool TrackChanges>
 void encode(
   const pg_missing_set<TrackChanges> &c, bufferlist &bl, uint64_t features=0) {
@@ -4252,8 +4386,8 @@ ostream& operator<<(ostream& out, const pg_missing_set<TrackChanges> &missing)
   return out;
 }
 
-using pg_missing_t = pg_missing_set<false>;
-using pg_missing_tracker_t = pg_missing_set<true>;
+using pg_missing_t = pg_missing_set<false>; // for replica missing
+using pg_missing_tracker_t = pg_missing_set<true>; // for primary missing
 
 
 /**
@@ -4916,8 +5050,6 @@ struct object_info_t {
 WRITE_CLASS_ENCODER_FEATURES(object_info_t)
 
 ostream& operator<<(ostream& out, const object_info_t& oi);
-
-
 
 // Object recovery
 struct ObjectRecoveryInfo {

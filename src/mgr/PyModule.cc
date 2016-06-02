@@ -265,6 +265,8 @@ void PyModule::init_ceph_logger()
 }
 #endif
 
+// called by
+// PyModuleRegistry::init
 #if PY_MAJOR_VERSION >= 3
 PyObject* PyModule::init_ceph_module()
 #else
@@ -298,6 +300,7 @@ void PyModule::init_ceph_module()
      {"BasePyOSDMapIncremental", &BasePyOSDMapIncrementalType},
      {"BasePyCRUSH", &BasePyCRUSHType}}
   };
+
   for (auto [name, type] : classes) {
     type->tp_new = PyType_GenericNew;
     if (PyType_Ready(type) < 0) {

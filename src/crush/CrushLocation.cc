@@ -94,6 +94,7 @@ int CrushLocation::update_from_hook()
   return _parse(out);
 }
 
+// called by global_init
 int CrushLocation::init_on_startup()
 {
   if (cct->_conf->crush_location.length()) {
@@ -115,10 +116,13 @@ int CrushLocation::init_on_startup()
       break;
     }
   }
+
   std::lock_guard<std::mutex> l(lock);
   loc.clear();
   loc.insert(make_pair<std::string,std::string>("host", hostname));
   loc.insert(make_pair<std::string,std::string>("root", "default"));
+
   lgeneric_dout(cct, 10) << "crush_location is (default) " << loc << dendl;
+
   return 0;
 }

@@ -21,6 +21,8 @@ namespace image_watcher {
 using namespace watch_notify;
 using util::create_context_callback;
 
+// created by
+// ImageWatcher<I>::notify_lock_owner
 NotifyLockOwner::NotifyLockOwner(ImageCtx &image_ctx,
                                  watcher::Notifier &notifier,
                                  bufferlist &&bl, Context *on_finish)
@@ -61,6 +63,7 @@ void NotifyLockOwner::handle_notify(int r) {
         finish(-EINVAL);
         return;
       }
+
       lock_owner_responded = true;
       response.claim(it.second);
     }
@@ -83,6 +86,7 @@ void NotifyLockOwner::handle_notify(int r) {
   } catch (const buffer::error &err) {
     r = -EINVAL;
   }
+
   finish(r);
 }
 

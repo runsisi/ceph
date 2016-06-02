@@ -32,6 +32,9 @@ public:
       forked(false)
   {}
 
+  // called by
+  // rbd-nbd.cc:do_map
+  // ceph_mon.cc:main
   int prefork(std::string &err) {
     ceph_assert(!forked);
     int r = ::socketpair(AF_UNIX, SOCK_STREAM, 0, fd);
@@ -51,11 +54,16 @@ public:
       err = oss.str();
       return r;
     }
+
     if (is_child()) {
+
+      // childpid == 0
+
       ::close(fd[0]);
     } else {
       ::close(fd[1]);
     }
+
     return 0;
   }
 
@@ -71,11 +79,15 @@ public:
     return childpid != 0;
   }
 
+  // called by
+  // rbd-nbd.cc:do_map
+  // ceph_mon.cc:main
   int parent_wait(std::string &err_msg) {
     ceph_assert(forked);
 
     int r = -1;
     std::ostringstream oss;
+
     int err = safe_read_exact(fd[0], &r, sizeof(r));
     if (err == 0 && r == -1) {
       // daemonize
@@ -101,23 +113,36 @@ public:
          oss << "[" << getpid() << "]" << " returned exit_status " << cpp_strerror(err);
       }
     }
+
     err_msg = oss.str();
     return err;
   }
 
+  // called by
+  // Preforker::exit
+  // ceph_mon.cc:main
   int signal_exit(int r) {
     if (forked) {
       /* If we get an error here, it's too late to do anything reasonable about it. */
       [[maybe_unused]] auto n = safe_write(fd[1], &r, sizeof(r));
     }
+
     return r;
   }
+
+  // called by
+  // rbd-nbd.cc:do_map
+  // ceph_mon.cc:main
   void exit(int r) {
     if (is_child())
         signal_exit(r);
+
     ::exit(r);
   }
 
+  // called by
+  // rbd-nbd.cc:do_map
+  // ceph_mon.cc:main
   void daemonize() {
     ceph_assert(forked);
     static int r = -1;

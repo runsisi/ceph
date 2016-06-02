@@ -395,6 +395,8 @@ class Infiniband {
     bool get_cq_event();
     int get_fd() { return channel->fd; }
     ibv_comp_channel* get_channel() { return channel; }
+    // called by
+    // Infiniband::CompletionQueue::init
     void bind_cq(ibv_cq *c) { cq = c; }
     void ack_events();
   };

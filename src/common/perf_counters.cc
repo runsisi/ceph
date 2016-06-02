@@ -39,8 +39,10 @@ void PerfCountersCollection::add(class PerfCounters *l)
   i = m_loggers.find(l);
   while (i != m_loggers.end()) {
     ostringstream ss;
+    // e.g., name-123-123
     ss << l->get_name() << "-" << (void*)l;
     l->set_name(ss.str());
+
     i = m_loggers.find(l);
   }
 
@@ -238,8 +240,10 @@ void PerfCounters::tinc(int idx, utime_t amt)
   ceph_assert(idx > m_lower_bound);
   ceph_assert(idx < m_upper_bound);
   perf_counter_data_any_d& data(m_data[idx - m_lower_bound - 1]);
+
   if (!(data.type & PERFCOUNTER_TIME))
     return;
+
   if (data.type & PERFCOUNTER_LONGRUNAVG) {
     data.avgcount++;
     data.u64 += amt.to_nsec();
@@ -320,10 +324,13 @@ pair<uint64_t, uint64_t> PerfCounters::get_tavg_ns(int idx) const
   ceph_assert(idx > m_lower_bound);
   ceph_assert(idx < m_upper_bound);
   const perf_counter_data_any_d& data(m_data[idx - m_lower_bound - 1]);
+
   if (!(data.type & PERFCOUNTER_TIME))
     return make_pair(0, 0);
   if (!(data.type & PERFCOUNTER_LONGRUNAVG))
     return make_pair(0, 0);
+
+  // <time in ns, count>
   pair<uint64_t,uint64_t> a = data.read_avg();
   return make_pair(a.second, a.first);
 }

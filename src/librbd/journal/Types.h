@@ -530,7 +530,7 @@ struct MirrorPeerClientMeta {
 
   static const ClientMetaType TYPE = MIRROR_PEER_CLIENT_META_TYPE;
 
-  std::string image_id;
+  std::string image_id; // local mirror image id, see BootstrapRequest<I>::update_client_image
   MirrorPeerState state = MIRROR_PEER_STATE_SYNCING; ///< replay state
   uint64_t sync_object_count = 0; ///< maximum number of objects ever sync'ed
   SyncPoints sync_points;         ///< max two in-use snapshots for sync

@@ -387,6 +387,7 @@ int main(int argc, const char **argv)
       forker.exit(1);
     }
   }
+
   if (flushjournal) {
     common_init_finish(g_ceph_context);
     int err = store->mount();
@@ -404,6 +405,7 @@ flushjournal_out:
     delete store;
     forker.exit(err < 0 ? 1 : 0);
   }
+
   if (dump_journal) {
     common_init_finish(g_ceph_context);
     int err = store->dump_journal(cout);
@@ -669,6 +671,7 @@ flushjournal_out:
   if (g_conf().get_val<bool>("inject_early_sigterm"))
     kill(getpid(), SIGTERM);
 
+  // wait msgr->stopped be set to true, i.e., msgr->shutdown() to be called
   ms_public->wait();
   ms_hb_front_client->wait();
   ms_hb_back_client->wait();

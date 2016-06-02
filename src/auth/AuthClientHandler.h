@@ -29,7 +29,7 @@ protected:
   EntityName name;
   uint64_t global_id;
   uint32_t want;
-  uint32_t have;
+  uint32_t have; // for debug only
   uint32_t need;
 
 public:
@@ -40,8 +40,12 @@ public:
 
   void init(const EntityName& n) { name = n; }
   
+  // called by
+  // MonClient::handle_auth
+  // MonClient::set_want_keys
   void set_want_keys(__u32 keys) {
     want = keys | CEPH_ENTITY_TYPE_AUTH;
+
     validate_tickets();
   }
 

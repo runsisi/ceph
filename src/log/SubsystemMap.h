@@ -52,12 +52,14 @@ public:
   int get_log_level(unsigned subsys) const {
     if (subsys >= get_num())
       subsys = 0;
+
     return m_subsys[subsys].log_level;
   }
 
   int get_gather_level(unsigned subsys) const {
     if (subsys >= get_num())
       subsys = 0;
+
     return m_subsys[subsys].gather_level;
   }
 

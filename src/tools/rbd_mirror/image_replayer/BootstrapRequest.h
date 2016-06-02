@@ -161,7 +161,7 @@ private:
   Journaler *m_journaler;
   cls::journal::ClientState *m_client_state;
   MirrorPeerClientMeta *m_client_meta;
-  ProgressContext *m_progress_ctx;
+  ProgressContext *m_progress_ctx; // member or ImageReplayer
   bool *m_do_resync;
 
   mutable Mutex m_lock;

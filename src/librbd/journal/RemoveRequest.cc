@@ -20,6 +20,11 @@ using util::create_context_callback;
 
 namespace journal {
 
+// created by
+// DisableFeaturesRequest<I>::send_remove_journal
+// librbd::image::RemoveRequest<I>::send_journal_remove
+// librbd::image::CreateRequest<I>::journal_remove, upon failure
+// librbd::journal::CreateRequest<I>::remove_journal, upon failure
 template<typename I>
 RemoveRequest<I>::RemoveRequest(IoCtx &ioctx, const std::string &image_id,
                                 const std::string &client_id,
@@ -42,6 +47,8 @@ void RemoveRequest<I>::stat_journal() {
   ldout(m_cct, 20) << this << " " << __func__ << dendl;
 
   ImageCtx::get_timer_instance(m_cct, &m_timer, &m_timer_lock);
+
+  // create an Journaler instance, the same as CreateRequest<I>::create_journal
   m_journaler = new Journaler(m_op_work_queue, m_timer, m_timer_lock,
                               m_ioctx, m_image_id, m_image_client_id, {});
 
@@ -57,6 +64,7 @@ Context *RemoveRequest<I>::handle_stat_journal(int *result) {
 
   if ((*result < 0) && (*result != -ENOENT)) {
     lderr(m_cct) << "failed to stat journal header: " << cpp_strerror(*result) << dendl;
+
     shut_down_journaler(*result);
     return nullptr;
   }
@@ -86,6 +94,7 @@ Context *RemoveRequest<I>::handle_init_journaler(int *result) {
 
   if ((*result < 0) && (*result != -ENOENT)) {
     lderr(m_cct) << "failed to init journaler: " << cpp_strerror(*result) << dendl;
+
     shut_down_journaler(*result);
     return nullptr;
   }
@@ -101,6 +110,7 @@ void RemoveRequest<I>::remove_journal() {
   using klass = RemoveRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_remove_journal>(this);
 
+  // force == true, which means do not check the registered clients
   m_journaler->remove(true, ctx);
 }
 

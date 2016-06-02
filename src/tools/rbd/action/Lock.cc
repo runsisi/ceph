@@ -51,7 +51,7 @@ static int do_lock_list(librbd::Image& image, Formatter *f)
     f->open_array_section("locks");
   } else {
     tbl.define_column("Locker", TextTable::LEFT, TextTable::LEFT);
-    tbl.define_column("ID", TextTable::LEFT, TextTable::LEFT);
+    tbl.define_column("ID", TextTable::LEFT, TextTable::LEFT);          // lock cookie
     tbl.define_column("Address", TextTable::LEFT, TextTable::LEFT);
   }
 
@@ -62,6 +62,8 @@ static int do_lock_list(librbd::Image& image, Formatter *f)
       std::cout << "There " << (one ? "is " : "are ") << lockers.size()
            << (exclusive ? " exclusive" : " shared")
            << " lock" << (one ? "" : "s") << " on this image.\n";
+
+      // exclusive lock has tag == ""
       if (!exclusive)
         std::cout << "Lock tag: " << tag << "\n";
     }
@@ -195,10 +197,10 @@ int execute_add(const po::variables_map &vm,
                   lock_tag.empty() ? nullptr : lock_tag.c_str());
   if (r < 0) {
     if (r == -EBUSY || r == -EEXIST) {
-      if (!lock_tag.empty()) {
+      if (!lock_tag.empty()) { // lock shared
         std::cerr << "rbd: lock is already held by someone else"
                   << " with a different tag" << std::endl;
-      } else {
+      } else { // lock exclusive
         std::cerr << "rbd: lock is already held by someone else" << std::endl;
       }
     } else {

@@ -332,6 +332,7 @@ class RDMAIWARPServerSocketImpl : public RDMAServerSocketImpl {
 class RDMAStack : public NetworkStack {
   vector<std::thread> threads;
   PerfCounters *perf_counter;
+
   Infiniband ib;
   RDMADispatcher dispatcher;
 

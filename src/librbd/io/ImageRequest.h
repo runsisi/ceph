@@ -83,8 +83,12 @@ protected:
   }
 
 
+  // AioImageFlush always return 0
   virtual int clip_request();
+
+  // bypass or without image cache
   virtual void send_request() = 0;
+  // with image cache
   virtual void send_image_cache_request() = 0;
 
   virtual aio_type_t get_aio_type() const = 0;
@@ -115,6 +119,10 @@ protected:
 private:
   int m_op_flags;
 };
+
+// AioImageRequest <- AioImageRead
+// AioImageRequest <- AbstractAioImageWrite <- AioImageWrite, AioImageDiscard
+// AioImageRequest <- AioImageFlush
 
 template <typename ImageCtxT = ImageCtx>
 class AbstractImageWriteRequest : public ImageRequest<ImageCtxT> {
@@ -171,7 +179,9 @@ public:
   }
 
 protected:
+  // std::list<ObjectRequestHandle *>
   using typename ImageRequest<ImageCtxT>::ObjectRequests;
+  // std::vector<ObjectExtent>
   using typename AbstractImageWriteRequest<ImageCtxT>::ObjectExtents;
 
   aio_type_t get_aio_type() const override {

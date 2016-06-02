@@ -180,7 +180,7 @@ void ECTransaction::generate_transactions(
 			   << dendl;
       }
 
-      if (entry && op.updated_snaps) {
+      if (entry && op.updated_snaps) { // updated by PGTransaction::update_snaps
 	entry->mod_desc.update_snaps(op.updated_snaps->first);
       }
 

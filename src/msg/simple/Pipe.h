@@ -208,11 +208,14 @@ static const int SM_IOV_MAX = (IOV_MAX >= 1024 ? IOV_MAX / 4 : IOV_MAX);
 
     entity_addr_t& get_peer_addr() { return peer_addr; }
 
+    // called by Pipe::accept, SimpleMessenger::connect_rank
     void set_peer_addr(const entity_addr_t& a) {
       if (&peer_addr != &a)  // shut up valgrind
         peer_addr = a;
+
       connection_state->set_peer_addr(a);
     }
+
     void set_peer_type(int t) {
       peer_type = t;
       connection_state->set_peer_type(t);
@@ -230,13 +233,21 @@ static const int SM_IOV_MAX = (IOV_MAX >= 1024 ? IOV_MAX / 4 : IOV_MAX);
     void _send(Message *m) {
       ceph_assert(pipe_lock.is_locked());
       out_q[m->get_priority()].push_back(m);
+
       cond.Signal();
     }
+
+    // called by
+    // Pipe::accept
+    // SimpleMessenger::send_keepalive <- PipeConnection::send_keepalive
+    // <- MonClient::_reopen_session/MonClient::tick
+    // so only MonClient will send keepalive messages periodically
     void _send_keepalive() {
       ceph_assert(pipe_lock.is_locked());
       send_keepalive = true;
       cond.Signal();
     }
+
     Message *_get_next_outgoing() {
       ceph_assert(pipe_lock.is_locked());
       Message *m = 0;
@@ -246,9 +257,11 @@ static const int SM_IOV_MAX = (IOV_MAX >= 1024 ? IOV_MAX / 4 : IOV_MAX);
           m = p->second.front();
           p->second.pop_front();
         }
+
         if (p->second.empty())
           out_q.erase(p->first);
       }
+
       return m;
     }
 

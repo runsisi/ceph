@@ -478,7 +478,7 @@ namespace buffer CEPH_BUFFER_API {
 			     const iterator_impl& rhs) {
 	return &lhs.get_bl() != &rhs.get_bl() || lhs.get_off() != rhs.get_off();
       }
-    };
+    }; // class CEPH_BUFFER_API iterator_impl
 
   public:
     typedef iterator_impl<true> const_iterator;
@@ -517,7 +517,7 @@ namespace buffer CEPH_BUFFER_API {
       bool operator!=(const iterator& rhs) const {
 	return bl != rhs.bl || off != rhs.off;
       }
-    };
+    }; // class CEPH_BUFFER_API iterator
 
     class contiguous_appender {
       bufferlist *pbl;
@@ -634,7 +634,7 @@ namespace buffer CEPH_BUFFER_API {
 	  return out_of_band_offset + (pos - pbl->append_buffer.end_c_str());
 	}
       }
-    };
+    }; // class contiguous_appender
 
     contiguous_appender get_contiguous_appender(size_t len, bool deep=false) {
       return contiguous_appender(this, len, deep);
@@ -662,6 +662,7 @@ namespace buffer CEPH_BUFFER_API {
 	if (pos && pos != buffer.c_str()) {
 	  size_t len = pos - buffer.c_str();
 	  pbl->append(buffer, 0, len);
+
 	  buffer.set_length(buffer.length() - len);
 	  buffer.set_offset(buffer.offset() + len);
 	}
@@ -678,21 +679,24 @@ namespace buffer CEPH_BUFFER_API {
 	    pos = buffer.c_str();
 	    end = buffer.end_c_str();
 	  }
+
 	  size_t l = len;
 	  if (l > (size_t)(end - pos)) {
 	    l = end - pos;
 	  }
 	  memcpy(pos, buf, l);
+
 	  pos += l;
 	  buf += l;
 	  len -= l;
+
 	  if (pos == end) {
 	    pbl->append(buffer, 0, buffer.length());
 	    pos = end = nullptr;
 	  }
 	}
       }
-    };
+    }; // class page_aligned_appender
 
     page_aligned_appender get_page_aligned_appender(unsigned min_pages=1) {
       return page_aligned_appender(this, min_pages);

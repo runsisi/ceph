@@ -65,8 +65,8 @@ protected:
   std::map<std::string, std::string> load_store();
   void init();
 
-  bool initialized;
-  bool initializing;
+  bool initialized; // set by Mgr::init
+  bool initializing; // set by Mgr::background_init
 
 public:
   Mgr(MonClient *monc_, const MgrMap& mgrmap,

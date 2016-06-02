@@ -46,10 +46,13 @@ int KeyRing::from_ceph_context(CephContext *cct)
   }
 
   if (!conf->key.empty()) {
+    // <auid, key, caps>
     EntityAuth ea;
     try {
       ea.key.decode_base64(conf->key);
+
       add(conf->name, ea);
+
       return 0;
     }
     catch (buffer::error& e) {
@@ -61,21 +64,26 @@ int KeyRing::from_ceph_context(CephContext *cct)
   if (!conf->keyfile.empty()) {
     bufferlist bl;
     string err;
+
     int r = bl.read_file(conf->keyfile.c_str(), &err);
     if (r < 0) {
       lderr(cct) << err << dendl;
       return r;
     }
+
     string k(bl.c_str(), bl.length());
+    // <auid, key, caps>
     EntityAuth ea;
     try {
       ea.key.decode_base64(k);
+
       add(conf->name, ea);
     }
     catch (buffer::error& e) {
       lderr(cct) << "failed to decode key '" << k << "'" << dendl;
       return -EINVAL;
     }
+
     return 0;
   }
 
@@ -160,6 +168,14 @@ void KeyRing::encode_formatted(string label, Formatter *f, bufferlist& bl)
 
 void KeyRing::decode_plaintext(bufferlist::const_iterator& bli)
 {
+  /*
+~ # cat /etc/ceph/ceph.client.admin.keyring
+[client.admin]
+        key = AQBe4aBZAAAAABAA7TrWxpnV4UxmHrm+FLRqeg==
+        caps mds = "allow *"
+        caps mgr = "allow *"
+        caps mon = "allow *"
+   */
   int ret;
   bufferlist bl;
   bli.copy_all(bl);
@@ -188,6 +204,7 @@ void KeyRing::decode_plaintext(bufferlist::const_iterator& bli)
 	 l != s->second.lines.end(); ++l) {
       if (l->key.empty())
         continue;
+
       string k(l->key);
       std::replace(k.begin(), k.end(), '_', ' ');
       ret = set_modifier(k.c_str(), l->val.c_str(), ename, caps);

@@ -106,6 +106,7 @@ class StoreTool
 
       if (out)
         *out << url_escape(rk.first) << "\t" << url_escape(rk.second);
+
       if (do_crc) {
         bufferlist bl;
         bl.append(rk.first);
@@ -113,10 +114,12 @@ class StoreTool
         bl.append(iter->value());
 
         crc = bl.crc32c(crc);
+
         if (out) {
           *out << "\t" << bl.crc32c(0);
         }
       }
+
       if (out)
         *out << std::endl;
       iter->next();

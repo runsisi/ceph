@@ -31,6 +31,8 @@ const std::string SERVICE_DAEMON_ERROR_COUNT_KEY("image_error_count");
 using librbd::util::create_async_context_callback;
 using librbd::util::create_context_callback;
 
+// created by
+// PoolReplayer::init
 template <typename I>
 InstanceReplayer<I>::InstanceReplayer(
     Threads<I> *threads, ServiceDaemon<I>* service_daemon,
@@ -129,6 +131,8 @@ void InstanceReplayer<I>::release_all(Context *on_finish) {
   gather_ctx->activate();
 }
 
+// called by
+// InstanceWatcher<I>::handle_image_acquire
 template <typename I>
 void InstanceReplayer<I>::acquire_image(InstanceWatcher<I> *instance_watcher,
                                         const std::string &global_image_id,
@@ -168,6 +172,8 @@ void InstanceReplayer<I>::acquire_image(InstanceWatcher<I> *instance_watcher,
   m_threads->work_queue->queue(on_finish, 0);
 }
 
+// called by
+// InstanceWatcher<I>::handle_image_release
 template <typename I>
 void InstanceReplayer<I>::release_image(const std::string &global_image_id,
                                         Context *on_finish) {
@@ -319,6 +325,8 @@ void InstanceReplayer<I>::start_image_replayer(
   image_replayer->start(nullptr, false);
 }
 
+// called by
+// InstanceReplayer<I>::schedule_image_state_check_task
 template <typename I>
 void InstanceReplayer<I>::queue_start_image_replayers() {
   dout(10) << dendl;
@@ -475,6 +483,8 @@ void InstanceReplayer<I>::cancel_image_state_check_task() {
   m_image_state_check_task = nullptr;
 }
 
+// called by
+// InstanceReplayer<I>::init
 template <typename I>
 void InstanceReplayer<I>::schedule_image_state_check_task() {
   ceph_assert(m_threads->timer_lock.is_locked());

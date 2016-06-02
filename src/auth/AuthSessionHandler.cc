@@ -20,7 +20,9 @@
 
 #define dout_subsys ceph_subsys_auth
 
-
+// called by
+// AsyncConnection::_process_connection
+// AsyncCOnnection::handle_connect_msg
 AuthSessionHandler *get_auth_session_handler(CephContext *cct, int protocol, CryptoKey key, uint64_t features)
 {
 

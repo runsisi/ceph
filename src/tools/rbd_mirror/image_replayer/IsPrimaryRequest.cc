@@ -24,6 +24,9 @@ namespace image_replayer {
 using librbd::util::create_context_callback;
 using librbd::util::create_rados_callback;
 
+// created by
+// BootstrapRequest<I>::is_primary
+// rbd::mirror::image_replayer::OpenLocalImageRequest<I>::send_is_primary
 template <typename I>
 IsPrimaryRequest<I>::IsPrimaryRequest(I *image_ctx, bool *primary,
                                       Context *on_finish)

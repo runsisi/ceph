@@ -40,12 +40,15 @@ static int do_delete(librbd::RBD &rbd, librados::IoCtx& io_ctx,
                      const char *imgname, bool no_progress)
 {
   utils::ProgressContext pc("Removing image", no_progress);
+
   int r = rbd.remove_with_progress(io_ctx, imgname, pc);
   if (r < 0) {
     pc.fail();
     return r;
   }
+
   pc.finish();
+
   return 0;
 }
 
@@ -62,6 +65,7 @@ int execute(const po::variables_map &vm,
   std::string namespace_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
     vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &namespace_name,
     &image_name, &snap_name, true, utils::SNAPSHOT_PRESENCE_NONE,
@@ -144,12 +148,14 @@ int execute(const po::variables_map &vm,
       std::cerr << std::endl
 		<< "Remove the image from the group and try again."
 		<< std::endl;
+
       image.close();
     } else {
       std::cerr << "rbd: delete error: " << cpp_strerror(r) << std::endl;
     }
     return r;
   }
+
   return 0;
 }
 

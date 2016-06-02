@@ -86,6 +86,9 @@ static std::list<uint64_t> throttle_flags = {
   RBD_QOS_WRITE_BPS_THROTTLE
 };
 
+// created by
+// ImageCtx::ImageCtx
+// inherited from ThreadPool::PointerWQ<AioImageRequest<ImageCtx> >
 template <typename I>
 ImageRequestWQ<I>::ImageRequestWQ(I *image_ctx, const string &name,
 				  time_t ti, ThreadPool *tp)
@@ -321,6 +324,7 @@ void ImageRequestWQ<I>::aio_write(AioCompletion *c, uint64_t off, uint64_t len,
   }
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   if (m_image_ctx.non_blocking_aio || writes_blocked()) {
     queue(ImageDispatchSpec<I>::create_write_request(
             m_image_ctx, c, {{off, len}}, std::move(bl), op_flags, trace));
@@ -359,6 +363,7 @@ void ImageRequestWQ<I>::aio_discard(AioCompletion *c, uint64_t off,
   }
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   if (m_image_ctx.non_blocking_aio || writes_blocked()) {
     queue(ImageDispatchSpec<I>::create_discard_request(
             m_image_ctx, c, off, len, skip_partial_discard, trace));
@@ -511,10 +516,23 @@ void ImageRequestWQ<I>::shut_down(Context *on_shutdown) {
 template <typename I>
 int ImageRequestWQ<I>::block_writes() {
   C_SaferCond cond_ctx;
+
   block_writes(&cond_ctx);
+
   return cond_ctx.wait();
 }
 
+// called by:
+// ReleaseRequest<I>::send_block_writes
+// RefreshRequest<I>::send_v2_block_writes, only when we are to disable journaling
+// SetSnapRequest<I>::send_block_writes
+// ResizeRequest<I>::send_pre_block_writes, ResizeRequest<I>::send_post_block_writes
+// SnapshotCreateRequest<I>::send_suspend_aio
+// SnapshotRollbackRequest<I>::send_block_writes
+// EnableFeaturesRequest<I>::handle_prepare_lock,
+// DisableFeaturesRequest<I>::handle_prepare_lock
+// ExclusiveLock<I>::init
+// ImageRequestWQ::block_writes()
 template <typename I>
 void ImageRequestWQ<I>::block_writes(Context *on_blocked) {
   ceph_assert(m_image_ctx.owner_lock.is_locked());
@@ -522,10 +540,13 @@ void ImageRequestWQ<I>::block_writes(Context *on_blocked) {
 
   {
     RWLock::WLocker locker(m_lock);
+
     ++m_write_blockers;
     ldout(cct, 5) << &m_image_ctx << ", " << "num="
                   << m_write_blockers << dendl;
     if (!m_write_blocker_contexts.empty() || m_in_flight_writes > 0) {
+      // will be called by AioImageRequestWQ::handle_blocked_writes, see
+      // AioImageRequestWQ::finish_in_progress_write
       m_write_blocker_contexts.push_back(on_blocked);
       return;
     }
@@ -697,6 +718,7 @@ void *ImageRequestWQ<I>::_void_dequeue() {
 
   bool lock_required;
   bool refresh_required = m_image_ctx.state->is_refresh_required();
+
   {
     RWLock::RLocker locker(m_lock);
     bool write_op = peek_item->is_write_op();
@@ -758,22 +780,30 @@ void *ImageRequestWQ<I>::_void_dequeue() {
     return nullptr;
   }
 
+  // push the the aiocompletion associated with the request back of
+  // m_image_ctx->async_ops, when the aiocompletion completes, it will
+  // remove itself from m_image_ctx->async_ops, see AioCompletion::complete
   item->start_op();
+
   return item;
 }
 
+// ThreadPool::PointerWQ::_void_process calls this directly and do nothing else
 template <typename I>
 void ImageRequestWQ<I>::process(ImageDispatchSpec<I> *req) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "ictx=" << &m_image_ctx << ", "
                  << "req=" << req << dendl;
 
+  // like the implementation of ImageRequest<I>::aio_xxx static methods
   req->send();
 
   finish_queued_io(req);
   if (req->is_write_op()) {
     finish_in_flight_write();
   }
+
+  // AioImageRead, AioImageWrite, AioImageDiscard, AioImageFlush
   delete req;
 
   finish_in_flight_io();
@@ -794,6 +824,7 @@ void ImageRequestWQ<I>::finish_queued_io(ImageDispatchSpec<I> *req) {
 template <typename I>
 void ImageRequestWQ<I>::finish_in_flight_write() {
   bool writes_blocked = false;
+
   {
     RWLock::RLocker locker(m_lock);
     ceph_assert(m_in_flight_writes > 0);
@@ -918,8 +949,10 @@ void ImageRequestWQ<I>::handle_refreshed(
 template <typename I>
 void ImageRequestWQ<I>::handle_blocked_writes(int r) {
   Contexts contexts;
+
   {
     RWLock::WLocker locker(m_lock);
+
     contexts.swap(m_write_blocker_contexts);
   }
 

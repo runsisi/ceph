@@ -86,6 +86,8 @@ void Worker::add_pending(PendingIO::ptr io) {
 
 void Worker::run() {
   dout(THREAD_LEVEL) << "Worker thread started" << dendl;
+
+  // set by Worker::stop
   while (!m_done) {
     Action::ptr action;
     m_buffer.pop_back(&action);
@@ -93,6 +95,7 @@ void Worker::run() {
     action->perform(*this);
     m_replayer.set_action_complete(action->id());
   }
+
   {
     std::unique_lock lock{m_pending_ios_mutex};
     bool first_time = true;

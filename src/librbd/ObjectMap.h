@@ -53,15 +53,26 @@ public:
   void aio_resize(uint64_t new_size, uint8_t default_object_state,
 		  Context *on_finish);
 
+  // called by
+  // CopyupRequest.cc/UpdateObjectMap::send
+  // CopyupRequest::send_object_map_head
+  // AbstractObjectWriteRequest::send_pre_object_map_update
+  // AbstractObjectWriteRequest::send_post_object_map_update
   template <typename T, void(T::*MF)(int) = &T::complete>
   bool aio_update(uint64_t snap_id, uint64_t start_object_no, uint8_t new_state,
                   const boost::optional<uint8_t> &current_state,
                   const ZTracer::Trace &parent_trace, T *callback_object) {
+    // call aio_update below
     return aio_update<T, MF>(snap_id, start_object_no, start_object_no + 1,
                              new_state, current_state, parent_trace,
                              callback_object);
   }
 
+  // called by
+  // librbd::operation::TrimRequest<I>::send_pre_copyup
+  // librbd::operation::TrimRequest<I>::send_pre_remove
+  // librbd::operation::TrimRequest<I>::send_post_copyup
+  // librbd::operation::TrimRequest<I>::send_post_remove
   template <typename T, void(T::*MF)(int) = &T::complete>
   bool aio_update(uint64_t snap_id, uint64_t start_object_no,
                   uint64_t end_object_no, uint8_t new_state,
@@ -92,9 +103,10 @@ public:
                                          callback_object));
       detained_aio_update(std::move(update_operation));
     } else {
+      // call ObjectMap.cc/aio_update, which has Context *on_finish as the last parameter
       aio_update(snap_id, start_object_no, end_object_no, new_state,
                  current_state, parent_trace,
-                 util::create_context_callback<T, MF>(callback_object));
+                 util::create_context_callback<T, MF>(callback_object)); // Context *on_finish
     }
     return true;
   }

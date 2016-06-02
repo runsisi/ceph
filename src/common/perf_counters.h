@@ -304,6 +304,8 @@ public:
 
 typedef std::set <PerfCounters*, SortPerfCountersByName> perf_counters_set_t;
 
+// created by
+// CephContext::CephContext
 /*
  * PerfCountersCollection manages PerfCounters objects for a Ceph process.
  */
@@ -353,6 +355,7 @@ private:
   /** Protects m_loggers */
   mutable Mutex m_lock;
 
+  // std::set <PerfCounters*, SortPerfCountersByName>
   perf_counters_set_t m_loggers;
 
   CounterMap by_path; 

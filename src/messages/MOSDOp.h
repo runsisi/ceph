@@ -200,6 +200,8 @@ public:
     mtime = ceph::real_clock::to_timespec(mt);
   }
 
+  // called by
+  // write, writefull, zero, truncate, remove, read, stat below
   // ops
   void add_simple_op(int o, uint64_t off, uint64_t len) {
     OSDOp osd_op;
@@ -208,11 +210,14 @@ public:
     osd_op.op.extent.length = len;
     ops.push_back(osd_op);
   }
+
   void write(uint64_t off, uint64_t len, bufferlist& bl) {
     add_simple_op(CEPH_OSD_OP_WRITE, off, len);
     data.claim(bl);
     header.data_off = off;
   }
+
+  // never used
   void writefull(bufferlist& bl) {
     add_simple_op(CEPH_OSD_OP_WRITEFULL, 0, bl.length());
     data.claim(bl);
@@ -392,6 +397,8 @@ struct ceph_osd_request_head {
     }
   }
 
+  // called by
+  // Message.cc/decode_message
   void decode_payload() override {
     ceph_assert(partial_decode_needed && final_decode_needed);
     p = std::cbegin(payload);
@@ -527,9 +534,14 @@ struct ceph_osd_request_head {
 	reqid.inc = client_inc;
     }
 
+    // new header.version >= HEAD_VERSION will need finish_decode which
+    // called by PrimaryLogPG::do_op to decode the remaining data
+
     partial_decode_needed = false;
   }
 
+  // called by
+  // PrimaryLogPG::do_op
   bool finish_decode() {
     ceph_assert(!partial_decode_needed); // partial decoding required
     if (!final_decode_needed)
@@ -574,9 +586,12 @@ struct ceph_osd_request_head {
   const char *get_type_name() const override { return "osd_op"; }
   void print(ostream& out) const override {
     out << "osd_op(";
+
     if (!partial_decode_needed) {
       out << get_reqid() << ' ';
+
       out << pgid;
+
       if (!final_decode_needed) {
 	out << ' ';
 	out << hobj
@@ -587,9 +602,11 @@ struct ceph_osd_request_head {
       } else {
 	out << " " << get_raw_pg() << " (undecoded)";
       }
+
       out << " " << ceph_osd_flag_string(get_flags());
       out << " e" << osdmap_epoch;
     }
+
     out << ")";
   }
 };

@@ -31,6 +31,13 @@ using librbd::util::create_context_callback;
 
 namespace {
 
+// AutomaticPolicy -> <true, release upon requested>
+// StandardPolicy -> <false, return -EROFS>
+// MirrorExclusiveLockPolicy -> <false, return -EROFS>
+
+// created by
+// OpenLocalImageRequest<I>::send_open_image
+
 template <typename I>
 struct MirrorExclusiveLockPolicy : public librbd::exclusive_lock::Policy {
   I *image_ctx;
@@ -38,10 +45,12 @@ struct MirrorExclusiveLockPolicy : public librbd::exclusive_lock::Policy {
   MirrorExclusiveLockPolicy(I *image_ctx) : image_ctx(image_ctx) {
   }
 
+  // checked by librbd::AioImageRequestWQ::queue and librbd::lock_acquire
   bool may_auto_request_lock() override {
     return false;
   }
 
+  // always return return -EROFS, called by ImageWatcher<I>::handle_payload
   int lock_requested(bool force) override {
     int r = -EROFS;
     {
@@ -62,20 +71,34 @@ struct MirrorExclusiveLockPolicy : public librbd::exclusive_lock::Policy {
 
 };
 
+// DisabledPolicy -> <assert, true, assert>
+// StandardPolicy -> <false, false, allocate tag if is primary else return -EPERM>
+// MirrorJournalPolicy -> <true, false, finish with do nothing>
+// DeleteJournalPolicy -> <true, false, finish with do nothing>
+
+// created by
+// OpenLocalImageRequest<I>::send_open_image
 struct MirrorJournalPolicy : public librbd::journal::Policy {
   ContextWQ *work_queue;
 
   MirrorJournalPolicy(ContextWQ *work_queue) : work_queue(work_queue) {
   }
 
+  // checked by Journal<I>::is_journal_appending
   bool append_disabled() const override {
     // avoid recording any events to the local journal
     return true;
   }
+
+  // checked by
+  // AcquireRequest<I>::send_open_journal and
+  // RefreshRequest<I>::send_v2_open_journal
   bool journal_disabled() const override {
     return false;
   }
 
+  // called by
+  // AcquireRequest<I>::handle_open_journal -> AcquireRequest<I>::send_allocate_journal_tag
   void allocate_tag_on_lock(Context *on_finish) override {
     // rbd-mirror will manually create tags by copying them from the peer
     work_queue->queue(on_finish, 0);
@@ -84,6 +107,8 @@ struct MirrorJournalPolicy : public librbd::journal::Policy {
 
 } // anonymous namespace
 
+// created by
+// BootstrapRequest<I>::open_local_image
 template <typename I>
 OpenLocalImageRequest<I>::OpenLocalImageRequest(librados::IoCtx &local_io_ctx,
                                                 I **local_image_ctx,
@@ -106,9 +131,13 @@ void OpenLocalImageRequest<I>::send_open_image() {
 
   *m_local_image_ctx = I::create("", m_local_image_id, nullptr,
                                  m_local_io_ctx, false);
+
   {
     RWLock::WLocker owner_locker((*m_local_image_ctx)->owner_lock);
     RWLock::WLocker snap_locker((*m_local_image_ctx)->snap_lock);
+
+    // we lock the image exclusively, we will not release the exclusive
+    // lock upon other peers requests
     (*m_local_image_ctx)->set_exclusive_lock_policy(
       new MirrorExclusiveLockPolicy<I>(*m_local_image_ctx));
     (*m_local_image_ctx)->set_journal_policy(
@@ -253,6 +282,7 @@ void OpenLocalImageRequest<I>::finish(int r) {
   dout(20) << ": r=" << r << dendl;
 
   m_on_finish->complete(r);
+
   delete this;
 }
 

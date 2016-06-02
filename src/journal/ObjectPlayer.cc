@@ -12,6 +12,8 @@
 
 namespace journal {
 
+// created by
+// JournalPlayer::fetch
 ObjectPlayer::ObjectPlayer(librados::IoCtx &ioctx,
                            const std::string &object_oid_prefix,
                            uint64_t object_num, SafeTimer &timer,
@@ -37,6 +39,10 @@ ObjectPlayer::~ObjectPlayer() {
   }
 }
 
+// called by
+// JournalPlayer::fetch
+// ObjectPlayer::handle_watch_task
+// ObjectPlayer::C_Fetch::finish, if need to refetch
 void ObjectPlayer::fetch(Context *on_finish) {
   ldout(m_cct, 10) << __func__ << ": " << m_oid << dendl;
 
@@ -44,7 +50,9 @@ void ObjectPlayer::fetch(Context *on_finish) {
   ceph_assert(!m_fetch_in_progress);
   m_fetch_in_progress = true;
 
+  // ObjectPlayer::handle_fetch_complete
   C_Fetch *context = new C_Fetch(this, on_finish);
+  
   librados::ObjectReadOperation op;
   op.read(m_read_off, m_max_fetch_bytes, &context->read_bl, NULL);
   op.set_op_flags2(CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
@@ -57,15 +65,18 @@ void ObjectPlayer::fetch(Context *on_finish) {
   rados_completion->release();
 }
 
+// name it schedule_fetch should be better
 void ObjectPlayer::watch(Context *on_fetch, double interval) {
   ldout(m_cct, 20) << __func__ << ": " << m_oid << " watch" << dendl;
 
   Mutex::Locker timer_locker(m_timer_lock);
+
   m_watch_interval = interval;
 
   ceph_assert(m_watch_ctx == nullptr);
   m_watch_ctx = on_fetch;
 
+  // add timer to start the fetch in the timer's callback
   schedule_watch();
 }
 
@@ -104,12 +115,15 @@ void ObjectPlayer::pop_front() {
   m_entries.pop_front();
 }
 
+// called by
+// ObjectPlayer::C_Fetch::finish, which created by ObjectPlayer::fetch
 int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
                                         bool *refetch) {
   ldout(m_cct, 10) << __func__ << ": " << m_oid << ", r=" << r << ", len="
                    << bl.length() << dendl;
 
   *refetch = false;
+  
   if (r == -ENOENT) {
     return 0;
   } else if (r < 0) {
@@ -121,7 +135,10 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
   Mutex::Locker locker(m_lock);
   ceph_assert(m_fetch_in_progress);
   m_read_off += bl.length();
+
+  // last fetch may results a partial entry, so append the current fetched buffer
   m_read_bl.append(bl);
+  
   m_refetch_state = REFETCH_STATE_REQUIRED;
 
   bool full_fetch = (m_max_fetch_bytes == 2U << m_order);
@@ -134,11 +151,22 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
   while (!iter.end()) {
     uint32_t bytes_needed;
     uint32_t bl_off = iter.get_off();
+
     if (!Entry::is_readable(iter, &bytes_needed)) {
+
+      // either partial entry or corruptted entry
+        
       if (bytes_needed != 0) {
+
+        // partial entry
+        
         invalid_start_off = m_read_bl_off + bl_off;
+        
         invalid = true;
+
+        // invalid entry because we need more data to parse
         partial_entry = true;
+        
         if (full_fetch) {
           lderr(m_cct) << ": partial record at offset " << invalid_start_off
                        << dendl;
@@ -146,36 +174,57 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
           ldout(m_cct, 20) << ": partial record detected, will re-fetch"
                            << dendl;
         }
+        
         break;
       }
 
+      // corruptted entry
+
       if (!invalid) {
         invalid_start_off = m_read_bl_off + bl_off;
+        
         invalid = true;
+        
         lderr(m_cct) << ": detected corrupt journal entry at offset "
                      << invalid_start_off << dendl;
       }
+      
       ++iter;
       continue;
     }
+
+    // read a complete entry
+
+    // the last read is 1) a complete entry or 2) corruptted entry(s) + complete entry
+    
+    // if our last read is a partial entry then we have break from this loop, but there may be
+    // corruptted entries before the partial entry
 
     Entry entry;
     decode(entry, iter);
     ldout(m_cct, 20) << ": " << entry << " decoded" << dendl;
 
     uint32_t entry_len = iter.get_off() - bl_off;
+    
     if (invalid) {
+
+      // corruptted entry(s) + complete entry
+        
       // new corrupt region detected
       uint32_t invalid_end_off = m_read_bl_off + bl_off;
+      
       lderr(m_cct) << ": corruption range [" << invalid_start_off
                    << ", " << invalid_end_off << ")" << dendl;
+      
       m_invalid_ranges.insert(invalid_start_off,
                               invalid_end_off - invalid_start_off);
+      
       invalid = false;
     }
 
     EntryKey entry_key(std::make_pair(entry.get_tag_tid(),
                                       entry.get_entry_tid()));
+    
     if (m_entry_keys.find(entry_key) == m_entry_keys.end()) {
       m_entry_keys[entry_key] = m_entries.insert(m_entries.end(), entry);
     } else {
@@ -192,14 +241,21 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
 
     // advance the decoded entry offset
     m_read_bl_off += entry_len;
-  }
+  } // all m_read_bl parsed
 
   if (invalid) {
+
+    // corruptted entry(s) + complete entry is excluded in above while loop
+
+    // 1) partial entry or 2) corruptted entry(s) + partial entry or 3) corruptted entry(s)
+        
     uint32_t invalid_end_off = m_read_bl_off + m_read_bl.length();
+    
     if (!partial_entry) {
       lderr(m_cct) << ": corruption range [" << invalid_start_off
                    << ", " << invalid_end_off << ")" << dendl;
     }
+    
     m_invalid_ranges.insert(invalid_start_off,
                             invalid_end_off - invalid_start_off);
   }
@@ -227,6 +283,7 @@ void ObjectPlayer::clear_invalid_range(uint32_t off, uint32_t len) {
   }
 }
 
+// maybe name it schedule_fetch should be better
 void ObjectPlayer::schedule_watch() {
   ceph_assert(m_timer_lock.is_locked());
   if (m_watch_ctx == NULL) {
@@ -263,6 +320,8 @@ void ObjectPlayer::handle_watch_task() {
   ceph_assert(m_watch_task != nullptr);
 
   m_watch_task = nullptr;
+
+  // handle_watch_fetched
   fetch(new C_WatchFetch(this));
 }
 
@@ -273,6 +332,7 @@ void ObjectPlayer::handle_watch_fetched(int r) {
   Context *watch_ctx = nullptr;
   {
     Mutex::Locker timer_locker(m_timer_lock);
+    
     std::swap(watch_ctx, m_watch_ctx);
 
     if (m_unwatched) {
@@ -281,6 +341,7 @@ void ObjectPlayer::handle_watch_fetched(int r) {
     }
   }
 
+  // m_watch_ctx is JournalPlayer provided callback
   if (watch_ctx != nullptr) {
     watch_ctx->complete(r);
   }
@@ -288,19 +349,26 @@ void ObjectPlayer::handle_watch_fetched(int r) {
 
 void ObjectPlayer::C_Fetch::finish(int r) {
   bool refetch = false;
+  
   r = object_player->handle_fetch_complete(r, read_bl, &refetch);
 
   {
     Mutex::Locker locker(object_player->m_lock);
+    
     object_player->m_fetch_in_progress = false;
   }
 
   if (refetch) {
+
+    // read partial journal entry, fetch again
+        
     object_player->fetch(on_finish);
     return;
   }
 
   object_player.reset();
+
+  // JournalPlayer::handle_fetched
   on_finish->complete(r);
 }
 

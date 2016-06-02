@@ -90,7 +90,7 @@ namespace std {
   };
 } // namespace std
 
-
+// for cephfs only
 struct file_object_t {
   uint64_t ino, bno;
   mutable char buf[34];

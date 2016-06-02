@@ -117,9 +117,9 @@ namespace librbd {
     uint8_t order;
     uint64_t size;
     uint64_t features;
-    std::string object_prefix;
-    char *format_string;
-    std::string header_oid;
+    std::string object_prefix; // set by OpenRequest<I>::handle_v2_get_immutable_metadata
+    char *format_string; // set by ImageCtx::init_layout
+    std::string header_oid; // only used for old-format images
     std::string id; // only used for new-format images
     ParentInfo parent_md;
     ImageCtx *parent;
@@ -143,16 +143,20 @@ namespace librbd {
 
     std::map<uint64_t, io::CopyupRequest<ImageCtx>*> copyup_list;
 
+    // librbd::AioImageRequest<I>
     xlist<io::AsyncOperation*> async_ops;
+    // librbd::operation::Request<I>, librbd::object_map::Request<I>
     xlist<AsyncRequest<>*> async_requests;
     std::list<Context*> async_requests_waiters;
 
     ImageState<ImageCtx> *state;
     Operations<ImageCtx> *operations;
 
+    // created by RefreshRequest<I>::send_v2_init_exclusive_lock
     ExclusiveLock<ImageCtx> *exclusive_lock;
     ObjectMap<ImageCtx> *object_map;
 
+    // was pushed back by librbd::operation::ResizeRequest<I>::send
     xlist<operation::ResizeRequest<ImageCtx>*> resize_reqs;
 
     io::ImageRequestWQ<ImageCtx> *io_work_queue;

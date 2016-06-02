@@ -78,7 +78,7 @@ class EventDriver {
   virtual int del_event(int fd, int cur_mask, int del_mask) = 0;
   virtual int event_wait(vector<FiredFileEvent> &fired_events, struct timeval *tp) = 0;
   virtual int resize_events(int newsize) = 0;
-  virtual bool need_wakeup() { return true; }
+  virtual bool need_wakeup() { return true; } // only DPDK return false
 };
 
 /*
@@ -118,7 +118,7 @@ class EventCenter {
      * A Poller object is invoked once each time through the dispatcher's
      * inner polling loop.
      */
-  class Poller {
+  class Poller { // DPDK only stuff
    public:
     explicit Poller(EventCenter* center, const string& pollerName);
     virtual ~Poller();
@@ -251,6 +251,7 @@ class EventCenter {
       f();
       return ;
     }
+
     if (nowait) {
       C_submit_event<func> *event = new C_submit_event<func>(std::move(f), true);
       c->dispatch_event_external(event);

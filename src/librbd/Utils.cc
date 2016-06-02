@@ -21,21 +21,25 @@ namespace util {
 
 const std::string group_header_name(const std::string &group_id)
 {
+  // "rbd_group_header."
   return RBD_GROUP_HEADER_PREFIX + group_id;
 }
 
 const std::string id_obj_name(const std::string &name)
 {
+  // "rbd_id."
   return RBD_ID_PREFIX + name;
 }
 
 const std::string header_name(const std::string &image_id)
 {
+  // "rbd_header."
   return RBD_HEADER_PREFIX + image_id;
 }
 
 const std::string old_header_name(const std::string &image_name)
 {
+  // ".rbd"
   return image_name + RBD_SUFFIX;
 }
 
@@ -62,6 +66,7 @@ std::string generate_image_id(librados::IoCtx &ioctx) {
     id = id.substr(id.length() - RBD_MAX_IMAGE_ID_LENGTH);
   }
 
+  // the unique is guaranteed by cls_rbd::dir_add_image_helper
   return id;
 }
 

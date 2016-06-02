@@ -37,15 +37,19 @@
 std::function<void ()> NetworkStack::add_thread(unsigned i)
 {
   Worker *w = workers[i];
+
   return [this, w]() {
       char tp_name[16];
       sprintf(tp_name, "msgr-worker-%u", w->id);
       ceph_pthread_setname(pthread_self(), tp_name);
       const unsigned EventMaxWaitUs = 30000000;
+
       w->center.set_owner();
+
       ldout(cct, 10) << __func__ << " starting" << dendl;
       w->initialize();
       w->init_done();
+
       while (!w->done) {
         ldout(cct, 30) << __func__ << " calling event process" << dendl;
 
@@ -63,6 +67,8 @@ std::function<void ()> NetworkStack::add_thread(unsigned i)
   };
 }
 
+// called by
+// AsyncMessenger::AsyncMessenger
 std::shared_ptr<NetworkStack> NetworkStack::create(CephContext *c, const string &t)
 {
   if (t == "posix")
@@ -174,7 +180,7 @@ void NetworkStack::stop()
   std::lock_guard<decltype(pool_spin)> lk(pool_spin);
   for (unsigned i = 0; i < num_workers; ++i) {
     workers[i]->done = true;
-    workers[i]->center.wakeup();
+    workers[i]->center.wakeup(); // the driver->event_wait will return without wait until timeout
     join_worker(i);
   }
   started = false;

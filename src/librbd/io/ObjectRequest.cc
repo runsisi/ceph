@@ -45,6 +45,8 @@ inline bool is_copy_on_read(I *ictx, librados::snap_t snap_id) {
 
 } // anonymous namespace
 
+// called by
+// ImageDiscardRequest<I>::create_object_request
 template <typename I>
 ObjectRequest<I>*
 ObjectRequest<I>::create_write(I *ictx, const std::string &oid,
@@ -58,6 +60,8 @@ ObjectRequest<I>::create_write(I *ictx, const std::string &oid,
                                    parent_trace, completion);
 }
 
+// called by
+// ImageDiscardRequest<I>::create_object_request
 template <typename I>
 ObjectRequest<I>*
 ObjectRequest<I>::create_discard(I *ictx, const std::string &oid,
@@ -72,6 +76,8 @@ ObjectRequest<I>::create_discard(I *ictx, const std::string &oid,
                                      parent_trace, completion);
 }
 
+// called by
+// ImageWriteSameRequest<I>::create_object_request
 template <typename I>
 ObjectRequest<I>*
 ObjectRequest<I>::create_write_same(I *ictx, const std::string &oid,
@@ -130,6 +136,10 @@ void ObjectRequest<I>::add_write_hint(I& image_ctx,
   }
 }
 
+// called by
+// ObjectRequest<I>::ObjectRequest
+// ObjectReadRequest<I>::send_copyup
+// AbstractObjectWriteRequest::handle_write_guard
 template <typename I>
 bool ObjectRequest<I>::compute_parent_extents(Extents *parent_extents,
                                               bool read_request) {
@@ -142,6 +152,8 @@ bool ObjectRequest<I>::compute_parent_extents(Extents *parent_extents,
   uint64_t parent_overlap;
   int r = m_ictx->get_parent_overlap(m_snap_id, &parent_overlap);
   if (r < 0) {
+    // r == -ENOENT, no parent found
+
     // NOTE: it's possible for a snapshot to be deleted while we are
     // still reading from it
     lderr(m_ictx->cct) << "failed to retrieve parent overlap: "
@@ -167,6 +179,7 @@ bool ObjectRequest<I>::compute_parent_extents(Extents *parent_extents,
     m_has_parent = !parent_extents->empty();
     return true;
   }
+
   return false;
 }
 
@@ -231,6 +244,7 @@ void ObjectReadRequest<I>::read_object() {
   } else {
     op.read(this->m_object_off, this->m_object_len, m_read_data, nullptr);
   }
+
   op.set_op_flags2(m_op_flags);
 
   librados::AioCompletion *rados_completion = util::create_rados_callback<
@@ -244,6 +258,11 @@ void ObjectReadRequest<I>::read_object() {
   rados_completion->release();
 }
 
+// called by
+// ObjectReadRequest<I>::should_complete
+// do CoR, this is not a necessary step for object read request, so the
+// original object read request is not appended to CopyupRequest::m_pending_requests
+// vector, which is not the same as object write request
 template <typename I>
 void ObjectReadRequest<I>::handle_read_object(int r) {
   I *image_ctx = this->m_ictx;
@@ -350,6 +369,8 @@ void ObjectReadRequest<I>::copyup() {
       image_ctx, this->m_oid, this->m_object_no, std::move(parent_extents),
       this->m_trace);
 
+    // will be erased by CopyupRequest::should_complete
+    // the original object read request will not be appended
     image_ctx->copyup_list[this->m_object_no] = new_req;
     image_ctx->copyup_list_lock.Unlock();
     image_ctx->parent_lock.put_read();
@@ -551,12 +572,18 @@ void AbstractObjectWriteRequest<I>::copyup() {
     this->m_parent_extents.clear();
 
     // make sure to wait on this CopyupRequest
+    // multiple child object requests may wait for the same copyup request,
+    // the object write request will be sent and finished by the copyup
+    // reqeust, see CopyupRequest::complete_requests
     new_req->append_request(this);
     image_ctx->copyup_list[this->m_object_no] = new_req;
 
     image_ctx->copyup_list_lock.Unlock();
     new_req->send();
   } else {
+
+    // a copyup already in progress for this child object, just wait
+
     it->second->append_request(this);
     image_ctx->copyup_list_lock.Unlock();
   }

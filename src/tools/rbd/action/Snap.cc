@@ -164,6 +164,7 @@ int do_add_snap(librbd::Image& image, const char *snapname)
 int do_remove_snap(librbd::Image& image, const char *snapname, bool force,
 		   bool no_progress)
 {
+  // RBD_SNAP_REMOVE_FORCE = (RBD_SNAP_REMOVE_UNPROTECT | RBD_SNAP_REMOVE_FLATTEN)
   uint32_t flags = force? RBD_SNAP_REMOVE_FORCE : 0;
   int r = 0;
   utils::ProgressContext pc("Removing snap", no_progress);
@@ -175,6 +176,7 @@ int do_remove_snap(librbd::Image& image, const char *snapname, bool force,
   }
 
   pc.finish();
+
   return 0;
 }
 
@@ -182,12 +184,15 @@ int do_rollback_snap(librbd::Image& image, const char *snapname,
                      bool no_progress)
 {
   utils::ProgressContext pc("Rolling back to snapshot", no_progress);
+
   int r = image.snap_rollback_with_progress(snapname, pc);
   if (r < 0) {
     pc.fail();
     return r;
   }
+
   pc.finish();
+
   return 0;
 }
 
@@ -465,8 +470,10 @@ int execute_remove(const po::variables_map &vm,
       std::cerr << "rbd: failed to remove snapshot: " << cpp_strerror(r)
                 << std::endl;
     }
+
     return r;
   }
+
   return 0;
 }
 
@@ -546,6 +553,7 @@ int execute_rollback(const po::variables_map &vm,
   std::string namespace_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
     vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &namespace_name,
     &image_name, &snap_name, true, utils::SNAPSHOT_PRESENCE_REQUIRED,
@@ -569,6 +577,7 @@ int execute_rollback(const po::variables_map &vm,
     std::cerr << "rbd: rollback failed: " << cpp_strerror(r) << std::endl;
     return r;
   }
+
   return 0;
 }
 

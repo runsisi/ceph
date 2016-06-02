@@ -616,6 +616,7 @@ public:
 	return;
       }
     }
+
     ceph_abort();
   }
   void ms_fast_dispatch(Message *m) {
@@ -753,6 +754,7 @@ public:
       if (dispatcher->ms_get_authorizer(peer_type, &a, force_new))
 	return a;
     }
+
     return NULL;
   }
   /**

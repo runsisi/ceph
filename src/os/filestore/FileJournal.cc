@@ -746,11 +746,15 @@ void FileJournal::write_header_sync()
   dout(20) << __func__ << " finish" << dendl;
 }
 
+// called by
+// FileJournal::prepare_single_write
 int FileJournal::check_for_full(uint64_t seq, off64_t pos, off64_t size)
 {
   // already full?
   if (full_state != FULL_NOTFULL)
     return -ENOSPC;
+
+  // journal not full yet
 
   // take 1 byte off so that we only get pos == header.start on EMPTY, never on FULL.
   off64_t room;
@@ -758,21 +762,26 @@ int FileJournal::check_for_full(uint64_t seq, off64_t pos, off64_t size)
     room = (header.max_size - pos) + (header.start - get_top()) - 1;
   else
     room = header.start - pos - 1;
+
   dout(10) << "room " << room << " max_size " << max_size << " pos " << pos << " header.start " << header.start
 	   << " top " << get_top() << dendl;
 
   if (do_sync_cond) {
+    // was assigned to FileStore::sync_cond by FileStore::new_journal
     if (room >= (header.max_size >> 1) &&
         room - size < (header.max_size >> 1)) {
       dout(10) << " passing half full mark, triggering commit" << dendl;
+
       do_sync_cond->SloppySignal();  // initiate a real commit so we can trim
     }
   }
 
   if (room >= size) {
     dout(10) << "check_for_full at " << pos << " : " << size << " < " << room << dendl;
+
     if (pos + size > header.max_size)
       must_write_header = true;
+
     return 0;
   }
 
@@ -789,6 +798,7 @@ int FileJournal::check_for_full(uint64_t seq, off64_t pos, off64_t size)
   return -ENOSPC;
 }
 
+// called by FileJournal::write_thread_entry
 int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_t& orig_bytes)
 {
   // gather queued writes
@@ -802,10 +812,16 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
 
   while (!writeq_empty()) {
     list<write_item> items;
+
+    // swap FileJournal::writeq
     batch_pop_write(items);
+
     list<write_item>::iterator it = items.begin();
+
     while (it != items.end()) {
       uint64_t bytes = it->bl.length();
+
+      // wrap encoded tx(s) to be an journal entry
       int r = prepare_single_write(*it, bl, queue_pos, orig_ops, orig_bytes);
       if (r == 0) { // prepare ok, delete it
 	items.erase(it++);
@@ -821,9 +837,11 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
 	(void)bytes;
 #endif
       }
+
       if (r == -ENOSPC) {
         // the journal maybe full, insert the left item to writeq
         batch_unpop_write(items);
+
         if (orig_ops)
           goto out;         // commit what we have
 
@@ -831,6 +849,7 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
           logger->inc(l_filestore_journal_full);
 
         if (wait_on_full) {
+          // set in FileStore::mount when the journal mode is m_filestore_journal_writeahead
           dout(20) << "prepare_multi_write full on first entry, need to wait" << dendl;
         } else {
           dout(20) << "prepare_multi_write full on first entry, restarting journal" << dendl;
@@ -838,16 +857,23 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
           // throw out what we have so far
           full_state = FULL_FULL;
           while (!writeq_empty()) {
+            // only a debug log
             complete_write(1, peek_write().orig_len);
+
             pop_write();
           }
+
           print_header(header);
         }
 
         return -ENOSPC;  // hrm, full on first op
       }
+
+      // check if we need to break the while loop in case we do not want to write
+      // too much in a single write
       if (eleft) {
         if (--eleft == 0) {
+          // default 100
           dout(20) << "prepare_multi_write hit max events per write "
 		   << cct->_conf->journal_max_write_entries << dendl;
           batch_unpop_write(items);
@@ -856,6 +882,7 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
       }
       if (bmax) {
         if (bl.length() >= bmax) {
+          // default 10M
           dout(20) << "prepare_multi_write hit max write size "
 		   << cct->_conf->journal_max_write_bytes << dendl;
           batch_unpop_write(items);
@@ -891,26 +918,36 @@ void FileJournal::queue_write_fin(uint64_t seq, Context *fin)
 }
 */
 
+// called by FileJournal::do_write, FileJournal::check_aio_completion and FileJournal::committed_thru
 void FileJournal::queue_completions_thru(uint64_t seq)
 {
   ceph_assert(finisher_lock.is_locked());
   utime_t now = ceph_clock_now();
   list<completion_item> items;
+  // swap FileJournal::completions
   batch_pop_completions(items);
+
   list<completion_item>::iterator it = items.begin();
+
   while (it != items.end()) {
     completion_item& next = *it;
     if (next.seq > seq)
       break;
+
     utime_t lat = now;
     lat -= next.start;
+
     dout(10) << "queue_completions_thru seq " << seq
 	     << " queueing seq " << next.seq
 	     << " " << next.finish
 	     << " lat " << lat << dendl;
+
     if (logger) {
       logger->tinc(l_filestore_journal_latency, lat);
     }
+
+    // next.finish was queued by FileJournal::submit_entry, it is C_JournaledAhead
+    // which wraps the ondisk callback provided by FileStore::queue_transactions
     if (next.finish)
       finisher->queue(next.finish);
     if (next.tracked_op) {
@@ -920,7 +957,10 @@ void FileJournal::queue_completions_thru(uint64_t seq)
     }
     items.erase(it++);
   }
+
+  // unpop those journal writes that have not been encoded and written to disk
   batch_unpop_completions(items);
+
   finisher_cond.Signal();
 }
 
@@ -928,6 +968,7 @@ void FileJournal::queue_completions_thru(uint64_t seq)
 int FileJournal::prepare_single_write(write_item &next_write, bufferlist& bl, off64_t& queue_pos, uint64_t& orig_ops, uint64_t& orig_bytes)
 {
   uint64_t seq = next_write.seq;
+  // an encoded tx(s) to prepend journal entry header and append journal entry footer
   bufferlist &ebl = next_write.bl;
   off64_t size = ebl.length();
 
@@ -968,6 +1009,8 @@ int FileJournal::prepare_single_write(write_item &next_write, bufferlist& bl, of
   }
 
   journalq.push_back(pair<uint64_t,off64_t>(seq, queue_pos));
+
+  // will be used to update journaled_seq by FileJournal::do_write
   writing_seq = seq;
 
   queue_pos += size;
@@ -1066,6 +1109,7 @@ void FileJournal::do_write(bufferlist& bl)
       second.swap(tmp);
       pos = 0;          // we included the header
     }
+
     // Write the second portion first possible with the header, so
     // do_read_entry() won't even get a valid entry_header_t if there
     // is a crash between the two writes.
@@ -1076,6 +1120,7 @@ void FileJournal::do_write(bufferlist& bl)
       check_align(pos, second);
       ceph_abort();
     }
+
     orig_pos = first_pos;
     if (write_bl(first_pos, first)) {
       derr << "FileJournal::do_write: write_bl(pos=" << orig_pos
@@ -1148,19 +1193,32 @@ void FileJournal::do_write(bufferlist& bl)
 
   {
     Mutex::Locker locker(finisher_lock);
+
+    // writing_seq was updated by FileJournal::prepare_single_write
     journaled_seq = writing_seq;
 
     // kick finisher?
     //  only if we haven't filled up recently!
     if (full_state != FULL_NOTFULL) {
+
+      // which means the journal is full
+
       dout(10) << "do_write NOT queueing finisher seq " << journaled_seq
 	       << ", full_commit_seq|full_restart_seq" << dendl;
     } else {
+
+      // journal is not full
+
       if (plug_journal_completions) {
+
+        // only set by FileJournal::commit_start when FileJournal::full_state is FULL_WAIT
+        // and reset to false by FileJournal::committed_thru
+        
 	dout(20) << "do_write NOT queueing finishers through seq " << journaled_seq
 		 << " due to completion plug" << dendl;
       } else {
 	dout(20) << "do_write queueing finishers through seq " << journaled_seq << dendl;
+
 	queue_completions_thru(journaled_seq);
       }
     }
@@ -1184,14 +1242,22 @@ void FileJournal::flush()
 void FileJournal::write_thread_entry()
 {
   dout(10) << "write_thread_entry start" << dendl;
+
   while (1) {
     {
       Mutex::Locker locker(writeq_lock);
+
       if (writeq.empty() && !must_write_header) {
 	if (write_stop)
 	  break;
+
 	dout(20) << "write_thread_entry going to sleep" << dendl;
+
+	// FileJournal::submit_entry which called by _op_journal_transactions
+	// will notify us
+
 	writeq_cond.Wait(writeq_lock);
+
 	dout(20) << "write_thread_entry woke up" << dendl;
 	continue;
       }
@@ -1215,41 +1281,59 @@ void FileJournal::write_thread_entry()
 	int exp = std::min<int>(aio_num * 2, 24);
 	long unsigned min_new = 1ull << exp;
 	uint64_t cur = aio_write_queue_bytes;
+
 	dout(20) << "write_thread_entry aio throttle: aio num " << aio_num << " bytes " << aio_bytes
 		 << " ... exp " << exp << " min_new " << min_new
 		 << " ... pending " << cur << dendl;
+
 	if (cur >= min_new)
 	  break;
+
 	dout(20) << "write_thread_entry deferring until more aios complete: "
 		 << aio_num << " aios with " << aio_bytes << " bytes needs " << min_new
 		 << " bytes to start a new aio (currently " << cur << " pending)" << dendl;
+
 	aio_cond.Wait(aio_lock);
+
 	dout(20) << "write_thread_entry woke up" << dendl;
       }
     }
 #endif
 
     Mutex::Locker locker(write_lock);
+
     uint64_t orig_ops = 0;
     uint64_t orig_bytes = 0;
 
     bufferlist bl;
+
+    // encode each tx list into an journal entry, multiple journal entries are claim into bl
     int r = prepare_multi_write(bl, orig_ops, orig_bytes);
+
     // Don't care about journal full if stoppping, so drop queue and
     // possibly let header get written and loop above to notice stop
     if (r == -ENOSPC) {
       if (write_stop) {
 	dout(20) << "write_thread_entry full and stopping, throw out queue and finish up" << dendl;
+
 	while (!writeq_empty()) {
+	  // only a debug log
 	  complete_write(1, peek_write().orig_len);
+
 	  pop_write();
 	}
+
 	print_header(header);
 	r = 0;
       } else {
 	dout(20) << "write_thread_entry full, going to sleep (waiting for commit)" << dendl;
+
+	// FileJournal::committed_thru will notify us, if we are to stop FileJournal::stop_writer
+	// should also notify us
 	commit_cond.Wait(write_lock);
+
 	dout(20) << "write_thread_entry woke up" << dendl;
+
 	continue;
       }
     }
@@ -1268,6 +1352,8 @@ void FileJournal::write_thread_entry()
 #else
     do_write(bl);
 #endif
+
+    // only a debug log
     complete_write(orig_ops, orig_bytes);
   }
 
@@ -1513,7 +1599,9 @@ void FileJournal::check_aio_completion()
     // kick finisher?
     //  only if we haven't filled up recently!
     Mutex::Locker locker(finisher_lock);
+    
     journaled_seq = new_journaled_seq;
+    
     if (full_state != FULL_NOTFULL) {
       dout(10) << "check_aio_completion NOT queueing finisher seq " << journaled_seq
 	       << ", full_commit_seq|full_restart_seq" << dendl;
@@ -1523,6 +1611,7 @@ void FileJournal::check_aio_completion()
 		 << " due to completion plug" << dendl;
       } else {
 	dout(20) << "check_aio_completion queueing finishers through seq " << journaled_seq << dendl;
+        
 	queue_completions_thru(journaled_seq);
       }
     }
@@ -1586,6 +1675,7 @@ int FileJournal::prepare_entry(vector<ObjectStore::Transaction>& tls, bufferlist
   return h.len;
 }
 
+// called by JournalingObjectStore::_op_journal_transactions
 void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
 			       Context *oncommit, TrackedOpRef osd_op)
 {
@@ -1628,11 +1718,16 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
     aio_cond.Signal();
 #endif
 
+    // the oncommit(i.e., onjournal, which wraps ondisk, see C_JournaledAhead) will be queued 
+    // on finisher by FileJournal::queue_completions_thru which called by FileJournal::do_write, 
+    // FileJournal::check_aio_completion and FileJournal::committed_thru
     completions.push_back(
       completion_item(
 	seq, oncommit, ceph_clock_now(), osd_op));
     if (writeq.empty())
       writeq_cond.Signal();
+
+    // e is a local var from FileStore::queue_transactions, now we copy it
     writeq.push_back(write_item(seq, e, orig_len, osd_op));
     if (osd_op)
       osd_op->journal_trace.keyval("queue depth", writeq.size());
@@ -1656,10 +1751,12 @@ void FileJournal::pop_write()
 {
   ceph_assert(write_lock.is_locked());
   Mutex::Locker locker(writeq_lock);
+
   if (logger) {
     logger->dec(l_filestore_journal_queue_bytes, writeq.front().orig_len);
     logger->dec(l_filestore_journal_queue_ops, 1);
   }
+
   writeq.pop_front();
 }
 
@@ -1691,6 +1788,7 @@ void FileJournal::batch_unpop_write(list<write_item> &items)
   writeq.splice(writeq.begin(), items);
 }
 
+// called by JournalingObjectStore::ApplyManager::commit_start
 void FileJournal::commit_start(uint64_t seq)
 {
   dout(10) << "commit_start" << dendl;
@@ -1740,11 +1838,15 @@ void FileJournal::do_discard(int64_t offset, int64_t end)
 	dout(1) << __func__ << " ioctl(BLKDISCARD) error:" << cpp_strerror(errno) << dendl;
 }
 
+// called by JournalingObjectStore::ApplyManager::commit_finish which called
+// by FileStore::sync_entry
 void FileJournal::committed_thru(uint64_t seq)
 {
   Mutex::Locker locker(write_lock);
 
+  // release throttle which reserved by FileStore::queue_transactions
   auto released = throttle.flush(seq);
+
   if (logger) {
     logger->dec(l_filestore_journal_ops, released.first);
     logger->dec(l_filestore_journal_bytes, released.second);
@@ -1761,15 +1863,25 @@ void FileJournal::committed_thru(uint64_t seq)
   }
 
   dout(5) << "committed_thru " << seq << " (last_committed_seq " << last_committed_seq << ")" << dendl;
+
+  // the seq is ApplyManager::committing_seq, i.e., the same as ApplyManager::committed_seq, 
+  // see JournalingObjectStore::ApplyManager::commit_finish
   last_committed_seq = seq;
 
   // completions!
   {
     Mutex::Locker locker(finisher_lock);
+
+    // finish FileJournal::completions up through seq
     queue_completions_thru(seq);
+
     if (plug_journal_completions && seq >= header.start_seq) {
       dout(10) << " removing completion plug, queuing completions thru journaled_seq " << journaled_seq << dendl;
+
       plug_journal_completions = false;
+
+      // FileJournal::journaled_seq was updated by FileJournal::open, FileJournal::do_write,
+      // FileJournal::check_aio_completion, FileJournal::read_entry
       queue_completions_thru(journaled_seq);
     }
   }
@@ -1799,6 +1911,7 @@ void FileJournal::committed_thru(uint64_t seq)
   }
 
   must_write_header = true;
+
   print_header(header);
 
   // committed but unjournaled items
@@ -1806,7 +1919,11 @@ void FileJournal::committed_thru(uint64_t seq)
     dout(15) << " dropping committed but unwritten seq " << peek_write().seq
 	     << " len " << peek_write().bl.length()
 	     << dendl;
+
+    // only a debug log
     complete_write(1, peek_write().orig_len);
+
+    // pop front of FileJournal::writeq
     pop_write();
   }
 
@@ -1849,8 +1966,11 @@ int FileJournal::set_throttle_params()
 {
   stringstream ss;
   bool valid = throttle.set_params(
+    // default 0.6
     cct->_conf->journal_throttle_low_threshhold,
+    // default 0.9
     cct->_conf->journal_throttle_high_threshhold,
+    // default 200M/s
     cct->_conf->filestore_expected_throughput_bytes,
     cct->_conf->journal_throttle_high_multiple,
     cct->_conf->journal_throttle_max_multiple,
@@ -2067,8 +2187,10 @@ FileJournal::read_entry_result FileJournal::do_read_entry(
   return SUCCESS;
 }
 
+// called by FileStore::queue_transactions, will be released by FileJournal::committed_thru
 void FileJournal::reserve_throttle_and_backoff(uint64_t count)
 {
+  // JournalThrottle -> BackoffThrottle
   throttle.get(count);
 }
 

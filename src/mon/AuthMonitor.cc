@@ -50,14 +50,23 @@ ostream& operator<<(ostream &out, const AuthMonitor &pm)
   return out << "auth";
 }
 
+// called by
+// AuthMonitor::tick
+// AuthMonitor::create_initial
 bool AuthMonitor::check_rotate()
 {
   KeyServerData::Incremental rot_inc;
+
   rot_inc.op = KeyServerData::AUTH_INC_SET_ROTATING;
+
   if (!mon->key_server.updated_rotating(rot_inc.rotating_bl, last_rotating_ver))
     return false;
+
   dout(10) << __func__ << " updated rotating" << dendl;
+
+  // prepare pending_auth
   push_cephx_inc(rot_inc);
+
   return true;
 }
 
@@ -83,6 +92,8 @@ void AuthMonitor::on_active()
 
   if (!mon->is_leader())
     return;
+
+  // initialize the rotating keys
   mon->key_server.start_server();
 }
 
@@ -172,6 +183,7 @@ void AuthMonitor::create_initial()
 
   // initialize rotating keys
   last_rotating_ver = 0;
+
   check_rotate();
   ceph_assert(pending_auth.size() == 1);
 
@@ -190,11 +202,14 @@ void AuthMonitor::create_initial()
   Incremental inc;
   inc.inc_type = GLOBAL_ID;
   inc.max_global_id = max_global_id;
+
   pending_auth.push_back(inc);
 
   format_version = 3;
 }
 
+// called by
+// PaxosService::refresh
 void AuthMonitor::update_from_paxos(bool *need_bootstrap)
 {
   dout(10) << __func__ << dendl;
@@ -213,6 +228,7 @@ void AuthMonitor::update_from_paxos(bool *need_bootstrap)
 
   if ((latest_full > 0) && (latest_full > keys_ver)) {
     bufferlist latest_bl;
+
     int err = get_version_full(latest_full, latest_bl);
     ceph_assert(err == 0);
     ceph_assert(latest_bl.length() != 0);
@@ -224,6 +240,7 @@ void AuthMonitor::update_from_paxos(bool *need_bootstrap)
     decode(max_global_id, p);
     decode(mon->key_server, p);
     mon->key_server.set_ver(latest_full);
+
     keys_ver = latest_full;
   }
 
@@ -292,9 +309,11 @@ void AuthMonitor::increase_max_global_id()
 
   max_global_id += g_conf()->mon_globalid_prealloc;
   dout(10) << "increasing max_global_id to " << max_global_id << dendl;
+
   Incremental inc;
   inc.inc_type = GLOBAL_ID;
   inc.max_global_id = max_global_id;
+
   pending_auth.push_back(inc);
 }
 
@@ -454,10 +473,14 @@ bool AuthMonitor::prepare_update(MonOpRequestRef op)
   }
 }
 
+// called by
+// AuthMonitor::prep_auth
 uint64_t AuthMonitor::assign_global_id(MonOpRequestRef op, bool should_increase_max)
 {
   MAuth *m = static_cast<MAuth*>(op->get_req());
+
   int total_mon = mon->monmap->size();
+
   dout(10) << "AuthMonitor::assign_global_id m=" << *m << " mon=" << mon->rank << "/" << total_mon
 	   << " last_allocated=" << last_allocated_id << " max_global_id=" <<  max_global_id << dendl;
 
@@ -465,7 +488,9 @@ uint64_t AuthMonitor::assign_global_id(MonOpRequestRef op, bool should_increase_
   int remainder = next_global_id % total_mon;
   if (remainder)
     remainder = total_mon - remainder;
+
   next_global_id += remainder + mon->rank;
+
   dout(10) << "next_global_id should be " << next_global_id << dendl;
 
   // if we can't bump the max, bail out now on an out-of-bounds gid
@@ -496,6 +521,7 @@ uint64_t AuthMonitor::assign_global_id(MonOpRequestRef op, bool should_increase_
 bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 {
   MAuth *m = static_cast<MAuth*>(op->get_req());
+
   dout(10) << "prep_auth() blob_size=" << m->get_auth_payload().length() << dendl;
 
   MonSession *s = op->get_session();
@@ -543,6 +569,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
                   << " supports cephx but not signatures and"
                   << " 'cephx [cluster] require signatures = true';"
                   << " disallowing cephx" << dendl;
+
 	  supported.erase(CEPH_AUTH_CEPHX);
 	}
       } else {
@@ -552,6 +579,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
                   << " supports cephx but not signatures and"
                   << " 'cephx [service] require signatures = true';"
                   << " disallowing cephx" << dendl;
+
 	  supported.erase(CEPH_AUTH_CEPHX);
 	}
       }
@@ -581,6 +609,8 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
     }
 
     int type;
+    // mon->auth_cluster_required and mon->auth_service_required were
+    // initialized by Monitor::Monitor
     if (entity_name.get_type() == CEPH_ENTITY_TYPE_MON ||
 	entity_name.get_type() == CEPH_ENTITY_TYPE_OSD ||
 	entity_name.get_type() == CEPH_ENTITY_TYPE_MDS ||
@@ -589,15 +619,19 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
     else
       type = mon->auth_service_required.pick(supported);
 
+    // AuthServiceHandler
     s->auth_handler = get_auth_service_handler(type, g_ceph_context, &mon->key_server);
     if (!s->auth_handler) {
       dout(1) << "client did not provide supported auth type" << dendl;
       ret = -ENOTSUP;
       goto reply;
     }
+
+    // this is a new session
     start = true;
   } else if (!s->auth_handler) {
       dout(10) << "protocol specified but no s->auth_handler" << dendl;
+
       ret = -EINVAL;
       goto reply;
   }
@@ -614,17 +648,21 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 
       if (mon->is_leader() && paxos_writable) {
         dout(10) << "increasing global id, waitlisting message" << dendl;
+
         wait_for_active(op, new C_RetryMessage(this, op));
         goto done;
       }
 
       if (!mon->is_leader()) {
 	dout(10) << "not the leader, requesting more ids from leader" << dendl;
+
 	int leader = mon->get_leader();
+
 	MMonGlobalID *req = new MMonGlobalID();
 	req->old_max_id = max_global_id;
 	mon->send_mon_message(req, leader);
 	wait_for_finished_proposal(op, new C_RetryMessage(this, op));
+
 	return true;
       }
 
@@ -637,28 +675,38 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
     if (start) {
       // new session
       proto = s->auth_handler->start_session(entity_name, indata, response_bl, caps_info);
+
       ret = 0;
-      if (caps_info.allow_all) {
+      if (caps_info.allow_all) { // auth type is none, no need for the next auth stage
 	s->caps.set_allow_all();
 	s->authenticated = true;
       }
-    } else {
+    } else { // authenticate stage for client, the first MAuth is to get
+      // AUTH_SESSION_KEY and the second MAuth is to get PRINCIPAL_SESSION_KEY
       // request
       ret = s->auth_handler->handle_request(indata, response_bl, s->global_id, caps_info);
     }
+
     if (ret == -EIO) {
       wait_for_active(op, new C_RetryMessage(this,op));
       goto done;
     }
-    if (caps_info.caps.length()) {
+
+    // for cephx auth_handler->start_session is negotiation stage, it did
+    // not set caps_info, until the second MAuth message auth_handler->handle_request
+    // will generate the correct caps and finish the auth process
+    if (caps_info.caps.length()) { // auth type is cephx
       auto p = caps_info.caps.cbegin();
       string str;
+
       try {
 	decode(str, p);
       } catch (const buffer::error &err) {
 	derr << "corrupt cap data for " << entity_name << " in auth db" << dendl;
 	str.clear();
       }
+
+      // s->caps will be used by MonSession::is_capable and Monitor::_allowed_command
       s->caps.parse(str, NULL);
       s->authenticated = true;
       finished = true;
@@ -1656,9 +1704,12 @@ done:
   return false;
 }
 
+// called by
+// AuthMonitor::prepare_update, for MSG_MON_GLOBAL_ID
 bool AuthMonitor::prepare_global_id(MonOpRequestRef op)
 {
   dout(10) << "AuthMonitor::prepare_global_id" << dendl;
+
   increase_max_global_id();
 
   return true;

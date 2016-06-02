@@ -53,6 +53,7 @@ void SnapshotRemoveRequest<I>::send_op() {
 template <typename I>
 bool SnapshotRemoveRequest<I>::should_complete(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << "r=" << r << dendl;
   if (r < 0) {
@@ -331,13 +332,17 @@ void SnapshotRemoveRequest<I>::handle_remove_snap(int r) {
 template <typename I>
 void SnapshotRemoveRequest<I>::remove_snap_context() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << dendl;
 
   RWLock::WLocker snap_locker(image_ctx.snap_lock);
+  // erase snap related info from ImageCtx::snaps, ImageCtx::snap_info and ImageCtx::snap_ids
   image_ctx.rm_snap(m_snap_namespace, m_snap_name, m_snap_id);
 }
 
+// called by
+// SnapshotRemoveRequest<I>::send_remove_child
 template <typename I>
 int SnapshotRemoveRequest<I>::scan_for_parents(ParentSpec &pspec) {
   I &image_ctx = this->m_image_ctx;
@@ -346,20 +351,24 @@ int SnapshotRemoveRequest<I>::scan_for_parents(ParentSpec &pspec) {
 
   if (pspec.pool_id != -1) {
     map<uint64_t, SnapInfo>::iterator it;
+
     for (it = image_ctx.snap_info.begin();
          it != image_ctx.snap_info.end(); ++it) {
       // skip our snap id (if checking base image, CEPH_NOSNAP won't match)
       if (it->first == m_snap_id) {
         continue;
       }
+
       if (it->second.parent.spec == pspec) {
         break;
       }
     }
+
     if (it == image_ctx.snap_info.end()) {
       return -ENOENT;
     }
   }
+
   return 0;
 }
 

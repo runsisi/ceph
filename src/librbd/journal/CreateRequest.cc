@@ -21,6 +21,10 @@ using util::create_context_callback;
 
 namespace journal {
 
+// created by
+// EnableFeaturesRequest<I>::send_create_journal
+// Journal<I>::create, which never be used
+// librbd::image::CreateRequest<I>::journal_create
 template<typename I>
 CreateRequest<I>::CreateRequest(IoCtx &ioctx, const std::string &imageid,
                                 uint8_t order, uint8_t splay_width,
@@ -45,6 +49,7 @@ void CreateRequest<I>::send() {
     complete(-EDOM);
     return;
   }
+
   if (m_splay_width == 0) {
     complete(-EINVAL);
     return;
@@ -74,7 +79,9 @@ void CreateRequest<I>::get_pool_id() {
   }
   data_ioctx.set_namespace(m_ioctx.get_namespace());
 
+  // journal data pool provided, git its id
   m_pool_id = data_ioctx.get_id();
+
   create_journal();
 }
 
@@ -83,12 +90,16 @@ void CreateRequest<I>::create_journal() {
   ldout(m_cct, 20) << this << " " << __func__ << dendl;
 
   ImageCtx::get_timer_instance(m_cct, &m_timer, &m_timer_lock);
+
+  // create an Journaler instance, the same as RemoveRequest<I>::stat_journal
   m_journaler = new Journaler(m_op_work_queue, m_timer, m_timer_lock,
                               m_ioctx, m_image_id, m_image_client_id, {});
 
   using klass = CreateRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_create_journal>(this);
 
+  // register omaps, i.e., "order", "splay_width", etc., for "journal.xxx"
+  // metadata object
   m_journaler->create(m_order, m_splay_width, m_pool_id, ctx);
 }
 
@@ -127,6 +138,7 @@ Context *CreateRequest<I>::handle_journal_tag(int *result) {
     return nullptr;
   }
 
+  // register image client
   register_client();
   return nullptr;
 }
@@ -141,6 +153,7 @@ void CreateRequest<I>::register_client() {
   using klass = CreateRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_register_client>(this);
 
+  // register <m_image_client_id, m_bl> on journal metadata object omap
   m_journaler->register_client(m_bl, ctx);
 }
 
@@ -165,6 +178,10 @@ void CreateRequest<I>::shut_down_journaler(int r) {
   using klass = CreateRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_journaler_shutdown>(this);
 
+  // remove metadata listener registered by m_trimmer, unwatch metadata object
+  // NOTE: we only called m_journaler->create(), without calling
+  // m_journaler->start_replay() and m_journaler->start_append(), so
+  // Journaler::m_player and Journaler::m_recorder are both NULL
   m_journaler->shut_down(ctx);
 }
 
@@ -201,6 +218,7 @@ void CreateRequest<I>::remove_journal() {
 
   RemoveRequest<I> *req = RemoveRequest<I>::create(
     m_ioctx, m_image_id, m_image_client_id, m_op_work_queue, ctx);
+
   req->send();
 }
 

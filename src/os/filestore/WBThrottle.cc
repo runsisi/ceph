@@ -16,6 +16,7 @@ WBThrottle::WBThrottle(CephContext *cct) :
 {
   {
     Mutex::Locker l(lock);
+    
     set_from_conf();
   }
   ceph_assert(cct);
@@ -28,8 +29,10 @@ WBThrottle::WBThrottle(CephContext *cct) :
   b.add_u64(l_wbthrottle_ios_wb, "ios_wb", "Written operations");
   b.add_u64(l_wbthrottle_inodes_dirtied, "inodes_dirtied", "Entries waiting for write");
   b.add_u64(l_wbthrottle_inodes_wb, "inodes_wb", "Written entries");
+  
   logger = b.create_perf_counters();
   cct->get_perfcounters_collection()->add(logger);
+
   for (unsigned i = l_wbthrottle_first + 1; i != l_wbthrottle_last; ++i)
     logger->set(i, 0);
 
@@ -47,8 +50,10 @@ void WBThrottle::start()
 {
   {
     Mutex::Locker l(lock);
+    
     stopping = false;
   }
+
   create("wb_throttle");
 }
 
@@ -56,6 +61,7 @@ void WBThrottle::stop()
 {
   {
     Mutex::Locker l(lock);
+    
     stopping = true;
     cond.Signal();
   }
@@ -100,21 +106,28 @@ void WBThrottle::set_from_conf()
     fd_limits.second =
       cct->_conf->filestore_wbthrottle_btrfs_inodes_hard_limit;
   } else if (fs == XFS) {
+    // default 40M
     size_limits.first =
       cct->_conf->filestore_wbthrottle_xfs_bytes_start_flusher;
+    // default 400M
     size_limits.second =
       cct->_conf->filestore_wbthrottle_xfs_bytes_hard_limit;
+    // default 500
     io_limits.first =
       cct->_conf->filestore_wbthrottle_xfs_ios_start_flusher;
+    // default 5000
     io_limits.second =
       cct->_conf->filestore_wbthrottle_xfs_ios_hard_limit;
+    // default 500
     fd_limits.first =
       cct->_conf->filestore_wbthrottle_xfs_inodes_start_flusher;
+    // default 5000
     fd_limits.second =
       cct->_conf->filestore_wbthrottle_xfs_inodes_hard_limit;
   } else {
     ceph_abort_msg("invalid value for fs");
   }
+  
   cond.Signal();
 }
 
@@ -137,6 +150,7 @@ bool WBThrottle::get_next_should_flush(
   ceph_assert(next);
   while (!stopping && (!beyond_limit() || pending_wbs.empty()))
          cond.Wait(lock);
+  
   if (stopping)
     return false;
   ceph_assert(!pending_wbs.empty());
@@ -144,8 +158,12 @@ bool WBThrottle::get_next_should_flush(
 
   ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> >::iterator i =
     pending_wbs.find(obj);
+
+  // <ghobject_t, FDRef, PendingWB>
   *next = boost::make_tuple(obj, i->second.second, i->second.first);
+  
   pending_wbs.erase(i);
+  
   return true;
 }
 
@@ -153,69 +171,98 @@ bool WBThrottle::get_next_should_flush(
 void *WBThrottle::entry()
 {
   Mutex::Locker l(lock);
+  
   boost::tuple<ghobject_t, FDRef, PendingWB> wb;
+  
   while (get_next_should_flush(&wb)) {
+
+    // io_limits, fd_limits or size_limits exceeded, find the least recently used object to sync
+        
     clearing = wb.get<0>();
     cur_ios -= wb.get<2>().ios;
+    
     logger->dec(l_wbthrottle_ios_dirtied, wb.get<2>().ios);
     logger->inc(l_wbthrottle_ios_wb, wb.get<2>().ios);
+    
     cur_size -= wb.get<2>().size;
+    
     logger->dec(l_wbthrottle_bytes_dirtied, wb.get<2>().size);
     logger->inc(l_wbthrottle_bytes_wb, wb.get<2>().size);
     logger->dec(l_wbthrottle_inodes_dirtied);
     logger->inc(l_wbthrottle_inodes_wb);
+    
     lock.Unlock();
 #if defined(HAVE_FDATASYNC)
     ::fdatasync(**wb.get<1>());
 #else
     ::fsync(**wb.get<1>());
 #endif
+
 #ifdef HAVE_POSIX_FADVISE
     if (cct->_conf->filestore_fadvise && wb.get<2>().nocache) {
       int fa_r = posix_fadvise(**wb.get<1>(), 0, 0, POSIX_FADV_DONTNEED);
       ceph_assert(fa_r == 0);
     }
 #endif
+
     lock.Lock();
+
     clearing = ghobject_t();
+    
     cond.Signal();
+    
     wb = boost::tuple<ghobject_t, FDRef, PendingWB>();
   }
+  
   return 0;
 }
 
+// called by FileStore::_write
 void WBThrottle::queue_wb(
   FDRef fd, const ghobject_t &hoid, uint64_t offset, uint64_t len,
   bool nocache)
 {
   Mutex::Locker l(lock);
+  
   ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> >::iterator wbiter =
     pending_wbs.find(hoid);
+  
   if (wbiter == pending_wbs.end()) {
     wbiter = pending_wbs.insert(
       make_pair(hoid,
 	make_pair(
 	  PendingWB(),
 	  fd))).first;
+    
     logger->inc(l_wbthrottle_inodes_dirtied);
   } else {
+    // remove from WBThrottle::lru and WBThrottle::rev_lru and will be re-inserted below
     remove_object(hoid);
   }
 
   cur_ios++;
+  
   logger->inc(l_wbthrottle_ios_dirtied);
+  
   cur_size += len;
+  
   logger->inc(l_wbthrottle_bytes_dirtied, len);
 
   wbiter->second.first.add(nocache, len, 1);
+
+  // insert into WBThrottle::lru and WBThrottle::rev_lru
   insert_object(hoid);
+
+  // check if io_limits, fd_limits or size_limits exceeded
   if (beyond_limit())
+    // exceed limits, notify WBThrottle thread to sync
     cond.Signal();
 }
 
 void WBThrottle::clear()
 {
   Mutex::Locker l(lock);
+  
   for (ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> >::iterator i =
 	 pending_wbs.begin();
        i != pending_wbs.end();
@@ -228,13 +275,17 @@ void WBThrottle::clear()
 #endif
 
   }
+       
   cur_ios = cur_size = 0;
+  
   logger->set(l_wbthrottle_ios_dirtied, 0);
   logger->set(l_wbthrottle_bytes_dirtied, 0);
   logger->set(l_wbthrottle_inodes_dirtied, 0);
+  
   pending_wbs.clear();
   lru.clear();
   rev_lru.clear();
+  
   cond.Signal();
 }
 
@@ -259,6 +310,7 @@ void WBThrottle::clear_object(const ghobject_t &hoid)
   cond.Signal();
 }
 
+// called by FileStore::_do_op
 void WBThrottle::throttle()
 {
   Mutex::Locker l(lock);

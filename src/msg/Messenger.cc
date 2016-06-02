@@ -30,6 +30,7 @@ Messenger *Messenger::create(CephContext *cct, const string &type,
   if (type == "random") {
     r = ceph::util::generate_random_number(0, 1);
   }
+
   if (r == 0 || type == "simple")
     return new SimpleMessenger(cct, name, std::move(lname), nonce);
   else if (r == 1 || type.find("async") != std::string::npos)
@@ -39,6 +40,7 @@ Messenger *Messenger::create(CephContext *cct, const string &type,
 	   cct->check_experimental_feature_enabled("ms-type-xio"))
     return new XioMessenger(cct, name, std::move(lname), nonce, cflags);
 #endif
+
   lderr(cct) << "unrecognized ms_type '" << type << "'" << dendl;
   return nullptr;
 }

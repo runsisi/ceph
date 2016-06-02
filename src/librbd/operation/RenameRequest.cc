@@ -61,6 +61,7 @@ void RenameRequest<I>::send_op() {
 template <typename I>
 bool RenameRequest<I>::should_complete(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": state=" << m_state << ", "
                 << "r=" << r << dendl;
@@ -87,6 +88,7 @@ bool RenameRequest<I>::should_complete(int r) {
     send_write_destination_header();
     break;
   case STATE_WRITE_DEST_HEADER:
+    // rename
     send_update_directory();
     break;
   case STATE_UPDATE_DIRECTORY:
@@ -115,23 +117,30 @@ int RenameRequest<I>::filter_return_code(int r) const {
       lderr(cct) << "warning: couldn't remove old source object ("
                  << m_source_oid << ")" << dendl;
     }
+
     return 0;
   }
+
   return r;
 }
 
 template <typename I>
 void RenameRequest<I>::send_read_source_header() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
+
   m_state = STATE_READ_SOURCE_HEADER;
 
   librados::ObjectReadOperation op;
+  // length == 0 means read the whole object
   op.read(0, 0, NULL, NULL);
 
   // TODO: old code read omap values but there are no omap values on the
   //       old format header nor the new format id object
+
+  // create_callback_xxx is the interface of AsyncRequest
   librados::AioCompletion *rados_completion = this->create_callback_completion();
   int r = image_ctx.md_ctx.aio_operate(m_source_oid, rados_completion, &op,
                                        &m_header_bl);
@@ -142,12 +151,15 @@ void RenameRequest<I>::send_read_source_header() {
 template <typename I>
 void RenameRequest<I>::send_write_destination_header() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
+
   m_state = STATE_WRITE_DEST_HEADER;
 
   librados::ObjectWriteOperation op;
   op.create(true);
+  // the header bufferlist is read from the source header object
   op.write_full(m_header_bl);
 
   librados::AioCompletion *rados_completion = this->create_callback_completion();
@@ -159,8 +171,10 @@ void RenameRequest<I>::send_write_destination_header() {
 template <typename I>
 void RenameRequest<I>::send_update_directory() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
+
   m_state = STATE_UPDATE_DIRECTORY;
 
   librados::ObjectWriteOperation op;
@@ -187,8 +201,10 @@ void RenameRequest<I>::send_update_directory() {
 template <typename I>
 void RenameRequest<I>::send_remove_source_header() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
+
   m_state = STATE_REMOVE_SOURCE_HEADER;
 
   librados::ObjectWriteOperation op;
@@ -203,6 +219,8 @@ void RenameRequest<I>::send_remove_source_header() {
 template <typename I>
 void RenameRequest<I>::apply() {
   I &image_ctx = this->m_image_ctx;
+
+  // set ImageCtx::name
   image_ctx.set_image_name(m_dest_name);
 }
 

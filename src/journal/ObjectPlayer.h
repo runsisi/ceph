@@ -31,8 +31,11 @@ public:
   typedef interval_set<uint64_t> InvalidRanges;
 
   enum RefetchState {
+    // JournalPlayer::process_prefetch, JournalPlayer::refetch, JournalPlayer::schedule_watch
     REFETCH_STATE_NONE,
+    // ObjectPlayer::handle_fetch_complete
     REFETCH_STATE_REQUIRED,
+    // initial value, JournalPlayer::prune_tag, JournalPlayer::remove_empty_object_player
     REFETCH_STATE_IMMEDIATE
   };
 
@@ -82,6 +85,8 @@ private:
   typedef std::pair<uint64_t, uint64_t> EntryKey;
   typedef boost::unordered_map<EntryKey, Entries::iterator> EntryKeys;
 
+  // created by
+  // ObjectPlayer::fetch
   struct C_Fetch : public Context {
     ObjectPlayerPtr object_player;
     Context *on_finish;

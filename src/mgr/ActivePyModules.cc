@@ -90,6 +90,7 @@ PyObject *ActivePyModules::get_server_python(const std::string &hostname)
   PyEval_RestoreThread(tstate);
   dout(10) << " (" << hostname << ")" << dendl;
 
+  // daemon_state was initialized by Mgr::load_all_metadata
   auto dmc = daemon_state.get_by_server(hostname);
 
   PyFormatter f;
@@ -106,6 +107,7 @@ PyObject *ActivePyModules::list_servers_python()
   dout(10) << " >" << dendl;
 
   PyFormatter f(false, true);
+  // daemon_state was initialized by Mgr::load_all_metadata
   daemon_state.with_daemons_by_server([this, &f]
       (const std::map<std::string, DaemonStateCollection> &all) {
     for (const auto &i : all) {
@@ -133,6 +135,7 @@ PyObject *ActivePyModules::get_metadata_python(
   Mutex::Locker l(metadata->lock);
   PyFormatter f;
   f.dump_string("hostname", metadata->hostname);
+
   for (const auto &i : metadata->metadata) {
     f.dump_string(i.first.c_str(), i.second);
   }
@@ -369,6 +372,8 @@ PyObject *ActivePyModules::get_python(const std::string &what)
   }
 }
 
+// called by
+// PyModuleRegistry::active_start
 int ActivePyModules::start_one(PyModuleRef py_module)
 {
   Mutex::Locker l(lock);

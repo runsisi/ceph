@@ -62,13 +62,16 @@ bool RotatingKeyRing<lp>::get_service_secret(uint32_t service_id_, uint64_t secr
 
   map<uint64_t, ExpiringCryptoKey>::const_iterator iter =
     secrets.secrets.find(secret_id);
+
   if (iter == secrets.secrets.end()) {
     ldout(cct, 0) << "could not find secret_id=" << secret_id << dendl;
+
     dump_rotating();
     return false;
   }
 
   secret = iter->second.key;
+
   return true;
 }
 

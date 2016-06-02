@@ -49,8 +49,11 @@ uint64_t DispatchQueue::pre_dispatch(const Message::ref& m)
 	       << " " << m->get_footer().data_crc << ")"
 	       << " " << m << " con " << m->get_connection()
 	       << dendl;
+
   uint64_t msize = m->get_dispatch_throttle_size();
+
   m->set_dispatch_throttle_size(0); // clear it out, in case we requeue this message.
+
   return msize;
 }
 
@@ -68,7 +71,9 @@ bool DispatchQueue::can_fast_dispatch(const Message::const_ref &m) const
 void DispatchQueue::fast_dispatch(const Message::ref& m)
 {
   uint64_t msize = pre_dispatch(m);
+
   msgr->ms_fast_dispatch(m);
+
   post_dispatch(m, msize);
 }
 
@@ -84,12 +89,15 @@ void DispatchQueue::enqueue(const Message::ref& m, int priority, uint64_t id)
     return;
   }
   ldout(cct,20) << "queue " << m << " prio " << priority << dendl;
+
   add_arrival(m);
+
   if (priority >= CEPH_MSG_PRIO_LOW) {
     mqueue.enqueue_strict(id, priority, QueueItem(m));
   } else {
     mqueue.enqueue(id, priority, m->get_cost(), QueueItem(m));
   }
+
   cond.Signal();
 }
 
@@ -97,6 +105,7 @@ void DispatchQueue::local_delivery(const Message::ref& m, int priority)
 {
   m->set_recv_stamp(ceph_clock_now());
   Mutex::Locker l(local_delivery_lock);
+
   if (local_messages.empty())
     local_delivery_cond.Signal();
   local_messages.emplace(m, priority);
@@ -106,9 +115,11 @@ void DispatchQueue::local_delivery(const Message::ref& m, int priority)
 void DispatchQueue::run_local_delivery()
 {
   local_delivery_lock.Lock();
+
   while (true) {
     if (stop_local_delivery)
       break;
+
     if (local_messages.empty()) {
       local_delivery_cond.Wait(local_delivery_lock);
       continue;
@@ -119,13 +130,16 @@ void DispatchQueue::run_local_delivery()
     const Message::ref& m = p.first;
     int priority = p.second;
     fast_preprocess(m);
+
     if (can_fast_dispatch(m)) {
       fast_dispatch(m);
     } else {
       enqueue(m, priority, 0);
     }
+
     local_delivery_lock.Lock();
   }
+
   local_delivery_lock.Unlock();
 }
 
@@ -135,6 +149,7 @@ void DispatchQueue::dispatch_throttle_release(uint64_t msize)
     ldout(cct,10) << __func__ << " " << msize << " to dispatch throttler "
 	    << dispatch_throttler.get_current() << "/"
 	    << dispatch_throttler.get_max() << dendl;
+
     dispatch_throttler.put(msize);
   }
 }
@@ -182,6 +197,8 @@ void DispatchQueue::entry()
 	  msgr->ms_deliver_handle_reset(qitem.get_connection());
 	  break;
 	case D_CONN_REFUSED:
+	  // dispatcher->ms_handle_refused, currently only OSD handles this if
+	  // osd_fast_fail_on_connection_refused is enabled, see OSD::ms_handle_refused
 	  msgr->ms_deliver_handle_refused(qitem.get_connection());
 	  break;
 	default:
@@ -242,6 +259,7 @@ void DispatchQueue::discard_local()
   decltype(local_messages)().swap(local_messages);
 }
 
+// called by SimpleMessenger::wait, AsyncMessenger::wait
 void DispatchQueue::shutdown()
 {
   // stop my local delivery thread

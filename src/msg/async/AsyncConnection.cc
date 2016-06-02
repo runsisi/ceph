@@ -119,6 +119,9 @@ static void alloc_aligned_buffer(bufferlist& data, unsigned len, unsigned off)
   data.push_back(std::move(ptr));
 }
 
+// called by
+// AsyncMessenger::add_accept
+// AsyncMessenger::create_connect
 AsyncConnection::AsyncConnection(
   CephContext *cct, AsyncMessenger *m, DispatchQueue *q,
   Worker *w, bool m2)
@@ -229,7 +232,7 @@ ssize_t AsyncConnection::_try_send(bool more)
   if (open_write && !is_queued()) {
     center->delete_file_event(cs.fd(), EVENT_WRITABLE);
     open_write = false;
-    if (state_after_send != STATE_NONE)
+    if (state_after_send != STATE_NONE) // need to drive to the next state
       center->dispatch_event_external(read_handler);
   }
 
@@ -327,6 +330,8 @@ void AsyncConnection::inject_delay() {
   }
 }
 
+// only process state transition in OPEN state,
+// connect/accept is processed in AsyncConnection::_process_connection
 void AsyncConnection::process()
 {
   ssize_t r = 0;
@@ -345,7 +350,7 @@ void AsyncConnection::process()
       case STATE_OPEN:
         {
           char tag = -1;
-          r = read_until(sizeof(tag), &tag);
+          r = read_until(sizeof(tag), &tag); // return the remaining bytes, 0 means this buffer is finished
           if (r < 0) {
             ldout(async_msgr->cct, 1) << __func__ << " read tag failed" << dendl;
             goto fail;
@@ -377,7 +382,7 @@ void AsyncConnection::process()
       case STATE_OPEN_KEEPALIVE2:
         {
           ceph_timespec *t;
-          r = read_until(sizeof(*t), state_buffer);
+          r = read_until(sizeof(*t), state_buffer); // state_buffer is a 4K buffer
           if (r < 0) {
             ldout(async_msgr->cct, 1) << __func__ << " read keeplive timespec failed" << dendl;
             goto fail;
@@ -879,7 +884,7 @@ ssize_t AsyncConnection::_process_connection()
         SocketOptions opts;
         opts.priority = async_msgr->get_socket_priority();
         opts.connect_bind_addr = msgr->get_myaddr();
-        r = worker->connect(get_peer_addr(), opts, &cs);
+        r = worker->connect(get_peer_addr(), opts, &cs); // construct ConnectedSocket
         if (r < 0)
           goto fail;
 
@@ -1019,6 +1024,13 @@ ssize_t AsyncConnection::_process_connection()
     case STATE_CONNECTING_SEND_CONNECT_MSG:
       {
         if (!authorizer) {
+          // MON::ms_get_authorizer
+          // MGR/OSD/MDS/Client::ms_get_authorizer -> MonClient::build_authorizer
+          // MON calls Monitor::ms_get_authorizer has its own logic to build authorizer
+          // for MGR/OSD/MDS/Client, call MonClient::build_authorizer to
+          // build, and if connect to MON it will always return nullptr,
+          // for those connect to non- MON only after the authentication then
+          // MonClient::build_authorizer will return non- nullptr
           authorizer = async_msgr->get_authorizer(peer_type, false);
         }
         bufferlist bl;
@@ -1028,7 +1040,7 @@ ssize_t AsyncConnection::_process_connection()
         connect_msg.global_seq = global_seq;
         connect_msg.connect_seq = connect_seq;
         connect_msg.protocol_version = async_msgr->get_proto_version(peer_type, true);
-        connect_msg.authorizer_protocol = authorizer ? authorizer->protocol : 0;
+        connect_msg.authorizer_protocol = authorizer ? authorizer->protocol : 0; // unknown(0)/none(1)/cephx(2)
         connect_msg.authorizer_len = authorizer ? authorizer->bl.length() : 0;
         if (authorizer)
           ldout(async_msgr->cct, 10) << __func__ <<  " connect_msg.authorizer_len="
@@ -1417,7 +1429,7 @@ int AsyncConnection::handle_connect_reply(ceph_msg_connect &connect, ceph_msg_co
     if (got_bad_auth)
       goto fail;
     got_bad_auth = true;
-    delete authorizer;
+    delete authorizer; // if we are connect to MON（myself is not MON）, authorizer should always be nullptr
     authorizer = async_msgr->get_authorizer(peer_type, true);  // try harder
     state = STATE_CONNECTING_SEND_CONNECT_MSG;
   }
@@ -1492,7 +1504,7 @@ ssize_t AsyncConnection::handle_connect_msg(ceph_msg_connect &connect, bufferlis
         peer_type == CEPH_ENTITY_TYPE_MDS ||
 	peer_type == CEPH_ENTITY_TYPE_MGR) {
       if (async_msgr->cct->_conf->cephx_require_signatures ||
-          async_msgr->cct->_conf->cephx_cluster_require_signatures) {
+          async_msgr->cct->_conf->cephx_cluster_require_signatures) { // both false
         ldout(async_msgr->cct, 10) << __func__ << " using cephx, requiring MSG_AUTH feature bit for cluster" << dendl;
         policy.features_required |= CEPH_FEATURE_MSG_AUTH;
       }
@@ -1503,7 +1515,7 @@ ssize_t AsyncConnection::handle_connect_msg(ceph_msg_connect &connect, bufferlis
       }
     } else {
       if (async_msgr->cct->_conf->cephx_require_signatures ||
-          async_msgr->cct->_conf->cephx_service_require_signatures) {
+          async_msgr->cct->_conf->cephx_service_require_signatures) { // both false
         ldout(async_msgr->cct, 10) << __func__ << " using cephx, requiring MSG_AUTH feature bit for service" << dendl;
         policy.features_required |= CEPH_FEATURE_MSG_AUTH;
       }
@@ -1527,6 +1539,8 @@ ssize_t AsyncConnection::handle_connect_msg(ceph_msg_connect &connect, bufferlis
   bool authorizer_valid;
   bool need_challenge = HAVE_FEATURE(connect.features, CEPHX_V2);
   bool had_challenge = (bool)authorizer_challenge;
+  // MON::ms_verify_authorizer
+  // MGR/OSD/MDS::ms_verify_authorizer, NOTE: not include Client
   if (!async_msgr->verify_authorizer(
 	this, peer_type, connect.authorizer_protocol, authorizer_bl,
 	authorizer_reply, authorizer_valid, session_key,
@@ -1793,6 +1807,7 @@ ssize_t AsyncConnection::handle_connect_msg(ceph_msg_connect &connect, bufferlis
           existing->fault();
         }
       };
+
       if (existing->center->in_thread())
         transfer_existing();
       else
@@ -1800,8 +1815,10 @@ ssize_t AsyncConnection::handle_connect_msg(ceph_msg_connect &connect, bufferlis
             existing->center->get_id(), std::move(transfer_existing), true);
     }, std::move(temp_cs));
 
+    // dispatch external event
     existing->center->submit_to(
         existing->center->get_id(), std::move(deactivate_existing), true);
+
     existing->write_lock.unlock();
     existing->lock.unlock();
     return 0;

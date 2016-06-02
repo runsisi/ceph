@@ -68,6 +68,7 @@ public:
   virtual void send() = 0;
 
   bool has_parent() const {
+    // updated by ObjectRequest<I>::compute_parent_extents
     return m_has_parent;
   }
 

@@ -13,6 +13,8 @@
 
 namespace journal {
 
+// created by
+// JournalTrimmer::remove_set
 struct JournalTrimmer::C_RemoveSet : public Context {
   JournalTrimmer *journal_trimmer;
   uint64_t object_set;
@@ -29,6 +31,8 @@ struct JournalTrimmer::C_RemoveSet : public Context {
   }
 };
 
+// created by
+// Journaler::init_complete
 JournalTrimmer::JournalTrimmer(librados::IoCtx &ioctx,
                                const std::string &object_oid_prefix,
                                const JournalMetadataPtr &journal_metadata)
@@ -46,8 +50,11 @@ JournalTrimmer::~JournalTrimmer() {
   ceph_assert(m_shutdown);
 }
 
+// called by
+// Journaler::shut_down
 void JournalTrimmer::shut_down(Context *on_finish) {
   ldout(m_cct, 20) << __func__ << dendl;
+
   {
     Mutex::Locker locker(m_lock);
     ceph_assert(!m_shutdown);
@@ -60,9 +67,11 @@ void JournalTrimmer::shut_down(Context *on_finish) {
   on_finish = new FunctionContext([this, on_finish](int r) {
       m_async_op_tracker.wait_for_ops(on_finish);
     });
+
   m_journal_metadata->flush_commit_position(on_finish);
 }
 
+// called by Journaler::remove
 void JournalTrimmer::remove_objects(bool force, Context *on_finish) {
   ldout(m_cct, 20) << __func__ << dendl;
 
@@ -74,6 +83,10 @@ void JournalTrimmer::remove_objects(bool force, Context *on_finish) {
       }
 
       if (!force) {
+
+        // non-force, remove only if no mirror peer clients, i.e., only
+        // master client
+
         JournalMetadata::RegisteredClients registered_clients;
         m_journal_metadata->get_registered_clients(&registered_clients);
 
@@ -90,14 +103,21 @@ void JournalTrimmer::remove_objects(bool force, Context *on_finish) {
       m_remove_set_pending = true;
       m_remove_set_ctx = on_finish;
 
+      // remove object set by set, and start from the minimum set on
       remove_set(m_journal_metadata->get_minimum_set());
     });
 
   m_async_op_tracker.wait_for_ops(on_finish);
 }
 
+// called by
+// Journaler::committed(const ReplayEntry)
+// Journaler::committed(const Future)
 void JournalTrimmer::committed(uint64_t commit_tid) {
   ldout(m_cct, 20) << __func__ << ": commit_tid=" << commit_tid << dendl;
+
+  // update in-memory commit position and schedule a timer to update in backend
+  // callback is a lambda that creates instance of JournalTrimmer::C_CommitPositionSafe
   m_journal_metadata->committed(commit_tid,
                                 m_create_commit_position_safe_context);
 }
@@ -106,6 +126,8 @@ void JournalTrimmer::trim_objects(uint64_t minimum_set) {
   ceph_assert(m_lock.is_locked());
 
   ldout(m_cct, 20) << __func__ << ": min_set=" << minimum_set << dendl;
+
+  // trim until the minimum set
   if (minimum_set <= m_journal_metadata->get_minimum_set()) {
     return;
   }
@@ -117,6 +139,7 @@ void JournalTrimmer::trim_objects(uint64_t minimum_set) {
 
   m_remove_set = minimum_set;
   m_remove_set_pending = true;
+
   remove_set(m_journal_metadata->get_minimum_set());
 }
 
@@ -124,18 +147,25 @@ void JournalTrimmer::remove_set(uint64_t object_set) {
   ceph_assert(m_lock.is_locked());
 
   m_async_op_tracker.start_op();
+
   uint8_t splay_width = m_journal_metadata->get_splay_width();
+
+  // JournalTrimmer::handle_set_removed
   C_RemoveSet *ctx = new C_RemoveSet(this, object_set, splay_width);
 
   ldout(m_cct, 20) << __func__ << ": removing object set " << object_set
                    << dendl;
+
   for (uint64_t object_number = object_set * splay_width;
        object_number < (object_set + 1) * splay_width;
        ++object_number) {
+
+    // "journal_data." + pool_id + "." + journal_id + "."
     std::string oid = utils::get_object_name(m_object_oid_prefix,
                                              object_number);
 
     ldout(m_cct, 20) << "removing journal object " << oid << dendl;
+
     librados::AioCompletion *comp =
       librados::Rados::aio_create_completion(ctx, NULL,
                                              utils::rados_ctx_callback);
@@ -145,12 +175,16 @@ void JournalTrimmer::remove_set(uint64_t object_set) {
   }
 }
 
+// called by
+// JournalMetadata::handle_refresh_complete, registered to listen JournalMetadata
+// by ctor of JournalTrimmer
 void JournalTrimmer::handle_metadata_updated() {
   ldout(m_cct, 20) << __func__ << dendl;
 
   Mutex::Locker locker(m_lock);
 
   JournalMetadata::RegisteredClients registered_clients;
+
   m_journal_metadata->get_registered_clients(&registered_clients);
 
   uint8_t splay_width = m_journal_metadata->get_splay_width();
@@ -165,7 +199,7 @@ void JournalTrimmer::handle_metadata_updated() {
     }
 
     if (client.commit_position.object_positions.empty()) {
-      // client hasn't recorded any commits
+      // client hasn't recorded any commits, this is for image replay after sync
       minimum_commit_set = minimum_set;
       minimum_client_id = client.id;
       break;
@@ -173,6 +207,7 @@ void JournalTrimmer::handle_metadata_updated() {
 
     for (auto &position : client.commit_position.object_positions) {
       uint64_t object_set = position.object_number / splay_width;
+
       if (object_set < minimum_commit_set) {
         minimum_client_id = client.id;
         minimum_commit_set = object_set;
@@ -181,6 +216,8 @@ void JournalTrimmer::handle_metadata_updated() {
   }
 
   if (minimum_commit_set > minimum_set) {
+    // the minimum commit set for all clients is beyond the minimum
+    // existing set, so we can remove some set(s) in [min set, min commit set]
     trim_objects(minimum_commit_set);
   } else {
     ldout(m_cct, 20) << "object set " << minimum_commit_set << " still "
@@ -188,31 +225,45 @@ void JournalTrimmer::handle_metadata_updated() {
   }
 }
 
+// called by
+// JournalTrimmer::C_RemoveSet::finish
 void JournalTrimmer::handle_set_removed(int r, uint64_t object_set) {
   ldout(m_cct, 20) << __func__ << ": r=" << r << ", set=" << object_set << ", "
                    << "trim=" << m_remove_set << dendl;
 
   Mutex::Locker locker(m_lock);
+
   m_remove_set_pending = false;
 
   if (r == -ENOENT) {
     // no objects within the set existed
     r = 0;
   }
+
   if (r == 0) {
     // advance the minimum set to the next set
     m_journal_metadata->set_minimum_set(object_set + 1);
+
     uint64_t active_set = m_journal_metadata->get_active_set();
     uint64_t minimum_set = m_journal_metadata->get_minimum_set();
 
     if (m_remove_set > minimum_set && minimum_set <= active_set) {
+
+      // still more object set to remove, remove the next object set
+
       m_remove_set_pending = true;
+
       remove_set(minimum_set);
     }
   }
 
   if (m_remove_set_ctx != nullptr && !m_remove_set_pending) {
+
+    // no more object set to remove (minimum set -> active set)
+
     ldout(m_cct, 20) << "completing remove set context" << dendl;
+
+    // ctx is a cond var, notify the waiter
     m_remove_set_ctx->complete(r);
     m_remove_set_ctx = nullptr;
   }
@@ -228,6 +279,7 @@ JournalTrimmer::C_RemoveSet::C_RemoveSet(JournalTrimmer *_journal_trimmer,
 
 void JournalTrimmer::C_RemoveSet::complete(int r) {
   lock.Lock();
+
   if (r < 0 && r != -ENOENT &&
       (return_value == -ENOENT || return_value == 0)) {
     return_value = r;
@@ -236,7 +288,9 @@ void JournalTrimmer::C_RemoveSet::complete(int r) {
   }
 
   if (--refs == 0) {
+    // JournalTrimmer::handle_set_removed and dec the pending ops
     finish(return_value);
+
     lock.Unlock();
     delete this;
   } else {

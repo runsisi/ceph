@@ -311,6 +311,7 @@ void SnapServer::check_osd_map(bool force)
     dout(10) << "check_osd_map - version unchanged" << dendl;
     return;
   }
+
   dout(10) << "check_osd_map need_to_purge=" << need_to_purge << dendl;
 
   map<int, vector<snapid_t> > all_purge;

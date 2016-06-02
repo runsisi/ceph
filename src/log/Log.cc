@@ -206,6 +206,7 @@ void Log::set_graylog_level(int log, int crash)
 void Log::start_graylog()
 {
   pthread_mutex_lock(&m_flush_mutex);
+
   if (! m_graylog.get())
     m_graylog = std::make_shared<Graylog>(m_subs, "dlog");
   pthread_mutex_unlock(&m_flush_mutex);
@@ -445,16 +446,20 @@ void Log::_log_message(const char *s, bool crash)
 void Log::dump_recent()
 {
   pthread_mutex_lock(&m_flush_mutex);
+
   m_flush_mutex_holder = pthread_self();
 
   pthread_mutex_lock(&m_queue_mutex);
+
   m_queue_mutex_holder = pthread_self();
 
   EntryQueue t;
   t.swap(m_new);
 
   m_queue_mutex_holder = 0;
+
   pthread_mutex_unlock(&m_queue_mutex);
+
   _flush(&t, &m_recent, false);
   _flush_logbuf();
 
@@ -484,6 +489,7 @@ void Log::dump_recent()
   _flush_logbuf();
 
   m_flush_mutex_holder = 0;
+
   pthread_mutex_unlock(&m_flush_mutex);
 }
 
@@ -491,8 +497,11 @@ void Log::start()
 {
   ceph_assert(!is_started());
   pthread_mutex_lock(&m_queue_mutex);
+
   m_stop = false;
+
   pthread_mutex_unlock(&m_queue_mutex);
+
   create("log");
 }
 
@@ -511,21 +520,31 @@ void Log::stop()
 void *Log::entry()
 {
   pthread_mutex_lock(&m_queue_mutex);
+
   m_queue_mutex_holder = pthread_self();
+
   while (!m_stop) {
     if (!m_new.empty()) {
       m_queue_mutex_holder = 0;
+
       pthread_mutex_unlock(&m_queue_mutex);
+
       flush();
+
       pthread_mutex_lock(&m_queue_mutex);
+
       m_queue_mutex_holder = pthread_self();
+
       continue;
     }
 
     pthread_cond_wait(&m_cond_flusher, &m_queue_mutex);
   }
+
   m_queue_mutex_holder = 0;
+
   pthread_mutex_unlock(&m_queue_mutex);
+
   flush();
   return NULL;
 }

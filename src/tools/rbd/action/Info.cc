@@ -122,9 +122,11 @@ static int do_show_info(librados::IoCtx &io_ctx, librbd::Image& image,
   std::string data_pool;
   if (!old_format) {
     int64_t data_pool_id = image.get_data_pool_id();
+
     if (data_pool_id != io_ctx.get_id()) {
       librados::Rados rados(io_ctx);
       librados::IoCtx data_io_ctx;
+
       r = rados.ioctx_create2(data_pool_id, data_io_ctx);
       if (r < 0) {
         data_pool = "<missing data pool " + stringify(data_pool_id) + ">";
@@ -160,6 +162,9 @@ static int do_show_info(librados::IoCtx &io_ctx, librbd::Image& image,
   }
 
   if (features & RBD_FEATURE_JOURNALING) {
+
+    // <image global id, enum image state, primary>
+
     r = image.mirror_image_get_info(&mirror_image, sizeof(mirror_image));
     if (r < 0) {
       return r;
@@ -455,6 +460,7 @@ int execute(const po::variables_map &vm,
     std::cerr << "rbd: info: " << cpp_strerror(r) << std::endl;
     return r;
   }
+
   return 0;
 }
 

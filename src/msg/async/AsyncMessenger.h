@@ -350,6 +350,8 @@ public:
     return _lookup_conn(k);
   }
 
+  // called by
+  // AsyncConnection::handle_connect_msg
   int accept_conn(AsyncConnectionRef conn) {
     Mutex::Locker l(lock);
     auto it = conns.find(conn->peer_addrs);
@@ -368,6 +370,8 @@ public:
     }
     conns[conn->peer_addrs] = conn;
     conn->get_perf_counter()->inc(l_msgr_active_connections);
+
+    // was inserted by AsyncMessenger::add_accept
     accepting_conns.erase(conn);
     return 0;
   }

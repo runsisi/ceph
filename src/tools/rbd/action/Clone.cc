@@ -36,6 +36,7 @@ int execute(const po::variables_map &vm,
   std::string namespace_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
     vm, at::ARGUMENT_MODIFIER_SOURCE, &arg_index, &pool_name, &namespace_name,
     &image_name, &snap_name, true, utils::SNAPSHOT_PRESENCE_REQUIRED,
@@ -48,6 +49,7 @@ int execute(const po::variables_map &vm,
   std::string dst_namespace_name;
   std::string dst_image_name;
   std::string dst_snap_name;
+
   r = utils::get_pool_image_snapshot_names(
     vm, at::ARGUMENT_MODIFIER_DEST, &arg_index, &dst_pool_name,
     &dst_namespace_name, &dst_image_name, &dst_snap_name, true,
@@ -61,6 +63,7 @@ int execute(const po::variables_map &vm,
   if (r < 0) {
     return r;
   }
+
   opts.set(RBD_IMAGE_OPTION_FORMAT, static_cast<uint64_t>(2));
 
   // TODO clones across namespaces not yet supported
@@ -89,6 +92,7 @@ int execute(const po::variables_map &vm,
     std::cerr << "rbd: clone error: " << cpp_strerror(r) << std::endl;
     return r;
   }
+
   return 0;
 }
 

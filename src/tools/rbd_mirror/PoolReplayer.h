@@ -117,6 +117,8 @@ private:
       : pool_replayer(pool_replayer), local(local) {
     }
 
+    // called by
+    // PoolWatcher<I>::notify_listener
     void handle_update(const std::string &mirror_uuid,
                        ImageIds &&added_image_ids,
                        ImageIds &&removed_image_ids) override {

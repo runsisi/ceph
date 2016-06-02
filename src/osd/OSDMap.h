@@ -724,12 +724,14 @@ public:
     ceph_assert(o < max_osd);
     return osd_state[o];
   }
+
   int get_state(int o, set<string>& st) const {
     ceph_assert(o < max_osd);
     unsigned t = osd_state[o];
     calc_state_set(t, st);
     return osd_state[o];
   }
+
   void set_state(int o, unsigned s) {
     ceph_assert(o < max_osd);
     osd_state[o] = s;
@@ -931,14 +933,17 @@ public:
     ceph_assert(exists(osd));
     return osd_info[osd].up_from;
   }
+
   const epoch_t& get_up_thru(int osd) const {
     ceph_assert(exists(osd));
     return osd_info[osd].up_thru;
   }
+
   const epoch_t& get_down_at(int osd) const {
     ceph_assert(exists(osd));
     return osd_info[osd].down_at;
   }
+
   const osd_info_t& get_info(int osd) const {
     ceph_assert(osd < max_osd);
     return osd_info[osd];
@@ -1191,6 +1196,7 @@ public:
       *out = spg_t(pgid);
       return true;
     }
+
     int primary;
     vector<int> acting;
     pg_to_acting_osds(pgid, &acting, &primary);

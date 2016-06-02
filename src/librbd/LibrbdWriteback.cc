@@ -44,6 +44,8 @@ namespace librbd {
     con->complete(rados_aio_get_return_value(c));
   }
 
+  // created by
+  // LibrbdWriteback::read
   /**
    * context to wrap another context in a Mutex
    *
@@ -56,14 +58,16 @@ namespace librbd {
     C_ReadRequest(CephContext *cct, Context *c, Mutex *cache_lock)
       : m_cct(cct), m_ctx(c), m_cache_lock(cache_lock) {
     }
+
     void finish(int r) override {
       ldout(m_cct, 20) << "aio_cb completing " << dendl;
       {
         Mutex::Locker cache_locker(*m_cache_lock);
-	m_ctx->complete(r);
+	m_ctx->complete(r); // ObjectCacher::C_ReadFinish
       }
       ldout(m_cct, 20) << "aio_cb finished" << dendl;
     }
+
   private:
     CephContext *m_cct;
     Context *m_ctx;
@@ -120,6 +124,9 @@ namespace librbd {
     : m_tid(0), m_lock(lock), m_ictx(ictx) {
   }
 
+  // called by
+  // ObjectCacher::bh_read <- ObjectCacher::_readx <- ObjectCacher::readx / ObjectCacher::C_RetryRead::finish
+  //      ObjectCacher::readx <- ImageCtx::aio_read_from_cache / ObjectCacher::file_read
   void LibrbdWriteback::read(const object_t& oid, uint64_t object_no,
 			     const object_locator_t& oloc,
 			     uint64_t off, uint64_t len, snapid_t snapid,
@@ -153,14 +160,19 @@ namespace librbd {
     req->send();
   }
 
+  // called by
+  // ObjectCacher::bh_write_commit
+  // ObjectCacher::_readx
   bool LibrbdWriteback::may_copy_on_write(const object_t& oid, uint64_t read_off, uint64_t read_len, snapid_t snapid)
   {
     m_ictx->snap_lock.get_read();
     librados::snap_t snap_id = m_ictx->snap_id;
+
     m_ictx->parent_lock.get_read();
     uint64_t overlap = 0;
     m_ictx->get_parent_overlap(snap_id, &overlap);
     m_ictx->parent_lock.put_read();
+
     m_ictx->snap_lock.put_read();
 
     uint64_t object_no = oid_to_object_no(oid.name, m_ictx->object_prefix);
@@ -170,13 +182,16 @@ namespace librbd {
     Striper::extent_to_file(m_ictx->cct, &m_ictx->layout,
 			  object_no, 0, m_ictx->layout.object_size,
 			  objectx);
+
     uint64_t object_overlap = m_ictx->prune_parent_extents(objectx, overlap);
     bool may = object_overlap > 0;
+
     ldout(m_ictx->cct, 10) << "may_copy_on_write " << oid << " " << read_off
 			   << "~" << read_len << " = " << may << dendl;
     return may;
   }
 
+  // called by ObjectCacher::bh_write, ObjectCacher::bh_write_scattered
   ceph_tid_t LibrbdWriteback::write(const object_t& oid,
 				    const object_locator_t& oloc,
 				    uint64_t off, uint64_t len,
@@ -197,7 +212,9 @@ namespace librbd {
     uint64_t object_no = oid_to_object_no(oid.name, m_ictx->object_prefix);
 
     write_result_d *result = new write_result_d(oid.name, oncommit);
+
     m_writes[oid.name].push(result);
+
     ldout(m_ictx->cct, 20) << "write will wait for result " << result << dendl;
 
     bufferlist bl_copy(bl);
@@ -216,7 +233,8 @@ namespace librbd {
     return ++m_tid;
   }
 
-
+  // called by
+  // ObjectCacher::Object::replace_journal_tid
   void LibrbdWriteback::overwrite_extent(const object_t& oid, uint64_t off,
 					 uint64_t len,
 					 ceph_tid_t original_journal_tid,
@@ -230,22 +248,35 @@ namespace librbd {
 
     uint64_t object_no = oid_to_object_no(oid.name, m_ictx->object_prefix);
 
+    // we are only called when the original_journal_tid is not 0, see
+    // the caller ObjectCacher::Object::replace_journal_tid
+
     // all IO operations are flushed prior to closing the journal
     ceph_assert(original_journal_tid != 0 && m_ictx->journal != NULL);
 
     Extents file_extents;
+
+    // from <off, len> in object -> <off, len> in image, if striper enabled
+    // then there may be multiple <off, len>(s), i.e., image extent(s), in image
     Striper::extent_to_file(m_ictx->cct, &m_ictx->layout, object_no, off,
 			    len, file_extents);
+
     for (Extents::iterator it = file_extents.begin();
 	 it != file_extents.end(); ++it) {
       if (new_journal_tid != 0) {
         // ensure new journal event is safely committed to disk before
         // committing old event
+
+        // C_CommitIOEventExtent::finish will call m_ictx->journal->commit_io_event_extent
         m_ictx->journal->flush_event(
           new_journal_tid, new C_CommitIOEventExtent(m_ictx,
                                                      original_journal_tid,
                                                      it->first, it->second));
       } else {
+
+        // new_journal_tid == 0, so our call originates from
+        // ObjectCacher::Object::truncate or ObjectCacher::Object::discard
+
         m_ictx->journal->commit_io_event_extent(original_journal_tid, it->first,
 					        it->second, 0);
       }

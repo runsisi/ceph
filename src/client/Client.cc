@@ -228,6 +228,11 @@ vinodeno_t Client::map_faked_ino(ino_t ino)
 
 // cons/des
 
+// created by
+// StandaloneClient::StandaloneClient, which called by
+//      ceph_fuse.cc/main
+//      ceph_sync.cc/main
+//      libcephfs.cc/ceph_mount_info::init
 Client::Client(Messenger *m, MonClient *mc, Objecter *objecter_)
   : Dispatcher(m->cct),
     timer(m->cct, client_lock),
@@ -13793,6 +13798,7 @@ void Client::ms_handle_remote_reset(Connection *con)
 {
   ldout(cct, 0) << __func__ << " on " << con->get_peer_addr() << dendl;
   Mutex::Locker l(client_lock);
+
   switch (con->get_peer_type()) {
   case CEPH_ENTITY_TYPE_MDS:
     {
@@ -14224,7 +14230,10 @@ mds_rank_t Client::_get_random_up_mds() const
   return *p;
 }
 
-
+// called by
+// ceph_fuse.cc/main
+// ceph_sync.cc/main
+// libcephfs.cc/ceph_mount_info::init
 StandaloneClient::StandaloneClient(Messenger *m, MonClient *mc)
     : Client(m, mc, new Objecter(m->cct, m, mc, NULL, 0, 0))
 {

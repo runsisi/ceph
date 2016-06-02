@@ -25,14 +25,18 @@ Readahead::~Readahead() {
 
 Readahead::extent_t Readahead::update(const vector<extent_t>& extents, uint64_t limit) {
   m_lock.Lock();
+
   for (vector<extent_t>::const_iterator p = extents.begin(); p != extents.end(); ++p) {
     _observe_read(p->first, p->second);
   }
+
   if (m_readahead_pos >= limit|| m_last_pos >= limit) {
     m_lock.Unlock();
     return extent_t(0, 0);
   }
+
   pair<uint64_t, uint64_t> extent = _compute_readahead(limit);
+
   m_lock.Unlock();
   return extent;
 }
@@ -60,12 +64,14 @@ void Readahead::_observe_read(uint64_t offset, uint64_t length) {
     m_readahead_size = 0;
     m_readahead_pos = 0;
   }
+
   m_last_pos = offset + length;
 }
 
 Readahead::extent_t Readahead::_compute_readahead(uint64_t limit) {
   uint64_t readahead_offset = 0;
   uint64_t readahead_length = 0;
+
   if (m_nr_consec_read >= m_trigger_requests) {
     // currently reading sequentially
     if (m_last_pos >= m_readahead_trigger_pos) {
@@ -91,10 +97,12 @@ Readahead::extent_t Readahead::_compute_readahead(uint64_t limit) {
       for (vector<uint64_t>::iterator p = m_alignments.begin(); p != m_alignments.end(); ++p) {
 	// Align the readahead, if possible.
 	uint64_t alignment = *p;
+
 	uint64_t align_prev = readahead_end / alignment * alignment;
 	uint64_t align_next = align_prev + alignment;
 	uint64_t dist_prev = readahead_end - align_prev;
 	uint64_t dist_next = align_next - readahead_end;
+
 	if (dist_prev < readahead_length / 2 && dist_prev < dist_next) {
 	  // we can snap to the previous alignment point by a less than 50% reduction in size
 	  ceph_assert(align_prev > readahead_offset);
@@ -117,6 +125,7 @@ Readahead::extent_t Readahead::_compute_readahead(uint64_t limit) {
       m_readahead_pos += readahead_length;
     }
   }
+
   return extent_t(readahead_offset, readahead_length);
 }
 
@@ -189,6 +198,9 @@ void Readahead::set_max_readahead_size(uint64_t max_readahead_size) {
   m_lock.Unlock();
 }
 
+// called by
+// Client::_create_fh
+// ImageCtx::init_layout
 void Readahead::set_alignments(const vector<uint64_t> &alignments) {
   m_lock.Lock();
   m_alignments = alignments;

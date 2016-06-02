@@ -61,6 +61,9 @@ using librbd::util::unique_lock_name;
 using managed_lock::util::decode_lock_cookie;
 using managed_lock::util::encode_lock_cookie;
 
+// derived by
+// ExclusiveLock, mode == EXCLUSIVE
+// LeaderLock, mode == EXCLUSIVE
 template <typename I>
 ManagedLock<I>::ManagedLock(librados::IoCtx &ioctx, ContextWQ *work_queue,
                             const string& oid, Watcher *watcher, Mode mode,
@@ -72,8 +75,8 @@ ManagedLock<I>::ManagedLock(librados::IoCtx &ioctx, ContextWQ *work_queue,
     m_oid(oid),
     m_watcher(watcher),
     m_mode(mode),
-    m_blacklist_on_break_lock(blacklist_on_break_lock),
-    m_blacklist_expire_seconds(blacklist_expire_seconds),
+    m_blacklist_on_break_lock(blacklist_on_break_lock), // default true
+    m_blacklist_expire_seconds(blacklist_expire_seconds), // 0
     m_state(STATE_UNLOCKED) {
 }
 
@@ -169,6 +172,7 @@ void ManagedLock<I>::try_acquire_lock(Context *on_acquired) {
     if (is_state_shutdown()) {
       r = -ESHUTDOWN;
     } else if (m_state != STATE_LOCKED || !m_actions_contexts.empty()) {
+      // not locked, or locked but has pending contexts
       ldout(m_cct, 10) << dendl;
       execute_action(ACTION_TRY_LOCK, on_acquired);
       return;
@@ -199,6 +203,8 @@ void ManagedLock<I>::release_lock(Context *on_released) {
   }
 }
 
+// called by
+// ImageWatcher<I>::handle_rewatch_complete
 template <typename I>
 void ManagedLock<I>::reacquire_lock(Context *on_reacquired) {
   {
@@ -251,6 +257,13 @@ void ManagedLock<I>::get_locker(managed_lock::Locker *locker,
   on_finish->complete(r);
 }
 
+// called by
+// librbd::lock_break, true
+// InstanceWatcher<I>::break_instance_lock, true
+// LeaderWatcher<I>::break_leader_lock, true
+// NOTE: AcquireRequest sent by ManagedLock<I>::send_acquire_lock will not force break the lock,
+//      i.e., not to blacklist if the other client is alive
+//      see ManagedLock<I>::handle_pre_acquire_lock and AcquireRequest<I>::send_break_lock
 template <typename I>
 void ManagedLock<I>::break_lock(const managed_lock::Locker &locker,
                                 bool force_break_lock, Context *on_finish) {
@@ -277,6 +290,8 @@ void ManagedLock<I>::break_lock(const managed_lock::Locker &locker,
   on_finish->complete(r);
 }
 
+// called by
+// librbd::is_exclusive_lock_owner
 template <typename I>
 int ManagedLock<I>::assert_header_locked() {
   ldout(m_cct, 10) << dendl;
@@ -392,7 +407,9 @@ template <typename I>
 void ManagedLock<I>::execute_action(Action action, Context *ctx) {
   ceph_assert(m_lock.is_locked());
 
+  // merge or append, the same as ImageState state machine
   append_context(action, ctx);
+
   if (!is_transition_state()) {
     execute_next_action();
   }
@@ -404,7 +421,7 @@ void ManagedLock<I>::execute_next_action() {
   ceph_assert(!m_actions_contexts.empty());
   switch (get_active_action()) {
   case ACTION_ACQUIRE_LOCK:
-  case ACTION_TRY_LOCK:
+  case ACTION_TRY_LOCK:         // the difference is in ExclusiveLock<I>::post_acquire_lock_handler
     send_acquire_lock();
     break;
   case ACTION_REACQUIRE_LOCK:
@@ -434,6 +451,7 @@ void ManagedLock<I>::complete_active_action(State next_state, int r) {
   ceph_assert(m_lock.is_locked());
   ceph_assert(!m_actions_contexts.empty());
 
+  // std::list<ActionContexts>
   ActionContexts action_contexts(std::move(m_actions_contexts.front()));
   m_actions_contexts.pop_front();
   m_state = next_state;
@@ -467,17 +485,23 @@ void ManagedLock<I>::send_acquire_lock() {
   }
 
   ldout(m_cct, 10) << dendl;
+
   m_state = STATE_ACQUIRING;
 
+  // pointer to the linger op, see IoCtxImpl::aio_watch
   uint64_t watch_handle = m_watcher->get_watch_handle();
   if (watch_handle == 0) {
     lderr(m_cct) << "watcher not registered - delaying request" << dendl;
     m_state = STATE_WAITING_FOR_REGISTER;
     return;
   }
+
+  // "auto " + watch_handle
   m_cookie = encode_lock_cookie(watch_handle);
 
   m_work_queue->queue(new FunctionContext([this](int r) {
+    // override by ExclusiveLock<I>::pre_acquire_lock_handler, to call
+    // m_image_ctx.image_watcher->flush and m_image_ctx.state->prepare_lock
     pre_acquire_lock_handler(create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_pre_acquire_lock>(this));
   }));
@@ -498,6 +522,7 @@ void ManagedLock<I>::handle_pre_acquire_lock(int r) {
     m_blacklist_on_break_lock, m_blacklist_expire_seconds,
     create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_acquire_lock>(this));
+
   m_work_queue->queue(new C_SendLockRequest<AcquireRequest<I>>(req), 0);
 }
 
@@ -505,7 +530,7 @@ template <typename I>
 void ManagedLock<I>::handle_acquire_lock(int r) {
   ldout(m_cct, 10) << "r=" << r << dendl;
 
-  if (r == -EBUSY || r == -EAGAIN) {
+  if (r == -EBUSY || r == -EAGAIN) { // locked by other incompatible locker or the owner is still alive
     ldout(m_cct, 5) << "unable to acquire exclusive lock" << dendl;
   } else if (r < 0) {
     lderr(m_cct) << "failed to acquire exclusive lock:" << cpp_strerror(r)
@@ -516,6 +541,9 @@ void ManagedLock<I>::handle_acquire_lock(int r) {
 
   m_post_next_state = (r < 0 ? STATE_UNLOCKED : STATE_LOCKED);
 
+  // exclusive lock will wait in the state machine if r < 0 and
+  // we are called by ManagedLock::acquire_lock until the lock is
+  // acquired finally
   m_work_queue->queue(new FunctionContext([this, r](int ret) {
     post_acquire_lock_handler(r, create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_post_acquire_lock>(this));
@@ -538,10 +566,14 @@ void ManagedLock<I>::handle_post_acquire_lock(int r) {
   if (r < 0 && m_post_next_state == STATE_LOCKED) {
     // release_lock without calling pre and post handlers
     revert_to_unlock_state(r);
-  } else if (r != -ECANCELED) {
+  } else if (r != -ECANCELED) { // ACTION_TRY_LOCK, see ExclusiveLock<I>::post_acquire_lock_handler
     // fail the lock request
     complete_active_action(m_post_next_state, r);
   }
+
+  // if r == -ECANCELED, then the fsm is in state STATE_WAITING_FOR_LOCK,
+  // m_image_ctx.image_watcher->notify_request_lock() will get response
+  // and let us continue, NOTE: the callback has not completed yet!
 }
 
 template <typename I>
@@ -556,6 +588,7 @@ void ManagedLock<I>::revert_to_unlock_state(int r) {
         ceph_assert(ret == 0);
         complete_active_action(STATE_UNLOCKED, r);
       }));
+
   m_work_queue->queue(new C_SendLockRequest<ReleaseRequest<I>>(req));
 }
 
@@ -661,6 +694,9 @@ void ManagedLock<I>::send_release_lock() {
   m_state = STATE_PRE_RELEASING;
 
   m_work_queue->queue(new FunctionContext([this](int r) {
+    // override by
+    // ExclusiveLock<I>::pre_release_lock_handler
+    // LeaderLock::pre_release_lock_handler
     pre_release_lock_handler(false, create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_pre_release_lock>(this));
   }));
@@ -686,6 +722,8 @@ void ManagedLock<I>::handle_pre_release_lock(int r) {
       m_work_queue, m_oid, m_cookie,
       create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_release_lock>(this));
+
+  // ReleaseRequest::send
   m_work_queue->queue(new C_SendLockRequest<ReleaseRequest<I>>(req), 0);
 }
 
@@ -700,10 +738,14 @@ void ManagedLock<I>::handle_release_lock(int r) {
     m_cookie = "";
   }
 
+  // r should always be 0, see librbd::managed_lock::ReleaseRequest<I>::finish
   m_post_next_state = r < 0 ? STATE_LOCKED : STATE_UNLOCKED;
 
   m_work_queue->queue(new FunctionContext([this, r](int ret) {
-    post_release_lock_handler(false, r, create_context_callback<
+    // override by
+    // ExclusiveLock<I>::post_release_lock_handler
+    // LeaderLock::post_release_lock_handler
+    post_release_lock_handler(false, r, create_context_callback< // not shutting down
         ManagedLock<I>, &ManagedLock<I>::handle_post_release_lock>(this));
   }));
 }
@@ -716,12 +758,15 @@ void ManagedLock<I>::handle_post_release_lock(int r) {
   complete_active_action(m_post_next_state, r);
 }
 
+// called by
+// ManagedLock<I>::execute_next_action, for ACTION_SHUT_DOWN
 template <typename I>
 void ManagedLock<I>::send_shutdown() {
   ldout(m_cct, 10) << dendl;
   ceph_assert(m_lock.is_locked());
   if (m_state == STATE_UNLOCKED) {
     m_state = STATE_SHUTTING_DOWN;
+
     m_work_queue->queue(new FunctionContext([this](int r) {
       shutdown_handler(r, create_context_callback<
           ManagedLock<I>, &ManagedLock<I>::handle_shutdown>(this));

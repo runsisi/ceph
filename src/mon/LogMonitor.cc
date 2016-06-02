@@ -74,6 +74,8 @@ void LogMonitor::create_initial()
   pending_log.insert(pair<utime_t,LogEntry>(e.stamp, e));
 }
 
+// called by
+// PaxosService::refresh
 void LogMonitor::update_from_paxos(bool *need_bootstrap)
 {
   dout(10) << __func__ << dendl;
@@ -251,6 +253,8 @@ version_t LogMonitor::get_trim_to() const
   return 0;
 }
 
+// called by
+// PaxosService::dispatch, which called by Monitor::handle_command
 bool LogMonitor::preprocess_query(MonOpRequestRef op)
 {
   op->mark_logmon_event("preprocess_query");
@@ -275,6 +279,8 @@ bool LogMonitor::preprocess_query(MonOpRequestRef op)
   }
 }
 
+// called by
+// PaxosService::dispatch, which called by Monitor::handle_command
 bool LogMonitor::prepare_update(MonOpRequestRef op)
 {
   op->mark_logmon_event("prepare_update");
@@ -516,6 +522,7 @@ bool LogMonitor::preprocess_command(MonOpRequestRef op)
 bool LogMonitor::prepare_command(MonOpRequestRef op)
 {
   op->mark_logmon_event("prepare_command");
+
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
   stringstream ss;
   string rs;
@@ -573,9 +580,12 @@ int LogMonitor::sub_name_to_id(const string& n)
   }
 }
 
+// called by
+// LogMonitor::update_from_paxos
 void LogMonitor::check_subs()
 {
   dout(10) << __func__ << dendl;
+
   for (map<string, xlist<Subscription*>*>::iterator i = mon->session_map.subs.begin();
        i != mon->session_map.subs.end();
        ++i) {
@@ -586,6 +596,9 @@ void LogMonitor::check_subs()
   }
 }
 
+// called by
+// LogMonitor::check_subs
+// Monitor::handle_subscribe
 void LogMonitor::check_sub(Subscription *s)
 {
   dout(10) << __func__ << " client wants " << s->type << " ver " << s->next << dendl;

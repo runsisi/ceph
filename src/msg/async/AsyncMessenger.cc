@@ -147,6 +147,8 @@ int Processor::bind(const entity_addrvec_t &bind_addrs,
   return 0;
 }
 
+// called by
+// AsyncMessenger::ready
 void Processor::start()
 {
   ldout(msgr->cct, 1) << __func__ << dendl;
@@ -279,8 +281,11 @@ AsyncMessenger::AsyncMessenger(CephContext *cct, entity_name_t name,
 					 local_worker, true);
   init_local_connection();
   reap_handler = new C_handle_reap(this);
+
   unsigned processor_num = 1;
   if (stack->support_local_listen_table())
+    // only for dpdk stack, otherwise only one worker can listen & accept, i.e.,
+    // only one Processor for the network stack
     processor_num = stack->get_num_worker();
   for (unsigned i = 0; i < processor_num; ++i)
     processors.push_back(new Processor(this, stack->get_worker(i), cct));
@@ -299,11 +304,15 @@ AsyncMessenger::~AsyncMessenger()
     delete p;
 }
 
+// called by
+// Messenger::add_dispatcher_head
+// Messenger::add_dispatcher_tail
 void AsyncMessenger::ready()
 {
   ldout(cct,10) << __func__ << " " << get_myaddrs() << dendl;
 
   stack->ready();
+
   if (pending_bind) {
     int err = bindv(pending_bind_addrs);
     if (err) {
@@ -313,8 +322,10 @@ void AsyncMessenger::ready()
   }
 
   Mutex::Locker l(lock);
+
   for (auto &&p : processors)
     p->start();
+
   dispatch_queue.start();
 }
 
@@ -325,15 +336,22 @@ int AsyncMessenger::shutdown()
   // done!  clean up.
   for (auto &&p : processors)
     p->stop();
+
   mark_down_all();
+
   // break ref cycles on the loopback connection
   local_connection->set_priv(NULL);
   did_bind = false;
+
   lock.Lock();
+
   stop_cond.Signal();
   stopped = true;
+
   lock.Unlock();
+
   stack->drain();
+
   return 0;
 }
 
@@ -366,7 +384,7 @@ int AsyncMessenger::bindv(const entity_addrvec_t &bind_addrs)
 
   ldout(cct,10) << __func__ << " " << bind_addrs << dendl;
 
-  if (!stack->is_ready()) {
+  if (!stack->is_ready()) { // has not attach any dispatcher
     ldout(cct, 10) << __func__ << " Network Stack is not ready for bind yet - postponed" << dendl;
     pending_bind_addrs = bind_addrs;
     pending_bind = true;
@@ -538,13 +556,17 @@ void AsyncMessenger::wait()
   started = false;
 }
 
+// called by
+// Processor::accept
 void AsyncMessenger::add_accept(Worker *w, ConnectedSocket cli_socket, entity_addr_t &addr)
 {
   lock.Lock();
   AsyncConnectionRef conn = new AsyncConnection(cct, this, &dispatch_queue, w,
 						addr.is_msgr2());
   conn->accept(std::move(cli_socket), addr);
-  accepting_conns.insert(conn);
+
+  accepting_conns.insert(conn); // will be erased by AsyncMessager::accept_conn
+
   lock.Unlock();
 }
 

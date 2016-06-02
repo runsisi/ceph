@@ -48,7 +48,7 @@ struct AioCompletion {
   ssize_t rval;
   callback_t complete_cb;
   void *complete_arg;
-  rbd_completion_t rbd_comp;
+  rbd_completion_t rbd_comp; // librbd::RBD::AioCompletion
   uint32_t pending_count;   ///< number of requests
   uint32_t blockers;
   int ref;
@@ -59,6 +59,7 @@ struct AioCompletion {
 
   ReadResult read_result;
 
+  // will be pushed on ImageCtx::async_ops by AioCompletion::start_op
   AsyncOperation async_op;
 
   xlist<AioCompletion*>::item m_xlist_item;
@@ -74,8 +75,10 @@ struct AioCompletion {
 
   static AioCompletion *create(void *cb_arg, callback_t cb_complete,
                                rbd_completion_t rbd_comp) {
+    // librbd::io::AioCompletion
     AioCompletion *comp = new AioCompletion();
     comp->set_complete_cb(cb_arg, cb_complete);
+    // librbd::RBD::AioCompletion
     comp->rbd_comp = (rbd_comp != nullptr ? rbd_comp : comp);
     return comp;
   }
@@ -88,6 +91,17 @@ struct AioCompletion {
     return comp;
   }
 
+  // called by
+  // ImageWriteback<I>::aio_read
+  // ImageWriteback<I>::aio_write
+  // ImageWriteback<I>::aio_discard
+  // ImageWriteback<I>::aio_flush
+  // CopyupRequest::send
+  // ObjectReadRequest<I>::read_from_parent
+  // Replay<I>::create_aio_modify_completion
+  // Replay<I>::create_aio_flush_completion
+  // librbd::copy
+  // librbd::read_iterate
   template <typename T, void (T::*MF)(int) = &T::complete>
   static AioCompletion *create(T *obj, ImageCtx *image_ctx, aio_type_t type) {
     AioCompletion *comp = create<T, MF>(obj);
@@ -192,6 +206,10 @@ struct AioCompletion {
     Mutex::Locker l(lock);
     ++blockers;
   }
+
+  // called by, i.e., no object requests generated
+  // AioCompletion::set_request_count
+  // AbstractImageWriteRequest<I>::send_request
   void unblock() {
     Mutex::Locker l(lock);
     ceph_assert(blockers > 0);
@@ -212,6 +230,15 @@ struct AioCompletion {
   }
 };
 
+// created by：
+// AbstractAioImageWrite<I>::send_object_requests
+// ImageWriteRequest<I>::send_image_cache_request
+// ImageWriteRequest<I>::send_object_cache_requests
+// ImageDiscardRequest<I>::send_image_cache_request
+// ImageFlushRequest<I>::send_request
+// ImageFlushRequest<I>::send_image_cache_request
+// ImageWriteSameRequest<I>::send_image_cache_request
+// ImageWriteSameRequest<I>::send_object_cache_requests
 class C_AioRequest : public Context {
 public:
   C_AioRequest(AioCompletion *completion) : m_completion(completion) {

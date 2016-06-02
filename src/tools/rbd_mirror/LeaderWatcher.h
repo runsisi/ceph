@@ -121,8 +121,8 @@ private:
 
     LeaderLock(librados::IoCtx& ioctx, ContextWQ *work_queue,
                const std::string& oid, LeaderWatcher *watcher,
-               bool blacklist_on_break_lock,
-               uint32_t blacklist_expire_seconds)
+               bool blacklist_on_break_lock, // true
+               uint32_t blacklist_expire_seconds) // 0
       : Parent(ioctx, work_queue, oid, watcher, librbd::managed_lock::EXCLUSIVE,
                blacklist_on_break_lock, blacklist_expire_seconds),
         watcher(watcher) {
@@ -139,6 +139,8 @@ private:
     }
 
   protected:
+    // called by
+    // ManagedLock<I>::handle_acquire_lock
     void post_acquire_lock_handler(int r, Context *on_finish) {
       if (r == 0) {
         // lock is owned at this point
@@ -151,6 +153,9 @@ private:
                                   Context *on_finish) {
       watcher->handle_pre_release_leader_lock(on_finish);
     }
+
+    // called by
+    // ManagedLock<I>::handle_release_lock
     void post_release_lock_handler(bool shutting_down, int r,
                                    Context *on_finish) {
       watcher->handle_post_release_leader_lock(r, on_finish);

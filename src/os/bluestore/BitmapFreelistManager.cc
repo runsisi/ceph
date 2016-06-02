@@ -116,6 +116,7 @@ int BitmapFreelistManager::init()
   // load meta
   while (it->valid()) {
     string k = it->key();
+
     if (k == "bytes_per_block") {
       bufferlist bl = it->value();
       auto p = bl.cbegin();

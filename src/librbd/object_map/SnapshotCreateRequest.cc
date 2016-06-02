@@ -38,6 +38,8 @@ std::ostream& operator<<(std::ostream& os,
 
 } // anonymous namespace
 
+// called by
+// librbd::ObjectMap::snapshot_add
 void SnapshotCreateRequest::send() {
   send_read_map();
 }
@@ -49,13 +51,16 @@ bool SnapshotCreateRequest::should_complete(int r) {
   if (r < 0 && m_ret_val == 0) {
     m_ret_val = r;
   }
+
   if (m_ret_val < 0) {
     // pass errors down to base class to invalidate the object map
     return Request::should_complete(r);
   }
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   bool finished = false;
+
   switch (m_state) {
   case STATE_READ_MAP:
     send_write_map();
@@ -71,6 +76,7 @@ bool SnapshotCreateRequest::should_complete(int r) {
     ceph_abort();
     break;
   }
+
   return finished;
 }
 
@@ -79,8 +85,12 @@ void SnapshotCreateRequest::send_read_map() {
   ceph_assert(m_image_ctx.get_snap_info(m_snap_id) != NULL);
 
   CephContext *cct = m_image_ctx.cct;
+
+  // read the object map of the HEAD from the disk
   std::string oid(ObjectMap<>::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
+
   ldout(cct, 5) << this << " " << __func__ << ": oid=" << oid << dendl;
+
   m_state = STATE_READ_MAP;
 
   // IO is blocked due to the snapshot creation -- consistent to read from disk
@@ -96,9 +106,13 @@ void SnapshotCreateRequest::send_read_map() {
 
 void SnapshotCreateRequest::send_write_map() {
   CephContext *cct = m_image_ctx.cct;
+
+  // write the object map of the HEAD as the snap's object map
   std::string snap_oid(ObjectMap<>::object_map_name(m_image_ctx.id, m_snap_id));
+
   ldout(cct, 5) << this << " " << __func__ << ": snap_oid=" << snap_oid
                 << dendl;
+
   m_state = STATE_WRITE_MAP;
 
   librados::ObjectWriteOperation op;
@@ -112,17 +126,24 @@ void SnapshotCreateRequest::send_write_map() {
 
 bool SnapshotCreateRequest::send_add_snapshot() {
   RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
   if ((m_image_ctx.features & RBD_FEATURE_FAST_DIFF) == 0) {
     return true;
   }
 
   CephContext *cct = m_image_ctx.cct;
+
+  // update HEAD object map state from OBJECT_EXISTS -> OBJECT_EXISTS_CLEAN
   std::string oid(ObjectMap<>::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
+
   ldout(cct, 5) << this << " " << __func__ << ": oid=" << oid << dendl;
+
   m_state = STATE_ADD_SNAPSHOT;
 
   librados::ObjectWriteOperation op;
+
   rados::cls::lock::assert_locked(&op, RBD_LOCK_NAME, LOCK_EXCLUSIVE, "", "");
+
   cls_client::object_map_snap_add(&op);
 
   librados::AioCompletion *rados_completion = create_callback_completion();

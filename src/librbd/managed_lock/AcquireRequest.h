@@ -21,6 +21,8 @@ class Watcher;
 
 namespace managed_lock {
 
+// created by
+// ManagedLock<I>::handle_pre_acquire_lock
 template <typename ImageCtxT>
 class AcquireRequest {
 private:

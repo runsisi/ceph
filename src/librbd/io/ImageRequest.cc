@@ -79,6 +79,9 @@ void ImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
+// called by
+// ImageRequestWQ::aio_write
 template <typename I>
 void ImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
                                 Extents &&image_extents, bufferlist &&bl,
@@ -89,6 +92,7 @@ void ImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
 template <typename I>
 void ImageRequest<I>::aio_discard(I *ictx, AioCompletion *c,
                                   Extents &&image_extents,
@@ -99,6 +103,7 @@ void ImageRequest<I>::aio_discard(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
 template <typename I>
 void ImageRequest<I>::aio_flush(I *ictx, AioCompletion *c,
                                 FlushSource flush_source,
@@ -139,11 +144,14 @@ void ImageRequest<I>::send() {
   ceph_assert(m_aio_comp->is_started() ^ (get_aio_type() == AIO_TYPE_FLUSH));
 
   CephContext *cct = image_ctx.cct;
+
   AioCompletion *aio_comp = this->m_aio_comp;
+
   ldout(cct, 20) << get_request_type() << ": ictx=" << &image_ctx << ", "
                  << "completion=" << aio_comp << dendl;
 
   aio_comp->get();
+
   int r = clip_request();
   if (r < 0) {
     m_aio_comp->fail(r);
@@ -151,17 +159,24 @@ void ImageRequest<I>::send() {
   }
 
   if (m_bypass_image_cache || m_image_ctx.image_cache == nullptr) {
+    // overrided by ImageReadRequest, AbstractImageWriteRequest, ImageFlushRequest
     send_request();
   } else {
     send_image_cache_request();
   }
 }
 
+// only AioImageFlush will override this and always return 0, becoz it does not
+// have the <off, len> parameter pair
 template <typename I>
 int ImageRequest<I>::clip_request() {
   RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
   for (auto &image_extent : m_image_extents) {
     auto clip_len = image_extent.second;
+
+    // do not operate beyond the image size, especially check if the snapshot
+    // we previously operated has been removed
     int r = clip_io(get_image_ctx(&m_image_ctx), image_extent.first, &clip_len);
     if (r < 0) {
       return r;
@@ -169,9 +184,12 @@ int ImageRequest<I>::clip_request() {
 
     image_extent.second = clip_len;
   }
+
   return 0;
 }
 
+// called by
+// ImageRequestWQ::_void_dequeue
 template <typename I>
 ImageReadRequest<I>::ImageReadRequest(I &image_ctx, AioCompletion *aio_comp,
                                       Extents &&image_extents,
@@ -202,6 +220,7 @@ int ImageReadRequest<I>::clip_request() {
 template <typename I>
 void ImageReadRequest<I>::send_request() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
 
   auto &image_extents = this->m_image_extents;
@@ -211,30 +230,40 @@ void ImageReadRequest<I>::send_request() {
   }
 
   AioCompletion *aio_comp = this->m_aio_comp;
+
   librados::snap_t snap_id;
   map<object_t,vector<ObjectExtent> > object_extents;
   uint64_t buffer_ofs = 0;
+
   {
     // prevent image size from changing between computing clip and recording
     // pending async operation
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     snap_id = image_ctx.snap_id;
 
     // map image extents to object extents
     for (auto &extent : image_extents) {
+
+      // there should be only 1 extent, becoz rbd_aio_read only accepts <off, len> parameter
+
       if (extent.second == 0) {
+        // if the io beyonds the image size, clip_request called previously will
+        // truncate the requested extent(s)
         continue;
       }
 
       Striper::file_to_extents(cct, image_ctx.format_string, &image_ctx.layout,
                                extent.first, extent.second, 0, object_extents,
                                buffer_ofs);
+
       buffer_ofs += extent.second;
     }
   }
 
   // pre-calculate the expected number of read requests
   uint32_t request_count = 0;
+  // map<object_t,vector<ObjectExtent> >
   for (auto &object_extent : object_extents) {
     request_count += object_extent.second.size();
   }
@@ -285,25 +314,36 @@ void ImageReadRequest<I>::send_request() {
   image_ctx.perfcounter->inc(l_librbd_rd_bytes, buffer_ofs);
 }
 
+// called by AioImageRequest<I>::send when image cache enabled, actually it never enabled
 template <typename I>
 void ImageReadRequest<I>::send_image_cache_request() {
   I &image_ctx = this->m_image_ctx;
   ceph_assert(image_ctx.image_cache != nullptr);
 
   AioCompletion *aio_comp = this->m_aio_comp;
+
   aio_comp->set_request_count(1);
 
   auto *req_comp = new io::ReadResult::C_ImageReadRequest(
     aio_comp, this->m_image_extents);
+
   image_ctx.image_cache->aio_read(std::move(this->m_image_extents),
                                   &req_comp->bl, m_op_flags,
                                   req_comp);
 }
 
+// called by
+// AioImageRequest<I>::send, when image cache bypassed or disabled (never enabled)
 template <typename I>
 void AbstractImageWriteRequest<I>::send_request() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
+
+  // image extents -> std::vector<ObjectExtent>
+  // AioImageRequest -> AioObjectRequest
+  // append journal event
+  // write object cache
 
   RWLock::RLocker md_locker(image_ctx.md_lock);
 
@@ -311,29 +351,44 @@ void AbstractImageWriteRequest<I>::send_request() {
 
   AioCompletion *aio_comp = this->m_aio_comp;
   uint64_t clip_len = 0;
+
+  // std::vector<ObjectExtent>, AioImageRequest will be divided into AioObjectRequest(s),
+  // each AioObjectRequest is identified by an ObjectExtent
   ObjectExtents object_extents;
+
   ::SnapContext snapc;
+
   {
     // prevent image size from changing between computing clip and recording
     // pending async operation
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     if (image_ctx.snap_id != CEPH_NOSNAP || image_ctx.read_only) {
       aio_comp->fail(-EROFS);
       return;
     }
 
     for (auto &extent : this->m_image_extents) {
+
+      // there should be only 1 extent, becoz rbd_aio_write only accepts <off, len> parameter
+
       if (extent.second == 0) {
+        // clip_request thinks this is a valid request
         continue;
       }
 
       // map to object extents
+      // <off, len> in image -> std::vector<ObjectExtent>
       Striper::file_to_extents(cct, image_ctx.format_string, &image_ctx.layout,
                                extent.first, extent.second, 0, object_extents);
+
+      // used for updating perf counter, the original request may have been clipped, the
+      // requested length after clipping is not known directly
       clip_len += extent.second;
     }
 
     snapc = image_ctx.snapc;
+
     journaling = (image_ctx.journal != nullptr &&
                   image_ctx.journal->is_journal_appending());
   }
@@ -344,7 +399,24 @@ void AbstractImageWriteRequest<I>::send_request() {
     return;
   }
 
+  // for AioImageDiscard:
+  //   if object cache disabled:
+  //     send/journal discard event w/ object requests
+  //   if object cache enabled:
+  //     send/journal discard event w/ object requests
+  //     discard object cache
+
+  // for AioImageWrite:
+  //   if object cache disabled:
+  //     send/journal write event w/ object requests
+  //   if object cache enabled:
+  //     journal write event w/o object requests
+  //     write object cache
+
   if (!object_extents.empty()) {
+
+    // AioImageWrite or AioImageDiscard, has block data to write or discard
+
     uint64_t journal_tid = 0;
 
     utime_t ts = ceph_clock_now();
@@ -380,10 +452,17 @@ void AbstractImageWriteRequest<I>::send_request() {
     aio_comp->unblock();
   }
 
+  // update perf counter
   update_stats(clip_len);
+
   aio_comp->put();
 }
 
+// called by
+// AbstractImageWriteRequest<I>::send_request, i.e., for  ImageDiscardRequest<I>
+// ImageWriteRequest<I>::send_object_requests, if cache disabled, for cache we
+//      write cache first, then let the cache to create and send the object requests
+// ImageWriteSameRequest<I>::send_object_requests, if cache disabled
 template <typename I>
 void AbstractImageWriteRequest<I>::send_object_requests(
     const ObjectExtents &object_extents, const ::SnapContext &snapc,
@@ -392,14 +471,17 @@ void AbstractImageWriteRequest<I>::send_object_requests(
   CephContext *cct = image_ctx.cct;
 
   AioCompletion *aio_comp = this->m_aio_comp;
+
   for (ObjectExtents::const_iterator p = object_extents.begin();
        p != object_extents.end(); ++p) {
     ldout(cct, 20) << "oid " << p->oid << " " << p->offset << "~" << p->length
                    << " from " << p->buffer_extents << dendl;
+
+    // callback for each AioObjectRequest, will call m_completion->complete_request
+    // to try to complete the AioImageRequest
     C_AioRequest *req_comp = new C_AioRequest(aio_comp);
     auto request = create_object_request(*p, snapc, journal_tid, req_comp);
 
-    // if journaling, stash the request for later; otherwise send
     if (request != NULL) {
       request->send();
     }
@@ -417,6 +499,8 @@ void ImageWriteRequest<I>::assemble_extent(const ObjectExtent &object_extent,
   }
 }
 
+// called by AbstractAioImageWrite<I>::send_request
+// synchronous always be false
 template <typename I>
 uint64_t ImageWriteRequest<I>::append_journal_event(bool synchronous) {
   I &image_ctx = this->m_image_ctx;
@@ -425,10 +509,20 @@ uint64_t ImageWriteRequest<I>::append_journal_event(bool synchronous) {
   uint64_t buffer_offset = 0;
   ceph_assert(!this->m_image_extents.empty());
   for (auto &extent : this->m_image_extents) {
+
+    // each image extent will encoded as an journal::Event, for
+    // rbd_aio_write, we always have only one extent with an user IO
+
     bufferlist sub_bl;
+
+    // <off, len> in AioImageRequest::m_bl, i.e., user provided buffer
     sub_bl.substr_of(m_bl, buffer_offset, extent.second);
+
     buffer_offset += extent.second;
 
+    // <off, len> in image, an user provided AioImageWrite extent may fit into
+    // multiple journal::EventEntry(s), and fit into one journal::Event
+    // an tid identifies an journal::Event
     tid = image_ctx.journal->append_write_event(extent.first, extent.second,
                                                 sub_bl, synchronous);
   }
@@ -436,18 +530,24 @@ uint64_t ImageWriteRequest<I>::append_journal_event(bool synchronous) {
   return tid;
 }
 
+// called by AioImageRequest<I>::send when image cache enabled, actually it never enabled
 template <typename I>
 void ImageWriteRequest<I>::send_image_cache_request() {
   I &image_ctx = this->m_image_ctx;
   ceph_assert(image_ctx.image_cache != nullptr);
 
   AioCompletion *aio_comp = this->m_aio_comp;
+
   aio_comp->set_request_count(1);
+
   C_AioRequest *req_comp = new C_AioRequest(aio_comp);
+
   image_ctx.image_cache->aio_write(std::move(this->m_image_extents),
                                    std::move(m_bl), m_op_flags, req_comp);
 }
 
+// called by
+// AbstractAioImageWrite<I>::send_request
 template <typename I>
 ObjectDispatchSpec *ImageWriteRequest<I>::create_object_request(
     const ObjectExtent &object_extent, const ::SnapContext &snapc,
@@ -455,6 +555,8 @@ ObjectDispatchSpec *ImageWriteRequest<I>::create_object_request(
   I &image_ctx = this->m_image_ctx;
 
   bufferlist bl;
+
+  // object_extent->buffer_extents denotes vector<pair<uint64_t,uint64_t> > in image
   assemble_extent(object_extent, &bl);
   auto req = ObjectDispatchSpec::create_write(
     &image_ctx, OBJECT_DISPATCH_LAYER_NONE, object_extent.oid.name,
@@ -463,6 +565,8 @@ ObjectDispatchSpec *ImageWriteRequest<I>::create_object_request(
   return req;
 }
 
+// called by
+// AbstractAioImageWrite<I>::send_request
 template <typename I>
 void ImageWriteRequest<I>::update_stats(size_t length) {
   I &image_ctx = this->m_image_ctx;
@@ -470,6 +574,7 @@ void ImageWriteRequest<I>::update_stats(size_t length) {
   image_ctx.perfcounter->inc(l_librbd_wr_bytes, length);
 }
 
+// synchronous always be false
 template <typename I>
 uint64_t ImageDiscardRequest<I>::append_journal_event(bool synchronous) {
   I &image_ctx = this->m_image_ctx;
@@ -519,6 +624,8 @@ ObjectDispatchSpec *ImageDiscardRequest<I>::create_object_request(
   return req;
 }
 
+// called by
+// AbstractImageWriteRequest<I>::send_request
 template <typename I>
 void ImageDiscardRequest<I>::update_stats(size_t length) {
   I &image_ctx = this->m_image_ctx;
@@ -531,6 +638,7 @@ void ImageFlushRequest<I>::send_request() {
   I &image_ctx = this->m_image_ctx;
 
   bool journaling = false;
+
   {
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
     journaling = (m_flush_source == FLUSH_SOURCE_USER &&
@@ -561,6 +669,9 @@ void ImageFlushRequest<I>::send_request() {
         image_ctx.journal->flush_event(journal_tid, ctx);
       });
   } else {
+
+    // journaling disabled
+
     // flush rbd cache only when journaling is not enabled
     auto object_dispatch_spec = ObjectDispatchSpec::create_flush(
       &image_ctx, OBJECT_DISPATCH_LAYER_NONE, m_flush_source, this->m_trace,

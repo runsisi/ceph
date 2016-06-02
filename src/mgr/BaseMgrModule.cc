@@ -704,6 +704,8 @@ BaseMgrModule_init(BaseMgrModule *self, PyObject *args, PyObject *kwds)
     return 0;
 }
 
+// registered by
+// PyModule::init_ceph_module, which called by PyModuleRegistry::init
 PyTypeObject BaseMgrModuleType = {
   PyVarObject_HEAD_INIT(NULL, 0)
   "ceph_module.BaseMgrModule", /* tp_name */

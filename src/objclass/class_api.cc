@@ -126,6 +126,7 @@ int cls_call(cls_method_context_t hctx, const char *cls, const char *method,
   *outdata = (char *)malloc(op.outdata.length());
   if (!*outdata)
     return -ENOMEM;
+
   memcpy(*outdata, op.outdata.c_str(), op.outdata.length());
   *outdatalen = op.outdata.length();
 
@@ -204,12 +205,20 @@ int cls_get_request_origin(cls_method_context_t hctx, entity_inst_t *origin)
   return 0;
 }
 
+// called by
+// cls_lua.cc/clslua_create
+// cls_rbd.cc/dir_add_image
+// cls_rbd.cc/group_dir_add
+// cls_rgw.cc/rgw_obj_remove
+// cls_kvs.cc/create_with_omap
 int cls_cxx_create(cls_method_context_t hctx, bool exclusive)
 {
   PrimaryLogPG::OpContext **pctx = (PrimaryLogPG::OpContext **)hctx;
+
   vector<OSDOp> ops(1);
   ops[0].op.op = CEPH_OSD_OP_CREATE;
   ops[0].op.flags = (exclusive ? CEPH_OSD_OP_FLAG_EXCL : 0);
+
   return (*pctx)->pg->do_osd_ops(*pctx, ops);
 }
 

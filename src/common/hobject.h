@@ -84,10 +84,11 @@ public:
   }
 
   bool is_temp() const {
-    return pool <= POOL_TEMP_START && pool != INT64_MIN;
+    return pool <= POOL_TEMP_START && pool != INT64_MIN; // -2
   }
+
   bool is_meta() const {
-    return pool == POOL_META;
+    return pool == POOL_META; // -1
   }
 
   hobject_t() : snap(0), hash(0), max(false), pool(INT64_MIN) {
@@ -201,6 +202,7 @@ public:
   static uint32_t _reverse_bits(uint32_t v) {
     return reverse_bits(v);
   }
+
   static uint32_t _reverse_nibbles(uint32_t retval) {
     return reverse_nibbles(retval);
   }
@@ -239,10 +241,13 @@ public:
   // once you change build_hash_cache()
   void build_hash_cache() {
     nibblewise_key_cache = _reverse_nibbles(hash);
+
     hash_reverse_bits = _reverse_bits(hash);
   }
+
   void set_bitwise_key_u32(uint32_t value) {
     hash = _reverse_bits(value);
+
     // below is identical to build_hash_cache() and shall be
     // updated correspondingly if you change build_hash_cache() 
     nibblewise_key_cache = _reverse_nibbles(hash);
@@ -252,6 +257,7 @@ public:
   const string& get_effective_key() const {
     if (key.length())
       return key;
+
     return oid.name;
   }
 

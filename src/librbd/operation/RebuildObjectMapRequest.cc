@@ -24,6 +24,8 @@
 namespace librbd {
 namespace operation {
 
+// called by
+// librbd::Operations<I>::execute_rebuild_object_map
 template <typename I>
 void RebuildObjectMapRequest<I>::send() {
   send_resize_object_map();
@@ -38,6 +40,7 @@ bool RebuildObjectMapRequest<I>::should_complete(int r) {
   switch (m_state) {
   case STATE_RESIZE_OBJECT_MAP:
     ldout(cct, 5) << "RESIZE_OBJECT_MAP" << dendl;
+
     if (r == -ESTALE && !m_attempted_trim) {
       // objects are still flagged as in-use -- delete them
       m_attempted_trim = true;
@@ -50,6 +53,7 @@ bool RebuildObjectMapRequest<I>::should_complete(int r) {
 
   case STATE_TRIM_IMAGE:
     ldout(cct, 5) << "TRIM_IMAGE" << dendl;
+
     if (r == 0) {
       send_resize_object_map();
     }
@@ -57,6 +61,7 @@ bool RebuildObjectMapRequest<I>::should_complete(int r) {
 
   case STATE_VERIFY_OBJECTS:
     ldout(cct, 5) << "VERIFY_OBJECTS" << dendl;
+
     if (r == 0) {
       send_save_object_map();
     }
@@ -64,12 +69,14 @@ bool RebuildObjectMapRequest<I>::should_complete(int r) {
 
   case STATE_SAVE_OBJECT_MAP:
     ldout(cct, 5) << "SAVE_OBJECT_MAP" << dendl;
+
     if (r == 0) {
       send_update_header();
     }
     break;
   case STATE_UPDATE_HEADER:
     ldout(cct, 5) << "UPDATE_HEADER" << dendl;
+
     if (r == 0) {
       return true;
     }
@@ -104,11 +111,13 @@ void RebuildObjectMapRequest<I>::send_resize_object_map() {
 
   if (m_image_ctx.object_map->size() == num_objects) {
     m_image_ctx.snap_lock.put_read();
+
     send_verify_objects();
     return;
   }
 
   ldout(cct, 5) << this << " send_resize_object_map" << dendl;
+
   m_state = STATE_RESIZE_OBJECT_MAP;
 
   // should have been canceled prior to releasing lock
@@ -129,7 +138,9 @@ void RebuildObjectMapRequest<I>::send_trim_image() {
   // should have been canceled prior to releasing lock
   ceph_assert(m_image_ctx.exclusive_lock == nullptr ||
          m_image_ctx.exclusive_lock->is_lock_owner());
+
   ldout(cct, 5) << this << " send_trim_image" << dendl;
+
   m_state = STATE_TRIM_IMAGE;
 
   uint64_t new_size;
@@ -148,13 +159,17 @@ void RebuildObjectMapRequest<I>::send_trim_image() {
   req->send();
 }
 
+// called by
+// librbd/operation/ObjectMapIterate.cc:object_map_action
 template <typename I>
 bool update_object_map(I& image_ctx, uint64_t object_no, uint8_t current_state,
 		      uint8_t new_state) {
   CephContext *cct = image_ctx.cct;
+
   uint64_t snap_id = image_ctx.snap_id;
 
   uint8_t state = (*image_ctx.object_map)[object_no];
+
   if (state == OBJECT_EXISTS && new_state == OBJECT_NONEXISTENT &&
       snap_id == CEPH_NOSNAP) {
     // might be writing object to OSD concurrently
@@ -166,8 +181,11 @@ bool update_object_map(I& image_ctx, uint64_t object_no, uint8_t current_state,
       << " rebuild updating object map "
       << static_cast<uint32_t>(state) << "->"
       << static_cast<uint32_t>(new_state) << dendl;
+
     (*image_ctx.object_map)[object_no] = new_state;
   }
+
+  // return false means no need to invalidate the object map
   return false;
 }
 
@@ -177,6 +195,7 @@ void RebuildObjectMapRequest<I>::send_verify_objects() {
   CephContext *cct = m_image_ctx.cct;
 
   m_state = STATE_VERIFY_OBJECTS;
+
   ldout(cct, 5) << this << " send_verify_objects" << dendl;
 
   ObjectMapIterateRequest<I> *req =
@@ -193,6 +212,7 @@ void RebuildObjectMapRequest<I>::send_save_object_map() {
   CephContext *cct = m_image_ctx.cct;
 
   ldout(cct, 5) << this << " send_save_object_map" << dendl;
+
   m_state = STATE_SAVE_OBJECT_MAP;
 
   // should have been canceled prior to releasing lock
@@ -213,11 +233,13 @@ void RebuildObjectMapRequest<I>::send_update_header() {
          m_image_ctx.exclusive_lock->is_lock_owner());
 
   ldout(m_image_ctx.cct, 5) << this << " send_update_header" << dendl;
+
   m_state = STATE_UPDATE_HEADER;
 
   librados::ObjectWriteOperation op;
 
   uint64_t flags = RBD_FLAG_OBJECT_MAP_INVALID | RBD_FLAG_FAST_DIFF_INVALID;
+
   cls_client::set_flags(&op, m_image_ctx.snap_id, 0, flags);
 
   librados::AioCompletion *comp = this->create_callback_completion();
@@ -226,6 +248,7 @@ void RebuildObjectMapRequest<I>::send_update_header() {
   comp->release();
 
   RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
+
   m_image_ctx.update_flags(m_image_ctx.snap_id, flags, false);
 }
 
@@ -239,6 +262,7 @@ uint64_t RebuildObjectMapRequest<I>::get_image_size() const {
       return m_image_ctx.size;
     }
   }
+
   return  m_image_ctx.get_image_size(m_image_ctx.snap_id);
 }
 

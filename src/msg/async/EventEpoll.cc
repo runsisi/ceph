@@ -22,6 +22,8 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "EpollDriver."
 
+// called by
+// EventCenter::init, which called by NetworkStack::NetworkStack
 int EpollDriver::init(EventCenter *c, int nevent)
 {
   events = (struct epoll_event*)malloc(sizeof(struct epoll_event)*nevent);
@@ -47,6 +49,7 @@ int EpollDriver::add_event(int fd, int cur_mask, int add_mask)
 {
   ldout(cct, 20) << __func__ << " add event fd=" << fd << " cur_mask=" << cur_mask
                  << " add_mask=" << add_mask << " to " << epfd << dendl;
+
   struct epoll_event ee;
   /* If the fd was already monitored for some event, we need a MOD
    * operation. Otherwise we need an ADD operation. */
@@ -74,6 +77,7 @@ int EpollDriver::del_event(int fd, int cur_mask, int delmask)
 {
   ldout(cct, 20) << __func__ << " del event fd=" << fd << " cur_mask=" << cur_mask
                  << " delmask=" << delmask << " to " << epfd << dendl;
+
   struct epoll_event ee;
   int mask = cur_mask & (~delmask);
   int r = 0;
@@ -106,6 +110,8 @@ int EpollDriver::resize_events(int newsize)
   return 0;
 }
 
+// called by
+// EventCenter::process_events
 int EpollDriver::event_wait(vector<FiredFileEvent> &fired_events, struct timeval *tvp)
 {
   int retval, numevents = 0;
@@ -125,6 +131,7 @@ int EpollDriver::event_wait(vector<FiredFileEvent> &fired_events, struct timeval
       if (e->events & EPOLLOUT) mask |= EVENT_WRITABLE;
       if (e->events & EPOLLERR) mask |= EVENT_READABLE|EVENT_WRITABLE;
       if (e->events & EPOLLHUP) mask |= EVENT_READABLE|EVENT_WRITABLE;
+
       fired_events[j].fd = e->data.fd;
       fired_events[j].mask = mask;
     }

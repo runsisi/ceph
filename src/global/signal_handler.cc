@@ -158,6 +158,7 @@ static void handle_fatal_signal(int signum)
 	    pthread_name);
 #endif
   dout_emergency(buf);
+
   pidfile_remove();
 
   // TODO: don't use an ostringstream here. It could call malloc(), which we
@@ -293,6 +294,7 @@ static void handle_fatal_signal(int signum)
   reraise_fatal(signum);
 }
 
+// called by global_init
 void install_standard_sighandlers(void)
 {
   install_sighandler(SIGSEGV, handle_fatal_signal, SA_RESETHAND | SA_NODEFER);
@@ -345,6 +347,7 @@ string get_name_by_pid(pid_t pid)
          << dendl;
     return "<unknown>";
   }
+
   // assuming the cmdline length does not exceed PATH_MAX. if it
   // really does, it's fine to return a truncated version.
   char buf[PATH_MAX] = {0};
@@ -357,7 +360,9 @@ string get_name_by_pid(pid_t pid)
          << dendl;
     return "<unknown>";
   }
+
   std::replace(buf, buf + ret, '\0', ' ');
+
   return string(buf, ret);
 }
 #endif
@@ -437,25 +442,32 @@ struct SignalHandler : public Thread {
       struct pollfd fds[33];
 
       lock.Lock();
+
       int num_fds = 0;
+
+      // this is the pipe of the signal handler thread
       fds[num_fds].fd = pipefd[0];
       fds[num_fds].events = POLLIN | POLLERR;
       fds[num_fds].revents = 0;
       ++num_fds;
+
       for (unsigned i=0; i<32; i++) {
 	if (handlers[i]) {
+	  // every signal handler has its own pipe
 	  fds[num_fds].fd = handlers[i]->pipefd[0];
 	  fds[num_fds].events = POLLIN | POLLERR;
 	  fds[num_fds].revents = 0;
 	  ++num_fds;
 	}
       }
+
       lock.Unlock();
 
       // wait for data on any of those pipes
       int r = poll(fds, num_fds, -1);
       if (stop)
 	break;
+
       if (r > 0) {
 	char v;
 
@@ -463,8 +475,12 @@ struct SignalHandler : public Thread {
 	TEMP_FAILURE_RETRY(read(pipefd[0], &v, 1));
 
 	lock.Lock();
+
 	for (unsigned signum=0; signum<32; signum++) {
 	  if (handlers[signum]) {
+
+	    // handler registered for this signal
+
 	    r = read(handlers[signum]->pipefd[0], &v, 1);
 	    if (r == 1) {
 	      siginfo_t * siginfo = &handlers[signum]->info_t;
@@ -498,9 +514,11 @@ struct SignalHandler : public Thread {
 	    }
 	  }
 	}
+
 	lock.Unlock();
       } 
     }
+
     return NULL;
   }
 
@@ -549,6 +567,7 @@ void SignalHandler::register_handler(int signum, signal_handler_t handler, bool 
   ceph_assert(r == 0);
 
   h->handler = handler;
+
   lock.Lock();
   handlers[signum] = h;
   lock.Unlock();
@@ -564,6 +583,7 @@ void SignalHandler::register_handler(int signum, signal_handler_t handler, bool 
   act.sa_handler = (signal_handler_t)handler_signal_hook;
   sigfillset(&act.sa_mask);  // mask all signals in the handler
   act.sa_flags = SA_SIGINFO | (oneshot ? SA_RESETHAND : 0);
+
   int ret = sigaction(signum, &act, &oldact);
   ceph_assert(ret == 0);
 }

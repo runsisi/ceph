@@ -46,6 +46,9 @@ using util::create_context_callback;
 using util::create_async_context_callback;
 using util::create_rados_callback;
 
+// created by
+// CloneRequest<I>::send_remove
+// librbd::remove
 template<typename I>
 RemoveRequest<I>::RemoveRequest(IoCtx &ioctx, const std::string &image_name,
                                 const std::string &image_id, bool force,
@@ -162,6 +165,7 @@ void RemoveRequest<I>::acquire_exclusive_lock() {
   } else {
     Context *ctx = create_context_callback<
       klass, &klass::handle_exclusive_lock>(this);
+
     RWLock::WLocker owner_lock(m_image_ctx->owner_lock);
     m_image_ctx->exclusive_lock->try_acquire_lock(ctx);
   }

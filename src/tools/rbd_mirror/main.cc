@@ -20,12 +20,15 @@ void usage() {
   std::cout << "  --keyring=<path>          path to keyring for local cluster\n";
   std::cout << "  --log-file=<logfile>       file to log debug output\n";
   std::cout << "  --debug-rbd-mirror=<log-level>/<memory-level>  set rbd-mirror debug level\n";
+
+  // provided by ceph_argparse.cc
   generic_server_usage();
 }
 
 static void handle_signal(int signum)
 {
   if (mirror)
+    // set Mirror::m_stopping and signal Mirror::run to stop
     mirror->handle_signal(signum);
 }
 
@@ -49,11 +52,15 @@ int main(int argc, const char **argv)
   if (g_conf()->daemonize) {
     global_init_daemonize(g_ceph_context);
   }
+
+  // setup perf counter of CephContext
   g_ceph_context->enable_perf_counter();
 
   common_init_finish(g_ceph_context);
 
   init_async_signal_handler();
+
+  // g_ceph_context->reopen_logs
   register_async_signal_handler(SIGHUP, sighup_handler);
   register_async_signal_handler_oneshot(SIGINT, handle_signal);
   register_async_signal_handler_oneshot(SIGTERM, handle_signal);
@@ -65,12 +72,19 @@ int main(int argc, const char **argv)
   g_ceph_context->_conf.set_val_or_die("rbd_cache", "false");
 
   mirror = new rbd::mirror::Mirror(g_ceph_context, cmd_args);
+
+  // connect to local cluster
+  // allocate ClusterWatcher, ImageDeleter, ImageSyncThrottler
   int r = mirror->init();
   if (r < 0) {
     std::cerr << "failed to initialize: " << cpp_strerror(r) << std::endl;
     goto cleanup;
   }
 
+  // keep a running Replayer instance for each <pool, peer> pair and delete
+  // the stale replayers, i.e., those replayers that 1) peer is blacklisted,
+  // or 2) the local pool removed, or 3) no peers associated with the
+  // local pool, or 4) the peer has removed for the local pool
   mirror->run();
 
  cleanup:

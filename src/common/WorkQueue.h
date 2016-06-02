@@ -447,6 +447,7 @@ private:
     WorkThread(ThreadPool *p) : pool(p) {}
     void *entry() override {
       pool->worker(this);
+
       return 0;
     }
   };
@@ -572,6 +573,20 @@ public:
     wq->queue(c);
   }
 };
+
+// multiple threads -> multiple wq
+// ThreadPool::worker
+//      wq = work_queues[last_work_queue]
+//      item = wq->_void_dequeue()
+//      wq->_void_process(item, tp_handle)
+//      wq->_void_process_finish(item)
+
+// multiple threads -> one wq
+// the wq->_process is user defined, see OSD::ShardedOpWQ::_process, it
+// dequeues items from the wq directly, no individual dequeue interface
+// as ThreadPool::worker does
+// ShardedThreadPool::shardedthreadpool_worker
+//      wq->_process(thread_index, hb)
 
 /// Work queue that asynchronously completes contexts (executes callbacks).
 /// @see Finisher

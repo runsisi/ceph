@@ -41,6 +41,7 @@ private:
     Listener(JournalRecorder *_journal_recorder)
       : journal_recorder(_journal_recorder) {}
 
+    // will be notified by JournalMetadata::handle_refresh_complete
     void handle_update(JournalMetadata *) override {
       journal_recorder->handle_update();
     }
@@ -84,6 +85,7 @@ private:
   uint64_t m_max_in_flight_appends;
 
   Listener m_listener;
+  // will be notified by journal::ObjectRecorder::notify_handler_unlock
   ObjectHandler m_object_handler;
 
   Mutex m_lock;

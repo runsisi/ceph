@@ -76,6 +76,8 @@ private:
 
 } // anonymous namespace
 
+// created by
+// ImageDeleter::ImageDeleter, which created by Mirror::init
 template <typename I>
 class ImageDeleterAdminSocketHook : public AdminSocketHook {
 public:
@@ -122,6 +124,8 @@ private:
   Commands commands;
 };
 
+// created by
+// Mirror::init
 template <typename I>
 ImageDeleter<I>::ImageDeleter(librados::IoCtx& local_io_ctx,
                               Threads<librbd::ImageCtx>* threads,
@@ -166,6 +170,8 @@ void ImageDeleter<I>::init(Context* on_finish) {
   m_trash_watcher->init(on_finish);
 }
 
+// called by
+// ImageDeleter::ImageDeleterThread::entry
 template <typename I>
 void ImageDeleter<I>::shut_down(Context* on_finish) {
   dout(10) << dendl;
@@ -189,6 +195,9 @@ void ImageDeleter<I>::shut_down_trash_watcher(Context* on_finish) {
   m_trash_watcher->shut_down(ctx);
 }
 
+// called by
+// ImageReplayer<I>::handle_shut_down
+// InstanceReplayer<I>::release_image
 template <typename I>
 void ImageDeleter<I>::wait_for_ops(Context* on_finish) {
   {
@@ -220,6 +229,8 @@ void ImageDeleter<I>::cancel_all_deletions(Context* on_finish) {
   on_finish->complete(0);
 }
 
+// called by
+// Replayer::start_image_replayer
 template <typename I>
 void ImageDeleter<I>::wait_for_deletion(const std::string& image_id,
                                         bool scheduled_only,
@@ -251,6 +262,8 @@ void ImageDeleter<I>::complete_active_delete(DeleteInfoRef* delete_info,
   delete_info->reset();
 }
 
+// called by
+// Replayer::stop_image_replayer
 template <typename I>
 void ImageDeleter<I>::enqueue_failed_delete(DeleteInfoRef* delete_info,
                                             int error_code,
@@ -276,6 +289,8 @@ void ImageDeleter<I>::enqueue_failed_delete(DeleteInfoRef* delete_info,
   schedule_retry_timer();
 }
 
+// called by
+// ImageDeleter::run
 template <typename I>
 typename ImageDeleter<I>::DeleteInfoRef
 ImageDeleter<I>::find_delete_info(const std::string &image_id) {
@@ -374,6 +389,8 @@ void ImageDeleter<I>::remove_images() {
   }
 }
 
+// called by
+// ImageDeleter::process_image_delete
 template <typename I>
 void ImageDeleter<I>::remove_image(DeleteInfoRef delete_info) {
   dout(10) << "info=" << *delete_info << dendl;
@@ -442,6 +459,10 @@ void ImageDeleter<I>::schedule_retry_timer() {
   m_threads->timer->add_event_at(delete_info->retry_time, m_timer_ctx);
 }
 
+// called by
+// ImageDeleter::schedule_image_delete
+// ImageDeleter::wait_for_scheduled_deletion
+// ImageDeleter::cancel_waiter
 template <typename I>
 void ImageDeleter<I>::cancel_retry_timer() {
   dout(10) << dendl;
@@ -525,6 +546,8 @@ void ImageDeleter<I>::notify_on_delete(const std::string& image_id,
   m_on_delete_contexts.erase(it);
 }
 
+// called by
+// StatusCommand::call
 template <typename I>
 void ImageDeleter<I>::DeleteInfo::print_status(Formatter *f, stringstream *ss,
                                                bool print_failure_info) {

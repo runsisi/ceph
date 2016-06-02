@@ -99,6 +99,8 @@ ostream& EventCenter::_event_prefix(std::ostream *_dout)
                 << " time_id=" << time_event_next_id << ").";
 }
 
+// called by
+// NetworkStack::NetworkStack
 int EventCenter::init(int n, unsigned i, const std::string &t)
 {
   // can't init multi times
@@ -184,10 +186,12 @@ EventCenter::~EventCenter()
     delete notify_handler;
 }
 
-
+// called by
+// NetworkStack::add_thread
 void EventCenter::set_owner()
 {
-  owner = pthread_self();
+  owner = pthread_self(); // EventCenter is a member of Worker
+
   ldout(cct, 2) << __func__ << " idx=" << idx << " owner=" << owner << dendl;
   if (!global_centers) {
     global_centers = &cct->lookup_or_create_singleton_object<
@@ -195,6 +199,7 @@ void EventCenter::set_owner()
 	"AsyncMessenger::EventCenter::global_center::" + type, true);
     ceph_assert(global_centers);
     global_centers->centers[idx] = this;
+
     if (driver->need_wakeup()) {
       notify_handler = new C_handle_notify(this, cct);
       int r = create_file_event(notify_receive_fd, EVENT_READABLE, notify_handler);
@@ -211,17 +216,20 @@ int EventCenter::create_file_event(int fd, int mask, EventCallbackRef ctxt)
     int new_size = nevent << 2;
     while (fd >= new_size)
       new_size <<= 2;
+
     ldout(cct, 20) << __func__ << " event count exceed " << nevent << ", expand to " << new_size << dendl;
-    r = driver->resize_events(new_size);
+    r = driver->resize_events(new_size); // for kqueue only
     if (r < 0) {
       lderr(cct) << __func__ << " event count is exceed." << dendl;
       return -ERANGE;
     }
+
     file_events.resize(new_size);
     nevent = new_size;
   }
 
   EventCenter::FileEvent *event = _get_file_event(fd);
+
   ldout(cct, 20) << __func__ << " create event started fd=" << fd << " mask=" << mask
                  << " original mask is " << event->mask << dendl;
   if (event->mask == mask)
@@ -245,6 +253,7 @@ int EventCenter::create_file_event(int fd, int mask, EventCallbackRef ctxt)
   if (mask & EVENT_WRITABLE) {
     event->write_cb = ctxt;
   }
+
   ldout(cct, 20) << __func__ << " create event end fd=" << fd << " mask=" << mask
                  << " original mask is " << event->mask << dendl;
   return 0;
@@ -288,11 +297,13 @@ uint64_t EventCenter::create_time_event(uint64_t microseconds, EventCallbackRef 
   uint64_t id = time_event_next_id++;
 
   ldout(cct, 30) << __func__ << " id=" << id << " trigger after " << microseconds << "us"<< dendl;
+
   EventCenter::TimeEvent event;
   clock_type::time_point expire = clock_type::now() + std::chrono::microseconds(microseconds);
   event.id = id;
   event.time_cb = ctxt;
   std::multimap<clock_type::time_point, TimeEvent>::value_type s_val(expire, event);
+
   auto it = time_events.insert(std::move(s_val));
   event_map[id] = it;
 
@@ -372,16 +383,19 @@ int EventCenter::process_events(unsigned timeout_microseconds,  ceph::timespan *
   if (!blocking) {
     if (it != time_events.end() && now >= it->first)
       trigger_time = true;
+
     tv.tv_sec = 0;
     tv.tv_usec = 0;
   } else {
     clock_type::time_point shortest;
-    shortest = now + std::chrono::microseconds(timeout_microseconds); 
+    shortest = now + std::chrono::microseconds(timeout_microseconds); // 30s
 
     if (it != time_events.end() && shortest >= it->first) {
       ldout(cct, 30) << __func__ << " shortest is " << shortest << " it->first is " << it->first << dendl;
+
       shortest = it->first;
       trigger_time = true;
+
       if (shortest > now) {
         timeout_microseconds = std::chrono::duration_cast<std::chrono::microseconds>(
             shortest - now).count();
@@ -390,19 +404,24 @@ int EventCenter::process_events(unsigned timeout_microseconds,  ceph::timespan *
         timeout_microseconds = 0;
       }
     }
+
     tv.tv_sec = timeout_microseconds / 1000000;
     tv.tv_usec = timeout_microseconds % 1000000;
   }
 
   ldout(cct, 30) << __func__ << " wait second " << tv.tv_sec << " usec " << tv.tv_usec << dendl;
+
   vector<FiredFileEvent> fired_events;
   numevents = driver->event_wait(fired_events, &tv);
+
   auto working_start = ceph::mono_clock::now();
+
   for (int j = 0; j < numevents; j++) {
     int rfired = 0;
     FileEvent *event;
     EventCallbackRef cb;
-    event = _get_file_event(fired_events[j].fd);
+
+    event = _get_file_event(fired_events[j].fd); // get event by fd
 
     /* note the event->mask & mask & ... code: maybe an already processed
     * event removed an element that fired and we still didn't
@@ -428,15 +447,21 @@ int EventCenter::process_events(unsigned timeout_microseconds,  ceph::timespan *
 
   if (external_num_events.load()) {
     external_lock.lock();
+
     deque<EventCallbackRef> cur_process;
     cur_process.swap(external_events);
     external_num_events.store(0);
+
     external_lock.unlock();
+
     numevents += cur_process.size();
+
     while (!cur_process.empty()) {
       EventCallbackRef e = cur_process.front();
       ldout(cct, 30) << __func__ << " do " << e << dendl;
+
       e->do_request(0);
+
       cur_process.pop_front();
     }
   }
@@ -448,6 +473,7 @@ int EventCenter::process_events(unsigned timeout_microseconds,  ceph::timespan *
 
   if (working_dur)
     *working_dur = ceph::mono_clock::now() - working_start;
+
   return numevents;
 }
 
@@ -458,8 +484,9 @@ void EventCenter::dispatch_event_external(EventCallbackRef e)
   bool wake = !external_num_events.load();
   uint64_t num = ++external_num_events;
   external_lock.unlock();
+
   if (!in_thread() && wake)
-    wakeup();
+    wakeup(); // stop waiting in driver->event_wait
 
   ldout(cct, 30) << __func__ << " " << e << " pending " << num << dendl;
 }

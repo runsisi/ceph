@@ -43,10 +43,14 @@ OpRequest::OpRequest(Message *req, OpTracker *tracker) :
   req_src_inst = req->get_source_inst();
 }
 
+// called by
+// TrackedOp::dump
 void OpRequest::_dump(Formatter *f) const
 {
   Message *m = request;
+
   f->dump_string("flag_point", state_string());
+
   if (m->get_orig_source().is_client()) {
     f->open_object_section("client_info");
     stringstream client_name, client_addr;
@@ -57,16 +61,23 @@ void OpRequest::_dump(Formatter *f) const
     f->dump_unsigned("tid", m->get_tid());
     f->close_section(); // client_info
   }
+
   {
     f->open_array_section("events");
+
     Mutex::Locker l(lock);
     for (auto& i : events) {
       f->dump_object("event", i);
     }
+
     f->close_section();
   }
 }
 
+// called by
+// OpTracker::check_ops_in_flight
+// OpTracker::_mark_event
+// TrackedOp::dump
 void OpRequest::_dump_op_descriptor_unlocked(ostream& stream) const
 {
   get_req()->print(stream);
@@ -135,6 +146,13 @@ void OpRequest::set_skip_handle_cache() { set_rmw_flags(CEPH_OSD_RMW_FLAG_SKIP_H
 void OpRequest::set_skip_promote() { set_rmw_flags(CEPH_OSD_RMW_FLAG_SKIP_PROMOTE); }
 void OpRequest::set_force_rwordered() { set_rmw_flags(CEPH_OSD_RMW_FLAG_RWORDERED); }
 
+// called by
+// OpRequest::mark_queued_for_pg
+// OpRequest::mark_reached_pg
+// OpRequest::mark_delayed
+// OpRequest::mark_started
+// OpRequest::mark_sub_op_sent
+// OpRequest::mark_commit_sent
 void OpRequest::mark_flag_point(uint8_t flag, const char *s) {
 #ifdef WITH_LTTNG
   uint8_t old_flags = hit_flag_points;
@@ -154,6 +172,7 @@ void OpRequest::mark_flag_point_string(uint8_t flag, const string& s) {
   mark_event_string(s);
   hit_flag_points |= flag;
   latest_flag_point = flag;
+
   tracepoint(oprequest, mark_flag_point, reqid.name._type,
 	     reqid.name._num, reqid.tid, reqid.inc, rmw_flags,
 	     flag, s.c_str(), old_flags, hit_flag_points);

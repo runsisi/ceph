@@ -2996,6 +2996,8 @@ void PGMap::get_health_checks(
   }
 }
 
+// called by
+// DaemonServer::handle_command
 int process_pg_map_command(
   const string& orig_prefix,
   const cmdmap_t& orig_cmdmap,

@@ -562,12 +562,14 @@ string LFNIndex::lfn_generate_object_name_keyless(const ghobject_t &oid)
 
   ceph_assert(oid.generation == ghobject_t::NO_GEN);
   const char *i = oid.hobj.oid.name.c_str();
+
   // Escape subdir prefix
   if (oid.hobj.oid.name.substr(0, 4) == "DIR_") {
     *t++ = '\\';
     *t++ = 'd';
     i += 4;
   }
+
   while (*i && t < end) {
     if (*i == '\\') {
       *t++ = '\\';
@@ -589,6 +591,7 @@ string LFNIndex::lfn_generate_object_name_keyless(const ghobject_t &oid)
     t += snprintf(t, end - t, "_snapdir");
   else
     t += snprintf(t, end - t, "_%llx", (long long unsigned)oid.hobj.snap);
+
   snprintf(t, end - t, "_%.*X", (int)(sizeof(oid.hobj.get_hash())*2), oid.hobj.get_hash());
 
   return string(s);
@@ -617,6 +620,7 @@ string LFNIndex::lfn_generate_object_name_current(const ghobject_t &oid)
 {
   string full_name;
   string::const_iterator i = oid.hobj.oid.name.begin();
+
   if (oid.hobj.oid.name.substr(0, 4) == "DIR_") {
     full_name.append("\\d");
     i += 4;
@@ -624,9 +628,13 @@ string LFNIndex::lfn_generate_object_name_current(const ghobject_t &oid)
     full_name.append("\\.");
     ++i;
   }
+
   append_escaped(i, oid.hobj.oid.name.end(), &full_name);
+
   full_name.append("_");
+
   append_escaped(oid.hobj.get_key().begin(), oid.hobj.get_key().end(), &full_name);
+
   full_name.append("_");
 
   char buf[PATH_MAX];
@@ -643,6 +651,7 @@ string LFNIndex::lfn_generate_object_name_current(const ghobject_t &oid)
   full_name.append("_");
 
   append_escaped(oid.hobj.nspace.begin(), oid.hobj.nspace.end(), &full_name);
+
   full_name.append("_");
 
   t = buf;
@@ -654,6 +663,7 @@ string LFNIndex::lfn_generate_object_name_current(const ghobject_t &oid)
 
   if (oid.generation != ghobject_t::NO_GEN ||
       oid.shard_id != shard_id_t::NO_SHARD) {
+
     full_name.append("_");
 
     t = buf;

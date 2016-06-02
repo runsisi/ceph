@@ -502,6 +502,12 @@ private:
     const ghobject_t &oid ///< [in] Object for which to generate.
     ); ///< @return Generated object name.
 
+  // called by
+  // LFNIndex::list_objects
+  // LFNIndex::lfn_get_name
+  // LFNIndex::lfn_created
+  // LFNIndex::lfn_parse_object_name_keyless
+  // LFNIndex::lfn_get_short_name
   /// Generate object name
   string lfn_generate_object_name(
     const ghobject_t &oid ///< [in] Object for which to generate.

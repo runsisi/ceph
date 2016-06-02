@@ -933,6 +933,10 @@ struct bluestore_onode_t {
     return has_flag(FLAG_PGMETA_OMAP);
   }
 
+  // called by
+  // BlueStore::_omap_setkeys
+  // BlueStore::_omap_setheader
+  // BlueStore::_clone
   void set_omap_flag() {
     set_flag(FLAG_OMAP);
   }

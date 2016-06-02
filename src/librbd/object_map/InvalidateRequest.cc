@@ -42,6 +42,7 @@ void InvalidateRequest<I>::send() {
     flags |= RBD_FLAG_FAST_DIFF_INVALID;
   }
 
+  // update image_ctx.flags or image_ctx.snap_info[m_snap_id].flags
   r = image_ctx.update_flags(m_snap_id, flags, true);
   if (r < 0) {
     this->async_complete(r);
@@ -58,6 +59,7 @@ void InvalidateRequest<I>::send() {
   }
 
   lderr(cct) << this << " invalidating object map on-disk" << dendl;
+
   librados::ObjectWriteOperation op;
   cls_client::set_flags(&op, m_snap_id, flags, flags);
 
@@ -72,8 +74,10 @@ void InvalidateRequest<I>::send() {
 template <typename I>
 bool InvalidateRequest<I>::should_complete(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   lderr(cct) << this << " " << __func__ << ": r=" << r << dendl;
+
   return true;
 }
 

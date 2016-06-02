@@ -44,6 +44,7 @@ public:
 
   int send() override {
     uint64_t snap_id = m_snap_ids[m_snap_id_idx];
+
     if (snap_id == CEPH_NOSNAP) {
       RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
       RWLock::WLocker object_map_locker(m_image_ctx.object_map_lock);
@@ -102,6 +103,7 @@ CopyupRequest<I>::~CopyupRequest() {
 template <typename I>
 void CopyupRequest<I>::append_request(AbstractObjectWriteRequest<I> *req) {
   ldout(m_ictx->cct, 20) << req << dendl;
+  // pending object requests that are waiting for the copyup request
   m_pending_requests.push_back(req);
 }
 
@@ -161,6 +163,8 @@ bool CopyupRequest<I>::send_copyup() {
   }
 
   if (!copy_on_read) {
+    // CoW
+
     librados::ObjectWriteOperation write_op;
     write_op.exec("rbd", "copyup", m_copyup_data);
 
@@ -174,6 +178,7 @@ bool CopyupRequest<I>::send_copyup() {
     m_pending_copyups++;
 
     snaps.insert(snaps.end(), snapc.snaps.begin(), snapc.snaps.end());
+
     librados::AioCompletion *comp = util::create_rados_callback(this);
     r = m_ictx->data_ctx.aio_operate(
       m_oid, comp, &write_op, snapc.seq, snaps,
@@ -181,6 +186,7 @@ bool CopyupRequest<I>::send_copyup() {
     ceph_assert(r == 0);
     comp->release();
   }
+
   return false;
 }
 
@@ -255,7 +261,8 @@ void CopyupRequest<I>::send()
                          << ", oid " << m_oid
                          << ", extents " << m_image_extents
                          << dendl;
-  ImageRequest<>::aio_read(m_ictx->parent, comp, std::move(m_image_extents),
+  // read from parent, send directly, i.e., skip the ImageRequestWQ
+  ImageRequest<>::aio_read(m_ictx->parent, comp, std::move(m_image_extents), // full sized object read
                            ReadResult{&m_copyup_data}, 0, m_trace);
 }
 
@@ -275,6 +282,7 @@ bool CopyupRequest<I>::should_complete(int *r) {
                  << ", r " << *r << dendl;
 
   uint64_t pending_copyups;
+
   switch (m_state) {
   case STATE_READ_FROM_PARENT:
     ldout(cct, 20) << "READ_FROM_PARENT" << dendl;
@@ -331,6 +339,7 @@ bool CopyupRequest<I>::should_complete(int *r) {
     } else if (*r < 0) {
       complete_requests(*r);
     }
+
     return (pending_copyups == 0);
 
   default:
@@ -367,6 +376,7 @@ bool CopyupRequest<I>::send_object_map_head() {
   {
     RWLock::RLocker owner_locker(m_ictx->owner_lock);
     RWLock::RLocker snap_locker(m_ictx->snap_lock);
+
     if (m_ictx->object_map != nullptr) {
       bool copy_on_read = m_pending_requests.empty();
       ceph_assert(m_ictx->exclusive_lock->is_lock_owner());
@@ -415,12 +425,15 @@ bool CopyupRequest<I>::send_object_map_head() {
                             m_ictx->snaps.end());
         }
       }
+
       if (copy_on_read &&
           (*m_ictx->object_map)[m_object_no] != OBJECT_EXISTS) {
         m_snap_ids.insert(m_snap_ids.begin(), CEPH_NOSNAP);
+
         object_map_locker.unlock();
         snap_locker.unlock();
         owner_locker.unlock();
+
         return send_object_map();
       }
 
@@ -438,6 +451,7 @@ bool CopyupRequest<I>::send_object_map_head() {
                        << stringify(static_cast<uint32_t>(current_state))
                        << " new state " << stringify(static_cast<uint32_t>(new_state))
                        << dendl;
+
         may_update = true;
       }
 
@@ -465,13 +479,16 @@ bool CopyupRequest<I>::send_object_map() {
     m_state = STATE_OBJECT_MAP;
 
     RWLock::RLocker owner_locker(m_ictx->owner_lock);
+
     AsyncObjectThrottle<>::ContextFactory context_factory(
       boost::lambda::bind(boost::lambda::new_ptr<UpdateObjectMap>(),
       boost::lambda::_1, m_ictx, m_object_no, &m_snap_ids, m_trace,
       boost::lambda::_2));
+
     AsyncObjectThrottle<> *throttle = new AsyncObjectThrottle<>(
       NULL, *m_ictx, context_factory, util::create_context_callback(this),
       NULL, 0, m_snap_ids.size());
+
     throttle->start_ops(m_ictx->concurrent_management_ops);
   }
   return false;

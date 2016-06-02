@@ -120,6 +120,10 @@ void DeviceState::print(ostream& out) const
   }
 }
 
+// called by
+// DaemonServer::handle_report
+// MetadataUpdate::finish
+// Mgr::load_all_metadata
 void DaemonStateIndex::insert(DaemonStatePtr dm)
 {
   RWLock::WLocker l(lock);
@@ -170,6 +174,7 @@ DaemonStateCollection DaemonStateIndex::get_by_service(
 {
   RWLock::RLocker l(lock);
 
+  // std::map<DaemonKey, DaemonStatePtr>
   DaemonStateCollection result;
 
   for (const auto &i : all) {
@@ -181,6 +186,7 @@ DaemonStateCollection DaemonStateIndex::get_by_service(
   return result;
 }
 
+// std::map<DaemonKey, DaemonStatePtr>
 DaemonStateCollection DaemonStateIndex::get_by_server(
   const std::string &hostname) const
 {
@@ -243,6 +249,8 @@ void DaemonStateIndex::cull(const std::string& svc_name,
   }
 }
 
+// called by
+// DaemonServer::handle_report
 void DaemonPerfCounters::update(MMgrReport *report)
 {
   dout(20) << "loading " << report->declare_types.size() << " new types, "
@@ -256,11 +264,13 @@ void DaemonPerfCounters::update(MMgrReport *report)
 
   // Load any newly declared types
   for (const auto &t : report->declare_types) {
+    // i.e., reference of DaemonStateIndex::types
     types.insert(std::make_pair(t.path, t));
     session->declared_types.insert(t.path);
     instances.insert(std::pair<std::string, PerfCounterInstance>(
                      t.path, PerfCounterInstance(t.type)));
   }
+
   // Remove any old types
   for (const auto &t : report->undeclare_types) {
     session->declared_types.erase(t);
@@ -273,6 +283,7 @@ void DaemonPerfCounters::update(MMgrReport *report)
   DECODE_START(1, p);
   for (const auto &t_path : session->declared_types) {
     const auto &t = types.at(t_path);
+
     uint64_t val = 0;
     uint64_t avgcount = 0;
     uint64_t avgcount2 = 0;
@@ -289,6 +300,7 @@ void DaemonPerfCounters::update(MMgrReport *report)
   DECODE_FINISH(p);
 }
 
+// never used
 uint64_t PerfCounterInstance::get_current() const
 {
   return buffer.front().v;

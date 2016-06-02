@@ -23,12 +23,14 @@ KeyValueDB *KeyValueDB::create(CephContext *cct, const string& type,
     return new LevelDBStore(cct, dir);
   }
 #endif
+
 #ifdef HAVE_KINETIC
   if (type == "kinetic" &&
       cct->check_experimental_feature_enabled("kinetic")) {
     return new KineticStore(cct);
   }
 #endif
+
 #ifdef HAVE_LIBROCKSDB
   if (type == "rocksdb") {
     return new RocksDBStore(cct, dir, options, p);
@@ -39,6 +41,7 @@ KeyValueDB *KeyValueDB::create(CephContext *cct, const string& type,
     cct->check_experimental_feature_enabled("memdb")) {
     return new MemDB(cct, dir, p);
   }
+
   return NULL;
 }
 

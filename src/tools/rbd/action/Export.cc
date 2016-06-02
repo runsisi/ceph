@@ -327,6 +327,7 @@ public:
 
   void send()
   {
+    // will wait if need to throttle
     m_throttle.start_op();
 
     int op_flags = LIBRADOS_OP_FLAG_FADVISE_SEQUENTIAL |
@@ -335,7 +336,9 @@ public:
                               m_aio_completion, op_flags);
     if (r < 0) {
       cerr << "rbd: error requesting read from source image" << std::endl;
+
       m_aio_completion->release();
+
       m_throttle.end_op(r);
     }
   }
@@ -388,6 +391,8 @@ private:
 
 const uint32_t MAX_KEYS = 64;
 
+// called by
+// do_export
 static int do_export_v2(librbd::Image& image, librbd::image_info_t &info, int fd,
 		        uint64_t period, int max_concurrent_ops, utils::ProgressContext &pc)
 {
@@ -560,6 +565,7 @@ static int do_export(librbd::Image& image, const char *path, bool no_progress, i
 
   int fd;
   int max_concurrent_ops;
+
   bool to_stdout = (strcmp(path, "-") == 0);
   if (to_stdout) {
     fd = STDOUT_FILENO;
@@ -570,6 +576,7 @@ static int do_export(librbd::Image& image, const char *path, bool no_progress, i
     if (fd < 0) {
       return -errno;
     }
+
 #ifdef HAVE_POSIX_FADVISE
     posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
 #endif

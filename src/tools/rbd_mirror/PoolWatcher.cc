@@ -46,19 +46,26 @@ public:
       m_pool_watcher(pool_watcher) {
   }
 
+  // called by
+  // librbd::Watcher::handle_rewatch
   void handle_rewatch_complete(int r) override {
     m_pool_watcher->handle_rewatch_complete(r);
   }
 
+  // called by
+  // MirroringWatcher<I>::handle_payload(const ModeUpdatedPayload)
   void handle_mode_updated(cls::rbd::MirrorMode mirror_mode) override {
     // invalidate all image state and refresh the pool contents
     m_pool_watcher->schedule_refresh_images(5);
   }
 
+  // called by
+  // MirroringWatcher<I>::handle_payload(const ImageUpdatedPayload)
   void handle_image_updated(cls::rbd::MirrorImageState state,
                             const std::string &remote_image_id,
                             const std::string &global_image_id) override {
     bool enabled = (state == cls::rbd::MIRROR_IMAGE_STATE_ENABLED);
+
     m_pool_watcher->handle_image_updated(remote_image_id, global_image_id,
                                          enabled);
   }
@@ -67,6 +74,9 @@ private:
   PoolWatcher *m_pool_watcher;
 };
 
+// created by
+// PoolReplayer::init_local_pool_watcher
+// PoolReplayer::init_remote_pool_watcher
 template <typename I>
 PoolWatcher<I>::PoolWatcher(Threads<I> *threads, librados::IoCtx &remote_io_ctx,
                             pool_watcher::Listener &listener)
@@ -87,6 +97,9 @@ bool PoolWatcher<I>::is_blacklisted() const {
   return m_blacklisted;
 }
 
+// called by
+// PoolReplayer::init_local_pool_watcher
+// PoolReplayer::init_remote_pool_watcher
 template <typename I>
 void PoolWatcher<I>::init(Context *on_finish) {
   dout(5) << dendl;
@@ -369,6 +382,8 @@ void PoolWatcher<I>::schedule_refresh_images(double interval) {
       }));
 }
 
+// called by
+// PoolWatcher<I>::MirroringWatcher::handle_rewatch_complete, which called by librbd::Watcher::handle_rewatch
 template <typename I>
 void PoolWatcher<I>::handle_rewatch_complete(int r) {
   dout(5) << "r=" << r << dendl;
@@ -389,6 +404,8 @@ void PoolWatcher<I>::handle_rewatch_complete(int r) {
   schedule_refresh_images(5);
 }
 
+// called by
+// PoolWatcher<I>::MirroringWatcher::handle_image_updated
 template <typename I>
 void PoolWatcher<I>::handle_image_updated(const std::string &remote_image_id,
                                        const std::string &global_image_id,
@@ -398,7 +415,9 @@ void PoolWatcher<I>::handle_image_updated(const std::string &remote_image_id,
            << "enabled=" << enabled << dendl;
 
   Mutex::Locker locker(m_lock);
+
   ImageId image_id(global_image_id, remote_image_id);
+
   m_pending_added_image_ids.erase(image_id);
   m_pending_removed_image_ids.erase(image_id);
 
@@ -535,8 +554,10 @@ void PoolWatcher<I>::notify_listener() {
 
   {
     Mutex::Locker locker(m_lock);
+
     m_notify_listener_in_progress = false;
-    if (m_pending_updates) {
+
+    if (m_pending_updates) { // new update notification between release m_lock and require m_lock
       schedule_listener();
     }
   }

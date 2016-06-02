@@ -22,11 +22,14 @@
 
 class CephContext;
 
+// used as data member of KeyServer
 struct KeyServerData {
   version_t version;
 
   /* for each entity */
   map<EntityName, EntityAuth> secrets;
+
+  // this is the mon's keyring, see KeyServer::KeyServer which called by Monitor::Monitor
   KeyRing *extra_secrets;
 
   /* for each service type */
@@ -35,7 +38,7 @@ struct KeyServerData {
 
   explicit KeyServerData(KeyRing *extra)
     : version(0),
-      extra_secrets(extra),
+      extra_secrets(extra), // mon keyring
       rotating_ver(0) {}
 
   void encode(bufferlist& bl) const {
@@ -164,6 +167,7 @@ struct KeyServerData {
   void apply_incremental(Incremental& inc) {
     switch (inc.op) {
     case AUTH_INC_ADD:
+      // secrets[name] = auth
       add_auth(inc.name, inc.auth);
       break;
       
@@ -189,10 +193,13 @@ WRITE_CLASS_ENCODER(KeyServerData::Incremental)
 
 
 
-
+// used as a member variable of Monitor
+// see get_auth_service_handler and its caller AuthMonitor::prep_auth
 class KeyServer : public KeyStore {
   CephContext *cct;
+  // <extra_secrets, secrets, rotating_secrets>
   KeyServerData data;
+
   mutable Mutex lock;
 
   int _rotate_secret(uint32_t service_id);

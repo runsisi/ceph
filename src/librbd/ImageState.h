@@ -42,6 +42,10 @@ public:
 
   void snap_set(uint64_t snap_id, Context *on_finish);
 
+  // set ImageState::m_state to STATE_PREPARING_LOCK, this is an transition
+  // state, so effectively disabled anyone else to modify the ImageState
+  // state machine, i.e., locked the ImageState state machine,
+  // see ImageState<I>::execute_action_unlock
   void prepare_lock(Context *on_ready);
   void handle_prepare_lock_complete();
 

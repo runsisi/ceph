@@ -36,6 +36,7 @@ struct ECSubWrite {
   boost::optional<pg_hit_set_history_t> updated_hit_set_history;
   bool backfill_or_async_recovery = false;
   ECSubWrite() : tid(0) {}
+
   ECSubWrite(
     pg_shard_t from,
     ceph_tid_t tid,
@@ -61,6 +62,7 @@ struct ECSubWrite {
       updated_hit_set_history(updated_hit_set_history),
       backfill_or_async_recovery(backfill_or_async_recovery)
     {}
+
   void claim(ECSubWrite &other) {
     from = other.from;
     tid = other.tid;

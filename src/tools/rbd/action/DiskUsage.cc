@@ -24,9 +24,11 @@ namespace po = boost::program_options;
 static int disk_usage_callback(uint64_t offset, size_t len, int exists,
                                void *arg) {
   uint64_t *used_size = reinterpret_cast<uint64_t *>(arg);
+
   if (exists) {
     (*used_size) += len;
   }
+
   return 0;
 }
 
@@ -48,6 +50,7 @@ static int compute_image_disk_usage(const std::string& name,
          << std::endl;
     return r;
   }
+
   if ((flags & RBD_FLAG_FAST_DIFF_INVALID) != 0) {
     std::cerr << "warning: fast-diff map is invalid for " << name
          << (snap_name.empty() ? "" : "@" + snap_name) << ". "
@@ -82,6 +85,7 @@ static int compute_image_disk_usage(const std::string& name,
         << stringify(byte_u_t(*used_size))
         << TextTable::endrow;
   }
+
   return 0;
 }
 
@@ -138,6 +142,7 @@ static int do_disk_usage(librbd::RBD &rbd, librados::IoCtx &io_ctx,
                 << std::endl;
       goto out;
     }
+
     if ((features & RBD_FEATURE_FAST_DIFF) == 0) {
       std::cerr << "warning: fast-diff map is not enabled for " << *name << ". "
                 << "operation may be slow." << std::endl;

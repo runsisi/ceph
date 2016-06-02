@@ -406,6 +406,7 @@ int get_image_options(const boost::program_options::variables_map &vm,
 
   if (vm.count(at::IMAGE_ORDER)) {
     order = vm[at::IMAGE_ORDER].as<uint64_t>();
+
     std::cerr << "rbd: --order is deprecated, use --object-size"
 	      << std::endl;
   } else if (vm.count(at::IMAGE_OBJECT_SIZE)) {
@@ -448,6 +449,7 @@ int get_image_options(const boost::program_options::variables_map &vm,
   if (get_format) {
     uint64_t format = 0;
     bool format_specified = false;
+
     if (vm.count(at::IMAGE_NEW_FORMAT)) {
       format = 2;
       format_specified = true;
@@ -455,6 +457,7 @@ int get_image_options(const boost::program_options::variables_map &vm,
       format = vm[at::IMAGE_FORMAT].as<uint32_t>();
       format_specified = true;
     }
+
     if (format == 1) {
       std::cerr << "rbd: image format 1 is deprecated" << std::endl;
     }
@@ -703,6 +706,7 @@ int open_image(librados::IoCtx &io_ctx, const std::string &image_name,
               << cpp_strerror(r) << std::endl;
     return r;
   }
+
   return 0;
 }
 
@@ -761,6 +765,7 @@ int snap_set(librbd::Image &image, const std::string &snap_name) {
               << std::endl;
     return r;
   }
+
   return 0;
 }
 

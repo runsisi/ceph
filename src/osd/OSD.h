@@ -367,9 +367,11 @@ public:
     i->second++;
     return next_osdmap;
   }
+
   /// releases reservation on map
   void release_map(OSDMapRef osdmap) {
     Mutex::Locker l(pre_publish_lock);
+
     map<epoch_t, unsigned>::iterator i =
       map_reservations.find(osdmap->get_epoch());
     ceph_assert(i != map_reservations.end());
@@ -377,17 +379,24 @@ public:
     if (--(i->second) == 0) {
       map_reservations.erase(i);
     }
+
     pre_publish_cond.Signal();
   }
+
   /// blocks until there are no reserved maps prior to next_osdmap
+  // called by
+  // OSD::_committed_osd_maps
+  // OSD::consume_map
   void await_reserved_maps() {
     Mutex::Locker l(pre_publish_lock);
     ceph_assert(next_osdmap);
     while (true) {
       map<epoch_t, unsigned>::const_iterator i = map_reservations.cbegin();
+
       if (i == map_reservations.cend() || i->first >= next_osdmap->get_epoch()) {
 	break;
       } else {
+        // will be signalled by OSDService::release_map
 	pre_publish_cond.Wait(pre_publish_lock);
       }
     }
@@ -461,6 +470,8 @@ public:
   };
   set<ScrubJob> sched_scrub_pg;
 
+  // called by
+  // PG::reg_next_scrub
   /// @returns the scrub_reg_stamp used for unregister the scrub job
   utime_t reg_pg_scrub(spg_t pgid, utime_t t, double pool_scrub_min_interval,
 		       double pool_scrub_max_interval, bool must) {
@@ -470,11 +481,15 @@ public:
     sched_scrub_pg.insert(scrub);
     return scrub.sched_time;
   }
+
   void unreg_pg_scrub(spg_t pgid, utime_t t) {
     Mutex::Locker l(sched_scrub_lock);
     size_t removed = sched_scrub_pg.erase(ScrubJob(cct, pgid, t));
     ceph_assert(removed);
   }
+
+  // called by
+  // OSD::sched_scrub, which called by OSD::tick_without_osd_lock
   bool first_scrub_stamp(ScrubJob *out) {
     Mutex::Locker l(sched_scrub_lock);
     if (sched_scrub_pg.empty())
@@ -483,6 +498,7 @@ public:
     *out = *iter;
     return true;
   }
+
   bool next_scrub_stamp(const ScrubJob& next,
 			ScrubJob *out) {
     Mutex::Locker l(sched_scrub_lock);
@@ -769,6 +785,9 @@ private:
 #endif
   bool _recover_now(uint64_t *available_pushes);
   void _maybe_queue_recovery();
+
+  // called by
+  // OSDService::_maybe_queue_recovery
   void _queue_for_recovery(
     pair<epoch_t, PGRef> p, uint64_t reserved_pushes);
 public:
@@ -780,23 +799,43 @@ public:
     defer_recovery_until = ceph_clock_now();
     defer_recovery_until += defer_for;
   }
+
+  // called by
+  // OSD::activate_map, for CEPH_OSDMAP_NORECOVER
   void pause_recovery() {
     Mutex::Locker l(recovery_lock);
+
     recovery_paused = true;
   }
+
   bool recovery_is_paused() {
     Mutex::Locker l(recovery_lock);
+
     return recovery_paused;
   }
+
+  // called by
+  // OSD::activate_map, when CEPH_OSDMAP_NORECOVER is unset
   void unpause_recovery() {
     Mutex::Locker l(recovery_lock);
+
     recovery_paused = false;
+
+    // try to queue OSDService::awaiting_throttle on OSD::op_shardedwq
     _maybe_queue_recovery();
   }
+
+  // called by
+  // OSD::tick_without_osd_lock
+  // OSD::handle_conf_change, for "osd_recovery_delay_start"
   void kick_recovery_queue() {
     Mutex::Locker l(recovery_lock);
+
+    // try to queue OSDService::awaiting_throttle on OSD::op_shardedwq
     _maybe_queue_recovery();
   }
+  // called by
+  // ReplicatedPG::on_change, which called by PG::start_peering_interval
   void clear_queued_recovery(PG *pg) {
     Mutex::Locker l(recovery_lock);
     awaiting_throttle.remove_if(
@@ -804,6 +843,9 @@ public:
 	return awaiting.second.get() == pg;
       });
   }
+
+  // called by
+  // PG::queue_recovery
   // delayed pg activation
   void queue_for_recovery(PG *pg) {
     Mutex::Locker l(recovery_lock);
@@ -813,6 +855,8 @@ public:
     } else {
       awaiting_throttle.push_back(make_pair(pg->get_osdmap()->get_epoch(), pg));
     }
+
+    // try to queue OSDService::awaiting_throttle on OSD::op_shardedwq
     _maybe_queue_recovery();
   }
   void queue_recovery_after_sleep(PG *pg, epoch_t queued, uint64_t reserved_pushes) {
@@ -830,11 +874,13 @@ public:
   map<int64_t,int> deleted_pool_pg_nums;
 
   OSDMapRef try_get_map(epoch_t e);
+
   OSDMapRef get_map(epoch_t e) {
     OSDMapRef ret(try_get_map(e));
     ceph_assert(ret);
     return ret;
   }
+
   OSDMapRef add_map(OSDMap *o) {
     Mutex::Locker l(map_cache_lock);
     return _add_map(o);
@@ -846,10 +892,12 @@ public:
     return _add_map_bl(e, bl);
   }
   void _add_map_bl(epoch_t e, bufferlist& bl);
+
   bool get_map_bl(epoch_t e, bufferlist& bl) {
     Mutex::Locker l(map_cache_lock);
     return _get_map_bl(e, bl);
   }
+
   bool _get_map_bl(epoch_t e, bufferlist& bl);
 
   void add_map_inc_bl(epoch_t e, bufferlist& bl) {
@@ -978,16 +1026,19 @@ public:
    */
   void set_epochs(const epoch_t *_boot_epoch, const epoch_t *_up_epoch,
                   const epoch_t *_bind_epoch);
+
   epoch_t get_boot_epoch() const {
     epoch_t ret;
     retrieve_epochs(&ret, NULL, NULL);
     return ret;
   }
+
   epoch_t get_up_epoch() const {
     epoch_t ret;
     retrieve_epochs(NULL, &ret, NULL);
     return ret;
   }
+
   epoch_t get_bind_epoch() const {
     epoch_t ret;
     retrieve_epochs(NULL, NULL, &ret);
@@ -1318,6 +1369,7 @@ public:
   }
 
   static ghobject_t make_snapmapper_oid() {
+    // hobject_t::hash = std::hash<sobject_t>()(sobject_t("snapmapper", 0));
     return ghobject_t(hobject_t(
       sobject_t(
 	object_t("snapmapper"),
@@ -1479,6 +1531,9 @@ private:
     Mutex::Locker l(session_waiting_lock);
     session_waiting_for_map.erase(session);
   }
+
+  // called by
+  // OSD::consume_map
   void dispatch_sessions_waiting_on_map() {
     set<SessionRef> sessions_to_check;
     get_sessions_waiting_for_map(&sessions_to_check);
@@ -1492,6 +1547,8 @@ private:
   }
   void session_handle_reset(SessionRef session) {
     Mutex::Locker l(session->session_dispatch_lock);
+
+    // OSD::session_waiting_for_map
     clear_session_waiting_on_map(session);
 
     session->clear_backoffs();
@@ -1501,7 +1558,7 @@ private:
      * cycles which result.
      * Bug #12338
      */
-    session->waiting_on_map.clear_and_dispose(TrackedOp::Putter());
+    session->waiting_on_map.clear_and_dispose(TrackedOp::Putter()); // pushed by OSD::ms_fast_dispatch
   }
 
 private:
@@ -1644,6 +1701,7 @@ public:
     bool ms_handle_refused(Connection *con) override {
       return osd->ms_handle_refused(con);
     }
+
     bool ms_verify_authorizer(Connection *con, int peer_type,
 			      int protocol, bufferlist& authorizer_data, bufferlist& authorizer_reply,
 			      bool& isvalid, CryptoKey& session_key,
@@ -1657,10 +1715,13 @@ private:
   // -- waiters --
   list<OpRequestRef> finished;
   
+  // called by
+  // OSD::activate_map, to splice OSD::waiting_for_osdmap
   void take_waiters(list<OpRequestRef>& ls) {
     ceph_assert(osd_lock.is_locked());
     finished.splice(finished.end(), ls);
   }
+
   void do_waiters();
   
   // -- op tracking --
@@ -1974,6 +2035,10 @@ protected:
   epoch_t requested_full_first, requested_full_last;
 
   void request_full_map(epoch_t first, epoch_t last);
+
+  // called by
+  // OSD::ms_handle_connect
+  // OSD::handle_osd_map
   void rerequest_full_maps() {
     epoch_t first = requested_full_first;
     epoch_t last = requested_full_last;
@@ -1981,6 +2046,7 @@ protected:
     requested_full_last = 0;
     request_full_map(first, last);
   }
+
   void got_full_map(epoch_t e);
 
   // -- failures --

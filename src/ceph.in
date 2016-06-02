@@ -864,6 +864,7 @@ def wait(childargs, waitdata):
 
 def main():
     ceph_args = os.environ.get('CEPH_ARGS')
+    
     if ceph_args:
         if "injectargs" in sys.argv:
             i = sys.argv.index("injectargs")
@@ -991,6 +992,7 @@ def main():
     if parsed_args.completion:
         # for completion let timeout be really small
         timeout = 3
+    
     try:
         if childargs and childargs[0] == 'ping' and not parsed_args.help:
             return ping_monitor(cluster_handle, childargs[1], timeout)
@@ -1033,6 +1035,7 @@ def main():
                 level = 'info'
             elif k != "watch_channel":
                 level = k.replace('watch_', '')
+    
     if level:
         # an awfully simple callback
         def watch_cb(arg, line, channel, name, who, stamp_sec, stamp_nsec, seq, level, msg):

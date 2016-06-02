@@ -236,6 +236,7 @@ private:
   typedef boost::optional<cls::rbd::MirrorImageStatusState>
       OptionalMirrorImageStatusState;
 
+  // used by ImageReplayer<I>::handle_bootstrap for local journal
   struct JournalListener : public librbd::journal::Listener {
     ImageReplayer *img_replayer;
 
@@ -243,14 +244,17 @@ private:
       : img_replayer(img_replayer) {
     }
 
+    // Journal<I>::close will notify us
     void handle_close() override {
       img_replayer->on_stop_journal_replay();
     }
 
+    // Journal<I>::handle_refresh_metadata will notify us
     void handle_promoted() override {
       img_replayer->on_stop_journal_replay(0, "force promoted");
     }
 
+    // Journal<I>::handle_refresh_metadata will notify us
     void handle_resync() override {
       img_replayer->resync_image();
     }
@@ -304,9 +308,13 @@ private:
   std::string m_local_image_tag_owner;
 
   decltype(ImageCtxT::journal) m_local_journal = nullptr;
+  // will be created by ImageReplayer<I>::start_replay
   librbd::journal::Replay<ImageCtxT> *m_local_replay = nullptr;
   Journaler* m_remote_journaler = nullptr;
+
+  // registered by ImageReplayer<I>::handle_start_replay
   ::journal::ReplayHandler *m_replay_handler = nullptr;
+
   librbd::journal::Listener *m_journal_listener;
 
   Context *m_on_start_finish = nullptr;
@@ -338,11 +346,14 @@ private:
   AsyncOpTracker m_event_replay_tracker;
   Context *m_delayed_preprocess_task = nullptr;
 
+  // constructed by ImageReplayer<I>::ImageReplayer and registered by
+  // ImageReplayer<I>::handle_init_remote_journaler
   struct RemoteJournalerListener : public ::journal::JournalMetadataListener {
     ImageReplayer *replayer;
 
     RemoteJournalerListener(ImageReplayer *replayer) : replayer(replayer) { }
 
+    // will be notified by JournalMetadata::handle_refresh_complete
     void handle_update(::journal::JournalMetadata *) override;
   } m_remote_listener;
 

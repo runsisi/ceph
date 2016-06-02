@@ -173,6 +173,8 @@ struct ObjectDispatcher<I>::SendVisitor : public boost::static_visitor<bool> {
   }
 };
 
+// created by
+// ImageCtx::ImageCtx, ImageCtx::io_object_dispatcher = new io::ObjectDispatcher<>(this);
 template <typename I>
 ObjectDispatcher<I>::ObjectDispatcher(I* image_ctx)
   : m_image_ctx(image_ctx),
@@ -206,6 +208,9 @@ void ObjectDispatcher<I>::shut_down(Context* on_finish) {
   on_finish->complete(0);
 }
 
+// called by
+// ObjectCacherObjectDispatch<I>::init
+// Journal<I>::open
 template <typename I>
 void ObjectDispatcher<I>::register_object_dispatch(
     ObjectDispatchInterface* object_dispatch) {

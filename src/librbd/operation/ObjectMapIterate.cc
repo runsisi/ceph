@@ -26,6 +26,8 @@ namespace operation {
 
 namespace {
 
+// created by
+// ObjectMapIterateRequest<I>::send_verify_objects
 template <typename I>
 class C_VerifyObjectCallback : public C_AsyncObjectThrottle<I> {
 public:
@@ -45,6 +47,7 @@ public:
 
   void complete(int r) override {
     I &image_ctx = this->m_image_ctx;
+
     if (should_complete(r)) {
       ldout(image_ctx.cct, 20) << m_oid << " C_VerifyObjectCallback completed "
 			       << dendl;
@@ -73,10 +76,13 @@ private:
 
   bool should_complete(int r) {
     I &image_ctx = this->m_image_ctx;
+
     CephContext *cct = image_ctx.cct;
+
     if (r == 0) {
       r = m_snap_list_ret;
     }
+
     if (r < 0 && r != -ENOENT) {
       lderr(cct) << m_oid << " C_VerifyObjectCallback::should_complete: "
                  << "encountered an error: " << cpp_strerror(r) << dendl;
@@ -86,7 +92,9 @@ private:
     ldout(cct, 20) << m_oid << " C_VerifyObjectCallback::should_complete: "
 		   << " r="
                    << r << dendl;
-    return object_map_action(get_object_state());
+
+    // handle dismatch from in memory object map and state get from OSD
+    return object_map_action(get_object_state()); // always return true
   }
 
   void send_list_snaps() {
@@ -105,13 +113,17 @@ private:
     comp->release();
   }
 
+  // state get from OSD
   uint8_t get_object_state() {
     I &image_ctx = this->m_image_ctx;
+
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     for (std::vector<librados::clone_info_t>::const_iterator r =
            m_snap_set.clones.begin(); r != m_snap_set.clones.end(); ++r) {
       librados::snap_t from_snap_id;
       librados::snap_t to_snap_id;
+
       if (r->cloneid == librados::SNAP_HEAD) {
         from_snap_id = next_valid_snap_id(m_snap_set.seq + 1);
         to_snap_id = librados::SNAP_HEAD;
@@ -126,12 +138,16 @@ private:
         break;
       }
 
+      // from_snap_id <= m_snap_id <= to_snap_id
+
       if ((image_ctx.features & RBD_FEATURE_FAST_DIFF) != 0 &&
           from_snap_id != m_snap_id) {
         return OBJECT_EXISTS_CLEAN;
       }
+
       return OBJECT_EXISTS;
     }
+
     return OBJECT_NONEXISTENT;
   }
 
@@ -139,17 +155,23 @@ private:
     I &image_ctx = this->m_image_ctx;
     ceph_assert(image_ctx.snap_lock.is_locked());
 
+    // the next snap id >= snap_id
     std::map<librados::snap_t, SnapInfo>::iterator it =
       image_ctx.snap_info.lower_bound(snap_id);
     if (it == image_ctx.snap_info.end()) {
       return CEPH_NOSNAP;
     }
+
     return it->first;
   }
 
-  bool object_map_action(uint8_t new_state) {
+  // called by
+  // C_VerifyObjectCallback::should_complete
+  bool object_map_action(uint8_t new_state) { // state get from OSD
     I &image_ctx = this->m_image_ctx;
+
     CephContext *cct = image_ctx.cct;
+
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
 
     // should have been canceled prior to releasing lock
@@ -160,7 +182,8 @@ private:
     ceph_assert(image_ctx.object_map != nullptr);
 
     RWLock::WLocker l(image_ctx.object_map_lock);
-    uint8_t state = (*image_ctx.object_map)[m_object_no];
+
+    uint8_t state = (*image_ctx.object_map)[m_object_no]; // state from in memory object map
 
     ldout(cct, 10) << "C_VerifyObjectCallback::object_map_action"
 		   << " object " << image_ctx.get_object_name(m_object_no)
@@ -177,6 +200,7 @@ private:
 		   << image_ctx.get_object_name(m_object_no)
 		   << " marked as " << (int)state << ", but should be "
 		   << (int)new_state << dendl;
+
 	m_invalidate->test_and_set();
       } else {
 	ldout(cct, 1) << "object map inconsistent: object "
@@ -192,6 +216,9 @@ private:
 
 } // anonymous namespace
 
+// called by
+// librbd::Operations<I>::object_map_iterate, which called by Operations<I>::check_object_map
+// librbd::operation::RebuildObjectMapRequest<I>::send_verify_objects
 template <typename I>
 void ObjectMapIterateRequest<I>::send() {
   send_verify_objects();
@@ -207,6 +234,7 @@ bool ObjectMapIterateRequest<I>::should_complete(int r) {
   }
 
   RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
+
   switch (m_state) {
   case STATE_VERIFY_OBJECTS:
     if (m_invalidate.test_and_set()) {
@@ -235,6 +263,8 @@ bool ObjectMapIterateRequest<I>::should_complete(int r) {
   return false;
 }
 
+// called by
+// ObjectMapIterateRequest<I>::send
 template <typename I>
 void ObjectMapIterateRequest<I>::send_verify_objects() {
   ceph_assert(m_image_ctx.owner_lock.is_locked());
@@ -242,20 +272,30 @@ void ObjectMapIterateRequest<I>::send_verify_objects() {
 
   uint64_t snap_id;
   uint64_t num_objects;
+
   {
     RWLock::RLocker l(m_image_ctx.snap_lock);
+
     snap_id = m_image_ctx.snap_id;
     num_objects = Striper::get_num_objects(m_image_ctx.layout,
                                            m_image_ctx.get_image_size(snap_id));
   }
+
   ldout(cct, 5) << this << " send_verify_objects" << dendl;
 
   m_state = STATE_VERIFY_OBJECTS;
 
+  // m_handle_mismatch:
+  // librbd/Operations.cc:needs_invalidate, for librbd::Operations<I>::object_map_iterate
+  //    return false if from exists -> non-exists
+  // librbd::operation::update_object_map, for
+  //    librbd::operation::RebuildObjectMapRequest<I>::send_verify_objects
+  //    always return false
   typename AsyncObjectThrottle<I>::ContextFactory context_factory(
     boost::lambda::bind(boost::lambda::new_ptr<C_VerifyObjectCallback<I> >(),
 			boost::lambda::_1, &m_image_ctx, snap_id,
 			boost::lambda::_2, m_handle_mismatch, &m_invalidate));
+
   AsyncObjectThrottle<I> *throttle = new AsyncObjectThrottle<I>(
     this, m_image_ctx, context_factory, this->create_callback_context(),
     &m_prog_ctx, 0, num_objects);
@@ -272,6 +312,7 @@ uint64_t ObjectMapIterateRequest<I>::get_image_size() const {
       return m_image_ctx.size;
     }
   }
+
   return  m_image_ctx.get_image_size(m_image_ctx.snap_id);
 }
 
@@ -280,6 +321,7 @@ void ObjectMapIterateRequest<I>::send_invalidate_object_map() {
   CephContext *cct = m_image_ctx.cct;
 
   ldout(cct, 5) << this << " send_invalidate_object_map" << dendl;
+
   m_state = STATE_INVALIDATE_OBJECT_MAP;
 
   object_map::InvalidateRequest<I>*req =
@@ -289,6 +331,7 @@ void ObjectMapIterateRequest<I>::send_invalidate_object_map() {
 
   ceph_assert(m_image_ctx.owner_lock.is_locked());
   RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
+
   req->send();
 }
 

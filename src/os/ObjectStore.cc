@@ -59,6 +59,9 @@ void decode_str_set_to_bl(bufferlist::const_iterator& p,
   start.copy(len, *out);
 }
 
+// called by
+// ceph_osd.cc/main
+// ceph_objectstore_tool.cc/main
 ObjectStore *ObjectStore::create(CephContext *cct,
 				 const string& type,
 				 const string& data,
@@ -94,6 +97,9 @@ ObjectStore *ObjectStore::create(CephContext *cct,
   return NULL;
 }
 
+// static
+// called by
+// ceph_osd.cc/main, for "--get-device-fsid"
 int ObjectStore::probe_block_device_fsid(
   CephContext *cct,
   const string& path,

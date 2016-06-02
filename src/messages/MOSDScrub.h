@@ -38,6 +38,7 @@ public:
   MOSDScrub(const uuid_d& f, bool r, bool d) :
     MessageInstance(MSG_OSD_SCRUB, HEAD_VERSION, COMPAT_VERSION),
     fsid(f), repair(r), deep(d) {}
+  // for PGMonitor::preprocess_command
   MOSDScrub(const uuid_d& f, vector<pg_t>& pgs, bool r, bool d) :
     MessageInstance(MSG_OSD_SCRUB, HEAD_VERSION, COMPAT_VERSION),
     fsid(f), scrub_pgs(pgs), repair(r), deep(d) {}

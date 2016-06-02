@@ -93,6 +93,7 @@ int execute(const po::variables_map &vm,
   std::string namespace_name;
   std::string image_name;
   std::string snap_name;
+  
   int r = utils::get_pool_image_snapshot_names(
     vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &namespace_name,
     &image_name, &snap_name, true, utils::SNAPSHOT_PRESENCE_PERMITTED,
@@ -129,6 +130,7 @@ int execute(const po::variables_map &vm,
     std::cerr << "rbd: diff error: " << cpp_strerror(r) << std::endl;
     return -r;
   }
+  
   return 0;
 }
 

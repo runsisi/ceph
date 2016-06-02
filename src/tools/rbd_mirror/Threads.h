@@ -16,6 +16,7 @@ namespace librbd { struct ImageCtx; }
 namespace rbd {
 namespace mirror {
 
+// NOTE: almost the same as Journaler::Threads
 template <typename ImageCtxT = librbd::ImageCtx>
 struct Threads {
   ThreadPool *thread_pool = nullptr;

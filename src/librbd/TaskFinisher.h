@@ -15,6 +15,8 @@ class CephContext;
 
 namespace librbd {
 
+// created by
+// TaskFinisher::TaskFinisher
 struct TaskFinisherSingleton {
   Mutex m_lock;
   SafeTimer *m_safe_timer;
@@ -27,19 +29,23 @@ struct TaskFinisherSingleton {
     m_finisher = new Finisher(cct, "librbd::TaskFinisher::m_finisher", "taskfin_librbd");
     m_finisher->start();
   }
+
   virtual ~TaskFinisherSingleton() {
     {
       Mutex::Locker l(m_lock);
+
       m_safe_timer->shutdown();
       delete m_safe_timer;
     }
+
     m_finisher->wait_for_empty();
     m_finisher->stop();
     delete m_finisher;
   }
 };
 
-
+// created by
+// ImageWatcher<I>::ImageWatcher
 template <typename Task>
 class TaskFinisher {
 public:
@@ -54,48 +60,71 @@ public:
 
   void cancel(const Task& task) {
     Mutex::Locker l(*m_lock);
+
     typename TaskContexts::iterator it = m_task_contexts.find(task);
     if (it != m_task_contexts.end()) {
       delete it->second.first;
+
       m_safe_timer->cancel_event(it->second.second);
+
       m_task_contexts.erase(it);
     }
   }
 
+  // called by
+  // ImageWatcher<I>::unregister_watch
   void cancel_all(Context *comp) {
     {
       Mutex::Locker l(*m_lock);
+
       for (typename TaskContexts::iterator it = m_task_contexts.begin();
            it != m_task_contexts.end(); ++it) {
         delete it->second.first;
+
         m_safe_timer->cancel_event(it->second.second);
       }
+
       m_task_contexts.clear();
     }
+
     m_finisher->queue(comp);
   }
 
   bool add_event_after(const Task& task, double seconds, Context *ctx) {
     Mutex::Locker l(*m_lock);
+
     if (m_task_contexts.count(task) != 0) {
       // task already scheduled on finisher or timer
       delete ctx;
       return false;
     }
+
+    // m_task_finisher->complete(m_task)
     C_Task *timer_ctx = new C_Task(this, task);
+
     m_task_contexts[task] = std::make_pair(ctx, timer_ctx);
 
     m_safe_timer->add_event_after(seconds, timer_ctx);
+
     return true;
   }
 
+  // called by
+  // ImageWatcher::schedule_async_complete
   void queue(Context *ctx) {
     m_finisher->queue(ctx);
   }
 
+  // called by
+  // ImageWatcher<I>::schedule_async_progress
+  // ImageWatcher<I>::schedule_cancel_async_requests
+  // ImageWatcher<I>::schedule_request_lock
   bool queue(const Task& task, Context *ctx) {
     Mutex::Locker l(*m_lock);
+
+    // std::map<Task, std::pair<Context *, Context *> >
     typename TaskContexts::iterator it = m_task_contexts.find(task);
+
     if (it != m_task_contexts.end()) {
       if (it->second.second != NULL) {
         ceph_assert(m_safe_timer->cancel_event(it->second.second));
@@ -103,16 +132,22 @@ public:
       } else {
         // task already scheduled on the finisher
         delete ctx;
+
         return false;
       }
     }
+
     m_task_contexts[task] = std::make_pair(ctx, reinterpret_cast<Context *>(0));
 
     m_finisher->queue(new C_Task(this, task));
+
     return true;
   }
 
 private:
+  // created by
+  // librbd::TaskFinisher::add_event_after
+  // librbd::TaskFinisher::queue
   class C_Task : public Context {
   public:
     C_Task(TaskFinisher *task_finisher, const Task& task)
@@ -121,6 +156,7 @@ private:
     }
   protected:
     void finish(int r) override {
+      // find the user callback by task and complete it
       m_task_finisher->complete(m_task);
     }
   private:
@@ -139,16 +175,25 @@ private:
 
   void complete(const Task& task) {
     Context *ctx = NULL;
+
     {
       Mutex::Locker l(*m_lock);
+
+      // find the task to complete
       typename TaskContexts::iterator it = m_task_contexts.find(task);
+
       if (it != m_task_contexts.end()) {
+        // the user callback
         ctx = it->second.first;
+
         m_task_contexts.erase(it);
       }
     }
 
     if (ctx != NULL) {
+
+      // complete the user callback
+
       ctx->complete(0);
     }
   }

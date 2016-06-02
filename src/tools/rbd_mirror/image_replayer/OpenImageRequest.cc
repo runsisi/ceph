@@ -21,6 +21,10 @@ namespace image_replayer {
 
 using librbd::util::create_context_callback;
 
+// created by
+// BootstrapRequest<I>::open_remote_image
+// rbd::mirror::image_replayer::CreateImageRequest<I>::open_remote_parent_image
+// rbd::mirror::image_replayer::CreateImageRequest<I>::open_local_parent_image
 template <typename I>
 OpenImageRequest<I>::OpenImageRequest(librados::IoCtx &io_ctx, I **image_ctx,
                                       const std::string &image_id,

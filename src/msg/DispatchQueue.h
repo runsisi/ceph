@@ -210,9 +210,13 @@ class DispatchQueue {
   }
   void discard_queue(uint64_t id);
   void discard_local();
+
+  // called by AsyncConnection::AsyncConnection, Pipe::Pipe, which both
+  // get called with msgr locked, so no race conditions
   uint64_t get_id() {
     return next_id++;
   }
+
   void start();
   void entry();
   void wait();

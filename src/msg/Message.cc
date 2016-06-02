@@ -283,6 +283,11 @@ void Message::dump(Formatter *f) const
   f->dump_string("summary", ss.str());
 }
 
+// called by
+// AsyncConnection::process, for STATE_OPEN_MESSAGE_READ_FOOTER_AND_DISPATCH
+// Pipe::read_message
+// XioConnection::handle_data_msg
+// decode_message(CephContext *cct, int crcflags, bufferlist::iterator& p), i.e., below
 Message *decode_message(CephContext *cct, int crcflags,
 			ceph_msg_header& header,
 			ceph_msg_footer& footer,

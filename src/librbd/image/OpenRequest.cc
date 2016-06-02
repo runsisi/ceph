@@ -24,6 +24,9 @@ namespace image {
 using util::create_context_callback;
 using util::create_rados_callback;
 
+// created by
+// RefreshParentRequest<I>::send_open_parent
+// ImageState<I>::send_open_unlock
 template <typename I>
 OpenRequest<I>::OpenRequest(I *image_ctx, uint64_t flags,
                             Context *on_finish)
@@ -85,9 +88,14 @@ Context *OpenRequest<I>::handle_v1_detect_header(int *result) {
   return nullptr;
 }
 
+// called by
+// OpenRequest<I>::send
 template <typename I>
 void OpenRequest<I>::send_v2_detect_header() {
   if (m_image_ctx->id.empty()) {
+    // image id is not given, only the image name is given, so
+    // need to detect the image format first
+
     CephContext *cct = m_image_ctx->cct;
     ldout(cct, 10) << this << " " << __func__ << dendl;
 
@@ -98,10 +106,12 @@ void OpenRequest<I>::send_v2_detect_header() {
     librados::AioCompletion *comp =
       create_rados_callback<klass, &klass::handle_v2_detect_header>(this);
     m_out_bl.clear();
+    // RBD_ID_PREFIX + name
     m_image_ctx->md_ctx.aio_operate(util::id_obj_name(m_image_ctx->name),
                                    comp, &op, &m_out_bl);
     comp->release();
   } else {
+    // get image name by given id
     send_v2_get_name();
   }
 }
@@ -119,6 +129,8 @@ Context *OpenRequest<I>::handle_v2_detect_header(int *result) {
     send_close_image(*result);
   } else {
     m_image_ctx->old_format = false;
+
+    // detected this image is format 2, get its id by given name
     send_v2_get_id();
   }
   return nullptr;
@@ -185,6 +197,7 @@ Context *OpenRequest<I>::handle_v2_get_name(int *result) {
     auto it = m_out_bl.cbegin();
     *result = cls_client::dir_get_name_finish(&it, &m_image_ctx->name);
   }
+
   if (*result < 0 && *result != -ENOENT) {
     lderr(cct) << "failed to retrieve name: "
                << cpp_strerror(*result) << dendl;
@@ -228,6 +241,7 @@ Context *OpenRequest<I>::handle_v2_get_name_from_trash(int *result) {
     m_image_ctx->name = trash_spec.name;
   }
   if (*result < 0) {
+    // we did not find the name by id in RBD_DIRECTORY, and now we failed in RBD_TRASH too
     if (*result == -EOPNOTSUPP) {
       *result = -ENOENT;
     }
@@ -529,12 +543,17 @@ Context *OpenRequest<I>::send_register_watch(int *result) {
     return send_set_snap(result);
   }
 
+  // we did not open this image with read-only, so register a watch
+
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   using klass = OpenRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_register_watch>(this);
+
+  // create ImageCtx::image_watcher and register the watch to handle
+  // requests under librbd/operation
   m_image_ctx->register_watch(ctx);
   return nullptr;
 }
@@ -565,6 +584,9 @@ Context *OpenRequest<I>::send_set_snap(int *result) {
     *result = 0;
     return m_on_finish;
   }
+
+  // if we are to open a snapshot, then create a SetSnapRequest and
+  // execute it
 
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;

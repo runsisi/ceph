@@ -39,6 +39,7 @@ struct bluefs_fnode_t {
   uint64_t size;
   utime_t mtime;
   uint8_t prefer_bdev;
+
   mempool::bluefs::vector<bluefs_extent_t> extents;
   uint64_t allocated;
 
