@@ -826,7 +826,6 @@ void Operations<I>::snap_create(const char *snap_name,
   }
 
   m_image_ctx.snap_lock.get_read();
-
   // iterate ImageCtx::snap_ids
   if (m_image_ctx.get_snap_id(snap_name) != CEPH_NOSNAP) {
     m_image_ctx.snap_lock.put_read();
