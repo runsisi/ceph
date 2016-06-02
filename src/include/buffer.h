@@ -609,6 +609,7 @@ namespace buffer CEPH_BUFFER_API {
 	if (pos && pos != buffer.c_str()) {
 	  size_t len = pos - buffer.c_str();
 	  pbl->append(buffer, 0, len);
+
 	  buffer.set_length(buffer.length() - len);
 	  buffer.set_offset(buffer.offset() + len);
 	}
@@ -625,14 +626,17 @@ namespace buffer CEPH_BUFFER_API {
 	    pos = buffer.c_str();
 	    end = buffer.end_c_str();
 	  }
+
 	  size_t l = len;
 	  if (l > (size_t)(end - pos)) {
 	    l = end - pos;
 	  }
 	  memcpy(pos, buf, l);
+
 	  pos += l;
 	  buf += l;
 	  len -= l;
+
 	  if (pos == end) {
 	    pbl->append(buffer, 0, buffer.length());
 	    pos = end = nullptr;

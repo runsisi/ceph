@@ -39,7 +39,7 @@ KernelDevice::KernelDevice(CephContext* cct, aio_callback_t cb, void *cbpriv)
     fs(NULL), aio(false), dio(false),
     debug_lock("KernelDevice::debug_lock"),
     flush_lock("KernelDevice::flush_lock"),
-    aio_queue(cct->_conf->bdev_aio_max_queue_depth),
+    aio_queue(cct->_conf->bdev_aio_max_queue_depth), // default 32
     aio_callback(cb),
     aio_callback_priv(cbpriv),
     aio_stop(false),
@@ -63,7 +63,9 @@ int KernelDevice::_lock()
 int KernelDevice::open(const string& p)
 {
   path = p;
+
   int r = 0;
+
   dout(1) << __func__ << " path " << path << dendl;
 
   fd_direct = ::open(path.c_str(), O_RDWR | O_DIRECT);
@@ -72,12 +74,14 @@ int KernelDevice::open(const string& p)
     derr << __func__ << " open got: " << cpp_strerror(r) << dendl;
     return r;
   }
+
   fd_buffered = ::open(path.c_str(), O_RDWR);
   if (fd_buffered < 0) {
     r = -errno;
     derr << __func__ << " open got: " << cpp_strerror(r) << dendl;
     goto out_direct;
   }
+
   dio = true;
   aio = cct->_conf->bdev_aio;
   if (!aio) {
@@ -107,6 +111,7 @@ int KernelDevice::open(const string& p)
     derr << __func__ << " fstat got " << cpp_strerror(r) << dendl;
     goto out_fail;
   }
+
   if (S_ISBLK(st.st_mode)) {
     int64_t s;
     r = get_block_device_size(fd_direct, &s);
@@ -114,6 +119,7 @@ int KernelDevice::open(const string& p)
       goto out_fail;
     }
 
+    // determine from "queue/rotational"
     rotational = block_device_is_rotational(path.c_str());
     size = s;
   } else {
@@ -126,7 +132,7 @@ int KernelDevice::open(const string& p)
   // blksize doesn't strictly matter except that some file systems may
   // require a read/modify/write if we write something smaller than
   // it.
-  block_size = cct->_conf->bdev_block_size;
+  block_size = cct->_conf->bdev_block_size; // default 4096
   if (block_size != (unsigned)st.st_blksize) {
     dout(1) << __func__ << " backing device/file reports st_blksize "
 	    << st.st_blksize << ", using bdev_block_size "
@@ -228,13 +234,16 @@ int KernelDevice::_aio_start()
 {
   if (aio) {
     dout(10) << __func__ << dendl;
+
     int r = aio_queue.init();
     if (r < 0) {
       derr << __func__ << " failed: " << cpp_strerror(r) << dendl;
       return r;
     }
+
     aio_thread.create("bstore_aio");
   }
+
   return 0;
 }
 
@@ -252,18 +261,24 @@ void KernelDevice::_aio_stop()
 void KernelDevice::_aio_thread()
 {
   dout(10) << __func__ << " start" << dendl;
+
   int inject_crash_count = 0;
+
   while (!aio_stop) {
     dout(40) << __func__ << " polling" << dendl;
+
     int max = 16;
     FS::aio_t *aio[max];
+
     int r = aio_queue.get_next_completed(cct->_conf->bdev_aio_poll_ms,
 					 aio, max);
     if (r < 0) {
       derr << __func__ << " got " << cpp_strerror(r) << dendl;
     }
+
     if (r > 0) {
       dout(30) << __func__ << " got " << r << " completed aios" << dendl;
+
       for (int i = 0; i < r; ++i) {
 	IOContext *ioc = static_cast<IOContext*>(aio[i]->priv);
 	_aio_log_finish(ioc, aio[i]->offset, aio[i]->length);
@@ -281,6 +296,7 @@ void KernelDevice::_aio_thread()
 	io_since_flush.store(true);
 
 	int r = aio[i]->get_return_value();
+
 	dout(10) << __func__ << " finished aio " << aio[i] << " r " << r
 		 << " ioc " << ioc
 		 << " with " << (ioc->num_running.load() - 1)
@@ -302,6 +318,7 @@ void KernelDevice::_aio_thread()
 	}
       }
     }
+
     if (cct->_conf->bdev_debug_aio) {
       utime_t now = ceph_clock_now();
       std::lock_guard<std::mutex> l(debug_queue_lock);
@@ -321,7 +338,9 @@ void KernelDevice::_aio_thread()
 	}
       }
     }
+
     reap_ioc();
+
     if (cct->_conf->bdev_inject_crash) {
       ++inject_crash_count;
       if (inject_crash_count * cct->_conf->bdev_aio_poll_ms / 1000 >
@@ -333,7 +352,9 @@ void KernelDevice::_aio_thread()
       }
     }
   }
+
   reap_ioc();
+
   dout(10) << __func__ << " end" << dendl;
 }
 
@@ -344,8 +365,10 @@ void KernelDevice::_aio_log_start(
 {
   dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
 	   << std::dec << dendl;
+
   if (cct->_conf->bdev_debug_inflight_ios) {
     Mutex::Locker l(debug_lock);
+
     if (debug_inflight.intersects(offset, length)) {
       derr << __func__ << " inflight overlap of 0x"
 	   << std::hex
@@ -353,6 +376,7 @@ void KernelDevice::_aio_log_start(
 	   << " with " << debug_inflight << dendl;
       ceph_abort();
     }
+
     debug_inflight.insert(offset, length);
   }
 }
@@ -387,8 +411,10 @@ void KernelDevice::_aio_log_finish(
 {
   dout(20) << __func__ << " " << aio << " 0x"
 	   << std::hex << offset << "~" << length << std::dec << dendl;
+
   if (cct->_conf->bdev_debug_inflight_ios) {
     Mutex::Locker l(debug_lock);
+
     debug_inflight.erase(offset, length);
   }
 }
@@ -543,13 +569,16 @@ int KernelDevice::read(uint64_t off, uint64_t len, bufferlist *pbl,
   dout(5) << __func__ << " 0x" << std::hex << off << "~" << len << std::dec
 	  << (buffered ? " (buffered)" : " (direct)")
 	  << dendl;
+
   assert(off % block_size == 0);
   assert(len % block_size == 0);
   assert(len > 0);
   assert(off < size);
   assert(off + len <= size);
 
+  // debug only
   _aio_log_start(ioc, off, len);
+
   ++ioc->num_reading;
 
   bufferptr p = buffer::create_page_aligned(len);
@@ -559,6 +588,7 @@ int KernelDevice::read(uint64_t off, uint64_t len, bufferlist *pbl,
     r = -errno;
     goto out;
   }
+
   assert((uint64_t)r == len);
   pbl->push_back(std::move(p));
 
@@ -567,9 +597,13 @@ int KernelDevice::read(uint64_t off, uint64_t len, bufferlist *pbl,
   *_dout << dendl;
 
  out:
+  // debug only
   _aio_log_finish(ioc, off, len);
+
   --ioc->num_reading;
+
   ioc->aio_wake();
+
   return r < 0 ? r : 0;
 }
 

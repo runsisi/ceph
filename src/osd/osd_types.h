@@ -285,6 +285,7 @@ public:
 
   void combine_with_locator(object_locator_t& orig, string& obj) const {
     orig = redirect_locator;
+
     if (!redirect_object.empty())
       obj = redirect_object;
   }
@@ -1270,12 +1271,14 @@ public:
    * context.
    */
   map<snapid_t, pool_snap_info_t> snaps;
+
   /*
    * Alternatively, if we are defining non-pool snaps (e.g. via the
    * Ceph MDS), we must track @removed_snaps (since @snaps is not
    * used).  Snaps and removed_snaps are to be used exclusive of each
    * other!
    */
+  // used both for mds and rbd
   interval_set<snapid_t> removed_snaps;
 
   unsigned pg_num_mask, pgp_num_mask;
@@ -1448,9 +1451,16 @@ public:
     return !(get_type() == TYPE_ERASURE);
   }
 
+  // called by
+  // librados::RadosClient::pool_requires_alignment2
+  // PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_WRITE, CEPH_OSD_OP_ZERO,
+  // CEPH_OSD_OP_TRUNCATE,
+  // PrimaryLogPG::_write_copy_chunk
+  // PrimaryLogPG::get_copy_chunk_size
   bool requires_aligned_append() const {
     return is_erasure() && !has_flag(FLAG_EC_OVERWRITES);
   }
+
   uint64_t required_alignment() const { return stripe_width; }
 
   bool is_hacky_ecoverwrites() const {
@@ -3131,6 +3141,7 @@ inline ostream& operator<<(ostream& out, const pg_log_t& log)
  */
 struct pg_missing_item {
   eversion_t need, have;
+
   pg_missing_item() {}
   explicit pg_missing_item(eversion_t n) : need(n) {}  // have no old version
   pg_missing_item(eversion_t n, eversion_t h) : need(n), have(h) {}
@@ -3188,6 +3199,7 @@ public:
     return true;
   }
 };
+
 template <>
 class ChangeTracker<true> {
   set<hobject_t> _changed;
@@ -3214,6 +3226,7 @@ class pg_missing_set : public pg_missing_const_i {
   using item = pg_missing_item;
   map<hobject_t, item> missing;  // oid -> (need v, have v)
   map<version_t, hobject_t> rmissing;  // v -> oid
+
   ChangeTracker<TrackChanges> tracker;
 
 public:
@@ -3223,8 +3236,10 @@ public:
   pg_missing_set(const missing_type &m) {
     for (auto &&i: missing)
       tracker.changed(i.first);
+
     missing = m.get_items();
     rmissing = m.get_rmissing();
+
     for (auto &&i: missing)
       tracker.changed(i.first);
   }
@@ -3232,44 +3247,61 @@ public:
   const map<hobject_t, item> &get_items() const override {
     return missing;
   }
+
   const map<version_t, hobject_t> &get_rmissing() const override {
+    // map<version_t, hobject_t>
     return rmissing;
   }
+
   unsigned int num_missing() const override {
+    // map<hobject_t, item, hobject_t::ComparatorWithDefault>
     return missing.size();
   }
+
   bool have_missing() const override {
     return !missing.empty();
   }
+
   bool is_missing(const hobject_t& oid, pg_missing_item *out = nullptr) const override {
     auto iter = missing.find(oid);
+
     if (iter == missing.end())
       return false;
+
     if (out)
       *out = iter->second;
+
     return true;
   }
+
   bool is_missing(const hobject_t& oid, eversion_t v) const override {
     map<hobject_t, item>::const_iterator m =
       missing.find(oid);
+
     if (m == missing.end())
       return false;
+
     const item &item(m->second);
     if (item.need > v)
       return false;
+
     return true;
   }
+
   eversion_t have_old(const hobject_t& oid) const override {
     map<hobject_t, item>::const_iterator m =
       missing.find(oid);
     if (m == missing.end())
       return eversion_t();
+
     const item &item(m->second);
+
     return item.have;
   }
 
   void claim(pg_missing_set& o) {
     static_assert(!TrackChanges, "Can't use claim with TrackChanges");
+
     missing.swap(o.missing);
     rmissing.swap(o.rmissing);
   }
@@ -3282,7 +3314,9 @@ public:
     if (e.is_update()) {
       map<hobject_t, item>::iterator missing_it;
       missing_it = missing.find(e.soid);
+
       bool is_missing_divergent_item = missing_it != missing.end();
+
       if (e.prior_version == eversion_t() || e.is_clone()) {
 	// new object.
 	if (is_missing_divergent_item) {  // use iterator
@@ -3302,6 +3336,7 @@ public:
 	assert(!is_missing_divergent_item);
 	missing[e.soid] = item(e.version, e.prior_version);
       }
+
       rmissing[e.version.version] = e.soid;
     } else if (e.is_delete()) {
       rm(e.soid, e.version);
@@ -3317,6 +3352,7 @@ public:
     } else {
       missing[oid] = item(need, eversion_t());
     }
+
     rmissing[need.version] = oid;
 
     tracker.changed(oid);
@@ -3360,6 +3396,8 @@ public:
     missing.erase(m);
   }
 
+  // called by
+  // PGLog::split_into
   void split_into(
     pg_t child_pgid,
     unsigned split_bits,
@@ -3461,6 +3499,7 @@ public:
   bool is_clean() const {
     return tracker.is_clean();
   }
+
   template <typename missing_t>
   bool debug_verify_from_init(
     const missing_t &init_missing,
@@ -3504,6 +3543,7 @@ public:
     return ok;
   }
 };
+
 template <bool TrackChanges>
 void encode(
   const pg_missing_set<TrackChanges> &c, bufferlist &bl, uint64_t features=0) {
@@ -3869,6 +3909,10 @@ inline ostream& operator<<(ostream& out, const OSDSuperblock& sb)
 struct SnapSet {
   snapid_t seq;
   bool head_exists;
+
+  // snaps     -> all snapshots have been taken so far, descending order
+  // clones    -> all clone objects have been created by COW, ascending order
+
   vector<snapid_t> snaps;    // descending
   vector<snapid_t> clones;   // ascending
   map<snapid_t, interval_set<uint64_t> > clone_overlap;  // overlap w/ next newest
@@ -4131,11 +4175,7 @@ struct SnapSetContext {
     oid(o), ref(0), registered(false), exists(true) { }
 };
 
-
-
 ostream& operator<<(ostream& out, const object_info_t& oi);
-
-
 
 // Object recovery
 struct ObjectRecoveryInfo {

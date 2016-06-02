@@ -45,6 +45,7 @@ int CephxSessionHandler::_calc_signature(Message *m, uint64_t *psig)
     mswab32(header.crc), mswab32(footer.front_crc),
     mswab32(footer.middle_crc), mswab32(footer.data_crc)
   };
+
   bufferlist bl_plaintext;
   bl_plaintext.append(buffer::create_static(sizeof(sigblock), (char*)&sigblock));
 
@@ -63,11 +64,13 @@ int CephxSessionHandler::_calc_signature(Message *m, uint64_t *psig)
 		 << " data_crc = " << footer.data_crc
 		 << " sig = " << *psig
 		 << dendl;
+
   return 0;
 }
 
 int CephxSessionHandler::sign_message(Message *m)
 {
+  // default true
   // If runtime signing option is off, just return success without signing.
   if (!cct->_conf->cephx_sign_messages) {
     return 0;
@@ -81,18 +84,26 @@ int CephxSessionHandler::sign_message(Message *m)
   ceph_msg_footer& f = m->get_footer();
   f.sig = sig;
   f.flags = (unsigned)f.flags | CEPH_MSG_FOOTER_SIGNED;
+
   messages_signed++;
+
   ldout(cct, 20) << "Putting signature in client message(seq # " << m->get_seq()
 		 << "): sig = " << sig << dendl;
+
   return 0;
 }
 
+// called by
+// Pipe::read_message
+// AsyncConnection::process
 int CephxSessionHandler::check_message_signature(Message *m)
 {
+  // default true
   // If runtime signing option is off, just return success without checking signature.
   if (!cct->_conf->cephx_sign_messages) {
     return 0;
   }
+
   if ((features & CEPH_FEATURE_MSG_AUTH) == 0) {
     // it's fine, we didn't negotiate this feature.
     return 0;
@@ -110,6 +121,7 @@ int CephxSessionHandler::check_message_signature(Message *m)
     if (!(m->get_footer().flags & CEPH_MSG_FOOTER_SIGNED)) {
       ldout(cct, 0) << "SIGN: MSG " << m->get_seq() << " Sender did not set CEPH_MSG_FOOTER_SIGNED." << dendl;
     }
+
     ldout(cct, 0) << "SIGN: MSG " << m->get_seq() << " Message signature does not match contents." << dendl;
     ldout(cct, 0) << "SIGN: MSG " << m->get_seq() << "Signature on message:" << dendl;
     ldout(cct, 0) << "SIGN: MSG " << m->get_seq() << "    sig: " << m->get_footer().sig << dendl;
@@ -123,7 +135,9 @@ int CephxSessionHandler::check_message_signature(Message *m)
     // them, since the latter is a potential sign of an attack.  PLR
 
     signatures_failed++;
+
     ldout(cct, 0) << "Signature failed." << dendl;
+
     return (SESSION_SIGNATURE_FAILURE);
   }
 

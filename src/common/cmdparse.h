@@ -58,6 +58,7 @@ cmd_getval(CephContext *cct, const cmdmap_t& cmdmap, std::string k, T& val)
       handle_bad_get(cct, k, typeid(T).name());
     }
   }
+
   return false;
 }
 

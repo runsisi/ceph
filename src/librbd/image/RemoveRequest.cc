@@ -27,6 +27,8 @@ using util::create_context_callback;
 using util::create_async_context_callback;
 using util::create_rados_callback;
 
+// created by
+// librbd::remove
 template<typename I>
 RemoveRequest<I>::RemoveRequest(IoCtx &ioctx, const std::string &image_name,
                                 const std::string &image_id, bool force,

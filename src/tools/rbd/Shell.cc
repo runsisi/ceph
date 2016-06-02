@@ -103,9 +103,11 @@ int Shell::execute(const Arguments& cmdline_arguments) {
   }
 
   po::variables_map vm;
+
   try {
     po::options_description positional_opts;
     po::options_description command_opts;
+
     (*action->get_arguments)(&positional_opts, &command_opts);
 
     // dynamically allocate options for our command (e.g. snap list) and
@@ -124,6 +126,7 @@ int Shell::execute(const Arguments& cmdline_arguments) {
       int max_count = positional_opts.options().size();
       if (positional_opts.options().back()->semantic()->max_tokens() > 1)
         max_count = -1;
+
       positional_options.add(at::POSITIONAL_ARGUMENTS.c_str(), max_count);
     }
 

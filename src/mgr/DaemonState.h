@@ -61,11 +61,15 @@ class PerfCounterInstance
 
 typedef std::map<std::string, PerfCounterType> PerfCounterTypes;
 
+// created by
+// as member of:
+// DaemonState
 // Performance counters for one daemon
 class DaemonPerfCounters
 {
   public:
   // The record of perf stat types, shared between daemons
+  // NOTE: types is a reference of DaemonStateIndex::types, see DaemonState::DaemonState
   PerfCounterTypes &types;
 
   DaemonPerfCounters(PerfCounterTypes &types_)
@@ -89,6 +93,10 @@ class DaemonPerfCounters
   }
 };
 
+// created by
+// Mgr::load_all_metadata
+// MetadataUpdate::finish
+// Mgr::load_all_metadata
 // The state that we store about one daemon
 class DaemonState
 {
@@ -105,6 +113,7 @@ class DaemonState
   // The perf counters received in MMgrReport messages
   DaemonPerfCounters perf_counters;
 
+  // NOTE: the parameter types_ is a reference of DaemonStateIndex::types
   DaemonState(PerfCounterTypes &types_)
     : perf_counters(types_)
   {
@@ -126,6 +135,8 @@ class DaemonStateIndex
 {
   private:
   std::map<std::string, DaemonStateCollection> by_server;
+
+  // std::map<DaemonKey, DaemonStatePtr>
   DaemonStateCollection all;
 
   std::set<DaemonKey> updating;
@@ -138,6 +149,7 @@ class DaemonStateIndex
 
   // FIXME: shouldn't really be public, maybe construct DaemonState
   // objects internally to avoid this.
+  // std::map<std::string, PerfCounterType>
   PerfCounterTypes types;
 
   void insert(DaemonStatePtr dm);

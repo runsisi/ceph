@@ -117,6 +117,10 @@ struct MonCapGrant {
 
 ostream& operator<<(ostream& out, const MonCapGrant& g);
 
+// member of
+// MForward
+// Monitor
+// MonSession
 struct MonCap {
   string text;
   std::vector<MonCapGrant> grants;

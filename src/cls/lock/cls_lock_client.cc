@@ -39,6 +39,7 @@ namespace rados {
                 const utime_t& duration, uint8_t flags)
       {
         cls_lock_lock_op op;
+
         op.name = name;
         op.type = type;
         op.cookie = cookie;
@@ -46,8 +47,10 @@ namespace rados {
         op.description = description;
         op.duration = duration;
         op.flags = flags;
+
         bufferlist in;
         ::encode(op, in);
+
         rados_op->exec("lock", "lock", in);
       }
 
@@ -59,7 +62,9 @@ namespace rados {
 	       uint8_t flags)
       {
         ObjectWriteOperation op;
+
         lock(&op, name, type, cookie, tag, description, duration, flags);
+
         return ioctx->operate(oid, &op);
       }
 

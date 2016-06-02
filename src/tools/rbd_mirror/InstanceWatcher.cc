@@ -67,6 +67,9 @@ struct RemoveInstanceRequest : public Context {
 
 } // anonymous namespace
 
+// static
+// called by
+// Instances<I>::get_instances
 template <typename I>
 void InstanceWatcher<I>::get_instances(librados::IoCtx &io_ctx,
                                        std::vector<std::string> *instance_ids,
@@ -81,6 +84,9 @@ void InstanceWatcher<I>::get_instances(librados::IoCtx &io_ctx,
   aio_comp->release();
 }
 
+// static
+// called by
+// Instances<I>::remove_instance
 template <typename I>
 void InstanceWatcher<I>::remove_instance(librados::IoCtx &io_ctx,
                                          ContextWQ *work_queue,
@@ -91,13 +97,15 @@ void InstanceWatcher<I>::remove_instance(librados::IoCtx &io_ctx,
   req->send();
 }
 
+// created by
+// Replayer::init
 template <typename I>
 InstanceWatcher<I>::InstanceWatcher(librados::IoCtx &io_ctx,
                                     ContextWQ *work_queue,
                                     const boost::optional<std::string> &id)
   : Watcher(io_ctx, work_queue, RBD_MIRROR_INSTANCE_PREFIX +
             (id ? *id : stringify(io_ctx.get_instance_id()))),
-    m_instance_id(id ? *id : stringify(io_ctx.get_instance_id())),
+    m_instance_id(id ? *id : stringify(io_ctx.get_instance_id())), // rados client global id
     m_lock("rbd::mirror::InstanceWatcher " + io_ctx.get_pool_name()),
     m_instance_lock(librbd::ManagedLock<I>::create(
       m_ioctx, m_work_queue, m_oid, this, librbd::managed_lock::EXCLUSIVE, true,
@@ -173,6 +181,8 @@ void InstanceWatcher<I>::handle_notify(uint64_t notify_id, uint64_t handle,
   acknowledge_notify(notify_id, handle, out);
 }
 
+// called by
+// InstanceWatcher<I>::init
 template <typename I>
 void InstanceWatcher<I>::register_instance() {
   assert(m_lock.is_locked());
@@ -435,6 +445,8 @@ void InstanceWatcher<I>::handle_unregister_instance(int r) {
   on_finish->complete(r);
 }
 
+// called by
+// InstanceWatcher<I>::remove
 template <typename I>
 void InstanceWatcher<I>::get_instance_locker() {
   dout(20) << dendl;

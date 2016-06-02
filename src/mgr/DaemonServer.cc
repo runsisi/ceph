@@ -26,6 +26,8 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "mgr.server " << __func__ << " "
 
+// created by
+// member of Mgr
 DaemonServer::DaemonServer(MonClient *monc_,
   DaemonStateIndex &daemon_state_,
   ClusterState &cluster_state_,
@@ -45,8 +47,12 @@ DaemonServer::~DaemonServer() {
   delete msgr;
 }
 
+// called by
+// Mgr::init
 int DaemonServer::init(uint64_t gid, entity_addr_t client_addr)
 {
+  // NOTE: the msgr created by MgrStandby::MgrStandby is a client msgr
+
   // Initialize Messenger
   std::string public_msgr_type = g_conf->ms_public_type.empty() ? g_conf->ms_type : g_conf->ms_public_type;
   msgr = Messenger::create(g_ceph_context, public_msgr_type,
@@ -121,6 +127,7 @@ bool DaemonServer::ms_get_authorizer(int dest_type,
 
   *authorizer = monc->build_authorizer(dest_type);
   dout(20) << "got authorizer " << *authorizer << dendl;
+
   return *authorizer != NULL;
 }
 
@@ -130,18 +137,24 @@ bool DaemonServer::ms_handle_refused(Connection *con)
   return false;
 }
 
+// the only dispatch for DaemonServer::msgr
 bool DaemonServer::ms_dispatch(Message *m)
 {
   Mutex::Locker l(lock);
 
   switch(m->get_type()) {
     case MSG_PGSTATS:
+      // sent by OSD::mgrc.pgstats_cb, which initialized by OSD::init
+      // NOTE: for MMgrDigest, it is handled by Mgr::handle_mgr_digest, i.e.,
+      // MgrStandby::client_messenger
       cluster_state.ingest_pgstats(static_cast<MPGStats*>(m));
       m->put();
       return true;
     case MSG_MGR_REPORT:
+      // sent by MgrClient::send_report
       return handle_report(static_cast<MMgrReport*>(m));
     case MSG_MGR_OPEN:
+      // sent by MgrClient::reconnect
       return handle_open(static_cast<MMgrOpen*>(m));
     case MSG_COMMAND:
       return handle_command(static_cast<MCommand*>(m));
@@ -157,8 +170,8 @@ void DaemonServer::shutdown()
   msgr->wait();
 }
 
-
-
+// called by
+// DaemonServer::ms_dispatch, MMgrOpen sent by MgrClient::reconnect
 bool DaemonServer::handle_open(MMgrOpen *m)
 {
   DaemonKey key(
@@ -169,9 +182,12 @@ bool DaemonServer::handle_open(MMgrOpen *m)
           << m->daemon_name << dendl;
 
   auto configure = new MMgrConfigure();
+  // default 5
   configure->stats_period = g_conf->mgr_stats_period;
+
   m->get_connection()->send_message(configure);
 
+  // daemon_state was initialized by Mgr::load_all_metadata
   if (daemon_state.exists(key)) {
     dout(20) << "updating existing DaemonState for " << m->daemon_name << dendl;
     daemon_state.get(key)->perf_counters.clear();
@@ -181,6 +197,9 @@ bool DaemonServer::handle_open(MMgrOpen *m)
   return true;
 }
 
+// called by
+// DaemonServer::ms_dispatch, which is for DaemonServer::msgr, MMgrReport
+// sent by MgrClient::send_report
 bool DaemonServer::handle_report(MMgrReport *m)
 {
   DaemonKey key(
@@ -191,6 +210,8 @@ bool DaemonServer::handle_report(MMgrReport *m)
           << m->daemon_name << dendl;
 
   DaemonStatePtr daemon;
+
+  // daemon_state was initialized by Mgr::load_all_metadata
   if (daemon_state.exists(key)) {
     dout(20) << "updating existing DaemonState for " << m->daemon_name << dendl;
     daemon = daemon_state.get(key);
@@ -199,11 +220,13 @@ bool DaemonServer::handle_report(MMgrReport *m)
     daemon = std::make_shared<DaemonState>(daemon_state.types);
     // FIXME: crap, we don't know the hostname at this stage.
     daemon->key = key;
+
     daemon_state.insert(daemon);
     // FIXME: we should request metadata at this stage
   }
 
   assert(daemon != nullptr);
+
   auto &daemon_counters = daemon->perf_counters;
   daemon_counters.update(m);
   
@@ -227,6 +250,8 @@ COMMAND("foo " \
 	"do a thing", "mgr", "rw", "cli")
 };
 
+// called by
+// DaemonServer::ms_dispatch
 bool DaemonServer::handle_command(MCommand *m)
 {
   int r = 0;

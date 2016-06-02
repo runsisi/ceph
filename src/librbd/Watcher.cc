@@ -66,6 +66,12 @@ struct C_UnwatchAndFlush : public Context {
 
 } // anonymous namespace
 
+// derived by
+// ImageWatcher
+// MirroringWatcher
+// InstanceWatcher
+// LeaderWatcher
+// MirrorStatusWatcher
 Watcher::Watcher(librados::IoCtx& ioctx, ContextWQ *work_queue,
                           const string& oid)
   : m_ioctx(ioctx), m_work_queue(work_queue), m_oid(oid),

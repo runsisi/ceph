@@ -108,19 +108,21 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
   return 0;
 }
 
-
 } // anonymous namespace
 
   int detect_format(IoCtx &io_ctx, const string &name,
 		    bool *old_format, uint64_t *size)
   {
     CephContext *cct = (CephContext *)io_ctx.cct();
+
     if (old_format)
       *old_format = true;
+
     int r = io_ctx.stat(util::old_header_name(name), size, NULL);
     if (r == -ENOENT) {
       if (old_format)
 	*old_format = false;
+
       r = io_ctx.stat(util::id_obj_name(name), size, NULL);
       if (r < 0)
 	return r;
@@ -131,6 +133,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     ldout(cct, 20) << "detect format of " << name << " : "
 		   << (old_format ? (*old_format ? "old" : "new") :
 		       "don't care")  << dendl;
+
     return 0;
   }
 
@@ -168,9 +171,13 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
   void image_info(ImageCtx *ictx, image_info_t& info, size_t infosize)
   {
     int obj_order = ictx->order;
+
     ictx->snap_lock.get_read();
+
     info.size = ictx->get_image_size(ictx->snap_id);
+
     ictx->snap_lock.put_read();
+
     info.obj_size = 1ULL << obj_order;
     info.num_objs = Striper::get_num_objects(ictx->layout, info.size);
     info.order = obj_order;
@@ -200,10 +207,15 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
 	   ictx->exclusive_lock->is_lock_owner());
 
     C_SaferCond ctx;
+
+    // ImageCtx::size is protected by ImageCtx::snap_lock, see ImageCtx::get_current_size
     ictx->snap_lock.get_read();
+
     operation::TrimRequest<> *req = operation::TrimRequest<>::create(
       *ictx, &ctx, ictx->size, newsize, prog_ctx);
+
     ictx->snap_lock.put_read();
+
     req->send();
 
     int r = ctx.wait();
@@ -454,6 +466,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
       return -EINVAL;
     }
 
+    // std::map<int, boost::variant<std::string,uint64_t>>
     image_options_t::const_iterator j = (*opts_)->find(optname);
 
     if (j == (*opts_)->end()) {
@@ -513,6 +526,10 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     return (*opts_)->empty();
   }
 
+  // called by
+  // RBD::list
+  // rbd_list
+  // rbd_group_list
   int list(IoCtx& io_ctx, vector<string>& names)
   {
     CephContext *cct = (CephContext *)io_ctx.cct();
@@ -548,6 +565,8 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     return 0;
   }
 
+  // called by
+  // librbd::snap_remove
   int flatten_children(ImageCtx *ictx, const char* snap_name,
                        ProgressContext& pctx)
   {
@@ -570,7 +589,11 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
 
     size_t i = 0;
     Rados rados(ictx->md_ctx);
+
     for ( auto &info : image_info){
+
+      // iterate all children images
+
       string pool = info.first.second;
       IoCtx ioctx;
       r = rados.ioctx_create2(info.first.first, ioctx);
@@ -619,7 +642,9 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
           return r;
         }
       }
+
       pctx.update_progress(++i, size);
+
       assert(i <= size);
     }
 
@@ -750,10 +775,15 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     return 0;
   }
 
+  // if non_primary_global_image_id is not empty then we are creating a mirror image,
+  // it is the global image id of the remote image and is used to automatically enable
+  // the mirroring of the local created mirror image if we are in pool mirror mode
+  // primary_mirror_uuid is used to set tag.mirror_uuid of the newly create tag
   int create(librados::IoCtx& io_ctx, const char *imgname, uint64_t size,
 	     int *order)
   {
     uint64_t order_ = *order;
+
     ImageOptions opts;
 
     int r = opts.set(RBD_IMAGE_OPTION_ORDER, order_);
@@ -763,11 +793,13 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
 
     int r1 = opts.get(RBD_IMAGE_OPTION_ORDER, &order_);
     assert(r1 == 0);
+
     *order = order_;
 
     return r;
   }
 
+  // w/ striping options w/o journal options w/o mirror options
   int create(IoCtx& io_ctx, const char *imgname, uint64_t size,
 	     bool old_format, uint64_t features, int *order,
 	     uint64_t stripe_unit, uint64_t stripe_count)
@@ -777,6 +809,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
 
     uint64_t order_ = *order;
     uint64_t format = old_format ? 1 : 2;
+
     ImageOptions opts;
     int r;
 
@@ -791,15 +824,18 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     r = opts.set(RBD_IMAGE_OPTION_STRIPE_COUNT, stripe_count);
     assert(r == 0);
 
+    // w/ striping options w/o journal options w/o mirror options
     r = create(io_ctx, imgname, size, opts, "", "", false);
 
     int r1 = opts.get(RBD_IMAGE_OPTION_ORDER, &order_);
     assert(r1 == 0);
+
     *order = order_;
 
     return r;
   }
 
+  // striping options + journal options + mirror options
   int create(IoCtx& io_ctx, const char *imgname, uint64_t size,
 	     ImageOptions& opts,
              const std::string &non_primary_global_image_id,
@@ -807,6 +843,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
              bool skip_mirror_enable)
   {
     CephContext *cct = (CephContext *)io_ctx.cct();
+
     ldout(cct, 10) << __func__ << " name=" << imgname << ", "
                    << "size=" << size << ", opts=" << opts << dendl;
 
@@ -885,6 +922,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
 	    IoCtx& c_ioctx, const char *c_name, ImageOptions& c_opts)
   {
     CephContext *cct = (CephContext *)p_ioctx.cct();
+
     if (p_snap_name == NULL) {
       lderr(cct) << "image to be cloned must be a snapshot" << dendl;
       return -EINVAL;
@@ -1156,6 +1194,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
       return r;
 
     image_info(ictx, info, infosize);
+
     return 0;
   }
 
@@ -1198,6 +1237,9 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     return ictx->get_parent_overlap(ictx->snap_id, overlap);
   }
 
+  // called by
+  // librbd::Image::parent_info
+  // rbd_get_parent_info
   int get_parent_info(ImageCtx *ictx, string *parent_pool_name,
 		      string *parent_name, string *parent_snap_name)
   {
@@ -1293,6 +1335,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     return 0;
   }
 
+  // called by rbd_lock_acquire/Image::lock_acquire
   int lock_acquire(ImageCtx *ictx, rbd_lock_mode_t lock_mode)
   {
     CephContext *cct = ictx->cct;
@@ -1304,6 +1347,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     }
 
     C_SaferCond lock_ctx;
+
     {
       RWLock::WLocker l(ictx->owner_lock);
 
@@ -1313,7 +1357,13 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
       }
 
       if (ictx->get_exclusive_lock_policy()->may_auto_request_lock()) {
-	ictx->set_exclusive_lock_policy(
+
+        // only true for AutomaticPolicy, always be false for StandardPolicy
+        // and MirrorExclusiveLockPolicy, so if initially we have the
+        // AutomaticPolicy then once the external program try to request the
+        // exclusive lock explicitly, we will transit into StandardPolicy
+
+        ictx->set_exclusive_lock_policy(
 	  new exclusive_lock::StandardPolicy(ictx));
       }
 
@@ -1460,11 +1510,18 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     return 0;
   }
 
+  // called by
+  // rbd_remove
+  // rbd_remove_with_progress
+  // RBD::remove
+  // RBD::remove_with_progress
+  // librbd::clone, when failed
   int remove(IoCtx& io_ctx, const std::string &image_name,
              const std::string &image_id, ProgressContext& prog_ctx,
-             bool force)
+             bool force) // force default to false, no one calls it with true
   {
     CephContext *cct((CephContext *)io_ctx.cct());
+
     ldout(cct, 20) << "remove " << &io_ctx << " "
                    << (image_id.empty() ? image_name : image_id) << dendl;
 
@@ -1515,6 +1572,11 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     return 0;
   }
 
+  // called by
+  // Image::snap_remove
+  // Image::snap_remove2
+  // rbd_snap_remove
+  // rbd_snap_remove2
   int snap_remove(ImageCtx *ictx, const char *snap_name, uint32_t flags,
 		  ProgressContext& pctx)
   {
@@ -1525,6 +1587,9 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     r = ictx->state->refresh_if_required();
     if (r < 0)
       return r;
+
+    // RBD_SNAP_REMOVE_FORCE = (RBD_SNAP_REMOVE_UNPROTECT | RBD_SNAP_REMOVE_FLATTEN), which
+    // was set by rbd::action::snap::do_remove_snap
 
     if (flags & RBD_SNAP_REMOVE_FLATTEN) {
 	r = flatten_children(ictx, snap_name, pctx);
@@ -1550,6 +1615,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
       if (r < 0) {
 	return r;
       }
+
       if (is_protected) {
 	lderr(ictx->cct) << "snapshot is still protected after unprotection" << dendl;
 	ceph_abort();
@@ -1560,6 +1626,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     ictx->operations->snap_remove(cls::rbd::UserSnapshotNamespace(), snap_name, &ctx);
 
     r = ctx.wait();
+
     return r;
   }
 
@@ -2010,10 +2077,16 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
   int clip_io(ImageCtx *ictx, uint64_t off, uint64_t *len)
   {
     assert(ictx->snap_lock.is_locked());
+
     uint64_t image_size = ictx->get_image_size(ictx->snap_id);
+
+    // ictx->snap_exists should always be true unless be set to false by
+    // RefreshRequest<I>::apply, which means we are reading from a non-exist snapshot,
+    // i.e., the snapshot has been removed when we are still being reading from it
     bool snap_exists = ictx->snap_exists;
 
     if (!snap_exists)
+      // the snaphost we previously operated has been removed
       return -ENOENT;
 
     // special-case "len == 0" requests: always valid
@@ -2042,6 +2115,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     }
 
     ictx->user_flushed();
+
     C_SaferCond ctx;
     {
       RWLock::RLocker owner_locker(ictx->owner_lock);
@@ -2053,6 +2127,10 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     return r;
   }
 
+  // called by
+  // Image::invalidate_cache
+  // rbd_invalidate_cache
+  // InvalidateCacheCommand::call
   int invalidate_cache(ImageCtx *ictx)
   {
     CephContext *cct = ictx->cct;
@@ -2127,6 +2205,8 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     }
   };
 
+  // called by
+  // ImageReadRequest<I>::send_request
   void readahead(ImageCtx *ictx,
                  const vector<pair<uint64_t,uint64_t> >& image_extents)
   {
@@ -2151,25 +2231,30 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     ictx->md_lock.put_write();
  
     pair<uint64_t, uint64_t> readahead_extent = ictx->readahead.update(image_extents, image_size);
+
     uint64_t readahead_offset = readahead_extent.first;
     uint64_t readahead_length = readahead_extent.second;
 
     if (readahead_length > 0) {
       ldout(ictx->cct, 20) << "(readahead logical) " << readahead_offset << "~" << readahead_length << dendl;
+
       map<object_t,vector<ObjectExtent> > readahead_object_extents;
       Striper::file_to_extents(ictx->cct, ictx->format_string, &ictx->layout,
 			       readahead_offset, readahead_length, 0, readahead_object_extents);
+
       for (map<object_t,vector<ObjectExtent> >::iterator p = readahead_object_extents.begin(); p != readahead_object_extents.end(); ++p) {
 	for (vector<ObjectExtent>::iterator q = p->second.begin(); q != p->second.end(); ++q) {
 	  ldout(ictx->cct, 20) << "(readahead) oid " << q->oid << " " << q->offset << "~" << q->length << dendl;
 
 	  Context *req_comp = new C_RBD_Readahead(ictx, q->oid, q->offset, q->length);
 	  ictx->readahead.inc_pending();
+
 	  ictx->aio_read_from_cache(q->oid, q->objectno, NULL,
 				    q->length, q->offset,
 				    req_comp, 0);
 	}
       }
+
       ictx->perfcounter->inc(l_librbd_readahead);
       ictx->perfcounter->inc(l_librbd_readahead_bytes, readahead_length);
     }

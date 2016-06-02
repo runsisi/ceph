@@ -27,6 +27,17 @@
 #include "include/object.h"
 #include "os/ObjectStore.h"
 
+// map_cacher.hpp defines three classes:
+// class Transaction;
+// class StoreDriver;
+// class MapCacher;
+
+// created by
+// OSD::recursive_remove_collection
+// member of PG
+// member of Scrub::Store
+// ceph_objectstore_tool.cc/ObjectStoreTool::get_object
+// ceph_objectstore_tool.cc/do_remove_object
 class OSDriver : public MapCacher::StoreDriver<std::string, bufferlist> {
   ObjectStore *os;
   coll_t cid;
@@ -65,6 +76,7 @@ public:
 
   OSDriver(ObjectStore *os, coll_t cid, const ghobject_t &hoid) :
     os(os), cid(cid), hoid(hoid) {}
+
   int get_keys(
     const std::set<std::string> &keys,
     std::map<std::string, bufferlist> *out);
@@ -165,6 +177,7 @@ public:
   const int64_t pool;
   const shard_id_t shard;
   const string shard_prefix;
+
   SnapMapper(
     CephContext* cct,
     MapCacher::StoreDriver<std::string, bufferlist> *driver,

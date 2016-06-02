@@ -1552,6 +1552,7 @@ void Paxos::propose_pending()
 
   committing_finishers.swap(pending_finishers);
   state = STATE_UPDATING;
+
   begin(bl);
 }
 
@@ -1562,13 +1563,25 @@ void Paxos::queue_pending_finisher(Context *onfinished)
   pending_finishers.push_back(onfinished);
 }
 
+// called by
+// ConfigKeyService::store_put
+// ConfigKeyService::store_delete
+// MDSMonitor::update_metadata
+// Monitor::update_mon_metadata
+// Monitor::tick
+// Paxos::trim
+// PaxosService::propose_pending
+// PaxosService::maybe_trim
 MonitorDBStore::TransactionRef Paxos::get_pending_transaction()
 {
   assert(mon->is_leader());
+
   if (!pending_proposal) {
     pending_proposal.reset(new MonitorDBStore::Transaction);
+
     assert(pending_finishers.empty());
   }
+
   return pending_proposal;
 }
 
