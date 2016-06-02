@@ -66,6 +66,7 @@ void EventPreprocessor<I>::refresh_image() {
 
   Context *ctx = create_context_callback<
     EventPreprocessor<I>, &EventPreprocessor<I>::handle_refresh_image>(this);
+
   m_local_image_ctx.state->refresh(ctx);
 }
 
@@ -126,9 +127,11 @@ int EventPreprocessor<I>::preprocess_snap_rename(
 
   dout(20) << ": mapping remote snap id " << event.snap_id << " "
            << "to local snap id " << snap_id_it->second << dendl;
+
   m_snap_seqs_updated = true;
   m_snap_seqs[event.snap_id] = snap_id_it->second;
   event.snap_id = snap_id_it->second;
+
   return 0;
 }
 

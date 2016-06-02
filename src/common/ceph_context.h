@@ -130,15 +130,20 @@ public:
   template<typename T>
   void lookup_or_create_singleton_object(T*& p, const std::string &name) {
     ceph_spin_lock(&_associated_objs_lock);
+
+    // std::map<std::string, SingletonWrapper*>
     if (!_associated_objs.count(name)) {
       p = new T(this);
       _associated_objs[name] = new TypedSingletonWrapper<T>(p);
     } else {
       TypedSingletonWrapper<T> *wrapper =
         dynamic_cast<TypedSingletonWrapper<T> *>(_associated_objs[name]);
+
       assert(wrapper != NULL);
+
       p = wrapper->singleton;
     }
+
     ceph_spin_unlock(&_associated_objs_lock);
   }
   /**
@@ -213,6 +218,7 @@ private:
   struct TypedSingletonWrapper : public SingletonWrapper {
     TypedSingletonWrapper(T *p) : singleton(p) {
     }
+
     virtual ~TypedSingletonWrapper() {
       delete singleton;
     }

@@ -44,6 +44,7 @@ void OpenImageRequest<I>::send_open_image() {
   Context *ctx = create_context_callback<
     OpenImageRequest<I>, &OpenImageRequest<I>::handle_open_image>(
       this);
+
   (*m_image_ctx)->state->open(ctx);
 }
 
@@ -74,6 +75,7 @@ void OpenImageRequest<I>::send_close_image(int r) {
       this);
   CloseImageRequest<I> *request = CloseImageRequest<I>::create(
     m_image_ctx, m_work_queue, true, ctx);
+
   request->send();
 }
 

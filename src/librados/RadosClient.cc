@@ -277,6 +277,7 @@ int librados::RadosClient::connect()
   monclient.set_want_keys(
       CEPH_ENTITY_TYPE_MON | CEPH_ENTITY_TYPE_OSD | CEPH_ENTITY_TYPE_MGR);
   ldout(cct, 1) << "calling monclient init" << dendl;
+
   err = monclient.init();
   if (err) {
     ldout(cct, 0) << conf->name << " initialization error " << cpp_strerror(-err) << dendl;

@@ -13,6 +13,8 @@ namespace librbd {
 
 class ImageCtx;
 
+// AsyncOperation is a member variable of AioCompletion, so it is associated with
+// data aio, while the AsyncRequest is for image mgmt/object_map op
 class AsyncOperation {
 public:
 
@@ -30,9 +32,14 @@ public:
     return m_xlist_item.is_on_list();
   }
 
+  // push back of m_image_ctx->async_ops, started by AioCompletion::start_op which
+  // called by AioImageRequestWQ::_void_dequeue
   void start_op(ImageCtx &image_ctx);
+
+  // remove from m_image_ctx->async_ops
   void finish_op();
 
+  // called by ImageCtx::flush_async_operations
   void add_flush_context(Context *on_finish);
 
 private:

@@ -46,6 +46,7 @@ void CreateRequest<I>::send() {
     complete(-EDOM);
     return;
   }
+
   if (m_splay_width == 0) {
     complete(-EINVAL);
     return;
@@ -74,7 +75,10 @@ void CreateRequest<I>::get_pool_id() {
     return;
   }
 
+  // if we did not provide the pool name, then the m_pool_id will has the
+  // default value -1
   m_pool_id = data_ioctx.get_id();
+
   create_journal();
 }
 
@@ -83,12 +87,15 @@ void CreateRequest<I>::create_journal() {
   ldout(m_cct, 20) << this << " " << __func__ << dendl;
 
   ImageCtx::get_timer_instance(m_cct, &m_timer, &m_timer_lock);
+
   m_journaler = new Journaler(m_op_work_queue, m_timer, m_timer_lock,
                               m_ioctx, m_image_id, m_image_client_id, {});
 
   using klass = CreateRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_create_journal>(this);
 
+  // register omaps, i.e., "order", "splay_width", etc., for "journal.xxx"
+  // metadata object
   m_journaler->create(m_order, m_splay_width, m_pool_id, ctx);
 }
 
@@ -113,7 +120,16 @@ void CreateRequest<I>::allocate_journal_tag() {
   using klass = CreateRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_journal_tag>(this);
 
+  // if we are creating journal for local mirror image, then tag_data.mirror_uuid
+  // is remote cluster's mirror uuid, else it is LOCAL_MIRROR_UUID which means
+  // we are creating a primary image
   ::encode(m_tag_data, m_bl);
+
+  // Tag::TAG_CLASS_NEW, create the first tag to identify if we are
+  // a local mirror image, i.e., a non-primary image or a primary image
+  // note: only ImageReplayer can create a new image which is non-primary,
+  // all other non-primary images are from demotion when mirror is enabled
+  // for these images
   m_journaler->allocate_tag(m_tag_class, m_bl, &m_tag, ctx);
 }
 
@@ -127,6 +143,7 @@ Context *CreateRequest<I>::handle_journal_tag(int *result) {
     return nullptr;
   }
 
+  // register image client
   register_client();
   return nullptr;
 }
@@ -141,6 +158,7 @@ void CreateRequest<I>::register_client() {
   using klass = CreateRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_register_client>(this);
 
+  // register <m_image_client_id, m_bl> on journal metadata object omap
   m_journaler->register_client(m_bl, ctx);
 }
 

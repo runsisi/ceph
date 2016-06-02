@@ -46,6 +46,7 @@ std::string Journaler::object_oid_prefix(int pool_id,
 Journaler::Threads::Threads(CephContext *cct)
     : timer_lock("Journaler::timer_lock") {
   thread_pool = new ThreadPool(cct, "Journaler::thread_pool", "tp_journal", 1);
+
   thread_pool->start();
 
   work_queue = new ContextWQ("Journaler::work_queue", 60, thread_pool);
@@ -91,9 +92,13 @@ void Journaler::set_up(ContextWQ *work_queue, SafeTimer *timer,
                        const std::string &journal_id,
                        const Settings &settings) {
   m_header_ioctx.dup(header_ioctx);
+
   m_cct = reinterpret_cast<CephContext *>(m_header_ioctx.cct());
 
+  // "journal." + journal_id(i.e., image local id)
   m_header_oid = header_oid(journal_id);
+
+  // "journal_data." + pool_id + "." + journal_id + "."
   m_object_oid_prefix = object_oid_prefix(m_header_ioctx.get_id(), journal_id);
 
   m_metadata = new JournalMetadata(work_queue, timer, timer_lock,
@@ -133,6 +138,12 @@ void Journaler::exists(Context *on_finish) const {
 
 void Journaler::init(Context *on_init) {
   m_initialized = true;
+
+  // 1) watch the journal.xxx object, i.e., the journal metadata object
+  // 2) get immutable and mutable metadata etc.
+  // 3) create JournalTrimmer instance
+
+  // call Journaler::init_complete to create JournalTrimmer instance
   m_metadata->init(new C_InitJournaler(this, on_init));
 }
 
@@ -141,11 +152,14 @@ int Journaler::init_complete() {
 
   if (pool_id < 0 || pool_id == m_header_ioctx.get_id()) {
     ldout(m_cct, 20) << "using image pool for journal data" << dendl;
+
     m_data_ioctx.dup(m_header_ioctx);
   } else {
     ldout(m_cct, 20) << "using pool id=" << pool_id << " for journal data"
 		     << dendl;
+
     librados::Rados rados(m_header_ioctx);
+
     int r = rados.ioctx_create2(pool_id, m_data_ioctx);
     if (r < 0) {
       if (r == -ENOENT) {
@@ -155,6 +169,8 @@ int Journaler::init_complete() {
       return r;
     }
   }
+
+  // used by Journaler::committed and Journaler::remove
   m_trimmer = new JournalTrimmer(m_data_ioctx, m_object_oid_prefix,
                                  m_metadata);
   return 0;
@@ -166,6 +182,7 @@ void Journaler::shut_down() {
   ctx.wait();
 }
 
+// called by Journaler::shut_down, RemoveRequest<I>::shut_down_journaler
 void Journaler::shut_down(Context *on_finish) {
   assert(m_player == nullptr);
   assert(m_recorder == nullptr);
@@ -179,7 +196,9 @@ void Journaler::shut_down(Context *on_finish) {
       on_finish->complete(0);
     });
 
+  // m_trimmer was created during Journaler::init
   JournalTrimmer *trimmer = nullptr;
+
   std::swap(trimmer, m_trimmer);
   if (trimmer == nullptr) {
     metadata->shut_down(on_finish);
@@ -188,8 +207,13 @@ void Journaler::shut_down(Context *on_finish) {
 
   on_finish = new FunctionContext([trimmer, metadata, on_finish](int r) {
       delete trimmer;
+
+      // m_ioctx.aio_unwatch -> flush_commit_position -> rados.aio_watch_flush
       metadata->shut_down(on_finish);
     });
+
+  // m_journal_metadata->remove_listener and
+  // m_journal_metadata->flush_commit_position
   trimmer->shut_down(on_finish);
 }
 
@@ -206,9 +230,13 @@ void Journaler::get_mutable_metadata(uint64_t *minimum_set,
 				     uint64_t *active_set,
 				     RegisteredClients *clients,
 				     Context *on_finish) {
+  // get <minimum set, active set, set<Client>>
   m_metadata->get_mutable_metadata(minimum_set, active_set, clients, on_finish);
 }
 
+// called by
+// Journal<I>::create
+// librbd::image::CreateRequest<I>::create_journal
 void Journaler::create(uint8_t order, uint8_t splay_width,
                       int64_t pool_id, Context *on_finish) {
   if (order > 64 || order < 12) {
@@ -228,6 +256,7 @@ void Journaler::create(uint8_t order, uint8_t splay_width,
 
   librados::AioCompletion *comp =
     librados::Rados::aio_create_completion(on_finish, nullptr, rados_ctx_callback);
+
   int r = m_header_ioctx.aio_operate(m_header_oid, comp, &op);
   assert(r == 0);
   comp->release();
@@ -238,12 +267,15 @@ void Journaler::remove(bool force, Context *on_finish) {
   on_finish = new FunctionContext([this, on_finish](int r) {
       librados::AioCompletion *comp = librados::Rados::aio_create_completion(
         on_finish, nullptr, utils::rados_ctx_callback);
+
+      // remove "journal.xxx' metadata object
       r = m_header_ioctx.aio_remove(m_header_oid, comp);
       assert(r == 0);
       comp->release();
     });
 
   on_finish = new FunctionContext([this, force, on_finish](int r) {
+      // remove journal objects
       m_trimmer->remove_objects(force, on_finish);
     });
 
@@ -254,6 +286,7 @@ void Journaler::flush_commit_position(Context *on_safe) {
   m_metadata->flush_commit_position(on_safe);
 }
 
+// called by Journal<I>::handle_initialized
 void Journaler::add_listener(JournalMetadataListener *listener) {
   m_metadata->add_listener(listener);
 }
@@ -262,9 +295,12 @@ void Journaler::remove_listener(JournalMetadataListener *listener) {
   m_metadata->remove_listener(listener);
 }
 
+// called by rbd::action::journal::Journaler::init
 int Journaler::register_client(const bufferlist &data) {
   C_SaferCond cond;
+
   register_client(data, &cond);
+
   return cond.wait();
 }
 
@@ -274,7 +310,13 @@ int Journaler::unregister_client() {
   return cond.wait();
 }
 
+// called by
+// librbd::journal::CreateRequest<I>::register_client
+// rbd::mirror::image_replayer::BootstrapRequest<I>::register_client
 void Journaler::register_client(const bufferlist &data, Context *on_finish) {
+
+  // register JournalMetadata::m_client_id, i.e. Journaler::m_client_id
+
   return m_metadata->register_client(data, on_finish);
 }
 
@@ -289,12 +331,17 @@ void Journaler::unregister_client(Context *on_finish) {
 void Journaler::get_client(const std::string &client_id,
                            cls::journal::Client *client,
                            Context *on_finish) {
+  // get from journal metadata object's omap entry "client_" + client_id
   m_metadata->get_client(client_id, client, on_finish);
 }
 
 int Journaler::get_cached_client(const std::string &client_id,
                                  cls::journal::Client *client) {
+  // set<cls::journal::Client>
   RegisteredClients clients;
+
+  // JournalMetadata::m_registered_clients was set in
+  // JournalMetadata::handle_refresh_complete
   m_metadata->get_registered_clients(&clients);
 
   auto it = clients.find({client_id, {}});
@@ -306,14 +353,23 @@ int Journaler::get_cached_client(const std::string &client_id,
   return 0;
 }
 
+// not used by anyone
 void Journaler::allocate_tag(const bufferlist &data, cls::journal::Tag *tag,
                              Context *on_finish) {
   m_metadata->allocate_tag(cls::journal::Tag::TAG_CLASS_NEW, data, tag,
                            on_finish);
 }
 
+// called by
+// librbd::image::CreateRequest<I>::journal_create -> CreateRequest<I>::allocate_journal_tag
+// Journal<I>::reset -> Journal<I>::create -> CreateRequest<I>::allocate_journal_tag
+// Journal<I>::promote -> allocate_journaler_tag
+// Journal<I>::demote -> allocate_journaler_tag,
+// Journal<I>::allocate_tag
 void Journaler::allocate_tag(uint64_t tag_class, const bufferlist &data,
                              cls::journal::Tag *tag, Context *on_finish) {
+  // allocate a tag with specified tag class and tag data
+
   m_metadata->allocate_tag(tag_class, data, tag, on_finish);
 }
 
@@ -327,17 +383,21 @@ void Journaler::get_tags(uint64_t tag_class, Tags *tags, Context *on_finish) {
 
 void Journaler::get_tags(uint64_t start_after_tag_tid, uint64_t tag_class,
                          Tags *tags, Context *on_finish) {
+  // get tags and exclude those have been committed by the current client,
+  // i.e., m_client_id
   m_metadata->get_tags(start_after_tag_tid, tag_class, tags, on_finish);
 }
 
 void Journaler::start_replay(ReplayHandler *replay_handler) {
-  create_player(replay_handler);
+  create_player(replay_handler); // m_player = new JournalPlayer
+
   m_player->prefetch();
 }
 
 void Journaler::start_live_replay(ReplayHandler *replay_handler,
                                   double interval) {
-  create_player(replay_handler);
+  create_player(replay_handler); // m_player = new JournalPlayer
+
   m_player->prefetch_and_watch(interval);
 }
 
@@ -347,6 +407,7 @@ bool Journaler::try_pop_front(ReplayEntry *replay_entry,
 
   Entry entry;
   uint64_t commit_tid;
+
   if (!m_player->try_pop_front(&entry, &commit_tid)) {
     return false;
   }
@@ -355,9 +416,11 @@ bool Journaler::try_pop_front(ReplayEntry *replay_entry,
   if (tag_tid != nullptr) {
     *tag_tid = entry.get_tag_tid();
   }
+
   return true;
 }
 
+// only called by test code
 void Journaler::stop_replay() {
   C_SaferCond ctx;
   stop_replay(&ctx);
@@ -373,15 +436,23 @@ void Journaler::stop_replay(Context *on_finish) {
       delete player;
       on_finish->complete(r);
     });
+
   player->shut_down(on_finish);
 }
 
+// called by Journal<I>::handle_replay_process_safe
+// and ImageReplayer<I>::handle_process_entry_safe
 void Journaler::committed(const ReplayEntry &replay_entry) {
+  // call m_journal_metadata->committed
   m_trimmer->committed(replay_entry.get_commit_tid());
 }
 
+// called by Journal<I>::demote, Journal<I>::complete_event, Journal<I>::handle_io_event_safe
+// and Journal<I>::handle_op_event_safe
 void Journaler::committed(const Future &future) {
   FutureImplPtr future_impl = future.get_future_impl();
+
+  // call m_journal_metadata->committed
   m_trimmer->committed(future_impl->get_commit_tid());
 }
 
@@ -398,6 +469,7 @@ void Journaler::start_append(int flush_interval, uint64_t flush_bytes,
 
 void Journaler::stop_append(Context *on_safe) {
   JournalRecorder *recorder = nullptr;
+
   std::swap(recorder, m_recorder);
   assert(recorder != nullptr);
 
@@ -405,6 +477,8 @@ void Journaler::stop_append(Context *on_safe) {
       delete recorder;
       on_safe->complete(r);
     });
+
+  // flush a splay width of ObjectRecorder(s)
   recorder->flush(on_safe);
 }
 
@@ -418,6 +492,7 @@ uint64_t Journaler::get_max_append_size() const {
   return max_payload_size;
 }
 
+// m_recorder instance was created by Journaler::start_append
 Future Journaler::append(uint64_t tag_tid, const bufferlist &payload_bl) {
   return m_recorder->append(tag_tid, payload_bl);
 }
@@ -426,8 +501,10 @@ void Journaler::flush_append(Context *on_safe) {
   m_recorder->flush(on_safe);
 }
 
+// called by Journaler::start_replay, Journaler::start_live_replay
 void Journaler::create_player(ReplayHandler *replay_handler) {
   assert(m_player == NULL);
+
   m_player = new JournalPlayer(m_data_ioctx, m_object_oid_prefix, m_metadata,
                                replay_handler);
 }

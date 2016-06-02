@@ -311,12 +311,18 @@ pair<uint64_t, uint64_t> PerfCounters::get_tavg_ms(int idx) const
 
   assert(idx > m_lower_bound);
   assert(idx < m_upper_bound);
+
   const perf_counter_data_any_d& data(m_data[idx - m_lower_bound - 1]);
+
   if (!(data.type & PERFCOUNTER_TIME))
     return make_pair(0, 0);
   if (!(data.type & PERFCOUNTER_LONGRUNAVG))
     return make_pair(0, 0);
+
+  // <time in ns, count>
   pair<uint64_t,uint64_t> a = data.read_avg();
+
+  // <count, time in ms>
   return make_pair(a.second, a.first / 1000000ull);
 }
 

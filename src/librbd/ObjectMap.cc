@@ -40,13 +40,18 @@ int ObjectMap::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
 
 std::string ObjectMap::object_map_name(const std::string &image_id,
 				       uint64_t snap_id) {
+  // "rbd_object_map."
   std::string oid(RBD_OBJECT_MAP_PREFIX + image_id);
+
   if (snap_id != CEPH_NOSNAP) {
     std::stringstream snap_suffix;
+
     snap_suffix << "." << std::setfill('0') << std::setw(16) << std::hex
 		<< snap_id;
+
     oid += snap_suffix.str();
   }
+
   return oid;
 }
 
@@ -105,6 +110,7 @@ bool ObjectMap::update_required(uint64_t object_no, uint8_t new_state) {
 void ObjectMap::open(Context *on_finish) {
   object_map::RefreshRequest<> *req = new object_map::RefreshRequest<>(
     m_image_ctx, &m_object_map, m_snap_id, on_finish);
+
   req->send();
 }
 
@@ -116,6 +122,7 @@ void ObjectMap::close(Context *on_finish) {
 
   object_map::UnlockRequest<> *req = new object_map::UnlockRequest<>(
     m_image_ctx, on_finish);
+
   req->send();
 }
 
@@ -125,6 +132,7 @@ void ObjectMap::rollback(uint64_t snap_id, Context *on_finish) {
 
   object_map::SnapshotRollbackRequest *req =
     new object_map::SnapshotRollbackRequest(m_image_ctx, snap_id, on_finish);
+
   req->send();
 }
 
@@ -161,6 +169,7 @@ void ObjectMap::aio_save(Context *on_finish) {
   if (m_snap_id == CEPH_NOSNAP) {
     rados::cls::lock::assert_locked(&op, RBD_LOCK_NAME, LOCK_EXCLUSIVE, "", "");
   }
+
   cls_client::object_map_save(&op, m_object_map);
 
   std::string oid(object_map_name(m_image_ctx.id, m_snap_id));
@@ -184,9 +193,12 @@ void ObjectMap::aio_resize(uint64_t new_size, uint8_t default_object_state,
   object_map::ResizeRequest *req = new object_map::ResizeRequest(
     m_image_ctx, &m_object_map, m_snap_id, new_size, default_object_state,
     on_finish);
+
   req->send();
 }
 
+// called by AbstractAioObjectWrite::send_pre, AbstractAioObjectWrite::send_post
+// and UpdateObjectMap::send
 bool ObjectMap::aio_update(uint64_t object_no, uint8_t new_state,
 			   const boost::optional<uint8_t> &current_state,
 			   Context *on_finish)
@@ -214,6 +226,7 @@ bool ObjectMap::aio_update(uint64_t start_object_no, uint64_t end_object_no,
                  << (current_state ?
                        stringify(static_cast<uint32_t>(*current_state)) : "")
 		 << "->" << static_cast<uint32_t>(new_state) << dendl;
+
   if (end_object_no > m_object_map.size()) {
     ldout(cct, 20) << "skipping update of invalid object map" << dendl;
     return false;
@@ -222,6 +235,7 @@ bool ObjectMap::aio_update(uint64_t start_object_no, uint64_t end_object_no,
   for (uint64_t object_no = start_object_no; object_no < end_object_no;
        ++object_no) {
     uint8_t state = m_object_map[object_no];
+
     if ((!current_state || state == *current_state ||
           (*current_state == OBJECT_EXISTS && state == OBJECT_EXISTS_CLEAN)) &&
         state != new_state) {

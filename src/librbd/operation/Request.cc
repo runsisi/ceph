@@ -22,15 +22,26 @@ Request<I>::Request(I &image_ctx, Context *on_finish, uint64_t journal_op_tid)
 template <typename I>
 void Request<I>::send() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
 
   // automatically create the event if we don't need to worry
   // about affecting concurrent IO ops
   if (can_affect_io() || !append_op_event()) {
+
+    // 1) this op will affect data io, so the sequence of the data io and
+    // the mgmt op is important, we need to stop the data io first,
+    // see ResizeRequest<I>::send_pre_block_writes and
+    // SnapshotCreateRequest<I>::send_suspend_aio
+    // or 2) journal disabled, no need to append op event
+    // or 3) journal enabled, but it's not ready
+
+    // pure virtual function
     send_op();
   }
 }
 
+// called by: ResizeRequest, SnapshotCreateRequest, and SnapshotRollbackRequest
 template <typename I>
 Context *Request<I>::create_context_finisher(int r) {
   // automatically commit the event if required (delete after commit)
@@ -45,6 +56,7 @@ Context *Request<I>::create_context_finisher(int r) {
   return util::create_context_callback<Request<I>, &Request<I>::finish>(this);
 }
 
+// called by librbd/AsyncRequest::complete
 template <typename I>
 void Request<I>::finish_and_destroy(int r) {
   I &image_ctx = this->m_image_ctx;
@@ -66,35 +78,57 @@ void Request<I>::finish(int r) {
   CephContext *cct = image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
+  // either we need appended the event or the event has committed
   assert(!m_appended_op_event || m_committed_op_event);
+
+  // finish_request() and complete m_on_finish
   AsyncRequest<I>::finish(r);
 }
 
+// called by Request<I>::send if can_affect_io() returns false, i.e., neither
+// ResizeRequest nor SnapshotCreateRequest
 template <typename I>
 bool Request<I>::append_op_event() {
   I &image_ctx = this->m_image_ctx;
 
   assert(image_ctx.owner_lock.is_locked());
+
   RWLock::RLocker snap_locker(image_ctx.snap_lock);
   if (image_ctx.journal != nullptr &&
       image_ctx.journal->is_journal_appending()) {
+
+    // if the journal are opened by acquiring exclusive lock, then
+    // ImageCtx::journal is set before the journal has opened, see
+    // AcquireRequest<I>::send_open_journal
+
+    // allocate op event tid and append the op event now
     append_op_event(util::create_context_callback<
       Request<I>, &Request<I>::handle_op_event_safe>(this));
+
     return true;
   }
+
+  // journal not enabled or lirbd::Journal is not ready
   return false;
 }
 
+// called by
+// Request<I>::create_context_finisher,
+// Request<I>::finish_and_destroy,
 template <typename I>
 bool Request<I>::commit_op_event(int r) {
   I &image_ctx = this->m_image_ctx;
   RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
+  // m_appended_op_event set to true in Request<I>::replay_op_ready or
+  // C_OpEventSafe::finish(r >= 0), see librbd/operation/Request.h
 
   if (!m_appended_op_event) {
     return false;
   }
 
   assert(m_op_tid != 0);
+
   assert(!m_committed_op_event);
   m_committed_op_event = true;
 
@@ -128,21 +162,29 @@ void Request<I>::handle_commit_op_event(int r, int original_ret_val) {
   finish(r);
 }
 
+// called by template Request<I>::append_op_event
 template <typename I>
 void Request<I>::replay_op_ready(Context *on_safe) {
   I &image_ctx = this->m_image_ctx;
   assert(image_ctx.owner_lock.is_locked());
   assert(image_ctx.snap_lock.is_locked());
+
+  // TODO: for ResizeRequest and SnapshotCreateRequest this is not true ???
   assert(m_op_tid != 0);
 
   m_appended_op_event = true;
+
+  // will call Replay<I>::replay_op_ready eventually
   image_ctx.journal->replay_op_ready(
     m_op_tid, util::create_async_context_callback(image_ctx, on_safe));
 }
 
+// called by template Request<I>::append_op_event if journaling is enabled
+// and we are currently not in replaying
 template <typename I>
 void Request<I>::append_op_event(Context *on_safe) {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
   assert(image_ctx.snap_lock.is_locked());
 
@@ -150,11 +192,14 @@ void Request<I>::append_op_event(Context *on_safe) {
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   m_op_tid = image_ctx.journal->allocate_op_tid();
+
+  // librbd::Journal must be STATE_READY
   image_ctx.journal->append_op_event(
     m_op_tid, journal::EventEntry{create_event(m_op_tid)},
     new C_AppendOpEvent(this, on_safe));
 }
 
+// neither ResizeRequest nor SnapshotCreateRequest
 template <typename I>
 void Request<I>::handle_op_event_safe(int r) {
   I &image_ctx = this->m_image_ctx;
@@ -164,13 +209,20 @@ void Request<I>::handle_op_event_safe(int r) {
   if (r < 0) {
     lderr(cct) << "failed to commit op event to journal: " << cpp_strerror(r)
                << dendl;
+
+    // append op event to journal failed, finish it early
     this->finish(r);
     delete this;
   } else {
+
+    // request->m_appended_op_event has set to true
+
     assert(!can_affect_io());
 
     // haven't started the request state machine yet
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
+
+    // pure virtual
     send_op();
   }
 }

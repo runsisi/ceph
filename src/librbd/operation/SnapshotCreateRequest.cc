@@ -128,15 +128,26 @@ Context *SnapshotCreateRequest<I>::handle_suspend_aio(int *result) {
 template <typename I>
 void SnapshotCreateRequest<I>::send_append_op_event() {
   I &image_ctx = this->m_image_ctx;
+
+  // see http://stackoverflow.com/questions/5533354/what-does-a-call-to-this-template-somename-do
+  // will call the template librbd::operation::Request::append_op_event(T *request),
+  // append_op_event only returns false when image_ctx.journal is nullptr
   if (!this->template append_op_event<
         SnapshotCreateRequest<I>,
         &SnapshotCreateRequest<I>::handle_append_op_event>(this)) {
+
+    // image_ctx.journal is nullptr, so we can leverage the append_op_event
+    // to continue the state machine, so we continue it manually
+
     send_allocate_snap_id();
     return;
   }
 
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
+
+  // append_op_event called above succeeded, handle_append_op_event will
+  // continue the state machine, i.e., handle_append_op_event
 }
 
 template <typename I>
@@ -262,12 +273,14 @@ Context *SnapshotCreateRequest<I>::send_create_object_map() {
 
   {
     RWLock::RLocker object_map_lock(image_ctx.object_map_lock);
+
     image_ctx.object_map->snapshot_add(
       m_snap_id, create_context_callback<
         SnapshotCreateRequest<I>,
         &SnapshotCreateRequest<I>::handle_create_object_map>(this));
   }
   image_ctx.snap_lock.put_read();
+
   return nullptr;
 }
 
@@ -345,6 +358,8 @@ void SnapshotCreateRequest<I>::update_snap_context() {
 
   image_ctx.snapc.seq = m_snap_id;
   image_ctx.snapc.snaps.swap(snaps);
+
+  // set IoCtxImpl::snapc
   image_ctx.data_ctx.selfmanaged_snap_set_write_ctx(
     image_ctx.snapc.seq, image_ctx.snaps);
 }

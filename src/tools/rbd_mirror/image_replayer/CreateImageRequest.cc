@@ -43,6 +43,10 @@ CreateImageRequest<I>::CreateImageRequest(librados::IoCtx &local_io_ctx,
 
 template <typename I>
 void CreateImageRequest<I>::send() {
+
+  // we are to create a local mirror image of the remote image, the remote
+  // image may be a clone of another pool@image@snap
+
   int r = validate_parent();
   if (r < 0) {
     error(r);
@@ -50,8 +54,15 @@ void CreateImageRequest<I>::send() {
   }
 
   if (m_remote_parent_spec.pool_id == -1) {
+
+    // the remote image is not a clone
+
     create_image();
   } else {
+
+    // the remote image is a clone, the check if the parent of the
+    // remote image has mirror enabled
+
     get_parent_global_image_id();
   }
 }
@@ -75,16 +86,21 @@ void CreateImageRequest<I>::create_image() {
 
   std::string id = librbd::util::generate_image_id(m_local_io_ctx);
 
+  // m_global_image_id is used to enable mirroring of the newly created local mirror
+  // image if the mirror mode is pool mode, the newly create tag.mirror_uuid is set
+  // to m_remote_mirror_uuid
   librbd::image::CreateRequest<I> *req = librbd::image::CreateRequest<I>::create(
     m_local_io_ctx, m_local_image_name, id, m_remote_image_ctx->size,
     image_options, m_global_image_id, m_remote_mirror_uuid,
     m_remote_image_ctx->op_work_queue, ctx);
+
   req->send();
 }
 
 template <typename I>
 void CreateImageRequest<I>::handle_create_image(int r) {
   dout(20) << ": r=" << r << dendl;
+
   if (r < 0) {
     derr << ": failed to create local image: " << cpp_strerror(r) << dendl;
     finish(r);
@@ -99,6 +115,8 @@ void CreateImageRequest<I>::get_parent_global_image_id() {
   dout(20) << dendl;
 
   librados::ObjectReadOperation op;
+
+  // get MirrorImage of the remote parent image
   librbd::cls_client::mirror_image_get_start(&op, m_remote_parent_spec.image_id);
 
   librados::AioCompletion *aio_comp = create_rados_ack_callback<
@@ -114,29 +132,39 @@ void CreateImageRequest<I>::get_parent_global_image_id() {
 template <typename I>
 void CreateImageRequest<I>::handle_get_parent_global_image_id(int r) {
   dout(20) << ": r=" << r << dendl;
+
   if (r == 0) {
     cls::rbd::MirrorImage mirror_image;
     bufferlist::iterator iter = m_out_bl.begin();
     r = librbd::cls_client::mirror_image_get_finish(&iter, &mirror_image);
     if (r == 0) {
       m_parent_global_image_id = mirror_image.global_image_id;
+
       dout(20) << ": parent_global_image_id=" << m_parent_global_image_id
                << dendl;
     }
   }
 
   if (r == -ENOENT) {
+
+    // the parent of the remote image is not mirror enabled, we should
+    // enable the mirroring of the parent image first before we can
+    // mirror the child image
+
     dout(10) << ": parent image " << m_remote_parent_spec.image_id << " not mirrored"
              << dendl;
     finish(r);
+
     return;
   } else if (r < 0) {
     derr << ": failed to retrieve global image id for parent image "
          << m_remote_parent_spec.image_id << ": " << cpp_strerror(r) << dendl;
+
     finish(r);
     return;
   }
 
+  // check if we have mirrored the remote parent image
   get_local_parent_image_id();
 }
 
@@ -145,6 +173,8 @@ void CreateImageRequest<I>::get_local_parent_image_id() {
   dout(20) << dendl;
 
   librados::ObjectReadOperation op;
+
+  // get image id by image global id, see cls_rbd::mirror_image_set
   librbd::cls_client::mirror_image_get_image_id_start(
     &op, m_parent_global_image_id);
 
@@ -193,12 +223,14 @@ void CreateImageRequest<I>::open_remote_parent_image() {
   OpenImageRequest<I> *request = OpenImageRequest<I>::create(
     m_remote_parent_io_ctx, &m_remote_parent_image_ctx,
     m_remote_parent_spec.image_id, true, m_work_queue, ctx);
+
   request->send();
 }
 
 template <typename I>
 void CreateImageRequest<I>::handle_open_remote_parent_image(int r) {
   dout(20) << ": r=" << r << dendl;
+
   if (r < 0) {
     derr << ": failed to open remote parent image " << m_parent_pool_name << "/"
          << m_remote_parent_spec.image_id << dendl;
@@ -219,15 +251,18 @@ void CreateImageRequest<I>::open_local_parent_image() {
   OpenImageRequest<I> *request = OpenImageRequest<I>::create(
     m_local_parent_io_ctx, &m_local_parent_image_ctx, m_local_parent_spec.image_id,
     true, m_work_queue, ctx);
+
   request->send();
 }
 
 template <typename I>
 void CreateImageRequest<I>::handle_open_local_parent_image(int r) {
   dout(20) << ": r=" << r << dendl;
+
   if (r < 0) {
     derr << ": failed to open local parent image " << m_parent_pool_name << "/"
          << m_local_parent_spec.image_id << dendl;
+
     m_ret_val = r;
     close_remote_parent_image();
     return;
@@ -242,6 +277,7 @@ void CreateImageRequest<I>::set_local_parent_snap() {
 
   {
     RWLock::RLocker remote_snap_locker(m_remote_parent_image_ctx->snap_lock);
+
     auto it = m_remote_parent_image_ctx->snap_info.find(
       m_remote_parent_spec.snap_id);
     if (it != m_remote_parent_image_ctx->snap_info.end()) {
@@ -254,20 +290,24 @@ void CreateImageRequest<I>::set_local_parent_snap() {
     close_local_parent_image();
     return;
   }
+
   dout(20) << ": parent_snap_name=" << m_parent_snap_name << dendl;
 
   Context *ctx = create_context_callback<
     CreateImageRequest<I>,
     &CreateImageRequest<I>::handle_set_local_parent_snap>(this);
+
   m_local_parent_image_ctx->state->snap_set(m_parent_snap_name, ctx);
 }
 
 template <typename I>
 void CreateImageRequest<I>::handle_set_local_parent_snap(int r) {
   dout(20) << ": r=" << r << dendl;
+
   if (r < 0) {
     derr << ": failed to set parent snapshot " << m_parent_snap_name
          << ": " << cpp_strerror(r) << dendl;
+
     m_ret_val = r;
     close_local_parent_image();
     return;
@@ -294,14 +334,17 @@ void CreateImageRequest<I>::clone_image() {
       r = utils::clone_image(m_local_parent_image_ctx, m_local_io_ctx,
                              m_local_image_name.c_str(), opts,
                              m_global_image_id, m_remote_mirror_uuid);
+
       handle_clone_image(r);
     });
+
   m_work_queue->queue(ctx, 0);
 }
 
 template <typename I>
 void CreateImageRequest<I>::handle_clone_image(int r) {
   dout(20) << ": r=" << r << dendl;
+
   if (r < 0) {
     derr << ": failed to clone image " << m_parent_pool_name << "/"
          << m_local_parent_image_ctx->name << " to "
@@ -320,6 +363,7 @@ void CreateImageRequest<I>::close_local_parent_image() {
     &CreateImageRequest<I>::handle_close_local_parent_image>(this);
   CloseImageRequest<I> *request = CloseImageRequest<I>::create(
     &m_local_parent_image_ctx, m_work_queue, false, ctx);
+
   request->send();
 }
 
@@ -342,6 +386,7 @@ void CreateImageRequest<I>::close_remote_parent_image() {
     &CreateImageRequest<I>::handle_close_remote_parent_image>(this);
   CloseImageRequest<I> *request = CloseImageRequest<I>::create(
     &m_remote_parent_image_ctx, m_work_queue, false, ctx);
+
   request->send();
 }
 
@@ -367,7 +412,9 @@ void CreateImageRequest<I>::error(int r) {
 template <typename I>
 void CreateImageRequest<I>::finish(int r) {
   dout(20) << ": r=" << r << dendl;
+
   m_on_finish->complete(r);
+
   delete this;
 }
 

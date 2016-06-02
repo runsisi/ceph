@@ -152,6 +152,7 @@ Pipe::Pipe(SimpleMessenger *r, int st, PipeConnection *con)
   ANNOTATE_BENIGN_RACE_SIZED(&state, sizeof(state), "Pipe state");
   ANNOTATE_BENIGN_RACE_SIZED(&recv_len, sizeof(recv_len), "Pipe recv_len");
   ANNOTATE_BENIGN_RACE_SIZED(&recv_ofs, sizeof(recv_ofs), "Pipe recv_ofs");
+
   if (con) {
     connection_state = con;
     connection_state->reset_pipe(this);
@@ -164,11 +165,13 @@ Pipe::Pipe(SimpleMessenger *r, int st, PipeConnection *con)
     lsubdout(msgr->cct,ms,15) << "Pipe(): Could not get random bytes to set seq number for session reset; set seq number to " << out_seq << dendl;
   }
     
-
+  // default 900
   msgr->timeout = msgr->cct->_conf->ms_tcp_read_timeout * 1000; //convert to ms
+
   if (msgr->timeout == 0)
     msgr->timeout = -1;
 
+  // default 4096
   recv_max_prefetch = msgr->cct->_conf->ms_tcp_prefetch_max_size;
   recv_buf = new char[recv_max_prefetch];
 }
@@ -986,6 +989,7 @@ int Pipe::connect()
 
   // connect!
   ldout(msgr->cct,10) << "connecting to " << peer_addr << dendl;
+
   rc = ::connect(sd, peer_addr.get_sockaddr(), peer_addr.get_sockaddr_len());
   if (rc < 0) {
     int stored_errno = errno;
@@ -1045,7 +1049,11 @@ int Pipe::connect()
   }
 
   ldout(msgr->cct,20) << "connect read peer addr " << paddr << " on socket " << sd << dendl;
+
   if (peer_addr != paddr) {
+
+    // the peer addr we know is different than the addr the peer itslef knows
+
     if (paddr.is_blank_ip() &&
 	peer_addr.get_port() == paddr.get_port() &&
 	peer_addr.get_nonce() == paddr.get_nonce()) {
@@ -1075,6 +1083,7 @@ int Pipe::connect()
     ldout(msgr->cct,2) << "connect couldn't write my addr, " << cpp_strerror(rc) << dendl;
     goto fail;
   }
+
   ldout(msgr->cct,10) << "connect sent my addr " << msgr->my_inst.addr << dendl;
 
 
@@ -1112,6 +1121,7 @@ int Pipe::connect()
 
     ldout(msgr->cct,10) << "connect sending gseq=" << gseq << " cseq=" << cseq
 	     << " proto=" << connect.protocol_version << dendl;
+
     rc = do_sendmsg(&msg, msglen);
     if (rc < 0) {
       ldout(msgr->cct,2) << "connect couldn't write gseq, cseq, " << cpp_strerror(rc) << dendl;
@@ -1119,6 +1129,7 @@ int Pipe::connect()
     }
 
     ldout(msgr->cct,20) << "connect wrote (self +) cseq, waiting for reply" << dendl;
+
     ceph_msg_connect_reply reply;
     rc = tcp_read((char*)&reply, sizeof(reply));
     if (rc < 0) {
@@ -1141,12 +1152,14 @@ int Pipe::connect()
 
     if (reply.authorizer_len) {
       ldout(msgr->cct,10) << "reply.authorizer_len=" << reply.authorizer_len << dendl;
+
       bufferptr bp = buffer::create(reply.authorizer_len);
       rc = tcp_read(bp.c_str(), reply.authorizer_len);
       if (rc < 0) {
         ldout(msgr->cct,10) << "connect couldn't read connect authorizer_reply" << cpp_strerror(rc) << dendl;
 	goto fail;
       }
+
       authorizer_reply.push_back(bp);
     }
 
@@ -1160,12 +1173,14 @@ int Pipe::connect()
 
     if (conf->ms_inject_internal_delays) {
       ldout(msgr->cct, 10) << " sleep for " << msgr->cct->_conf->ms_inject_internal_delays << dendl;
+
       utime_t t;
       t.set_from_double(msgr->cct->_conf->ms_inject_internal_delays);
       t.sleep();
     }
 
     pipe_lock.Lock();
+
     if (state != STATE_CONNECTING) {
       ldout(msgr->cct,0) << "connect got RESETSESSION but no longer connecting" << dendl;
       goto stop_locked;
@@ -1189,12 +1204,14 @@ int Pipe::connect()
       ldout(msgr->cct,0) << "connect got BADAUTHORIZER" << dendl;
       if (got_bad_auth)
         goto stop_locked;
+
       got_bad_auth = true;
       pipe_lock.Unlock();
       delete authorizer;
       authorizer = msgr->get_authorizer(peer_type, true);  // try harder
       continue;
     }
+
     if (reply.tag == CEPH_MSGR_TAG_RESETSESSION) {
       ldout(msgr->cct,0) << "connect got RESETSESSION" << dendl;
       was_session_reset();
@@ -1202,6 +1219,7 @@ int Pipe::connect()
       pipe_lock.Unlock();
       continue;
     }
+
     if (reply.tag == CEPH_MSGR_TAG_RETRY_GLOBAL) {
       gseq = msgr->get_global_seq(reply.global_seq);
       ldout(msgr->cct,10) << "connect got RETRY_GLOBAL " << reply.global_seq
@@ -1209,6 +1227,7 @@ int Pipe::connect()
       pipe_lock.Unlock();
       continue;
     }
+
     if (reply.tag == CEPH_MSGR_TAG_RETRY_SESSION) {
       assert(reply.connect_seq > connect_seq);
       ldout(msgr->cct,10) << "connect got RETRY_SESSION " << connect_seq
@@ -1297,6 +1316,7 @@ int Pipe::connect()
     
     // protocol error
     ldout(msgr->cct,0) << "connect got bad tag " << (int)tag << dendl;
+
     goto fail_locked;
   }
 
@@ -1324,9 +1344,12 @@ int Pipe::connect()
 void Pipe::register_pipe()
 {
   ldout(msgr->cct,10) << "register_pipe" << dendl;
+
   assert(msgr->lock.is_locked());
+
   Pipe *existing = msgr->_lookup_pipe(peer_addr);
   assert(existing == NULL);
+
   msgr->rank_pipe[peer_addr] = this;
 }
 

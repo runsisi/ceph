@@ -4506,6 +4506,7 @@ void Monitor::handle_timecheck(MonOpRequestRef op)
 void Monitor::handle_subscribe(MonOpRequestRef op)
 {
   MMonSubscribe *m = static_cast<MMonSubscribe*>(op->get_req());
+
   dout(10) << "handle_subscribe " << *m << dendl;
   
   bool reply = false;
@@ -4538,6 +4539,7 @@ void Monitor::handle_subscribe(MonOpRequestRef op)
 
     if (p->first.compare(0, 6, "mdsmap") == 0 || p->first.compare(0, 5, "fsmap") == 0) {
       dout(10) << __func__ << ": MDS sub '" << p->first << "'" << dendl;
+
       if ((int)s->is_capable("mds", MON_CAP_R)) {
         Subscription *sub = s->sub_map[p->first];
         assert(sub != nullptr);

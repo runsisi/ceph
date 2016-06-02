@@ -74,13 +74,20 @@ private:
 };
 
 struct DeleteJournalPolicy : public librbd::journal::Policy {
+  // checked by Journal<I>::is_journal_appending
   virtual bool append_disabled() const {
     return true;
   }
+
+  // checked by
+  // AcquireRequest<I>::send_open_journal and
+  // RefreshRequest<I>::send_v2_open_journal
   virtual bool journal_disabled() const {
     return false;
   }
 
+  // called by
+  // AcquireRequest<I>::handle_open_journal -> AcquireRequest<I>::send_allocate_journal_tag
   virtual void allocate_tag_on_lock(Context *on_finish) {
     on_finish->complete(0);
   }
@@ -285,6 +292,7 @@ bool ImageDeleter::process_image_delete() {
     enqueue_failed_delete(r);
     return true;
   }
+
   if (is_primary) {
     dout(10) << "local image is the primary image, aborting deletion..."
              << dendl;

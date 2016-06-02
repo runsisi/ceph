@@ -38,6 +38,7 @@ struct C_Flush : public Context {
       delete this;
     }
   }
+
   virtual void finish(int r) {
   }
 };
@@ -60,6 +61,7 @@ JournalRecorder::JournalRecorder(librados::IoCtx &ioctx,
   m_cct = reinterpret_cast<CephContext*>(m_ioctx.cct());
 
   uint8_t splay_width = m_journal_metadata->get_splay_width();
+
   for (uint8_t splay_offset = 0; splay_offset < splay_width; ++splay_offset) {
     m_object_locks.push_back(shared_ptr<Mutex>(
                                           new Mutex("ObjectRecorder::m_lock::"+
@@ -70,6 +72,7 @@ JournalRecorder::JournalRecorder(librados::IoCtx &ioctx,
                                                 m_object_locks[splay_offset]);
   }
 
+  // implements JournalRecorder::handle_update event
   m_journal_metadata->add_listener(&m_listener);
 }
 
@@ -86,15 +89,34 @@ Future JournalRecorder::append(uint64_t tag_tid,
 
   m_lock.Lock();
 
+  // entry id is tag specific, i.e., global to a specific tag, it determines
+  // which ObjectRecorder this entry will be appended to
+  // i.e., entry_tid =  m_allocated_entry_tids[tag_tid]++
   uint64_t entry_tid = m_journal_metadata->allocate_entry_tid(tag_tid);
+
   uint8_t splay_width = m_journal_metadata->get_splay_width();
+
+  // determine which object to write
   uint8_t splay_offset = entry_tid % splay_width;
 
+  // one ObjectRecorder at an offset
   ObjectRecorderPtr object_ptr = get_object(splay_offset);
+
+  // commit id is global to the JournalMetadata instance, it is used to
+  // record the pending entries, by the commit id we can find the
+  // entry to be committed, see JournalMetadata::m_pending_commit_tids
+
+  // construct an CommitEntry and register into m_pending_commit_tids
+  // i.e., JournalMetadata::
+  //   ++m_commit_tid
+  //   m_pending_commit_tids[commit_tid] = CommitEntry()
   uint64_t commit_tid = m_journal_metadata->allocate_commit_tid(
     object_ptr->get_object_number(), tag_tid, entry_tid);
+
+  // a future represents an id of a commit
   FutureImplPtr future(new FutureImpl(tag_tid, entry_tid, commit_tid));
-  future->init(m_prev_future);
+  future->init(m_prev_future); // register consistent callback
+
   m_prev_future = future;
 
   m_object_locks[splay_offset]->Lock();
@@ -107,11 +129,18 @@ Future JournalRecorder::append(uint64_t tag_tid,
 
   bool object_full = object_ptr->append_unlock({{future, entry_bl}});
   if (object_full) {
+
+    // most of the time, we start a new set of objects manually, i.e., if
+    // we find any of the object is full here, but the buffers stashed
+    // when the objects are closing and then be re-appended may start a
+    // new set of objects driven by the -EOVERFLOW of the later appends
+
     ldout(m_cct, 10) << "object " << object_ptr->get_oid() << " now full"
                      << dendl;
     Mutex::Locker l(m_lock);
     close_and_advance_object_set(object_ptr->get_object_number() / splay_width);
   }
+
   return Future(future);
 }
 
@@ -120,9 +149,14 @@ void JournalRecorder::flush(Context *on_safe) {
   {
     Mutex::Locker locker(m_lock);
 
+    // we are to flush every object, after all objects flushed, i.e., pending
+    // flushes count to 0, the user's callback will be called
     ctx = new C_Flush(m_journal_metadata, on_safe, m_object_ptrs.size() + 1);
+
     for (ObjectRecorderPtrs::iterator it = m_object_ptrs.begin();
          it != m_object_ptrs.end(); ++it) {
+
+      // ObjectRecoder::flush
       it->second->flush(ctx);
     }
 
@@ -146,6 +180,7 @@ void JournalRecorder::close_and_advance_object_set(uint64_t object_set) {
   // entry overflow from open object
   if (m_current_set != object_set) {
     ldout(m_cct, 20) << __func__ << ": close already in-progress" << dendl;
+
     return;
   }
 
@@ -156,12 +191,18 @@ void JournalRecorder::close_and_advance_object_set(uint64_t object_set) {
 
   uint64_t active_set = m_journal_metadata->get_active_set();
   assert(m_current_set == active_set);
+
   ++m_current_set;
   ++m_in_flight_advance_sets;
 
   ldout(m_cct, 20) << __func__ << ": closing active object set "
                    << object_set << dendl;
-  if (close_object_set(m_current_set)) {
+
+  if (close_object_set(m_current_set)) { // issue object close op for this set of objects
+
+    // no in-flight buffers, i.e., this set of objects closed succeeded
+
+    // update active set in journal metadata object
     advance_object_set();
   }
 }
@@ -169,15 +210,19 @@ void JournalRecorder::close_and_advance_object_set(uint64_t object_set) {
 void JournalRecorder::advance_object_set() {
   assert(m_lock.is_locked());
 
+  // all in-flight buffers must have been flushed
   assert(m_in_flight_object_closes == 0);
+
   ldout(m_cct, 20) << __func__ << ": advance to object set " << m_current_set
                    << dendl;
+
   m_journal_metadata->set_active_set(m_current_set, new C_AdvanceObjectSet(
     this));
 }
 
 void JournalRecorder::handle_advance_object_set(int r) {
   Mutex::Locker locker(m_lock);
+
   ldout(m_cct, 20) << __func__ << ": r=" << r << dendl;
 
   assert(m_in_flight_advance_sets > 0);
@@ -228,11 +273,13 @@ bool JournalRecorder::close_object_set(uint64_t active_set) {
   for (ObjectRecorderPtrs::iterator it = m_object_ptrs.begin();
        it != m_object_ptrs.end(); ++it) {
     ObjectRecorderPtr object_recorder = it->second;
+
     if (object_recorder->get_object_number() / splay_width != active_set) {
       ldout(m_cct, 10) << __func__ << ": closing object "
                        << object_recorder->get_oid() << dendl;
+
       // flush out all queued appends and hold future appends
-      if (!object_recorder->close()) {
+      if (!object_recorder->close()) { // flush pending buffers
         ++m_in_flight_object_closes;
       } else {
         ldout(m_cct, 20) << __func__ << ": object "
@@ -271,24 +318,39 @@ void JournalRecorder::create_next_object_recorder_unlock(
   ldout(m_cct, 10) << __func__ << ": "
                    << "old oid=" << object_recorder->get_oid() << ", "
                    << "new oid=" << new_object_recorder->get_oid() << dendl;
+
   AppendBuffers append_buffers;
+
+  // stash all appends into append_buffers
   object_recorder->claim_append_buffers(&append_buffers);
 
   // update the commit record to point to the correct object number
   for (auto &append_buffer : append_buffers) {
+
+    // this Entry need to write to the next splay object, object number
+    // in CommitEntry need to be changed
+
     m_journal_metadata->overflow_commit_tid(
       append_buffer.first->get_commit_tid(),
       new_object_recorder->get_object_number());
   }
 
+  // re-append all those stashed appends, ObjectRecorder called in
+  // JournalRecorder::append will check if the object is full, but here
+  // we do not, we can only let the -EOVERFLOW to drive us to start
+  // a new set of objects
   new_object_recorder->append_unlock(std::move(append_buffers));
+
   m_object_ptrs[splay_offset] = new_object_recorder;
 }
 
+// JournalRecorder::m_listener, registered to JournalMetadata in ctor
+// of JournalRecorder
 void JournalRecorder::handle_update() {
   Mutex::Locker locker(m_lock);
 
   uint64_t active_set = m_journal_metadata->get_active_set();
+
   if (m_current_set < active_set) {
     // peer journal client advanced the active set
     ldout(m_cct, 20) << __func__ << ": "
@@ -296,10 +358,13 @@ void JournalRecorder::handle_update() {
                      << "active_set=" << active_set << dendl;
 
     uint64_t current_set = m_current_set;
+
     m_current_set = active_set;
+
     if (m_in_flight_advance_sets == 0 && m_in_flight_object_closes == 0) {
       ldout(m_cct, 20) << __func__ << ": closing current object set "
                        << current_set << dendl;
+
       if (close_object_set(active_set)) {
         open_object_set();
       }
@@ -315,7 +380,9 @@ void JournalRecorder::handle_closed(ObjectRecorder *object_recorder) {
   uint64_t object_number = object_recorder->get_object_number();
   uint8_t splay_width = m_journal_metadata->get_splay_width();
   uint8_t splay_offset = object_number % splay_width;
+
   ObjectRecorderPtr active_object_recorder = m_object_ptrs[splay_offset];
+
   assert(active_object_recorder->get_object_number() == object_number);
 
   assert(m_in_flight_object_closes > 0);
@@ -324,12 +391,20 @@ void JournalRecorder::handle_closed(ObjectRecorder *object_recorder) {
   // object closed after advance active set committed
   ldout(m_cct, 20) << __func__ << ": object "
                    << active_object_recorder->get_oid() << " closed" << dendl;
+
   if (m_in_flight_object_closes == 0) {
+
+    // all objects of this set have been closed
+
     if (m_in_flight_advance_sets == 0) {
-      // peer forced closing of object set
+      // peer forced closing of object set, we are notified that the active
+      // set has been advanced, so we do not have to advance the active
+      // set again, see JournalRecorder::handle_update
+
       open_object_set();
     } else {
-      // local overflow advanced object set
+      // local overflow advanced object set, see JournalRecorder::close_and_advance_object_set
+
       advance_object_set();
     }
   }
@@ -343,12 +418,15 @@ void JournalRecorder::handle_overflow(ObjectRecorder *object_recorder) {
   uint64_t object_number = object_recorder->get_object_number();
   uint8_t splay_width = m_journal_metadata->get_splay_width();
   uint8_t splay_offset = object_number % splay_width;
+
   ObjectRecorderPtr active_object_recorder = m_object_ptrs[splay_offset];
+
   assert(active_object_recorder->get_object_number() == object_number);
 
   ldout(m_cct, 20) << __func__ << ": object "
                    << active_object_recorder->get_oid() << " overflowed"
                    << dendl;
+
   close_and_advance_object_set(object_number / splay_width);
 }
 

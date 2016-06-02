@@ -509,6 +509,8 @@ private:
     bool *corrupt
     );
 
+  // called by FileJournal::open and JournalingObjectStore::journal_replay which
+  // called by FileJournal::mount
   bool read_entry(
     bufferlist &bl,
     uint64_t &last_seq) {

@@ -270,6 +270,8 @@ int ImageState<I>::close() {
   close(&ctx);
 
   int r = ctx.wait();
+
+  // will delete ImageCtx::state in ImageCtx::~ImageCtx
   delete m_image_ctx;
   return r;
 }
@@ -284,12 +286,16 @@ void ImageState<I>::close(Context *on_finish) {
 
   Action action(ACTION_TYPE_CLOSE);
   action.refresh_seq = m_refresh_seq;
+
   execute_action_unlock(action, on_finish);
 }
 
+// called in ImageWatcher::handle_payload(HeaderUpdatePayload) and
+// ImageCtx::notify_update
 template <typename I>
 void ImageState<I>::handle_update_notification() {
   Mutex::Locker locker(m_lock);
+
   ++m_refresh_seq;
 
   CephContext *cct = m_image_ctx->cct;
@@ -304,6 +310,8 @@ void ImageState<I>::handle_update_notification() {
 template <typename I>
 bool ImageState<I>::is_refresh_required() const {
   Mutex::Locker locker(m_lock);
+
+  // m_last_refresh is set in ImageState<I>::handle_refresh
   return (m_last_refresh != m_refresh_seq);
 }
 
@@ -334,6 +342,7 @@ void ImageState<I>::refresh(Context *on_finish) {
 template <typename I>
 int ImageState<I>::refresh_if_required() {
   C_SaferCond ctx;
+
   {
     m_lock.Lock();
     if (m_last_refresh == m_refresh_seq) {
@@ -346,6 +355,7 @@ int ImageState<I>::refresh_if_required() {
 
     Action action(ACTION_TYPE_REFRESH);
     action.refresh_seq = m_refresh_seq;
+
     execute_action_unlock(action, &ctx);
   }
 
@@ -361,6 +371,7 @@ void ImageState<I>::snap_set(const std::string &snap_name, Context *on_finish) {
   action.snap_name = snap_name;
 
   m_lock.Lock();
+
   execute_action_unlock(action, on_finish);
 }
 
@@ -485,6 +496,7 @@ template <typename I>
 void ImageState<I>::execute_next_action_unlock() {
   assert(m_lock.is_locked());
   assert(!m_actions_contexts.empty());
+
   switch (m_actions_contexts.front().first.action_type) {
   case ACTION_TYPE_OPEN:
     send_open_unlock();
@@ -511,9 +523,15 @@ void ImageState<I>::execute_action_unlock(const Action &action,
   assert(m_lock.is_locked());
 
   append_context(action, on_finish);
+
   if (!is_transition_state()) {
+
+    // STATE_UNINITIALIZED, STATE_OPEN, STATE_CLOSED
+
     execute_next_action_unlock();
   } else {
+    // do not try to start another action if we have not finished the last
+    // action yet
     m_lock.Unlock();
   }
 }
@@ -527,15 +545,22 @@ void ImageState<I>::complete_action_unlock(State next_state, int r) {
   m_actions_contexts.pop_front();
 
   m_state = next_state;
+
   m_lock.Unlock();
 
+  // complete the user provided callbacks before execute the next user action
   for (auto ctx : action_contexts.second) {
     ctx->complete(r);
   }
 
   if (next_state != STATE_CLOSED) {
+
+    // if the next state is not STATE_CLOSED, then try to proceed the
+    // state machine
+
     m_lock.Lock();
     if (!is_transition_state() && !m_actions_contexts.empty()) {
+      // we have finished the last action, try to start the next action
       execute_next_action_unlock();
     } else {
       m_lock.Unlock();
@@ -546,6 +571,7 @@ void ImageState<I>::complete_action_unlock(State next_state, int r) {
 template <typename I>
 void ImageState<I>::send_open_unlock() {
   assert(m_lock.is_locked());
+
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
@@ -558,6 +584,7 @@ void ImageState<I>::send_open_unlock() {
     m_image_ctx, ctx);
 
   m_lock.Unlock();
+
   req->send();
 }
 
@@ -571,6 +598,7 @@ void ImageState<I>::handle_open(int r) {
   }
 
   m_lock.Lock();
+
   complete_action_unlock(r < 0 ? STATE_UNINITIALIZED : STATE_OPEN, r);
 }
 
@@ -588,6 +616,7 @@ void ImageState<I>::send_close_unlock() {
     m_image_ctx, ctx);
 
   m_lock.Unlock();
+
   req->send();
 }
 
@@ -602,16 +631,19 @@ void ImageState<I>::handle_close(int r) {
   }
 
   m_lock.Lock();
+
   complete_action_unlock(STATE_CLOSED, r);
 }
 
 template <typename I>
 void ImageState<I>::send_refresh_unlock() {
   assert(m_lock.is_locked());
+
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   m_state = STATE_REFRESHING;
+
   assert(!m_actions_contexts.empty());
   auto &action_context = m_actions_contexts.front().first;
   assert(action_context.action_type == ACTION_TYPE_REFRESH);
@@ -619,10 +651,12 @@ void ImageState<I>::send_refresh_unlock() {
   Context *ctx = create_async_context_callback(
     *m_image_ctx, create_context_callback<
       ImageState<I>, &ImageState<I>::handle_refresh>(this));
+
   image::RefreshRequest<I> *req = image::RefreshRequest<I>::create(
     *m_image_ctx, false, ctx);
 
   m_lock.Unlock();
+
   req->send();
 }
 
@@ -669,6 +703,7 @@ void ImageState<I>::send_set_snap_unlock() {
     *m_image_ctx, action_contexts.first.snap_name, ctx);
 
   m_lock.Unlock();
+
   req->send();
 }
 
@@ -682,6 +717,7 @@ void ImageState<I>::handle_set_snap(int r) {
   }
 
   m_lock.Lock();
+
   complete_action_unlock(STATE_OPEN, r);
 }
 

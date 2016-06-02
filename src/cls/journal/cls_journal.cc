@@ -58,16 +58,19 @@ std::string to_hex(uint64_t value) {
 }
 
 std::string key_from_client_id(const std::string &client_id) {
+  // "client_"
   return HEADER_KEY_CLIENT_PREFIX + client_id;
 }
 
 std::string key_from_tag_tid(uint64_t tag_tid) {
+  // "tag_"
   return HEADER_KEY_TAG_PREFIX + to_hex(tag_tid);
 }
 
 uint64_t tag_tid_from_key(const std::string &key) {
   std::istringstream iss(key);
   uint64_t id;
+  // "tag_"
   iss.ignore(HEADER_KEY_TAG_PREFIX.size()) >> std::hex >> id;
   return id;
 }
@@ -229,10 +232,15 @@ int get_client_list_range(cls_method_context_t hctx,
                           std::string start_after, uint64_t max_return) {
   std::string last_read;
   if (!start_after.empty()) {
+
+    // "client_"
+
     last_read = key_from_client_id(start_after);
   }
 
   std::map<std::string, bufferlist> vals;
+
+  // "client_"
   int r = cls_cxx_map_get_vals(hctx, last_read, HEADER_KEY_CLIENT_PREFIX,
                                max_return, &vals);
   if (r < 0) {
@@ -245,8 +253,11 @@ int get_client_list_range(cls_method_context_t hctx,
     try {
       bufferlist::iterator iter = it->second.begin();
 
+      // <client id, bufferlist data, commit position, enum client state>
       cls::journal::Client client;
+
       ::decode(client, iter);
+
       clients->insert(client);
     } catch (const buffer::error &err) {
       CLS_ERR("could not decode client '%s': %s", it->first.c_str(),
@@ -317,6 +328,7 @@ int journal_create(cls_method_context_t hctx, bufferlist *in, bufferlist *out) {
   uint8_t order;
   uint8_t splay_width;
   int64_t pool_id;
+
   try {
     bufferlist::iterator iter = in->begin();
     ::decode(order, iter);
@@ -596,7 +608,9 @@ int journal_get_client(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
+  // "client_" + id
   std::string key(key_from_client_id(id));
+
   cls::journal::Client client;
   int r = read_key(hctx, key, &client);
   if (r < 0) {
@@ -628,12 +642,14 @@ int journal_client_register(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
+  // added in commit cb72ac120c6206a82ad4c0af7329f4512803f413
   uint8_t order;
   int r = read_key(hctx, HEADER_KEY_ORDER, &order);
   if (r < 0) {
     return r;
   }
 
+  // "client_"
   std::string key(key_from_client_id(id));
   bufferlist stored_clientbl;
   r = cls_cxx_map_get_val(hctx, key, &stored_clientbl);
@@ -649,6 +665,7 @@ int journal_client_register(cls_method_context_t hctx, bufferlist *in,
   if (r < 0)
     return r;
 
+  // <client id, bufferlist data, commit position, enum client state>
   cls::journal::Client client(id, data, minset);
   r = write_key(hctx, key, client);
   if (r < 0) {
@@ -844,6 +861,7 @@ int journal_client_list(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
+  // set<client id, bufferlist data, commit position, enum client state>
   std::set<cls::journal::Client> clients;
   int r = get_client_list_range(hctx, &clients, start_after, max_return);
   if (r < 0)
@@ -863,6 +881,8 @@ int journal_client_list(cls_method_context_t hctx, bufferlist *in,
 int journal_get_next_tag_tid(cls_method_context_t hctx, bufferlist *in,
                              bufferlist *out) {
   uint64_t tag_tid;
+
+  // "next_tag_tid"
   int r = read_key(hctx, HEADER_KEY_NEXT_TAG_TID, &tag_tid);
   if (r < 0) {
     return r;
@@ -891,8 +911,10 @@ int journal_get_tag(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
+  // "tag_"
   std::string key(key_from_tag_tid(tag_tid));
   cls::journal::Tag tag;
+
   int r = read_key(hctx, key, &tag);
   if (r < 0) {
     return r;
@@ -942,6 +964,7 @@ int journal_tag_create(cls_method_context_t hctx, bufferlist *in,
   if (r < 0) {
     return r;
   }
+
   if (tag_tid != next_tag_tid) {
     CLS_LOG(5, "out-of-order tag sequence: %" PRIu64, tag_tid);
     return -ESTALE;
@@ -956,6 +979,7 @@ int journal_tag_create(cls_method_context_t hctx, bufferlist *in,
   if (tag_class == cls::journal::Tag::TAG_CLASS_NEW) {
     // allocate a new tag class
     tag_class = next_tag_class;
+
     r = write_key(hctx, HEADER_KEY_NEXT_TAG_CLASS, tag_class + 1);
     if (r < 0) {
       return r;
@@ -981,6 +1005,7 @@ int journal_tag_create(cls_method_context_t hctx, bufferlist *in,
   }
 
   // write tag structure
+  // <tag_tid, tag_class, tag_data>
   cls::journal::Tag tag(tag_tid, tag_class, data);
   key = key_from_tag_tid(tag_tid);
   r = write_key(hctx, key, tag);
@@ -1010,6 +1035,7 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
 
   // handle compiler false positive about use-before-init
   tag_class = boost::none;
+
   try {
     bufferlist::iterator iter = in->begin();
     ::decode(start_after_tag_tid, iter);
@@ -1024,11 +1050,14 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
   // calculate the minimum tag within client's commit position
   uint64_t minimum_tag_tid = std::numeric_limits<uint64_t>::max();
   cls::journal::Client client;
+
+  // "client_"
   int r = read_key(hctx, key_from_client_id(client_id), &client);
   if (r < 0) {
     return r;
   }
 
+  // if the client has ever committed then calc the minimum tag id
   for (auto object_position : client.commit_position.object_positions) {
     minimum_tag_tid = MIN(minimum_tag_tid, object_position.tag_tid);
   }
@@ -1036,12 +1065,17 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
   // compute minimum tags in use per-class
   std::set<cls::journal::Tag> tags;
   std::map<uint64_t, uint64_t> minimum_tag_class_to_tids;
+  
   typedef enum { TAG_PASS_CALCULATE_MINIMUMS,
                  TAG_PASS_LIST,
                  TAG_PASS_DONE } TagPass;
+
   int tag_pass = (minimum_tag_tid == std::numeric_limits<uint64_t>::max() ?
     TAG_PASS_LIST : TAG_PASS_CALCULATE_MINIMUMS);
+
+  // "tag_"
   std::string last_read = HEADER_KEY_TAG_PREFIX;
+
   do {
     std::map<std::string, bufferlist> vals;
     r = cls_cxx_map_get_vals(hctx, last_read, HEADER_KEY_TAG_PREFIX,
@@ -1053,6 +1087,7 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
 
     for (auto &val : vals) {
       cls::journal::Tag tag;
+
       bufferlist::iterator iter = val.second.begin();
       try {
         ::decode(tag, iter);
@@ -1067,6 +1102,7 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
         // completed calculation of tag class minimums
         if (tag.tid >= minimum_tag_tid) {
           vals.clear();
+
           break;
         }
       } else if (tag_pass == TAG_PASS_LIST) {
@@ -1076,8 +1112,12 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
 
         if (tag.tid >= minimum_tag_class_to_tids[tag.tag_class] &&
             (!tag_class || *tag_class == tag.tag_class)) {
+
+          // filter those tags with tid >= the min committed tid
+
           tags.insert(tag);
         }
+
         if (tags.size() >= max_return) {
           tag_pass = TAG_PASS_DONE;
         }
@@ -1085,9 +1125,16 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
     }
 
     if (tag_pass != TAG_PASS_DONE && vals.size() < MAX_KEYS_READ) {
-      last_read = HEADER_KEY_TAG_PREFIX;
+
+      // no more tags to read, so transit to the next pass
+
+      last_read = HEADER_KEY_TAG_PREFIX; // re-read from the first
+
       ++tag_pass;
     } else if (!vals.empty()) {
+
+      // more tags to read, still in this pass
+
       last_read = vals.rbegin()->first;
     }
   } while (tag_pass != TAG_PASS_DONE);

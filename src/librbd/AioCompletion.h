@@ -220,6 +220,14 @@ struct AioCompletion {
   }
 };
 
+// inherited by: C_AioRead, C_ImageCacheRead
+// allocated by：
+// AbstractAioImageWrite<I>::send_object_requests
+// AioImageWrite<I>::send_image_cache_request
+// AioImageWrite<I>::send_object_cache_requests
+// AioImageDiscard<I>::send_image_cache_request
+// AioImageFlush<I>::send_request
+// AioImageFlush<I>::send_image_cache_request
 class C_AioRequest : public Context {
 public:
   C_AioRequest(AioCompletion *completion) : m_completion(completion) {
