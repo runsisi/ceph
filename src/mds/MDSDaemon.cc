@@ -1277,6 +1277,7 @@ void MDSDaemon::ms_handle_remote_reset(Connection *con)
   }
 
   dout(5) << "ms_handle_remote_reset on " << con->get_peer_addr() << dendl;
+
   if (beacon.get_want_state() == CEPH_MDS_STATE_DNE)
     return;
 
@@ -1284,9 +1285,11 @@ void MDSDaemon::ms_handle_remote_reset(Connection *con)
   if (session) {
     if (session->is_closed()) {
       dout(3) << "ms_handle_remote_reset closing connection for session " << session->info.inst << dendl;
+
       con->mark_down();
       con->set_priv(NULL);
     }
+
     session->put();
   }
 }

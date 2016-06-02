@@ -136,8 +136,11 @@ public:
 
     void update_from_perfcounters(PerfCounters &logger);
   } perf_tracker;
+
   objectstore_perf_stat_t get_cur_stats() {
+    // update os_commit_latency, os_commit_latency from <count, time in ms>
     perf_tracker.update_from_perfcounters(*logger);
+
     return perf_tracker.get_cur_stats();
   }
 
@@ -360,11 +363,13 @@ private:
   friend ostream& operator<<(ostream& out, const OpSequencer& s);
 
   FDCache fdcache;
+  // used by FileStore::_do_op
   WBThrottle wbthrottle;
 
   atomic_t next_osr_id;
   bool m_disable_wbthrottle;
   deque<OpSequencer*> op_queue;
+  // used by FileStore::queue_transactions
   BackoffThrottle throttle_ops, throttle_bytes;
   const int m_ondisk_finisher_num;
   const int m_apply_finisher_num;

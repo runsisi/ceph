@@ -31,10 +31,13 @@ void UnlockRequest<I>::send() {
 template <typename I>
 void UnlockRequest<I>::send_unlock() {
   CephContext *cct = m_image_ctx.cct;
+
   std::string oid(ObjectMap::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
+
   ldout(cct, 10) << this << " " << __func__ << ": oid=" << oid << dendl;
 
   librados::ObjectWriteOperation op;
+
   rados::cls::lock::unlock(&op, RBD_LOCK_NAME, "");
 
   using klass = UnlockRequest<I>;
@@ -57,6 +60,7 @@ Context *UnlockRequest<I>::handle_unlock(int *ret_val) {
   }
 
   *ret_val = 0;
+
   return m_on_finish;
 }
 

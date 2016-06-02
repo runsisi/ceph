@@ -59,7 +59,9 @@ bool librados::RadosClient::ms_get_authorizer(int dest_type,
   /* monitor authorization is being handled on different layer */
   if (dest_type == CEPH_ENTITY_TYPE_MON)
     return true;
+
   *authorizer = monclient.auth->build_authorizer(dest_type);
+
   return *authorizer != NULL;
 }
 
@@ -77,7 +79,7 @@ librados::RadosClient::RadosClient(CephContext *cct_)
     timer(cct, lock),
     refcnt(1),
     log_last_version(0), log_cb(NULL), log_cb_arg(NULL),
-    finisher(cct)
+    finisher(cct) // anonymous finisher, i.e., no finisher->logger created
 {
 }
 
@@ -234,6 +236,7 @@ int librados::RadosClient::connect()
     return -EINPROGRESS;
   if (state == CONNECTED)
     return -EISCONN;
+
   state = CONNECTING;
 
   // get monmap
@@ -242,6 +245,7 @@ int librados::RadosClient::connect()
     goto out;
 
   err = -ENOMEM;
+
   messenger = Messenger::create_client_messenger(cct, "radosclient");
   if (!messenger)
     goto out;
@@ -257,16 +261,18 @@ int librados::RadosClient::connect()
 
   objecter = new (std::nothrow) Objecter(cct, messenger, &monclient,
 			  &finisher,
-			  cct->_conf->rados_mon_op_timeout,
-			  cct->_conf->rados_osd_op_timeout);
+			  cct->_conf->rados_mon_op_timeout,     // default 0
+			  cct->_conf->rados_osd_op_timeout);    // default 0
   if (!objecter)
     goto out;
+
   objecter->set_balanced_budget();
 
   monclient.set_messenger(messenger);
   mgrclient.set_messenger(messenger);
 
   objecter->init();
+
   messenger->add_dispatcher_head(&mgrclient);
   messenger->add_dispatcher_tail(objecter);
   messenger->add_dispatcher_tail(this);
@@ -274,22 +280,31 @@ int librados::RadosClient::connect()
   messenger->start();
 
   ldout(cct, 1) << "setting wanted keys" << dendl;
+
   monclient.set_want_keys(
       CEPH_ENTITY_TYPE_MON | CEPH_ENTITY_TYPE_OSD | CEPH_ENTITY_TYPE_MGR);
+
   ldout(cct, 1) << "calling monclient init" << dendl;
+
   err = monclient.init();
   if (err) {
     ldout(cct, 0) << conf->name << " initialization error " << cpp_strerror(-err) << dendl;
+
     shutdown();
+
     goto out;
   }
 
+  // default 300.0
   err = monclient.authenticate(conf->client_mount_timeout);
   if (err) {
     ldout(cct, 0) << conf->name << " authentication error " << cpp_strerror(-err) << dendl;
+
     shutdown();
+
     goto out;
   }
+
   messenger->set_myname(entity_name_t::CLIENT(monclient.get_global_id()));
 
   // MgrClient needs this (it doesn't have MonClient reference itself)
@@ -300,6 +315,7 @@ int librados::RadosClient::connect()
 
   objecter->set_client_incarnation(0);
   objecter->start();
+
   lock.Lock();
 
   timer.init();
@@ -307,11 +323,13 @@ int librados::RadosClient::connect()
   finisher.start();
 
   state = CONNECTED;
+
   instance_id = monclient.get_global_id();
 
   lock.Unlock();
 
   ldout(cct, 1) << "init done" << dendl;
+
   err = 0;
 
  out:
@@ -322,6 +340,7 @@ int librados::RadosClient::connect()
       delete objecter;
       objecter = NULL;
     }
+
     if (messenger) {
       delete messenger;
       messenger = NULL;
@@ -331,9 +350,13 @@ int librados::RadosClient::connect()
   return err;
 }
 
+// called by
+// rados_shutdown
+// librados::Rados::shutdown
 void librados::RadosClient::shutdown()
 {
   lock.Lock();
+
   if (state == DISCONNECTED) {
     lock.Unlock();
     return;
@@ -349,23 +372,35 @@ void librados::RadosClient::shutdown()
       // make sure watch callbacks are flushed
       watch_flush();
     }
+
     finisher.wait_for_empty();
+
     finisher.stop();
   }
+
   state = DISCONNECTED;
   instance_id = 0;
+
   timer.shutdown();   // will drop+retake lock
+
   lock.Unlock();
+
   if (need_objecter) {
+
+    // objecter has initialized, need to shutdown
+
     objecter->shutdown();
   }
+
   mgrclient.shutdown();
 
   monclient.shutdown();
+
   if (messenger) {
     messenger->shutdown();
     messenger->wait();
   }
+
   ldout(cct, 1) << "shutdown" << dendl;
 }
 
@@ -430,9 +465,12 @@ librados::RadosClient::~RadosClient()
 {
   if (messenger)
     delete messenger;
+
   if (objecter)
     delete objecter;
   cct = NULL;
+
+  // deconstruct MonClient monclient and other member variables
 }
 
 int librados::RadosClient::create_ioctx(const char *name, IoCtxImpl **io)
@@ -644,15 +682,23 @@ int librados::RadosClient::get_fs_stats(ceph_statfs& stats)
   return ret;
 }
 
+// called by
+// librados::Rados::Rados
 void librados::RadosClient::get() {
   Mutex::Locker l(lock);
+
   assert(refcnt > 0);
+
   refcnt++;
 }
 
+// called by
+// librados::Rados::shutdown
 bool librados::RadosClient::put() {
   Mutex::Locker l(lock);
+
   assert(refcnt > 0);
+
   refcnt--;
   return (refcnt == 0);
 }
@@ -792,6 +838,11 @@ int librados::RadosClient::blacklist_add(const string& client_address,
   return r;
 }
 
+// called by
+// librados.cc:anon::get_inconsistent_pgs
+// librados::RadosClient::blacklist_add
+// librados::Rados::mon_command
+// rados_mon_command
 int librados::RadosClient::mon_command(const vector<string>& cmd,
 				       const bufferlist &inbl,
 				       bufferlist *outbl, string *outs)
@@ -800,14 +851,19 @@ int librados::RadosClient::mon_command(const vector<string>& cmd,
   Cond cond;
   bool done;
   int rval;
+
   lock.Lock();
+
   monclient.start_mon_command(cmd, inbl, outbl, outs,
 			       new C_SafeCond(&mylock, &cond, &done, &rval));
+
   lock.Unlock();
+
   mylock.Lock();
   while (!done)
     cond.Wait(mylock);
   mylock.Unlock();
+
   return rval;
 }
 
@@ -837,14 +893,19 @@ int librados::RadosClient::mon_command(int rank, const vector<string>& cmd,
   Cond cond;
   bool done;
   int rval;
+
   lock.Lock();
+
   monclient.start_mon_command(rank, cmd, inbl, outbl, outs,
 			       new C_SafeCond(&mylock, &cond, &done, &rval));
+
   lock.Unlock();
+
   mylock.Lock();
   while (!done)
     cond.Wait(mylock);
   mylock.Unlock();
+
   return rval;
 }
 

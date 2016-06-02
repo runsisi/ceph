@@ -26,16 +26,21 @@ uint32_t Entry::get_fixed_size() {
 
 void Entry::encode(bufferlist &bl) const {
   bufferlist data_bl;
-  ::encode(preamble, data_bl);
-  ::encode(static_cast<uint8_t>(1), data_bl);
-  ::encode(m_entry_tid, data_bl);
-  ::encode(m_tag_tid, data_bl);
-  ::encode(m_data, data_bl);
+
+  ::encode(preamble, data_bl);                  // 8
+  ::encode(static_cast<uint8_t>(1), data_bl);   // 1
+  ::encode(m_entry_tid, data_bl);               // 8
+  ::encode(m_tag_tid, data_bl);                 // 8
+
+  ::encode(m_data, data_bl);                    // 4 + m_data
 
   uint32_t crc = data_bl.crc32c(0);
   uint32_t bl_offset = bl.length();
+
   bl.claim_append(data_bl);
-  ::encode(crc, bl);
+
+  ::encode(crc, bl);                            // 4
+
   assert(get_fixed_size() + m_data.length() + bl_offset == bl.length());
 }
 

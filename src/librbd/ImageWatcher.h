@@ -105,6 +105,8 @@ private:
     watch_notify::AsyncRequestId m_async_request_id;
   };
 
+  // used by
+  // ImageWatcher<I>::register_watch
   struct WatchCtx : public librados::WatchCtx2 {
     ImageWatcher &image_watcher;
 
@@ -136,6 +138,8 @@ private:
     watch_notify::AsyncRequestId m_async_request_id;
   };
 
+  // used by
+  // ImageWatcher<I>::prepare_async_request
   class RemoteContext : public Context {
   public:
     RemoteContext(ImageWatcher &image_watcher,
@@ -158,6 +162,8 @@ private:
     ProgressContext *m_prog_ctx;
   };
 
+  // used by
+  // ImageWatcher<I>::register_watch
   struct C_RegisterWatch : public Context {
     ImageWatcher *image_watcher;
     Context *on_finish;
@@ -170,6 +176,7 @@ private:
       on_finish->complete(r);
     }
   };
+
   struct C_NotifyAck : public Context {
     ImageWatcher *image_watcher;
     uint64_t notify_id;
@@ -178,17 +185,26 @@ private:
 
     C_NotifyAck(ImageWatcher *image_watcher, uint64_t notify_id,
                 uint64_t handle);
+
+    // image_watcher->acknowledge_notify
     virtual void finish(int r);
   };
 
+  // used by
+  // ImageWatcher<I>::handle_payload, not all, but for some payload type
   struct C_ResponseMessage : public Context {
     C_NotifyAck *notify_ack;
 
     C_ResponseMessage(C_NotifyAck *notify_ack) : notify_ack(notify_ack) {
     }
+
+    // notify_ack->complete, i.e., image_watcher->acknowledge_notify
     virtual void finish(int r);
   };
 
+  // used by
+  // ImageWatcher<I>::handle_notify, to delay handling the payload of
+  // the notify, i.e., the image has to be refreshed first
   struct C_ProcessPayload : public Context {
     ImageWatcher *image_watcher;
     uint64_t notify_id;
@@ -206,6 +222,8 @@ private:
     }
   };
 
+  // used by
+  // ImageWatcher<I>::process_payload, to handle each type of payload
   struct HandlePayloadVisitor : public boost::static_visitor<void> {
     ImageWatcher *image_watcher;
     uint64_t notify_id;
@@ -219,9 +237,17 @@ private:
 
     template <typename Payload>
     inline void operator()(const Payload &payload) const {
+      // C_NotifyAck::finish will call image_watcher->acknowledge_notify
       C_NotifyAck *ctx = new C_NotifyAck(image_watcher, notify_id,
                                                 handle);
+
+      // if handle_payload returns false, then the notify will be
+      // acked by ImageWatcher::handle_payload
+
       if (image_watcher->handle_payload(payload, ctx)) {
+
+        // handle the payload finished, ack directly
+
         ctx->complete(0);
       }
     }
@@ -244,6 +270,8 @@ private:
   Mutex m_owner_client_id_lock;
   watch_notify::ClientId m_owner_client_id;
 
+  // initialized by ImageWatcher<I>::ImageWatcher, will be used to notify
+  // the image_ctx.header_oid object
   object_watcher::Notifier m_notifier;
 
   void handle_register_watch(int r);

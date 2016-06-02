@@ -118,6 +118,9 @@ static int do_show_info(librados::IoCtx &io_ctx, librbd::Image& image,
   }
 
   if (features & RBD_FEATURE_JOURNALING) {
+
+    // <image global id, enum image state, primary>
+
     r = image.mirror_image_get_info(&mirror_image, sizeof(mirror_image));
     if (r < 0) {
       return r;
@@ -280,6 +283,7 @@ int execute(const po::variables_map &vm) {
   std::string pool_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
     vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
     &snap_name, utils::SNAPSHOT_PRESENCE_PERMITTED,
@@ -297,6 +301,8 @@ int execute(const po::variables_map &vm) {
   librados::Rados rados;
   librados::IoCtx io_ctx;
   librbd::Image image;
+
+  // opened with read-only
   r = utils::init_and_open_image(pool_name, image_name, snap_name, true,
                                  &rados, &io_ctx, &image);
   if (r < 0) {
@@ -310,6 +316,7 @@ int execute(const po::variables_map &vm) {
     std::cerr << "rbd: info: " << cpp_strerror(r) << std::endl;
     return r;
   }
+
   return 0;
 }
 

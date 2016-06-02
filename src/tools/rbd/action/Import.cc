@@ -52,6 +52,7 @@ public:
       std::cerr << "rbd: error writing to destination image at offset "
                 << m_offset << ": " << cpp_strerror(r) << std::endl;
     }
+
     m_throttle.end_op(r);
   }
 
@@ -89,7 +90,9 @@ static int do_import(librbd::RBD &rbd, librados::IoCtx& io_ctx,
   uint64_t size = 0;
 
   boost::scoped_ptr<SimpleThrottle> throttle;
+
   bool from_stdin = !strcmp(path, "-");
+
   if (from_stdin) {
     throttle.reset(new SimpleThrottle(1, false));
     fd = 0;
@@ -97,6 +100,7 @@ static int do_import(librbd::RBD &rbd, librados::IoCtx& io_ctx,
   } else {
     throttle.reset(new SimpleThrottle(
       max(g_conf->rbd_concurrent_management_ops, 1), false));
+
     if ((fd = open(path, O_RDONLY)) < 0) {
       r = -errno;
       std::cerr << "rbd: error opening " << path << std::endl;
@@ -108,11 +112,13 @@ static int do_import(librbd::RBD &rbd, librados::IoCtx& io_ctx,
       std::cerr << "rbd: stat error " << path << std::endl;
       goto done;
     }
+
     if (S_ISDIR(stat_buf.st_mode)) {
       r = -EISDIR;
       std::cerr << "rbd: cannot import a directory" << std::endl;
       goto done;
     }
+
     if (stat_buf.st_size)
       size = (uint64_t)stat_buf.st_size;
 
@@ -124,9 +130,12 @@ static int do_import(librbd::RBD &rbd, librados::IoCtx& io_ctx,
                   << std::endl;
         goto done;
       }
+
       assert(bdev_size >= 0);
+
       size = (uint64_t) bdev_size;
     }
+
 #ifdef HAVE_POSIX_FADVISE
     posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
 #endif
@@ -156,11 +165,13 @@ static int do_import(librbd::RBD &rbd, librados::IoCtx& io_ctx,
       reqlen -= readlen;
       continue;
     }
+
     if (!from_stdin)
       pc.update_progress(image_pos, size);
 
     bufferlist bl(blklen);
     bl.append(p, blklen);
+
     // resize output image by binary expansion as we go for stdin
     if (from_stdin && (image_pos + (size_t)blklen) > size) {
       size *= 2;
@@ -183,9 +194,11 @@ static int do_import(librbd::RBD &rbd, librados::IoCtx& io_ctx,
     // if read had returned 0, we're at EOF and should quit
     if (readlen == 0)
       break;
+
     blklen = 0;
     reqlen = imgblklen;
   }
+
   r = throttle->wait_for_ret();
   if (r < 0) {
     goto done;

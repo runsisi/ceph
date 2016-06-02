@@ -206,6 +206,7 @@ private:
   typedef typename librbd::journal::TypeTraits<ImageCtxT>::Journaler Journaler;
   typedef boost::optional<State> OptionalState;
 
+  // used by ImageReplayer<I>::handle_bootstrap for local journal
   struct JournalListener : public librbd::journal::Listener {
     ImageReplayer *img_replayer;
 
@@ -213,14 +214,17 @@ private:
       : img_replayer(img_replayer) {
     }
 
+    // Journal<I>::close will notify us
     virtual void handle_close() {
       img_replayer->on_stop_journal_replay();
     }
 
+    // Journal<I>::handle_refresh_metadata will notify us
     virtual void handle_promoted() {
       img_replayer->on_stop_journal_replay(0, "force promoted");
     }
 
+    // Journal<I>::handle_refresh_metadata will notify us
     virtual void handle_resync() {
       img_replayer->resync_image();
     }
@@ -293,11 +297,14 @@ private:
   librbd::journal::EventEntry m_event_entry;
   AsyncOpTracker m_event_replay_tracker;
 
+  // constructed by ImageReplayer<I>::ImageReplayer and registered by
+  // ImageReplayer<I>::handle_init_remote_journaler
   struct RemoteJournalerListener : public ::journal::JournalMetadataListener {
     ImageReplayer *replayer;
 
     RemoteJournalerListener(ImageReplayer *replayer) : replayer(replayer) { }
 
+    // will be notified by JournalMetadata::handle_refresh_complete
     void handle_update(::journal::JournalMetadata *);
   } m_remote_listener;
 

@@ -349,6 +349,7 @@ struct PGSnapTrim {
   }
 };
 
+// used by OSDService::_maybe_queue_recovery, which called by OSDService::finish_recovery_op
 struct PGRecovery {
   epoch_t epoch_queued;
   uint64_t reserved_pushes;
@@ -977,14 +978,17 @@ public:
       }
     }
   }
+
   // replay / delayed pg activation
   void queue_for_recovery(PG *pg, bool front = false) {
     Mutex::Locker l(recovery_lock);
+
     if (front) {
       awaiting_throttle.push_front(make_pair(pg->get_osdmap()->get_epoch(), pg));
     } else {
       awaiting_throttle.push_back(make_pair(pg->get_osdmap()->get_epoch(), pg));
     }
+
     _maybe_queue_recovery();
   }
 
@@ -1834,16 +1838,21 @@ private:
       PG *pg;
       list<OpRequestRef> *out_ops;
       uint64_t reserved_pushes_to_free;
+
       Pred(PG *pg, list<OpRequestRef> *out_ops = 0)
 	: pg(pg), out_ops(out_ops), reserved_pushes_to_free(0) {}
+
       void accumulate(const PGQueueable &op) {
+        // only for PGRecovery
 	reserved_pushes_to_free += op.get_reserved_pushes();
+
 	if (out_ops) {
 	  boost::optional<OpRequestRef> mop = op.maybe_get_op();
 	  if (mop)
 	    out_ops->push_front(*mop);
 	}
       }
+
       bool operator()(const pair<PGRef, PGQueueable> &op) {
 	if (op.first == pg) {
 	  accumulate(op.second);
@@ -1852,21 +1861,26 @@ private:
 	  return false;
 	}
       }
+
       uint64_t get_reserved_pushes_to_free() const {
 	return reserved_pushes_to_free;
       }
     };
 
+    // we are ShardedOpWQ, no need to dequeue explicitly, we dequeue
+    // in ShardedOpWQ::_process
     void dequeue(PG *pg) {
       return dequeue_and_get_ops(pg, nullptr);
     }
 
+    // called by ShardedOpWQ::dequeue and OSDService::dequeue_pg
     void dequeue_and_get_ops(PG *pg, list<OpRequestRef> *dequeued) {
       ShardData* sdata = NULL;
       assert(pg != NULL);
       uint32_t shard_index = pg->get_pgid().ps()% shard_list.size();
       sdata = shard_list[shard_index];
       assert(sdata != NULL);
+
       sdata->sdata_op_ordering_lock.Lock();
 
       Pred f(pg, dequeued);
@@ -1886,6 +1900,7 @@ private:
       }
 
       sdata->sdata_op_ordering_lock.Unlock();
+
       osd->service.release_reserved_pushes(f.get_reserved_pushes_to_free());
     }
  

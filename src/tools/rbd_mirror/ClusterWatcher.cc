@@ -50,9 +50,11 @@ void ClusterWatcher::refresh_pools()
 
   PoolPeers pool_peers;
   PoolNames pool_names;
+
   read_pool_peers(&pool_peers, &pool_names);
 
   Mutex::Locker l(m_lock);
+
   m_pool_peers = pool_peers;
   m_pool_names = pool_names;
   // TODO: perhaps use a workqueue instead, once we get notifications
@@ -70,9 +72,14 @@ void ClusterWatcher::read_pool_peers(PoolPeers *pool_peers,
   }
 
   for (auto kv : pools) {
+
+    // iterate pools of local cluster
+
     int64_t pool_id = kv.first;
     string pool_name = kv.second;
     int64_t base_tier;
+
+    // skip cache pools
     r = m_cluster->pool_get_base_tier(pool_id, &base_tier);
     if (r == -ENOENT) {
       dout(10) << "pool " << pool_name << " no longer exists" << dendl;
@@ -96,6 +103,7 @@ void ClusterWatcher::read_pool_peers(PoolPeers *pool_peers,
       continue;
     }
 
+    // skip local non-mirror enabled pools
     rbd_mirror_mode_t mirror_mode;
     r = librbd::mirror_mode_get(ioctx, &mirror_mode);
     if (r < 0) {
@@ -103,6 +111,7 @@ void ClusterWatcher::read_pool_peers(PoolPeers *pool_peers,
 	   << " : " << cpp_strerror(r) << dendl;
       continue;
     }
+
     if (mirror_mode == RBD_MIRROR_MODE_DISABLED) {
       dout(10) << "mirroring is disabled for pool " << pool_name << dendl;
       continue;
@@ -116,6 +125,7 @@ void ClusterWatcher::read_pool_peers(PoolPeers *pool_peers,
       continue;
     }
 
+    // map<pool id, set<peer_t>>, note: peer_t has a ctor from mirror_peer_t
     pool_peers->insert({pool_id, Peers{configs.begin(), configs.end()}});
     pool_names->insert(pool_name);
   }

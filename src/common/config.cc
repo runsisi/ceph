@@ -134,8 +134,10 @@ md_config_t::md_config_t()
 #undef SUBSYS
 #undef DEFAULT_SUBSYS
   };
+
   static std::shared_ptr<decltype(s_config_options)>
     s_tbl(new std::vector<md_config_t::config_option>(std::move(s_config_options)));
+
   config_options = s_tbl;
 
   init_subsys();
@@ -607,6 +609,7 @@ bool md_config_t::_internal_field(const string& s)
   return false;
 }
 
+// called by md_config_t::apply_changes, md_config_t::injectargs
 void md_config_t::_apply_changes(std::ostream *oss)
 {
   /* Maps observers to the configuration options that they care about which

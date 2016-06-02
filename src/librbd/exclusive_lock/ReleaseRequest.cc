@@ -64,12 +64,15 @@ void ReleaseRequest<I>::send_prepare_lock() {
     return;
   }
 
+  // release exclusive lock not for shutdown the exclusive lock
+
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << __func__ << dendl;
 
   // release the lock if the image is not busy performing other actions
   Context *ctx = create_context_callback<
     ReleaseRequest<I>, &ReleaseRequest<I>::handle_prepare_lock>(this);
+
   m_image_ctx.state->prepare_lock(ctx);
 }
 
@@ -90,6 +93,9 @@ void ReleaseRequest<I>::send_cancel_op_requests() {
   using klass = ReleaseRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_cancel_op_requests>(this);
+
+  // cancel and wait all requests on ImageCtx::async_requests, note
+  // these are async op requests while not aio requests
   m_image_ctx.cancel_async_requests(ctx);
 }
 
@@ -101,6 +107,7 @@ Context *ReleaseRequest<I>::handle_cancel_op_requests(int *ret_val) {
   assert(*ret_val == 0);
 
   send_block_writes();
+
   return nullptr;
 }
 
@@ -115,9 +122,11 @@ void ReleaseRequest<I>::send_block_writes() {
 
   {
     RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
     if (m_image_ctx.test_features(RBD_FEATURE_JOURNALING)) {
       m_image_ctx.aio_work_queue->set_require_lock_on_read();
     }
+
     m_image_ctx.aio_work_queue->block_writes(ctx);
   }
 }
@@ -128,6 +137,9 @@ Context *ReleaseRequest<I>::handle_block_writes(int *ret_val) {
   ldout(cct, 10) << __func__ << ": r=" << *ret_val << dendl;
 
   if (*ret_val < 0) {
+
+    // TODO: clear lock on read ???
+
     m_image_ctx.aio_work_queue->unblock_writes();
     return m_on_finish;
   }
@@ -144,6 +156,7 @@ void ReleaseRequest<I>::send_flush_notifies() {
   using klass = ReleaseRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_flush_notifies>(this);
+
   m_image_ctx.image_watcher->flush(ctx);
 }
 
@@ -153,6 +166,7 @@ Context *ReleaseRequest<I>::handle_flush_notifies(int *ret_val) {
   ldout(cct, 10) << __func__ << dendl;
 
   assert(*ret_val == 0);
+
   send_close_journal();
   return nullptr;
 }
@@ -161,6 +175,7 @@ template <typename I>
 void ReleaseRequest<I>::send_close_journal() {
   {
     RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
+
     std::swap(m_journal, m_image_ctx.journal);
   }
 
@@ -175,6 +190,7 @@ void ReleaseRequest<I>::send_close_journal() {
   using klass = ReleaseRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_close_journal>(
     this);
+
   m_journal->close(ctx);
 }
 
@@ -192,6 +208,7 @@ Context *ReleaseRequest<I>::handle_close_journal(int *ret_val) {
   delete m_journal;
 
   send_close_object_map();
+
   return nullptr;
 }
 
@@ -213,6 +230,7 @@ void ReleaseRequest<I>::send_close_object_map() {
   using klass = ReleaseRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_close_object_map>(this);
+
   m_object_map->close(ctx);
 }
 
@@ -223,6 +241,7 @@ Context *ReleaseRequest<I>::handle_close_object_map(int *ret_val) {
 
   // object map shouldn't return errors
   assert(*ret_val == 0);
+
   delete m_object_map;
 
   send_unlock();
@@ -246,6 +265,7 @@ void ReleaseRequest<I>::send_unlock() {
   using klass = ReleaseRequest<I>;
   librados::AioCompletion *rados_completion =
     create_rados_safe_callback<klass, &klass::handle_unlock>(this);
+
   int r = m_image_ctx.md_ctx.aio_operate(m_image_ctx.header_oid,
                                          rados_completion, &op);
   assert(r == 0);

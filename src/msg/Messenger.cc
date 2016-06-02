@@ -16,6 +16,7 @@ Messenger *Messenger::create_client_messenger(CephContext *cct, string lname)
 {
   uint64_t nonce = 0;
   get_random_bytes((char*)&nonce, sizeof(nonce));
+
   return Messenger::create(cct, cct->_conf->ms_type, entity_name_t::CLIENT(),
 			   lname, nonce, 0);
 }
@@ -34,6 +35,7 @@ Messenger *Messenger::create(CephContext *cct, const string &type,
     std::uniform_int_distribution<> dis(0, 1);
     r = dis(random_engine);
   }
+
   if (r == 0 || type == "simple")
     return new SimpleMessenger(cct, name, lname, nonce);
   else if (r == 1 || type == "async")
@@ -43,6 +45,7 @@ Messenger *Messenger::create(CephContext *cct, const string &type,
 	   cct->check_experimental_feature_enabled("ms-type-xio"))
     return new XioMessenger(cct, name, lname, nonce, cflags);
 #endif
+
   lderr(cct) << "unrecognized ms_type '" << type << "'" << dendl;
   return nullptr;
 }

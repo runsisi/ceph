@@ -284,10 +284,15 @@ public:
   }
   void queue_transaction(ObjectStore::Transaction&& t,
 			 OpRequestRef op) override {
+    // construct a vector of Transaction and call ObjectStore::queue_transactions
     osd->store->queue_transaction(osr.get(), std::move(t), 0, 0, 0, op);
   }
+
+  // called by ReplicatedBackend::submit_transaction, ReplicatedBackend::sub_op_modify
+  // and ECBackend::handle_sub_write
   void queue_transactions(vector<ObjectStore::Transaction>& tls,
 			  OpRequestRef op) override {
+    // do not add additional onreadable, ondisk, onreadable_sync callback
     osd->store->queue_transactions(osr.get(), tls, 0, 0, 0, op, NULL);
   }
   epoch_t get_epoch() const override {
@@ -605,13 +610,17 @@ public:
       async_read_result(0),
       inflightreads(0),
       lock_type(ObjectContext::RWState::RWNONE) {}
+
     void reset_obs(ObjectContextRef obc) {
       new_obs = ObjectState(obc->obs.oi, obc->obs.exists);
+
+      // TODO: obc->ssc always be non-null, see get_object_context ???
       if (obc->ssc) {
 	new_snapset = obc->ssc->snapset;
 	snapset = &obc->ssc->snapset;
       }
     }
+
     ~OpContext() {
       assert(!op_t);
       if (reply)
@@ -624,6 +633,7 @@ public:
 	delete i->second.second;
       }
     }
+
     uint64_t get_features() {
       if (op && op->get_req()) {
         return op->get_req()->get_connection()->get_features();
@@ -631,6 +641,7 @@ public:
       return -1ull;
     }
   };
+
   using OpContextUPtr = std::unique_ptr<OpContext>;
   friend struct OpContext;
 
@@ -738,16 +749,30 @@ protected:
      * to get the second.
      */
     if (write_ordered && ctx->op->may_read()) {
+
+      // write-ordered read
+
       ctx->lock_type = ObjectContext::RWState::RWEXCL;
     } else if (write_ordered) {
+
+      // write
+
       ctx->lock_type = ObjectContext::RWState::RWWRITE;
     } else {
+
+      // read
+
       assert(ctx->op->may_read());
       ctx->lock_type = ObjectContext::RWState::RWREAD;
     }
 
     if (ctx->snapset_obc) {
+
+      // we only get snapdir obc when the obc of the target object does not exist
+
       assert(!ctx->obc->obs.exists);
+
+      // get obc lock by lock type
       if (!ctx->lock_manager.get_lock_type(
 	    ctx->lock_type,
 	    ctx->snapset_obc->obs.oi.soid,
@@ -757,6 +782,8 @@ protected:
 	return false;
       }
     }
+
+    // get obc lock by lock type
     if (ctx->lock_manager.get_lock_type(
 	  ctx->lock_type,
 	  ctx->obc->obs.oi.soid,
@@ -765,6 +792,7 @@ protected:
       return true;
     } else {
       assert(!ctx->snapset_obc);
+
       ctx->lock_type = ObjectContext::RWState::RWNONE;
       return false;
     }
@@ -777,12 +805,15 @@ protected:
    */
   void close_op_ctx(OpContext *ctx) {
     release_object_locks(ctx->lock_manager);
+
     ctx->op_t.reset();
+
     for (auto p = ctx->on_finish.begin();
 	 p != ctx->on_finish.end();
 	 ctx->on_finish.erase(p++)) {
       (*p)();
     }
+
     delete ctx;
   }
 
@@ -794,14 +825,18 @@ protected:
   void release_object_locks(
     ObcLockManager &lock_manager) {
     list<pair<hobject_t, list<OpRequestRef> > > to_req;
+
     bool requeue_recovery = false;
     bool requeue_snaptrim = false;
+
     lock_manager.put_locks(
       &to_req,
       &requeue_recovery,
       &requeue_snaptrim);
+
     if (requeue_recovery)
       queue_recovery();
+
     if (requeue_snaptrim)
       snap_trimmer_machine.process_event(TrimWriteUnblocked());
 

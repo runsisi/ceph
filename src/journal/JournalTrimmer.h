@@ -39,6 +39,8 @@ private:
     MetadataListener(JournalTrimmer *journal_trimmmer)
       : journal_trimmmer(journal_trimmmer) {
     }
+
+    // will be notified by JournalMetadata::handle_refresh_complete
     void handle_update(JournalMetadata *) {
       journal_trimmmer->handle_metadata_updated();
     }
@@ -51,6 +53,7 @@ private:
       : journal_trimmer(_journal_trimmer) {
       journal_trimmer->m_async_op_tracker.start_op();
     }
+
     virtual ~C_CommitPositionSafe() {
       journal_trimmer->m_async_op_tracker.finish_op();
     }
@@ -66,6 +69,7 @@ private:
   std::string m_object_oid_prefix;
 
   JournalMetadataPtr m_journal_metadata;
+  // registered by JournalTrimmer::JournalTrimmer
   MetadataListener m_metadata_listener;
 
   AsyncOpTracker m_async_op_tracker;
@@ -78,6 +82,7 @@ private:
 
   bool m_shutdown = false;
 
+  // used in JournalTrimmer::committed
   CreateContext m_create_commit_position_safe_context = [this]() {
       return new C_CommitPositionSafe(this);
     };

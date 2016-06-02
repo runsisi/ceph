@@ -44,6 +44,7 @@ Throttle::Throttle(CephContext *cct, const std::string& n, int64_t m, bool _use_
 
   if (cct->_conf->throttler_perf_counter) {
     PerfCountersBuilder b(cct, string("throttle-") + name, l_throttle_first, l_throttle_last);
+
     b.add_u64(l_throttle_val, "val", "Currently available throttle");
     b.add_u64(l_throttle_max, "max", "Max value for throttle");
     b.add_u64_counter(l_throttle_get_started, "get_started", "Number of get calls, increased before wait");
@@ -58,7 +59,9 @@ Throttle::Throttle(CephContext *cct, const std::string& n, int64_t m, bool _use_
     b.add_time_avg(l_throttle_wait, "wait", "Waiting latency");
 
     logger = b.create_perf_counters();
+
     cct->get_perfcounters_collection()->add(logger);
+
     logger->set(l_throttle_max, max.read());
   }
 }
@@ -371,48 +374,69 @@ std::chrono::duration<double> BackoffThrottle::_get_delay(uint64_t c) const
 std::chrono::duration<double> BackoffThrottle::get(uint64_t c)
 {
   locker l(lock);
+  
   auto delay = _get_delay(c);
 
   // fast path
   if (delay == std::chrono::duration<double>(0) &&
       waiters.empty() &&
       ((max == 0) || (current == 0) || ((current + c) <= max))) {
+    // no need to throttle or delay
     current += c;
     return std::chrono::duration<double>(0);
   }
 
+  // push a cond pointer back of the waiters list and return the iterator
   auto ticket = _push_waiter();
 
   while (waiters.begin() != ticket) {
+
+    // there is already someone is on the waiting list, wait the condition variable
+
+    // _kick_waiters will notify us to proceed
     (*ticket)->wait(l);
   }
 
   auto start = std::chrono::system_clock::now();
+  
   delay = _get_delay(c);
+  
   while (true) {
     if (!((max == 0) || (current == 0) || (current + c) <= max)) {
+      // queue full, should throttle
       (*ticket)->wait(l);
     } else if (delay > std::chrono::duration<double>(0)) {
+      // queue reached delay
       (*ticket)->wait_for(l, delay);
     } else {
+      // proceed
       break;
     }
+    
     assert(ticket == waiters.begin());
+    
     delay = _get_delay(c) - (std::chrono::system_clock::now() - start);
   }
+  
   waiters.pop_front();
+
+  // 
   _kick_waiters();
 
   current += c;
+  
   return std::chrono::system_clock::now() - start;
 }
 
 uint64_t BackoffThrottle::put(uint64_t c)
 {
   locker l(lock);
+  
   assert(current >= c);
   current -= c;
+  
   _kick_waiters();
+  
   return current;
 }
 
@@ -435,6 +459,7 @@ uint64_t BackoffThrottle::get_max()
   return max;
 }
 
+// used by librbd::copy and rbd/action/Export, rbd/action/Import
 SimpleThrottle::SimpleThrottle(uint64_t max, bool ignore_enoent)
   : m_lock("SimpleThrottle"),
     m_max(max),
@@ -485,6 +510,7 @@ void C_OrderedThrottle::finish(int r) {
   m_ordered_throttle->finish_op(m_tid, r);
 }
 
+// used by Image::diff_iterate
 OrderedThrottle::OrderedThrottle(uint64_t max, bool ignore_enoent)
   : m_lock("OrderedThrottle::m_lock"), m_max(max), m_current(0), m_ret_val(0),
     m_ignore_enoent(ignore_enoent), m_next_tid(0), m_complete_tid(0) {

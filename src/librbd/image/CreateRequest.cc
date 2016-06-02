@@ -89,9 +89,13 @@ int validate_data_pool(CephContext *cct, IoCtx &io_ctx, uint64_t features,
   return 0;
 }
 
-
+// called by
+// librbd::image::CreateRequest<I>::send
 bool validate_layout(CephContext *cct, uint64_t size, file_layout_t &layout) {
   if (!librbd::ObjectMap::is_compatible(layout, size)) {
+
+    // object count > 256000000
+
     lderr(cct) << "image size not compatible with object map" << dendl;
     return false;
   }
@@ -186,6 +190,9 @@ CreateRequest<I>::CreateRequest(IoCtx &ioctx, const std::string &image_name,
     m_layout.stripe_count = m_stripe_count;
   }
 
+  // if we are create a local mirror image, then the global image id of
+  // the remote image is provided, see
+  // rbd_mirror::image_replayer::CreateImageRequest<I>::create_image
   m_force_non_primary = !non_primary_global_image_id.empty();
 
   if (!m_data_pool.empty() && m_data_pool != ioctx.get_pool_name()) {
@@ -254,6 +261,7 @@ void CreateRequest<I>::send() {
     return;
   }
 
+  // object_map restricts the image size with object count <= 256000000
   if (!validate_layout(m_cct, m_size, m_layout)) {
     complete(-EINVAL);
     return;
@@ -426,6 +434,7 @@ Context *CreateRequest<I>::handle_negotiate_features(int *result) {
   }
 
   create_image();
+
   return nullptr;
 }
 
@@ -502,6 +511,7 @@ Context *CreateRequest<I>::handle_set_stripe_unit_count(int *result) {
   }
 
   object_map_resize();
+
   return nullptr;
 }
 
@@ -534,24 +544,38 @@ Context *CreateRequest<I>::handle_object_map_resize(int *result) {
     lderr(m_cct) << "error creating initial object map: " << cpp_strerror(*result) << dendl;
 
     m_r_saved = *result;
+
     remove_header_object();
+
     return nullptr;
   }
 
   fetch_mirror_mode();
+
   return nullptr;
 }
 
 template<typename I>
 void CreateRequest<I>::fetch_mirror_mode() {
+  // if we are creating a local mirror image, then the image features
+  // are the same as the remote primary image, see
+  // rbd_mirror::image_replayer::CreateImageRequest<I>::create_image
   if ((m_features & RBD_FEATURE_JOURNALING) == 0) {
+
+    // if journal feature is not enabled, then journal options and
+    // mirror options are not needed to considered
+
     complete(0);
     return;
   }
 
+  // ok, journal feature are to be enabled for this image
+
   ldout(m_cct, 20) << this << " " << __func__ << dendl;
 
   librados::ObjectReadOperation op;
+
+  // get miror mode of the pool which the newly created image resident in
   cls_client::mirror_mode_get_start(&op);
 
   using klass = CreateRequest<I>;
@@ -616,6 +640,12 @@ void CreateRequest<I>::journal_create() {
   Context *ctx = create_context_callback<klass, &klass::handle_journal_create>(this);
 
   librbd::journal::TagData tag_data;
+
+  // tags are always bundled with journal
+
+  // note: only ImageReplayer can create a new image which is non-primary,
+  // all other non-primary images are come from demotion if mirror is enabled
+  // for these images
   tag_data.mirror_uuid = (m_force_non_primary ? m_primary_mirror_uuid :
                           librbd::Journal<I>::LOCAL_MIRROR_UUID);
 
@@ -624,6 +654,11 @@ void CreateRequest<I>::journal_create() {
       m_ioctx, m_image_id, m_journal_order, m_journal_splay_width, m_journal_pool,
       cls::journal::Tag::TAG_CLASS_NEW, tag_data, librbd::Journal<I>::IMAGE_CLIENT_ID,
       m_op_work_queue, ctx);
+
+  // create journal metadata object and allocate the initial tag then
+  // register image client
+  // the initial tag, tag.tag_data.mirror_uuid, can used to identify if
+  // we are a local mirror image, i.e., a non-primary image or a primary image
   req->send();
 }
 
@@ -646,6 +681,11 @@ Context* CreateRequest<I>::handle_journal_create(int *result) {
 template<typename I>
 void CreateRequest<I>::fetch_mirror_image() {
   if ((m_mirror_mode != RBD_MIRROR_MODE_POOL) && !m_force_non_primary) {
+
+    // the pool the newly created image residents in is not in pool
+    // mirror mode, and the image is not a local mirror image, so
+    // no need to bother to continue
+
     complete(0);
     return;
   }
@@ -692,8 +732,12 @@ Context *CreateRequest<I>::handle_fetch_mirror_image(int *result) {
     }
   }
 
+  // to enable mirror becoz 1) the mirror mode of the pool is in
+  // pool mode or 2) we are creating a local mirror image
+
   // enable image mirroring (-ENOENT or disabled earlier)
   mirror_image_enable();
+
   return nullptr;
 }
 
@@ -702,15 +746,27 @@ void CreateRequest<I>::mirror_image_enable() {
   ldout(m_cct, 20) << this << " " << __func__ << dendl;
 
   m_mirror_image_internal.state = cls::rbd::MIRROR_IMAGE_STATE_ENABLED;
+
   if (m_non_primary_global_image_id.empty()) {
+
+    // enable mirror because the pool mode
+
     uuid_d uuid_gen;
     uuid_gen.generate_random();
     m_mirror_image_internal.global_image_id = uuid_gen.to_string();
   } else {
+
+    // enable mirror because we are a local mirror image of the remote image
+
     m_mirror_image_internal.global_image_id = m_non_primary_global_image_id;
   }
 
+  // register two omap entries on "rbd_mirroring" object, i.e.,
+  // 1) image id -> MirrorImage<global image id, enum mirror state>, and
+  // 2) global image id -> image id
+
   librados::ObjectWriteOperation op;
+  // <local image id, <image mirror state, global image id> >
   cls_client::mirror_image_set(&op, m_image_id, m_mirror_image_internal);
 
   using klass = CreateRequest<I>;

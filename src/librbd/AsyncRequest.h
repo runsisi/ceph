@@ -12,6 +12,10 @@ namespace librbd {
 
 class ImageCtx;
 
+// pure virtual function:
+// send, should_complete
+// virtual function:
+// filter_return_code, finish
 template <typename ImageCtxT = ImageCtx>
 class AsyncRequest
 {
@@ -20,8 +24,11 @@ public:
   virtual ~AsyncRequest();
 
   void complete(int r) {
+    // pure virtual
     if (should_complete(r)) {
       r = filter_return_code(r);
+
+      // finish(r) then delete this
       finish_and_destroy(r);
     }
   }
@@ -31,6 +38,8 @@ public:
   inline bool is_canceled() const {
     return m_canceled;
   }
+
+  // called by ImageCtx::cancel_async_requests
   inline void cancel() {
     m_canceled = true;
   }
@@ -39,9 +48,18 @@ protected:
   ImageCtxT &m_image_ctx;
 
   librados::AioCompletion *create_callback_completion();
+
   Context *create_callback_context();
+
+  // called in TrimRequest<I>::send_clean_boundary
   Context *create_async_callback_context();
 
+  // called by AsyncRequest<T>::create_async_callback_context to queue
+  // a context(created by create_callback_context) on m_image_ctx.op_work_queue
+  // and other places:
+  // object_map::InvalidateRequest
+  // operation::ResizeRequest, SnapshotProtectRequest, SnapshotRemoveRequest,
+  // SnapshotUnprotectRequest, TrimRequest
   void async_complete(int r);
 
   virtual bool should_complete(int r) = 0;
@@ -56,16 +74,23 @@ protected:
   }
 
   virtual void finish(int r) {
+    // remove from m_image_ctx.async_requests, which was pushed back by
+    // start_request which was called by AsyncRequest::AsyncRequest
     finish_request();
+
     m_on_finish->complete(r);
   }
 
 private:
   Context *m_on_finish;
   bool m_canceled;
+
+  // will be pushed back of ImageCtx::async_requests
   typename xlist<AsyncRequest<ImageCtxT> *>::item m_xlist_item;
 
+  // push ourself back of m_image_ctx.async_requests
   void start_request();
+  // remove ourself from m_image_ctx.async_requests and complete the waiters
   void finish_request();
 };
 

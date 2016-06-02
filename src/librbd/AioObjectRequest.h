@@ -91,6 +91,7 @@ protected:
   uint64_t m_object_no, m_object_off, m_object_len;
   librados::snap_t m_snap_id;
   Context *m_completion;
+  // std::vector<std::pair<uint64_t, uint64_t> >
   Extents m_parent_extents;
   bool m_hide_enoent;
 };
@@ -274,6 +275,7 @@ protected:
   virtual void pre_object_map_update(uint8_t *new_state) {
     *new_state = OBJECT_EXISTS;
   }
+
   virtual void send_write();
 
 private:
@@ -305,12 +307,14 @@ protected:
     }
     return "remove";
   }
+
   virtual void pre_object_map_update(uint8_t *new_state) {
     if (has_parent()) {
       m_object_state = OBJECT_EXISTS;
     } else {
       m_object_state = OBJECT_PENDING;
     }
+
     *new_state = m_object_state;
   }
 

@@ -63,13 +63,18 @@ void Elector::bump_epoch(epoch_t e)
   classic_mons.clear();
 }
 
-
+// called by
+// Elector::expire
+// Elector::handle_ack
+// Elector::handle_victory
+// Elector::call_election
 void Elector::start()
 {
   if (!participating) {
     dout(0) << "not starting new election -- not participating" << dendl;
     return;
   }
+
   dout(5) << "start -- can i be leader?" << dendl;
 
   acked_me.clear();
@@ -318,18 +323,27 @@ void Elector::handle_propose(MonOpRequestRef op)
 void Elector::handle_ack(MonOpRequestRef op)
 {
   op->mark_event("elector:handle_ack");
+
   MMonElection *m = static_cast<MMonElection*>(op->get_req());
+
   dout(5) << "handle_ack from " << m->get_source() << dendl;
+
   int from = m->get_source().num();
 
   assert(m->epoch % 2 == 1); // election
+
   if (m->epoch > epoch) {
     dout(5) << "woah, that's a newer epoch, i must have rebooted.  bumping and re-starting!" << dendl;
+
     bump_epoch(m->epoch);
+
     start();
+
     return;
   }
+
   assert(m->epoch == epoch);
+
   uint64_t required_features = mon->get_required_features();
   if ((required_features ^ m->get_connection()->get_features()) &
       required_features) {
@@ -347,13 +361,16 @@ void Elector::handle_ack(MonOpRequestRef op)
     return;
   }
 
+  // electing_me can only be set to true by Elector::start
   if (electing_me) {
     // thanks
     acked_me[from].cluster_features = m->get_connection()->get_features();
     acked_me[from].mon_features = m->mon_features;
     if (!m->sharing_bl.length())
       classic_mons.insert(from);
+
     dout(5) << " so far i have {";
+
     for (map<int, elector_features_t>::const_iterator p = acked_me.begin();
          p != acked_me.end();
          ++p) {
@@ -363,6 +380,7 @@ void Elector::handle_ack(MonOpRequestRef op)
              << " features " << p->second.cluster_features
              << " " << p->second.mon_features;
     }
+
     *_dout << " }" << dendl;
 
     // is that _everyone_?
@@ -380,11 +398,14 @@ void Elector::handle_ack(MonOpRequestRef op)
 void Elector::handle_victory(MonOpRequestRef op)
 {
   op->mark_event("elector:handle_victory");
+
   MMonElection *m = static_cast<MMonElection*>(op->get_req());
+
   dout(5) << "handle_victory from " << m->get_source()
           << " quorum_features " << m->quorum_features
           << " " << m->mon_features
           << dendl;
+
   int from = m->get_source().num();
 
   assert(from < mon->rank);
@@ -395,8 +416,11 @@ void Elector::handle_victory(MonOpRequestRef op)
   // i should have seen this election if i'm getting the victory.
   if (m->epoch != epoch + 1) { 
     dout(5) << "woah, that's a funny epoch, i must have rebooted.  bumping and re-starting!" << dendl;
+
     bump_epoch(m->epoch);
+
     start();
+
     return;
   }
 
@@ -559,10 +583,15 @@ void Elector::dispatch(MonOpRequestRef op)
   }
 }
 
+// called by
+// Monitor::do_admin_command
+// Monitor::handle_command
 void Elector::start_participating()
 {
+  // participating can only be set to false by Elector::stop_participating
   if (!participating) {
     participating = true;
+
     call_election();
   }
 }

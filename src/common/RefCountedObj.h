@@ -27,21 +27,27 @@ private:
   CephContext *cct;
 public:
   RefCountedObject(CephContext *c = NULL, int n=1) : nref(n), cct(c) {}
+
   virtual ~RefCountedObject() {
     assert(nref.read() == 0);
   }
   
   RefCountedObject *get() {
     int v = nref.inc();
+
     if (cct)
       lsubdout(cct, refs, 1) << "RefCountedObject::get " << this << " "
 			     << (v - 1) << " -> " << v
 			     << dendl;
+
     return this;
   }
+
   void put() {
     CephContext *local_cct = cct;
+
     int v = nref.dec();
+
     if (v == 0) {
       ANNOTATE_HAPPENS_AFTER(&nref);
       ANNOTATE_HAPPENS_BEFORE_FORGET_ALL(&nref);
@@ -49,11 +55,13 @@ public:
     } else {
       ANNOTATE_HAPPENS_BEFORE(&nref);
     }
+
     if (local_cct)
       lsubdout(local_cct, refs, 1) << "RefCountedObject::put " << this << " "
 				   << (v + 1) << " -> " << v
 				   << dendl;
   }
+
   void set_cct(CephContext *c) {
     cct = c;
   }

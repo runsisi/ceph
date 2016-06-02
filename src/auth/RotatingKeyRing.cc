@@ -8,13 +8,17 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "auth: "
 
-
+// called by
+// MonClient::_check_auth_rotating
 bool RotatingKeyRing::need_new_secrets() const
 {
   Mutex::Locker l(lock);
   return secrets.need_new_secrets();
 }
 
+// called by
+// MonClient::_check_auth_rotating
+// MonClient::wait_auth_rotating
 bool RotatingKeyRing::need_new_secrets(utime_t now) const
 {
   Mutex::Locker l(lock);
@@ -56,13 +60,16 @@ bool RotatingKeyRing::get_service_secret(uint32_t service_id_, uint64_t secret_i
 
   map<uint64_t, ExpiringCryptoKey>::const_iterator iter =
     secrets.secrets.find(secret_id);
+
   if (iter == secrets.secrets.end()) {
     ldout(cct, 0) << "could not find secret_id=" << secret_id << dendl;
+
     dump_rotating();
     return false;
   }
 
   secret = iter->second.key;
+
   return true;
 }
 

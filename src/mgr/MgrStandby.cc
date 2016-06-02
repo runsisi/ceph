@@ -211,6 +211,7 @@ bool MgrStandby::ms_get_authorizer(int dest_type, AuthAuthorizer **authorizer,
   }
 
   *authorizer = monc->auth->build_authorizer(dest_type);
+
   return *authorizer != NULL;
 }
 

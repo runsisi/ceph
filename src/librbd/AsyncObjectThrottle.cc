@@ -26,17 +26,22 @@ AsyncObjectThrottle<T>::AsyncObjectThrottle(
 template <typename T>
 void AsyncObjectThrottle<T>::start_ops(uint64_t max_concurrent) {
   assert(m_image_ctx.owner_lock.is_locked());
+
   bool complete;
+
   {
     Mutex::Locker l(m_lock);
+
     for (uint64_t i = 0; i < max_concurrent; ++i) {
       start_next_op();
       if (m_ret < 0 && m_current_ops == 0) {
 	break;
       }
     }
+
     complete = (m_current_ops == 0);
   }
+
   if (complete) {
     // avoid re-entrant callback
     m_image_ctx.op_work_queue->queue(m_ctx, m_ret);
@@ -67,6 +72,7 @@ void AsyncObjectThrottle<T>::finish_op(int r) {
 template <typename T>
 void AsyncObjectThrottle<T>::start_next_op() {
   bool done = false;
+
   while (!done) {
     if (m_async_request != NULL && m_async_request->is_canceled() &&
         m_ret == 0) {
@@ -78,6 +84,7 @@ void AsyncObjectThrottle<T>::start_next_op() {
     }
 
     uint64_t ono = m_object_no++;
+
     C_AsyncObjectThrottle<T> *ctx = m_context_factory(*this, ono);
 
     int r = ctx->send();
@@ -92,6 +99,7 @@ void AsyncObjectThrottle<T>::start_next_op() {
       ++m_current_ops;
       done = true;
     }
+
     if (m_prog_ctx != NULL) {
       m_prog_ctx->update_progress(ono, m_end_object_no);
     }

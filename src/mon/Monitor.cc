@@ -151,10 +151,12 @@ Monitor::Monitor(CephContext* cct_, string nm, MonitorDBStore *s,
   logger(NULL), cluster_logger(NULL), cluster_logger_registered(false),
   monmap(map),
   log_client(cct_, messenger, monmap, LogClient::FLAG_MON),
-  key_server(cct, &keyring),
+  key_server(cct, &keyring), // keyring will be loaded by Monitor::preinit
+  // default cephx
   auth_cluster_required(cct,
 			cct->_conf->auth_supported.empty() ?
 			cct->_conf->auth_cluster_required : cct->_conf->auth_supported),
+  // default cephx
   auth_service_required(cct,
 			cct->_conf->auth_supported.empty() ?
 			cct->_conf->auth_service_required : cct->_conf->auth_supported ),
@@ -272,12 +274,16 @@ public:
   bool call(std::string command, cmdmap_t& cmdmap, std::string format,
 	    bufferlist& out) {
     stringstream ss;
+
     mon->do_admin_command(command, cmdmap, format, ss);
+
     out.append(ss);
     return true;
   }
 };
 
+// called by
+// Monitor.cc:AdminHook::call
 void Monitor::do_admin_command(string command, cmdmap_t& cmdmap, string format,
 			       ostream& ss)
 {
@@ -290,10 +296,13 @@ void Monitor::do_admin_command(string command, cmdmap_t& cmdmap, string format,
        p != cmdmap.end(); ++p) {
     if (p->first == "prefix")
       continue;
+
     if (!args.empty())
       args += ", ";
+
     args += cmd_vartype_stringify(p->second);
   }
+
   args = "[" + args + "]";
 
   bool read_only = (command == "mon_status" ||
@@ -307,6 +316,7 @@ void Monitor::do_admin_command(string command, cmdmap_t& cmdmap, string format,
 
   if (command == "mon_status") {
     get_mon_status(f.get(), ss);
+
     if (f)
       f->flush(ss);
   } else if (command == "quorum_status") {
@@ -326,11 +336,15 @@ void Monitor::do_admin_command(string command, cmdmap_t& cmdmap, string format,
       goto abort;
   } else if (command == "quorum enter") {
     elector.start_participating();
+
     start_election();
+
     ss << "started responding to quorum, initiated new election";
   } else if (command == "quorum exit") {
     start_election();
+
     elector.stop_participating();
+
     ss << "stopped responding to quorum, initiated new election";
   } else if (command == "ops") {
     (void)op_tracker.dump_ops_in_flight(f.get());
@@ -457,11 +471,13 @@ void Monitor::do_admin_command(string command, cmdmap_t& cmdmap, string format,
   } else {
     assert(0 == "bad AdminSocket command binding");
   }
+
   (read_only ? audit_clog->debug() : audit_clog->info())
     << "from='admin socket' "
     << "entity='admin socket' "
     << "cmd=" << command << " "
     << "args=" << args << ": finished";
+
   return;
 
 abort:
@@ -940,10 +956,12 @@ int Monitor::preinit()
 int Monitor::init()
 {
   dout(2) << "init" << dendl;
+
   Mutex::Locker l(lock);
 
   // start ticker
   timer.init();
+
   new_tick();
 
   // i'm ready!
@@ -1212,7 +1230,10 @@ void Monitor::_reset()
   dout(10) << __func__ << dendl;
 
   cancel_probe_timeout();
+
+  // call timecheck_cleanup to clean timecheck related records and timer
   timecheck_finish();
+
   health_events_cleanup();
   scrub_event_cancel();
 
@@ -1985,14 +2006,18 @@ void Monitor::join_election()
 void Monitor::start_election()
 {
   dout(10) << "start_election" << dendl;
+
   wait_for_paxos_write();
+
   _reset();
+
   state = STATE_ELECTING;
 
   logger->inc(l_mon_num_elections);
   logger->inc(l_mon_election_call);
 
   clog->info() << "mon." << name << " calling new monitor election\n";
+
   elector.call_election();
 }
 
@@ -2007,12 +2032,15 @@ void Monitor::win_standalone_election()
 
   rank = monmap->get_rank(name);
   assert(rank == 0);
+
   set<int> q;
   q.insert(rank);
 
   const MonCommand *my_cmds;
   int cmdsize;
+
   get_locally_supported_monitor_commands(&my_cmds, &cmdsize);
+
   win_election(elector.get_epoch(), q,
                CEPH_FEATURES_ALL,
                ceph::features::mon::get_supported(),
@@ -2042,6 +2070,9 @@ void Monitor::_finish_svc_election()
   }
 }
 
+// called by
+// Elector::victory
+// Monitor::win_standalone_election
 void Monitor::win_election(epoch_t epoch, set<int>& active, uint64_t features,
                            const mon_feature_t& mon_features,
                            const MonCommand *cmdset, int cmdsize,
@@ -2051,8 +2082,11 @@ void Monitor::win_election(epoch_t epoch, set<int>& active, uint64_t features,
 	   << " features " << features
            << " mon_features " << mon_features
            << dendl;
+
   assert(is_electing());
+
   state = STATE_LEADER;
+
   leader_since = ceph_clock_now(g_ceph_context);
   leader = rank;
   quorum = active;
@@ -2068,6 +2102,7 @@ void Monitor::win_election(epoch_t epoch, set<int>& active, uint64_t features,
     classic_mons = *classic_monitors;
 
   paxos->leader_init();
+
   // NOTE: tell monmap monitor first.  This is important for the
   // bootstrap case to ensure that the very first paxos proposal
   // codifies the monmap.  Otherwise any manner of chaos can ensue
@@ -2080,9 +2115,12 @@ void Monitor::win_election(epoch_t epoch, set<int>& active, uint64_t features,
   logger->inc(l_mon_election_win);
 
   finish_election();
+
   if (monmap->size() > 1 &&
       monmap->get_epoch() > 0) {
+    // clear old timecheck related records and timer, then initiate a new timecheck
     timecheck_start();
+
     health_tick_start();
     do_health_to_clog_interval();
     scrub_event_start();
@@ -2126,11 +2164,17 @@ void Monitor::lose_election(epoch_t epoch, set<int> &q, int l,
   }
 }
 
+// called by
+// Monitor::win_election
+// Monitor::lose_election
 void Monitor::finish_election()
 {
   apply_quorum_to_compatset_features();
   apply_monmap_to_compatset_features();
+
+  // call timecheck_cleanup to clean timecheck related records and timer
   timecheck_finish();
+
   exited_quorum = utime_t();
   finish_contexts(g_ceph_context, waitfor_quorum);
   finish_contexts(g_ceph_context, maybe_wait_for_quorum);
@@ -2557,10 +2601,13 @@ health_status_t Monitor::get_health(list<string>& status,
   }
 
   health_status_t overall = HEALTH_OK;
+
   if (!timecheck_skews.empty()) {
     list<string> warns;
+
     if (f)
       f->open_array_section("mons");
+
     for (map<entity_inst_t,double>::iterator i = timecheck_skews.begin();
          i != timecheck_skews.end(); ++i) {
       entity_inst_t inst = i->first;
@@ -2569,16 +2616,22 @@ health_status_t Monitor::get_health(list<string>& status,
       string name = monmap->get_name(inst.addr);
 
       ostringstream tcss;
+
+      // latency is not used by timecheck_status
       health_status_t tcstatus = timecheck_status(tcss, skew, latency);
+
       if (tcstatus != HEALTH_OK) {
         if (overall > tcstatus)
+          // the smaller the more severe, HEALTH_ERR = 0, HEALTH_WARN = 1, HEALTH_OK = 2
           overall = tcstatus;
+
         warns.push_back(name);
 
         ostringstream tmp_ss;
         tmp_ss << "mon." << name
                << " addr " << inst.addr << " " << tcss.str()
 	       << " (latency " << latency << "s)";
+
         detail.push_back(make_pair(tcstatus, tmp_ss.str()));
       }
 
@@ -2593,21 +2646,30 @@ health_status_t Monitor::get_health(list<string>& status,
         f->close_section();
       }
     }
+
     if (!warns.empty()) {
       ostringstream ss;
+
       ss << "clock skew detected on";
+
       while (!warns.empty()) {
         ss << " mon." << warns.front();
+
         warns.pop_front();
+
         if (!warns.empty())
           ss << ",";
       }
+
       status.push_back(ss.str());
+
       summary.push_back(make_pair(HEALTH_WARN, "Monitor clock skew detected "));
     }
+
     if (f)
       f->close_section();
   }
+
   if (f)
     f->close_section();
 
@@ -2752,6 +2814,8 @@ const MonCommand *Monitor::_get_moncommand(const string &cmd_prefix,
   return this_cmd;
 }
 
+// called by
+// Monitor::handle_command
 bool Monitor::_allowed_command(MonSession *s, string &module, string &prefix,
                                const map<string,cmd_vartype>& cmdmap,
                                const map<string,string>& param_str_map,
@@ -2766,6 +2830,7 @@ bool Monitor::_allowed_command(MonSession *s, string &module, string &prefix,
                                     cmd_r, cmd_w, cmd_x);
 
   dout(10) << __func__ << " " << (capable ? "" : "not ") << "capable" << dendl;
+
   return capable;
 }
 
@@ -2822,9 +2887,12 @@ bool Monitor::is_keyring_required()
     auth_cluster_required == "cephx";
 }
 
+// called by
+// Monitor::dispatch_op, for MSG_MON_COMMAND
 void Monitor::handle_command(MonOpRequestRef op)
 {
   assert(op->is_type_command());
+
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
   if (m->fsid != monmap->fsid) {
     dout(0) << "handle_command on fsid " << m->fsid << " != " << monmap->fsid << dendl;
@@ -2838,6 +2906,7 @@ void Monitor::handle_command(MonOpRequestRef op)
     dout(5) << __func__ << " dropping stray message " << *m << dendl;
     return;
   }
+
   BOOST_SCOPE_EXIT_ALL(=) {
     session->put();
   };
@@ -2896,6 +2965,7 @@ void Monitor::handle_command(MonOpRequestRef op)
 
   string format;
   cmd_getval(g_ceph_context, cmdmap, "format", format, string("plain"));
+
   boost::scoped_ptr<Formatter> f(Formatter::create(format));
 
   get_str_vec(prefix, fullcmd);
@@ -2921,6 +2991,7 @@ void Monitor::handle_command(MonOpRequestRef op)
     reply_command(op, -EINVAL, "command not known", 0);
     return;
   }
+
   // validate command is in our map & matches, or forward if it is allowed
   const MonCommand *mon_cmd = _get_moncommand(prefix, mon_commands,
                                               ARRAY_SIZE(mon_commands));
@@ -2932,9 +3003,12 @@ void Monitor::handle_command(MonOpRequestRef op)
 		      0);
 	return;
       }
+
       dout(10) << "Command not locally supported, forwarding request "
 	       << m << dendl;
+
       forward_request_leader(op);
+
       return;
     } else if (!mon_cmd->is_compat(leader_cmd)) {
       if (mon_cmd->is_noforward()) {
@@ -2943,9 +3017,12 @@ void Monitor::handle_command(MonOpRequestRef op)
 		      0);
 	return;
       }
+
       dout(10) << "Command not compatible with leader, forwarding request "
 	       << m << dendl;
+
       forward_request_leader(op);
+
       return;
     }
   }
@@ -2977,10 +3054,13 @@ void Monitor::handle_command(MonOpRequestRef op)
 
   // validate user's permissions for requested command
   map<string,string> param_str_map;
+
   _generate_command_map(cmdmap, param_str_map);
+
   if (!_allowed_command(session, service, prefix, cmdmap,
                         param_str_map, mon_cmd)) {
     dout(1) << __func__ << " access denied" << dendl;
+
     (cmd_is_rw ? audit_clog->info() : audit_clog->debug())
       << "from='" << session->inst << "' "
       << "entity='" << session->entity_name << "' "
@@ -2998,6 +3078,7 @@ void Monitor::handle_command(MonOpRequestRef op)
     mdsmon()->dispatch(op);
     return;
   }
+
   if (module == "osd") {
     osdmon()->dispatch(op);
     return;
@@ -3007,6 +3088,7 @@ void Monitor::handle_command(MonOpRequestRef op)
     pgmon()->dispatch(op);
     return;
   }
+
   if (module == "mon" &&
       /* Let the Monitor class handle the following commands:
        *  'mon compact'
@@ -3020,10 +3102,12 @@ void Monitor::handle_command(MonOpRequestRef op)
     monmon()->dispatch(op);
     return;
   }
+
   if (module == "auth") {
     authmon()->dispatch(op);
     return;
   }
+
   if (module == "log") {
     logmon()->dispatch(op);
     return;
@@ -3049,6 +3133,7 @@ void Monitor::handle_command(MonOpRequestRef op)
       ds << monmap->fsid;
       rdata.append(ds);
     }
+
     reply_command(op, 0, "", rdata, 0);
     return;
   }
@@ -3068,6 +3153,7 @@ void Monitor::handle_command(MonOpRequestRef op)
 
   if (prefix == "compact" || prefix == "mon compact") {
     dout(1) << "triggering manual compaction" << dendl;
+
     utime_t start = ceph_clock_now(g_ceph_context);
     store->compact();
     utime_t end = ceph_clock_now(g_ceph_context);
@@ -3283,8 +3369,11 @@ void Monitor::handle_command(MonOpRequestRef op)
 	   "--i-know-what-i-am-doing' if you really do.";
       goto out;
     }
+
     sync_force(f.get(), ds);
+
     rs = ds.str();
+
     r = 0;
   } else if (prefix == "heap") {
     if (!ceph_using_tcmalloc())
@@ -3807,8 +3896,10 @@ void Monitor::dispatch_op(MonOpRequestRef op)
 
   /* we will consider the default type as being 'monitor' until proven wrong */
   op->set_type_monitor();
+
   /* deal with all messages that do not necessarily need caps */
   bool dealt_with = true;
+
   switch (op->get_req()->get_type()) {
     // auth
     case MSG_MON_GLOBAL_ID:
@@ -3927,6 +4018,7 @@ void Monitor::dispatch_op(MonOpRequestRef op)
       dealt_with = false;
       break;
   }
+
   if (dealt_with)
     return;
 
@@ -3939,6 +4031,7 @@ void Monitor::dispatch_op(MonOpRequestRef op)
 
   /* messages that should only be sent by another monitor */
   dealt_with = true;
+
   switch (op->get_req()->get_type()) {
 
     case MSG_ROUTE:
@@ -4019,7 +4112,7 @@ void Monitor::dispatch_op(MonOpRequestRef op)
       break;
 
     case MSG_TIMECHECK:
-      handle_timecheck(op);
+      handle_timecheck(op);atenc
       break;
 
     case MSG_MON_HEALTH:
@@ -4030,10 +4123,12 @@ void Monitor::dispatch_op(MonOpRequestRef op)
       dealt_with = false;
       break;
   }
+
   if (!dealt_with) {
     dout(1) << "dropping unexpected " << *(op->get_req()) << dendl;
     goto drop;
   }
+
   return;
 
 drop:
@@ -4043,45 +4138,68 @@ drop:
 void Monitor::handle_ping(MonOpRequestRef op)
 {
   MPing *m = static_cast<MPing*>(op->get_req());
+
   dout(10) << __func__ << " " << *m << dendl;
+
   MPing *reply = new MPing;
   entity_inst_t inst = m->get_source_inst();
   bufferlist payload;
   boost::scoped_ptr<Formatter> f(new JSONFormatter(true));
+
   f->open_object_section("pong");
 
   list<string> health_str;
   get_health(health_str, NULL, f.get());
+
   {
     stringstream ss;
     get_mon_status(f.get(), ss);
   }
 
   f->close_section();
+
   stringstream ss;
   f->flush(ss);
+
   ::encode(ss.str(), payload);
   reply->set_payload(payload);
+
   dout(10) << __func__ << " reply payload len " << reply->get_payload().length() << dendl;
+
   messenger->send_message(reply, inst);
 }
 
+// called by
+// Monitor::win_election
 void Monitor::timecheck_start()
 {
   dout(10) << __func__ << dendl;
+
+  // clear timecheck related records
   timecheck_cleanup();
+
+  // initiate a new timecheck
   timecheck_start_round();
 }
 
+// called by
+// Monitor::_reset
+// Monitor::finish_election
 void Monitor::timecheck_finish()
 {
   dout(10) << __func__ << dendl;
+
+  // clear timecheck related records and timer
   timecheck_cleanup();
 }
 
+// called by
+// Monitor::timecheck_start
+// Monitor::C_TimeCheck::finish
 void Monitor::timecheck_start_round()
 {
   dout(10) << __func__ << " curr " << timecheck_round << dendl;
+
   assert(is_leader());
 
   if (monmap->size() == 1) {
@@ -4091,7 +4209,10 @@ void Monitor::timecheck_start_round()
 
   if (timecheck_round % 2) {
     dout(10) << __func__ << " there's a timecheck going on" << dendl;
+
     utime_t curr_time = ceph_clock_now(g_ceph_context);
+
+    // default 300.0
     double max = g_conf->mon_timecheck_interval*3;
     if (curr_time - timecheck_round_start < max) {
       dout(10) << __func__ << " keep current round going" << dendl;
@@ -4099,54 +4220,81 @@ void Monitor::timecheck_start_round()
     } else {
       dout(10) << __func__
                << " finish current timecheck and start new" << dendl;
+
       timecheck_cancel_round();
     }
   }
 
   assert(timecheck_round % 2 == 0);
+
   timecheck_acks = 0;
   timecheck_round ++;
+
   timecheck_round_start = ceph_clock_now(g_ceph_context);
+
   dout(10) << __func__ << " new " << timecheck_round << dendl;
 
+  // send MTimeCheck to start timecheck
   timecheck();
+
 out:
   dout(10) << __func__ << " setting up next event" << dendl;
+
   timecheck_reset_event();
 }
 
+// called by
+// Monitor::timecheck_cancel_round, with success set to false
+// Monitor::handle_timecheck_leader
 void Monitor::timecheck_finish_round(bool success)
 {
   dout(10) << __func__ << " curr " << timecheck_round << dendl;
+
   assert(timecheck_round % 2);
+
   timecheck_round ++;
   timecheck_round_start = utime_t();
 
   if (success) {
     assert(timecheck_waiting.empty());
     assert(timecheck_acks == quorum.size());
+
+    // send Monitor::timecheck_latencies and Monitor::timecheck_skews
+    // to other monitors
     timecheck_report();
+
+    // to reset timer's interval, set a short interval if found skew
     timecheck_check_skews();
+
     return;
   }
 
   dout(10) << __func__ << " " << timecheck_waiting.size()
            << " peers still waiting:";
+
   for (map<entity_inst_t,utime_t>::iterator p = timecheck_waiting.begin();
       p != timecheck_waiting.end(); ++p) {
     *_dout << " " << p->first.name;
   }
+
   *_dout << dendl;
+
   timecheck_waiting.clear();
 
   dout(10) << __func__ << " finished to " << timecheck_round << dendl;
 }
 
+// called by
+// Monitor::timecheck_start_round, the ongoing timecheck take too long
+// Monitor::handle_timecheck_leader, our local time has been adjusted
 void Monitor::timecheck_cancel_round()
 {
   timecheck_finish_round(false);
 }
 
+// called by
+// Monitor::timecheck_start
+// Monitor::timecheck_finish
 void Monitor::timecheck_cleanup()
 {
   timecheck_round = 0;
@@ -4157,6 +4305,7 @@ void Monitor::timecheck_cleanup()
     timer.cancel_event(timecheck_event);
     timecheck_event = NULL;
   }
+
   timecheck_waiting.clear();
   timecheck_skews.clear();
   timecheck_latencies.clear();
@@ -4164,6 +4313,9 @@ void Monitor::timecheck_cleanup()
   timecheck_rounds_since_clean = 0;
 }
 
+// called by
+// Monitor::timecheck_start_round
+// Monitor::timecheck_check_skews
 void Monitor::timecheck_reset_event()
 {
   if (timecheck_event) {
@@ -4171,9 +4323,11 @@ void Monitor::timecheck_reset_event()
     timecheck_event = NULL;
   }
 
+  // default 30.0
   double delay =
     cct->_conf->mon_timecheck_skew_interval * timecheck_rounds_since_clean;
 
+  // default 300.0
   if (delay <= 0 || delay > cct->_conf->mon_timecheck_interval) {
     delay = cct->_conf->mon_timecheck_interval;
   }
@@ -4186,18 +4340,25 @@ void Monitor::timecheck_reset_event()
   timer.add_event_after(delay, timecheck_event);
 }
 
+// called by
+// Monitor::timecheck_finish_round
 void Monitor::timecheck_check_skews()
 {
   dout(10) << __func__ << dendl;
+
   assert(is_leader());
+
   assert((timecheck_round % 2) == 0);
+
   if (monmap->size() == 1) {
     assert(0 == "We are alone; we shouldn't have gotten here!");
     return;
   }
+
   assert(timecheck_latencies.size() == timecheck_skews.size());
 
   bool found_skew = false;
+
   for (map<entity_inst_t, double>::iterator p = timecheck_skews.begin();
        p != timecheck_skews.end(); ++p) {
 
@@ -4205,38 +4366,52 @@ void Monitor::timecheck_check_skews()
     if (timecheck_has_skew(p->second, &abs_skew)) {
       dout(10) << __func__
                << " " << p->first << " skew " << abs_skew << dendl;
+
       found_skew = true;
     }
   }
 
+  // we have setup the next timer event at the end of Monitor::timecheck_start_round,
+  // now we check if we should reduce the check interval to a short time
   if (found_skew) {
     ++timecheck_rounds_since_clean;
+
     timecheck_reset_event();
   } else if (timecheck_rounds_since_clean > 0) {
     dout(1) << __func__
       << " no clock skews found after " << timecheck_rounds_since_clean
       << " rounds" << dendl;
+
     // make sure the skews are really gone and not just a transient success
     // this will run just once if not in the presence of skews again.
     timecheck_rounds_since_clean = 1;
+
     timecheck_reset_event();
+
     timecheck_rounds_since_clean = 0;
   }
 
 }
 
+// called by
+// Monitor::timecheck_finish_round
 void Monitor::timecheck_report()
 {
   dout(10) << __func__ << dendl;
+
   assert(is_leader());
+
   assert((timecheck_round % 2) == 0);
+
   if (monmap->size() == 1) {
     assert(0 == "We are alone; we shouldn't have gotten here!");
     return;
   }
 
   assert(timecheck_latencies.size() == timecheck_skews.size());
+
   bool do_output = true; // only output report once
+
   for (set<int>::iterator q = quorum.begin(); q != quorum.end(); ++q) {
     if (monmap->get_name(*q) == name)
       continue;
@@ -4259,21 +4434,30 @@ void Monitor::timecheck_report()
                  << " skew " << skew << dendl;
       }
     }
+
     do_output = false;
+
     entity_inst_t inst = monmap->get_inst(*q);
+
     dout(10) << __func__ << " send report to " << inst << dendl;
+
     messenger->send_message(m, inst);
   }
 }
 
+// called by
+// Monitor::timecheck_start_round
 void Monitor::timecheck()
 {
   dout(10) << __func__ << dendl;
+
   assert(is_leader());
+
   if (monmap->size() == 1) {
     assert(0 == "We are alone; we shouldn't have gotten here!");
     return;
   }
+
   assert(timecheck_round % 2 != 0);
 
   timecheck_acks = 1; // we ack ourselves
@@ -4291,25 +4475,36 @@ void Monitor::timecheck()
 
     entity_inst_t inst = monmap->get_inst(*it);
     utime_t curr_time = ceph_clock_now(g_ceph_context);
+
     timecheck_waiting[inst] = curr_time;
+
     MTimeCheck *m = new MTimeCheck(MTimeCheck::OP_PING);
     m->epoch = get_epoch();
     m->round = timecheck_round;
+
     dout(10) << __func__ << " send " << *m << " to " << inst << dendl;
+
     messenger->send_message(m, inst);
   }
 }
 
+// called by
+// Monitor::get_health
+// Monitor::handle_timecheck_leader
 health_status_t Monitor::timecheck_status(ostringstream &ss,
                                           const double skew_bound,
                                           const double latency)
 {
   health_status_t status = HEALTH_OK;
+
   assert(latency >= 0);
 
   double abs_skew;
+
   if (timecheck_has_skew(skew_bound, &abs_skew)) {
     status = HEALTH_WARN;
+
+    // default 0.050
     ss << "clock skew " << abs_skew << "s"
        << " > max " << g_conf->mon_clock_drift_allowed << "s";
   }
@@ -4317,10 +4512,14 @@ health_status_t Monitor::timecheck_status(ostringstream &ss,
   return status;
 }
 
+// called by
+// Monitor::handle_timecheck
 void Monitor::handle_timecheck_leader(MonOpRequestRef op)
 {
   MTimeCheck *m = static_cast<MTimeCheck*>(op->get_req());
+
   dout(10) << __func__ << " " << *m << dendl;
+
   /* handles PONG's */
   assert(m->op == MTimeCheck::OP_PONG);
 
@@ -4332,6 +4531,7 @@ void Monitor::handle_timecheck_leader(MonOpRequestRef op)
             << " -- severely lagged? discard" << dendl;
     return;
   }
+
   assert(m->epoch == get_epoch());
 
   if (m->round < timecheck_round) {
@@ -4344,14 +4544,19 @@ void Monitor::handle_timecheck_leader(MonOpRequestRef op)
   utime_t curr_time = ceph_clock_now(g_ceph_context);
 
   assert(timecheck_waiting.count(other) > 0);
+
   utime_t timecheck_sent = timecheck_waiting[other];
+
   timecheck_waiting.erase(other);
+
   if (curr_time < timecheck_sent) {
     // our clock was readjusted -- drop everything until it all makes sense.
     dout(1) << __func__ << " our clock was readjusted --"
             << " bump round and drop current check"
             << dendl;
+
     timecheck_cancel_round();
+
     return;
   }
 
@@ -4362,6 +4567,7 @@ void Monitor::handle_timecheck_leader(MonOpRequestRef op)
     timecheck_latencies[other] = latency;
   else {
     double avg_latency = ((timecheck_latencies[other]*0.8)+(latency*0.2));
+
     timecheck_latencies[other] = avg_latency;
   }
 
@@ -4407,12 +4613,16 @@ void Monitor::handle_timecheck_leader(MonOpRequestRef op)
   double delta = ((double) m->timestamp) - ((double) curr_time);
   double abs_delta = (delta > 0 ? delta : -delta);
   double skew_bound = abs_delta - latency;
+
   if (skew_bound < 0)
+    // time diff < rtt, so no skew
     skew_bound = 0;
   else if (delta < 0)
+    // time diff >= rtt, so there is skew
     skew_bound = -skew_bound;
 
   ostringstream ss;
+
   health_status_t status = timecheck_status(ss, skew_bound, latency);
   if (status == HEALTH_ERR)
     clog->error() << other << " " << ss.str() << "\n";
@@ -4426,22 +4636,29 @@ void Monitor::handle_timecheck_leader(MonOpRequestRef op)
   timecheck_skews[other] = skew_bound;
 
   timecheck_acks++;
+
   if (timecheck_acks == quorum.size()) {
     dout(10) << __func__ << " got pongs from everybody ("
              << timecheck_acks << " total)" << dendl;
+
     assert(timecheck_skews.size() == timecheck_acks);
     assert(timecheck_waiting.empty());
+
     // everyone has acked, so bump the round to finish it.
     timecheck_finish_round();
   }
 }
 
+// called by
+// Monitor::handle_timecheck
 void Monitor::handle_timecheck_peon(MonOpRequestRef op)
 {
   MTimeCheck *m = static_cast<MTimeCheck*>(op->get_req());
+
   dout(10) << __func__ << " " << *m << dendl;
 
   assert(is_peon());
+
   assert(m->op == MTimeCheck::OP_PING || m->op == MTimeCheck::OP_REPORT);
 
   if (m->epoch != get_epoch()) {
@@ -4461,26 +4678,39 @@ void Monitor::handle_timecheck_peon(MonOpRequestRef op)
   timecheck_round = m->round;
 
   if (m->op == MTimeCheck::OP_REPORT) {
+
+    // MTimeCheck sent by Monitor::timecheck_report
+
     assert((timecheck_round % 2) == 0);
+
     timecheck_latencies.swap(m->latencies);
     timecheck_skews.swap(m->skews);
+
     return;
   }
 
+  // MTimeCheck sent by Monitor::timecheck
+
   assert((timecheck_round % 2) != 0);
+
   MTimeCheck *reply = new MTimeCheck(MTimeCheck::OP_PONG);
   utime_t curr_time = ceph_clock_now(g_ceph_context);
   reply->timestamp = curr_time;
   reply->epoch = m->epoch;
   reply->round = m->round;
+
   dout(10) << __func__ << " send " << *m
            << " to " << m->get_source_inst() << dendl;
+
   m->get_connection()->send_message(reply);
 }
 
+// called by
+// Monitor::dispatch_op, with MSG_TIMECHECK
 void Monitor::handle_timecheck(MonOpRequestRef op)
 {
   MTimeCheck *m = static_cast<MTimeCheck*>(op->get_req());
+
   dout(10) << __func__ << " " << *m << dendl;
 
   if (is_leader()) {
@@ -4503,6 +4733,7 @@ void Monitor::handle_timecheck(MonOpRequestRef op)
 void Monitor::handle_subscribe(MonOpRequestRef op)
 {
   MMonSubscribe *m = static_cast<MMonSubscribe*>(op->get_req());
+
   dout(10) << "handle_subscribe " << *m << dendl;
   
   bool reply = false;
@@ -4535,6 +4766,7 @@ void Monitor::handle_subscribe(MonOpRequestRef op)
 
     if (p->first.compare(0, 6, "mdsmap") == 0 || p->first.compare(0, 5, "fsmap") == 0) {
       dout(10) << __func__ << ": MDS sub '" << p->first << "'" << dendl;
+
       if ((int)s->is_capable("mds", MON_CAP_R)) {
         Subscription *sub = s->sub_map[p->first];
         assert(sub != nullptr);
@@ -5375,6 +5607,7 @@ bool Monitor::ms_get_authorizer(int service_id, AuthAuthorizer **authorizer, boo
     dout(0) << "ms_get_authorizer failed to build service ticket use with mon" << dendl;
     return false;
   }
+
   bufferlist ticket_data;
   ::encode(blob, ticket_data);
 
@@ -5402,8 +5635,11 @@ bool Monitor::ms_verify_authorizer(Connection *con, int peer_type,
 
   if (peer_type == CEPH_ENTITY_TYPE_MON &&
       auth_cluster_required.is_supported_auth(CEPH_AUTH_CEPHX)) {
-    // monitor, and cephx is enabled
+
+    // the peer is a monitor, and cephx is supported
+
     isvalid = false;
+
     if (protocol == CEPH_AUTH_CEPHX) {
       bufferlist::iterator iter = authorizer_data.begin();
       CephXServiceTicketInfo auth_ticket_info;

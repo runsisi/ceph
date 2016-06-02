@@ -37,29 +37,35 @@ EnableFeaturesRequest<I>::EnableFeaturesRequest(I &image_ctx,
 template <typename I>
 void EnableFeaturesRequest<I>::send_op() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
+
   assert(image_ctx.owner_lock.is_locked());
 
   ldout(cct, 20) << this << " " << __func__ << ": features=" << m_features
 		 << dendl;
+
   send_prepare_lock();
 }
 
 template <typename I>
 bool EnableFeaturesRequest<I>::should_complete(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << "r=" << r << dendl;
 
   if (r < 0) {
     lderr(cct) << "encountered error: " << cpp_strerror(r) << dendl;
   }
+
   return true;
 }
 
 template <typename I>
 void EnableFeaturesRequest<I>::send_prepare_lock() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << dendl;
 
@@ -72,6 +78,7 @@ void EnableFeaturesRequest<I>::send_prepare_lock() {
 template <typename I>
 Context *EnableFeaturesRequest<I>::handle_prepare_lock(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -87,6 +94,7 @@ Context *EnableFeaturesRequest<I>::handle_prepare_lock(int *result) {
 template <typename I>
 void EnableFeaturesRequest<I>::send_block_writes() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << dendl;
 
@@ -99,6 +107,7 @@ void EnableFeaturesRequest<I>::send_block_writes() {
 template <typename I>
 Context *EnableFeaturesRequest<I>::handle_block_writes(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -115,6 +124,7 @@ Context *EnableFeaturesRequest<I>::handle_block_writes(int *result) {
 template <typename I>
 void EnableFeaturesRequest<I>::send_get_mirror_mode() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
 
   if ((m_features & RBD_FEATURE_JOURNALING) == 0) {
@@ -142,6 +152,7 @@ void EnableFeaturesRequest<I>::send_get_mirror_mode() {
 template <typename I>
 Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -162,6 +173,7 @@ Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
   m_enable_mirroring = (mirror_mode == cls::rbd::MIRROR_MODE_POOL);
 
   bool create_journal = false;
+
   do {
     RWLock::WLocker locker(image_ctx.owner_lock);
 
@@ -171,6 +183,7 @@ Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
 	(image_ctx.journal == nullptr ||
 	 !image_ctx.journal->is_journal_replaying())) {
       image_ctx.exclusive_lock->block_requests(0);
+
       m_requests_blocked = true;
     }
 
@@ -185,9 +198,11 @@ Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
 	*result = -EINVAL;
 	break;
       }
+
       m_enable_flags |= RBD_FLAG_OBJECT_MAP_INVALID;
       m_features_mask |= RBD_FEATURE_EXCLUSIVE_LOCK;
     }
+
     if ((m_features & RBD_FEATURE_FAST_DIFF) != 0) {
       if ((m_new_features & RBD_FEATURE_OBJECT_MAP) == 0) {
 	lderr(cct) << "cannot enable fast-diff. object-map must be "
@@ -195,9 +210,11 @@ Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
 	*result = -EINVAL;
 	break;
       }
+
       m_enable_flags |= RBD_FLAG_FAST_DIFF_INVALID;
       m_features_mask |= (RBD_FEATURE_OBJECT_MAP | RBD_FEATURE_EXCLUSIVE_LOCK);
     }
+
     if ((m_features & RBD_FEATURE_JOURNALING) != 0) {
       if ((m_new_features & RBD_FEATURE_EXCLUSIVE_LOCK) == 0) {
 	lderr(cct) << "cannot enable journaling. exclusive-lock must be "
@@ -205,6 +222,7 @@ Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
 	*result = -EINVAL;
 	break;
       }
+
       m_features_mask |= RBD_FEATURE_EXCLUSIVE_LOCK;
       create_journal = true;
     }
@@ -213,10 +231,12 @@ Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
   if (*result < 0) {
     return handle_finish(*result);
   }
+
   if (create_journal) {
     send_create_journal();
     return nullptr;
   }
+
   send_append_op_event();
   return nullptr;
 }
@@ -224,6 +244,7 @@ Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
 template <typename I>
 void EnableFeaturesRequest<I>::send_create_journal() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
 
   ldout(cct, 20) << this << " " << __func__ << dendl;
@@ -245,6 +266,7 @@ void EnableFeaturesRequest<I>::send_create_journal() {
 template <typename I>
 Context *EnableFeaturesRequest<I>::handle_create_journal(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -261,6 +283,7 @@ Context *EnableFeaturesRequest<I>::handle_create_journal(int *result) {
 template <typename I>
 void EnableFeaturesRequest<I>::send_append_op_event() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
 
   if (!this->template append_op_event<
@@ -275,6 +298,7 @@ void EnableFeaturesRequest<I>::send_append_op_event() {
 template <typename I>
 Context *EnableFeaturesRequest<I>::handle_append_op_event(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -291,6 +315,7 @@ Context *EnableFeaturesRequest<I>::handle_append_op_event(int *result) {
 template <typename I>
 void EnableFeaturesRequest<I>::send_update_flags() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
 
   if (m_enable_flags == 0) {
@@ -314,6 +339,7 @@ void EnableFeaturesRequest<I>::send_update_flags() {
 template <typename I>
 Context *EnableFeaturesRequest<I>::handle_update_flags(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -330,6 +356,7 @@ Context *EnableFeaturesRequest<I>::handle_update_flags(int *result) {
 template <typename I>
 void EnableFeaturesRequest<I>::send_set_features() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": new_features="
 		 << m_new_features << ", features_mask=" << m_features_mask
@@ -349,6 +376,7 @@ void EnableFeaturesRequest<I>::send_set_features() {
 template <typename I>
 Context *EnableFeaturesRequest<I>::handle_set_features(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -359,19 +387,26 @@ Context *EnableFeaturesRequest<I>::handle_set_features(int *result) {
   }
 
   send_create_object_map();
+
   return nullptr;
 }
 
 template <typename I>
 void EnableFeaturesRequest<I>::send_create_object_map() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
 
   if (((image_ctx.features & RBD_FEATURE_OBJECT_MAP) != 0) ||
       ((m_features & RBD_FEATURE_OBJECT_MAP) == 0)) {
+
+    // object_map already enabled or we are not to enable it this time
+
     send_enable_mirror_image();
     return;
   }
+
+  // enable object_map dynamically
 
   ldout(cct, 20) << this << " " << __func__ << dendl;
 
@@ -381,12 +416,14 @@ void EnableFeaturesRequest<I>::send_create_object_map() {
 
   object_map::CreateRequest<I> *req =
     object_map::CreateRequest<I>::create(&image_ctx, ctx);
+
   req->send();
 }
 
 template <typename I>
 Context *EnableFeaturesRequest<I>::handle_create_object_map(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -403,6 +440,7 @@ Context *EnableFeaturesRequest<I>::handle_create_object_map(int *result) {
 template <typename I>
 void EnableFeaturesRequest<I>::send_enable_mirror_image() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << dendl;
 
@@ -423,6 +461,7 @@ void EnableFeaturesRequest<I>::send_enable_mirror_image() {
 template <typename I>
 Context *EnableFeaturesRequest<I>::handle_enable_mirror_image(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -452,6 +491,7 @@ void EnableFeaturesRequest<I>::send_notify_update() {
 template <typename I>
 Context *EnableFeaturesRequest<I>::handle_notify_update(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << *result << dendl;
 
@@ -461,6 +501,7 @@ Context *EnableFeaturesRequest<I>::handle_notify_update(int *result) {
 template <typename I>
 Context *EnableFeaturesRequest<I>::handle_finish(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << r << dendl;
 
@@ -470,10 +511,12 @@ Context *EnableFeaturesRequest<I>::handle_finish(int r) {
     if (image_ctx.exclusive_lock != nullptr && m_requests_blocked) {
       image_ctx.exclusive_lock->unblock_requests();
     }
+
     if (m_writes_blocked) {
       image_ctx.aio_work_queue->unblock_writes();
     }
   }
+
   image_ctx.state->handle_prepare_lock_complete();
 
   return this->create_context_finisher(r);

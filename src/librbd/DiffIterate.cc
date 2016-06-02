@@ -211,14 +211,18 @@ int DiffIterate::execute() {
   librados::snap_t end_snap_id;
   uint64_t from_size = 0;
   uint64_t end_size;
+
   {
     RWLock::RLocker md_locker(m_image_ctx.md_lock);
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     head_ctx.dup(m_image_ctx.data_ctx);
+
     if (m_from_snap_name) {
       from_snap_id = m_image_ctx.get_snap_id(m_from_snap_name);
       from_size = m_image_ctx.get_image_size(from_snap_id);
     }
+
     end_snap_id = m_image_ctx.snap_id;
     end_size = m_image_ctx.get_image_size(end_snap_id);
   }
@@ -226,10 +230,12 @@ int DiffIterate::execute() {
   if (from_snap_id == CEPH_NOSNAP) {
     return -ENOENT;
   }
+
   if (from_snap_id == end_snap_id) {
     // no diff.
     return 0;
   }
+
   if (from_snap_id >= end_snap_id) {
     return -EINVAL;
   }
@@ -237,14 +243,17 @@ int DiffIterate::execute() {
   int r;
   bool fast_diff_enabled = false;
   BitVector<2> object_diff_state;
+
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     if (m_whole_object && (m_image_ctx.features & RBD_FEATURE_FAST_DIFF) != 0) {
       r = diff_object_map(from_snap_id, end_snap_id, &object_diff_state);
       if (r < 0) {
         ldout(cct, 5) << "fast diff disabled" << dendl;
       } else {
         ldout(cct, 5) << "fast diff enabled" << dendl;
+
         fast_diff_enabled = true;
       }
     }
@@ -260,20 +269,27 @@ int DiffIterate::execute() {
   // check parent overlap only if we are comparing to the beginning of time
   DiffContext diff_context(m_image_ctx, m_callback, m_callback_arg,
                            m_whole_object, from_snap_id, end_snap_id);
+
   if (m_include_parent && from_snap_id == 0) {
     RWLock::RLocker l(m_image_ctx.snap_lock);
     RWLock::RLocker l2(m_image_ctx.parent_lock);
+
     uint64_t overlap = end_size;
     m_image_ctx.get_parent_overlap(from_snap_id, &overlap);
+
     r = 0;
+
     if (m_image_ctx.parent && overlap > 0) {
       ldout(cct, 10) << " first getting parent diff" << dendl;
+
       DiffIterate diff_parent(*m_image_ctx.parent, NULL, 0, overlap,
                               m_include_parent, m_whole_object,
                               &DiffIterate::simple_diff_cb,
                               &diff_context.parent_diff);
+
       r = diff_parent.execute();
     }
+
     if (r < 0) {
       return r;
     }
@@ -301,9 +317,11 @@ int DiffIterate::execute() {
 
       if (fast_diff_enabled) {
         const uint64_t object_no = p->second.front().objectno;
+
         if (object_diff_state[object_no] != OBJECT_DIFF_STATE_NONE) {
           bool updated = (object_diff_state[object_no] ==
                             OBJECT_DIFF_STATE_UPDATED);
+
           for (std::vector<ObjectExtent>::iterator q = p->second.begin();
                q != p->second.end(); ++q) {
             r = m_callback(off + q->offset, q->length, updated, m_callback_arg);
@@ -334,12 +352,14 @@ int DiffIterate::execute() {
   if (r < 0) {
     return r;
   }
+
   return 0;
 }
 
 int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
                                  BitVector<2>* object_diff_state) {
   assert(m_image_ctx.snap_lock.is_locked());
+
   CephContext* cct = m_image_ctx.cct;
 
   bool diff_from_start = (from_snap_id == 0);
@@ -356,8 +376,10 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
   uint64_t next_snap_id = to_snap_id;
   BitVector<2> prev_object_map;
   bool prev_object_map_valid = false;
+
   while (true) {
     uint64_t current_size = m_image_ctx.size;
+
     if (current_snap_id != CEPH_NOSNAP) {
       std::map<librados::snap_t, SnapInfo>::const_iterator snap_it =
         m_image_ctx.snap_info.find(current_snap_id);
@@ -378,6 +400,7 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
       lderr(cct) << "diff_object_map: failed to retrieve image flags" << dendl;
       return r;
     }
+
     if ((flags & RBD_FLAG_FAST_DIFF_INVALID) != 0) {
       ldout(cct, 1) << "diff_object_map: cannot perform fast diff on invalid "
                     << "object map" << dendl;
@@ -393,6 +416,7 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
                  << dendl;
       return r;
     }
+
     ldout(cct, 20) << "diff_object_map: loaded object map " << oid << dendl;
 
     uint64_t num_objs = Striper::get_num_objects(m_image_ctx.layout,
@@ -402,13 +426,16 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
                     << object_map.size() << " < " << num_objs << dendl;
       return -EINVAL;
     }
+
     object_map.resize(num_objs);
 
     uint64_t overlap = MIN(object_map.size(), prev_object_map.size());
+
     for (uint64_t i = 0; i < overlap; ++i) {
       ldout(cct, 20) << __func__ << ": object state: " << i << " "
                      << static_cast<uint32_t>(prev_object_map[i])
                      << "->" << static_cast<uint32_t>(object_map[i]) << dendl;
+
       if (object_map[i] == OBJECT_NONEXISTENT) {
         if (prev_object_map[i] != OBJECT_NONEXISTENT) {
           (*object_diff_state)[i] = OBJECT_DIFF_STATE_HOLE;
@@ -420,14 +447,17 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
         (*object_diff_state)[i] = OBJECT_DIFF_STATE_UPDATED;
       }
     }
+
     ldout(cct, 20) << "diff_object_map: computed overlap diffs" << dendl;
 
     object_diff_state->resize(object_map.size());
+
     if (object_map.size() > prev_object_map.size() &&
         (diff_from_start || prev_object_map_valid)) {
       for (uint64_t i = overlap; i < object_diff_state->size(); ++i) {
         ldout(cct, 20) << __func__ << ": object state: " << i << " "
                        << "->" << static_cast<uint32_t>(object_map[i]) << dendl;
+
         if (object_map[i] == OBJECT_NONEXISTENT) {
           (*object_diff_state)[i] = OBJECT_DIFF_STATE_NONE;
         } else {
@@ -435,15 +465,18 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
         }
       }
     }
+
     ldout(cct, 20) << "diff_object_map: computed resize diffs" << dendl;
 
     if (current_snap_id == next_snap_id || next_snap_id > to_snap_id) {
       break;
     }
+
     current_snap_id = next_snap_id;
     prev_object_map = object_map;
     prev_object_map_valid = true;
   }
+
   return 0;
 }
 

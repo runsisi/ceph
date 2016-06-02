@@ -191,6 +191,7 @@ int OSDMap::Incremental::identify_osd(uuid_d u) const
        ++p)
     if (p->second == u)
       return p->first;
+
   return -1;
 }
 
@@ -1013,6 +1014,7 @@ int OSDMap::identify_osd_on_all_channels(const entity_addr_t& addr) const
     if (exists(i) && (get_addr(i) == addr || get_cluster_addr(i) == addr ||
 	get_hb_back_addr(i) == addr || get_hb_front_addr(i) == addr))
       return i;
+
   return -1;
 }
 
@@ -1352,11 +1354,13 @@ int OSDMap::apply_incremental(const Incremental &inc)
        i != inc.new_state.end();
        ++i) {
     int s = i->second ? i->second : CEPH_OSD_UP;
+
     if ((osd_state[i->first] & CEPH_OSD_UP) &&
 	(s & CEPH_OSD_UP)) {
       osd_info[i->first].down_at = epoch;
       osd_xinfo[i->first].down_stamp = modified;
     }
+
     if ((osd_state[i->first] & CEPH_OSD_EXISTS) &&
 	(s & CEPH_OSD_EXISTS)) {
       // osd is destroyed; clear out anything interesting.
@@ -1374,6 +1378,7 @@ int OSDMap::apply_incremental(const Incremental &inc)
       osd_state[i->first] ^= s;
     }
   }
+
   for (map<int32_t,entity_addr_t>::const_iterator i = inc.new_up_client.begin();
        i != inc.new_up_client.end();
        ++i) {
@@ -1392,6 +1397,7 @@ int OSDMap::apply_incremental(const Incremental &inc)
 
     osd_info[i->first].up_from = epoch;
   }
+
   for (map<int32_t,entity_addr_t>::const_iterator i = inc.new_up_cluster.begin();
        i != inc.new_up_cluster.end();
        ++i)
@@ -1402,12 +1408,14 @@ int OSDMap::apply_incremental(const Incremental &inc)
        i != inc.new_up_thru.end();
        ++i)
     osd_info[i->first].up_thru = i->second;
+
   for (map<int32_t,pair<epoch_t,epoch_t> >::const_iterator i = inc.new_last_clean_interval.begin();
        i != inc.new_last_clean_interval.end();
        ++i) {
     osd_info[i->first].last_clean_begin = i->second.first;
     osd_info[i->first].last_clean_end = i->second.second;
   }
+
   for (map<int32_t,epoch_t>::const_iterator p = inc.new_lost.begin(); p != inc.new_lost.end(); ++p)
     osd_info[p->first].lost_at = p->second;
 
@@ -1441,6 +1449,7 @@ int OSDMap::apply_incremental(const Incremental &inc)
     blacklist.insert(inc.new_blacklist.begin(),inc.new_blacklist.end());
     new_blacklist_entries = true;
   }
+
   for (vector<entity_addr_t>::const_iterator p = inc.old_blacklist.begin();
        p != inc.old_blacklist.end();
        ++p)
@@ -2291,6 +2300,7 @@ void OSDMap::dump(Formatter *f) const
 
       set<string> st;
       get_state(i, st);
+
       f->open_array_section("state");
       for (set<string>::iterator p = st.begin(); p != st.end(); ++p)
 	f->dump_string("state", *p);
@@ -2421,17 +2431,23 @@ void OSDMap::print_pools(ostream& out) const
 {
   for (map<int64_t,pg_pool_t>::const_iterator p = pools.begin(); p != pools.end(); ++p) {
     std::string name("<unknown>");
+
     map<int64_t,string>::const_iterator pni = pool_name.find(p->first);
     if (pni != pool_name.end())
       name = pni->second;
+
     out << "pool " << p->first
 	<< " '" << name
 	<< "' " << p->second << "\n";
+
     for (map<snapid_t,pool_snap_info_t>::const_iterator q = p->second.snaps.begin();
 	 q != p->second.snaps.end();
 	 ++q)
+      // pool snaps mode
       out << "\tsnap " << q->second.snapid << " '" << q->second.name << "' " << q->second.stamp << "\n";
+
     if (!p->second.removed_snaps.empty())
+      // unmanaged snaps mode
       out << "\tremoved_snaps " << p->second.removed_snaps << "\n";
   }
   out << std::endl;

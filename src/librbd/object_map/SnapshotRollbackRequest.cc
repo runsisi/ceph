@@ -39,6 +39,8 @@ std::ostream& operator<<(std::ostream& os,
 
 } // anonymous namespace
 
+// called by
+// librbd::ObjectMap::rollback
 void SnapshotRollbackRequest::send() {
   send_read_map();
 }
@@ -47,11 +49,13 @@ bool SnapshotRollbackRequest::should_complete(int r) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": state=" << m_state << ", "
                 << "r=" << r << dendl;
+
   if (r < 0 && m_ret_val == 0) {
     m_ret_val = r;
   }
 
   bool finished = false;
+
   switch (m_state) {
   case STATE_READ_MAP:
     if (r < 0) {
@@ -62,6 +66,8 @@ bool SnapshotRollbackRequest::should_complete(int r) {
     }
     break;
   case STATE_INVALIDATE_MAP:
+    // m_ret_val should already been set to < 0, otherwise we never get
+    // here
     // invalidate the HEAD object map as well
     finished = Request::should_complete(m_ret_val);
     break;
@@ -72,20 +78,25 @@ bool SnapshotRollbackRequest::should_complete(int r) {
     assert(false);
     break;
   }
+
   return finished;
 }
 
 void SnapshotRollbackRequest::send_read_map() {
+  // e.g., rbd_object_map.2cf512ae8944a.0000000000000031
   std::string snap_oid(ObjectMap::object_map_name(m_image_ctx.id, m_snap_id));
 
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": snap_oid=" << snap_oid
                 << dendl;
+
   m_state = STATE_READ_MAP;
 
+  // read the object map of the snapshot
   librados::ObjectReadOperation op;
   op.read(0, 0, NULL, NULL);
 
+  // create_callback_completion is protect method of AsyncRequest
   librados::AioCompletion *rados_completion = create_callback_completion();
   int r = m_image_ctx.md_ctx.aio_operate(snap_oid, rados_completion, &op,
                                          &m_read_bl);
@@ -97,11 +108,16 @@ void SnapshotRollbackRequest::send_write_map() {
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
 
   CephContext *cct = m_image_ctx.cct;
+
   std::string snap_oid(ObjectMap::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
+
   ldout(cct, 5) << this << " " << __func__ << ": snap_oid=" << snap_oid
                 << dendl;
+
   m_state = STATE_WRITE_MAP;
 
+  // because we are rolling back, so set the HEAD image's object map to the object
+  // map of the snapshot
   librados::ObjectWriteOperation op;
   rados::cls::lock::assert_locked(&op, RBD_LOCK_NAME, LOCK_EXCLUSIVE, "", "");
   op.write_full(m_read_bl);
@@ -112,17 +128,22 @@ void SnapshotRollbackRequest::send_write_map() {
   rados_completion->release();
 }
 
+// called by
+// SnapshotRollbackRequest::should_complete, which means we have failed the read object
+// map of the snapshot image
 void SnapshotRollbackRequest::send_invalidate_map() {
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
   RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
 
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
+
   m_state = STATE_INVALIDATE_MAP;
 
   InvalidateRequest<> *req = new InvalidateRequest<>(m_image_ctx, m_snap_id,
                                                      false,
                                                      create_callback_context());
+
   req->send();
 }
 

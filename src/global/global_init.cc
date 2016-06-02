@@ -88,11 +88,16 @@ void global_pre_init(std::vector < const char * > *alt_def_args,
 {
   std::string conf_file_list;
   std::string cluster = "";
+
   CephInitParameters iparams = ceph_argparse_early_args(args, module_type, flags,
 							&cluster, &conf_file_list);
+
   CephContext *cct = common_preinit(iparams, code_env, flags, data_dir_option);
+
   cct->_conf->cluster = cluster;
+
   global_init_set_globals(cct);
+
   md_config_t *conf = cct->_conf;
 
   if (alt_def_args)
@@ -130,6 +135,7 @@ void global_pre_init(std::vector < const char * > *alt_def_args,
   g_conf->complain_about_parse_errors(g_ceph_context);
 }
 
+// called by all daemons and utils
 boost::intrusive_ptr<CephContext>
 global_init(std::vector < const char * > *alt_def_args,
 	    std::vector < const char* >& args,
@@ -142,6 +148,7 @@ global_init(std::vector < const char * > *alt_def_args,
   if (run_pre_init) {
     // We will run pre_init from here (default).
     assert(!g_ceph_context && first_run);
+
     global_pre_init(alt_def_args, args, module_type, code_env, flags);
   } else {
     // Caller should have invoked pre_init manually.
@@ -159,6 +166,7 @@ global_init(std::vector < const char * > *alt_def_args,
   int siglist[] = { SIGPIPE, 0 };
   block_signals(siglist, NULL);
 
+  // default true
   if (g_conf->fatal_signal_handlers)
     install_standard_sighandlers();
 
@@ -172,6 +180,7 @@ global_init(std::vector < const char * > *alt_def_args,
 	   << std::endl;
       g_conf->set_val("setuser", "", false, false);
     }
+
     if (g_conf->setgroup.length()) {
       cerr << "ignoring --setgroup " << g_conf->setgroup
 	   << " since I am not root" << std::endl;
@@ -181,50 +190,65 @@ global_init(std::vector < const char * > *alt_def_args,
 
   // drop privileges?
   ostringstream priv_ss;
+
   if (g_conf->setgroup.length() ||
       g_conf->setuser.length()) {
+
+    // currently we are root, but we are to drop priv
+
     uid_t uid = 0;  // zero means no change; we can only drop privs here.
     gid_t gid = 0;
     std::string uid_string;
     std::string gid_string;
+
     if (g_conf->setuser.length()) {
       uid = atoi(g_conf->setuser.c_str());
       if (!uid) {
 	char buf[4096];
 	struct passwd pa;
 	struct passwd *p = 0;
+
 	getpwnam_r(g_conf->setuser.c_str(), &pa, buf, sizeof(buf), &p);
 	if (!p) {
 	  cerr << "unable to look up user '" << g_conf->setuser << "'"
 	       << std::endl;
 	  exit(1);
 	}
+
 	uid = p->pw_uid;
 	gid = p->pw_gid;
+
 	uid_string = g_conf->setuser;
       }
     }
+
     if (g_conf->setgroup.length() > 0) {
       gid = atoi(g_conf->setgroup.c_str());
+
       if (!gid) {
 	char buf[4096];
 	struct group gr;
 	struct group *g = 0;
+
 	getgrnam_r(g_conf->setgroup.c_str(), &gr, buf, sizeof(buf), &g);
 	if (!g) {
 	  cerr << "unable to look up group '" << g_conf->setgroup << "'"
 	       << ": " << cpp_strerror(errno) << std::endl;
 	  exit(1);
 	}
+
 	gid = g->gr_gid;
+
 	gid_string = g_conf->setgroup;
       }
     }
+
     if ((uid || gid) &&
 	g_conf->setuser_match_path.length()) {
       // induce early expansion of setuser_match_path config option
       string match_path = g_conf->setuser_match_path;
       g_conf->early_expand_meta(match_path, &cerr);
+
       struct stat st;
       int r = ::stat(match_path.c_str(), &st);
       if (r < 0) {
@@ -233,12 +257,19 @@ global_init(std::vector < const char * > *alt_def_args,
 	     << ": " << cpp_strerror(errno) << std::endl;
 	exit(1);
       }
+
+      // if the path's owner does not equal to the requested drop to priv owner,
+      // then do nothing, normally we will set this path to:
+      // setuser match path = /var/lib/ceph/$type/$cluster-$id
+      // so if our cluster are upgraded from hammer, we do not have to fix the owner
+      // of the cluster data and continue to use the root user to run the ceph daemons
       if ((uid && uid != st.st_uid) ||
 	  (gid && gid != st.st_gid)) {
 	cerr << "WARNING: will not setuid/gid: " << match_path
 	     << " owned by " << st.st_uid << ":" << st.st_gid
 	     << " and not requested " << uid << ":" << gid
 	     << std::endl;
+
 	uid = 0;
 	gid = 0;
 	uid_string.erase();
@@ -249,19 +280,26 @@ global_init(std::vector < const char * > *alt_def_args,
 		<< st.st_uid << ":" << st.st_gid << ". ";
       }
     }
+
     g_ceph_context->set_uid_gid(uid, gid);
     g_ceph_context->set_uid_gid_strings(uid_string, gid_string);
+
     if ((flags & CINIT_FLAG_DEFER_DROP_PRIVILEGES) == 0) {
+
+      // drop to non-priv user
+
       if (setgid(gid) != 0) {
 	cerr << "unable to setgid " << gid << ": " << cpp_strerror(errno)
 	     << std::endl;
 	exit(1);
       }
+
       if (setuid(uid) != 0) {
 	cerr << "unable to setuid " << uid << ": " << cpp_strerror(errno)
 	     << std::endl;
 	exit(1);
       }
+
       priv_ss << "set uid:gid to " << uid << ":" << gid << " (" << uid_string << ":" << gid_string << ")";
     } else {
       priv_ss << "deferred set uid:gid to " << uid << ":" << gid << " (" << uid_string << ":" << gid_string << ")";
@@ -277,9 +315,13 @@ global_init(std::vector < const char * > *alt_def_args,
   // Expand metavariables. Invoke configuration observers. Open log file.
   g_conf->apply_changes(NULL);
 
+  // default "/var/run/ceph"
   if (g_conf->run_dir.length() &&
       code_env == CODE_ENVIRONMENT_DAEMON &&
       !(flags & CINIT_FLAG_NO_DAEMON_ACTIONS)) {
+
+    // systemd-tmpfiles should have already done for us
+
     int r = ::mkdir(g_conf->run_dir.c_str(), 0755);
     if (r < 0 && errno != EEXIST) {
       cerr << "warning: unable to create " << g_conf->run_dir << ": " << cpp_strerror(errno) << std::endl;
@@ -298,6 +340,9 @@ global_init(std::vector < const char * > *alt_def_args,
 
   if ((flags & CINIT_FLAG_DEFER_DROP_PRIVILEGES) &&
       (g_ceph_context->get_set_uid() || g_ceph_context->get_set_gid())) {
+
+    // currently we are still root
+
     // Fix ownership on log files and run directories if needed.
     // Admin socket files are chown()'d during the common init path _after_
     // the service thread has been started. This is sadly a bit of a hack :(
@@ -306,6 +351,7 @@ global_init(std::vector < const char * > *alt_def_args,
 	       g_ceph_context->get_set_gid(),
 	       g_ceph_context->get_set_uid_string(),
 	       g_ceph_context->get_set_gid_string());
+
     g_ceph_context->_log->chown_log_file(
       g_ceph_context->get_set_uid(),
       g_ceph_context->get_set_gid());
@@ -351,6 +397,7 @@ int global_init_prefork(CephContext *cct)
     return -1;
 
   const md_config_t *conf = cct->_conf;
+
   if (!conf->daemonize) {
 
     if (pidfile_write(conf) < 0)
@@ -366,15 +413,18 @@ int global_init_prefork(CephContext *cct)
   }
 
   cct->notify_pre_fork();
+
   // stop log thread
   cct->_log->flush();
   cct->_log->stop();
+
   return 0;
 }
 
 void global_init_daemonize(CephContext *cct)
 {
   if (global_init_prefork(cct) < 0)
+    // no need to daemonize
     return;
 
 #if !defined(_AIX)
@@ -397,6 +447,7 @@ void global_init_postfork_start(CephContext *cct)
 {
   // restart log thread
   cct->_log->start();
+
   cct->notify_post_fork();
 
   /* This is the old trick where we make file descriptors 0, 1, and possibly 2
@@ -414,6 +465,7 @@ void global_init_postfork_start(CephContext *cct)
 	 << err << dendl;
     exit(1);
   }
+
   VOID_TEMP_FAILURE_RETRY(close(STDOUT_FILENO));
   if (open("/dev/null", O_RDONLY) < 0) {
     int err = errno;
@@ -447,6 +499,7 @@ void global_init_postfork_finish(CephContext *cct)
       exit(1);
     }
   }
+
   ldout(cct, 1) << "finished global_init_daemonize" << dendl;
 }
 

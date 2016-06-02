@@ -29,13 +29,20 @@ void LockRequest<I>::send() {
   send_lock();
 }
 
+// called by
+// LockRequest<I>::send
+// LockRequest<I>::handle_get_lock_info
+// LockRequest<I>::handle_break_locks
 template <typename I>
 void LockRequest<I>::send_lock() {
   CephContext *cct = m_image_ctx.cct;
   std::string oid(ObjectMap::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
+
   ldout(cct, 10) << this << " " << __func__ << ": oid=" << oid << dendl;
 
   librados::ObjectWriteOperation op;
+
+  // name, type, cookie, tag, description
   rados::cls::lock::lock(&op, RBD_LOCK_NAME, LOCK_EXCLUSIVE, "", "", "",
                            utime_t(), 0);
 
@@ -55,20 +62,31 @@ Context *LockRequest<I>::handle_lock(int *ret_val) {
   if (*ret_val == 0) {
     return m_on_finish;
   } else if (m_broke_lock || *ret_val != -EBUSY) {
+
+    // m_broke_lock was set by LockRequest<I>::handle_break_locks, which
+    // means we have tried to break the lock
+
     lderr(cct) << "failed to lock object map: " << cpp_strerror(*ret_val)
                << dendl;
+
     *ret_val = 0;
+
     return m_on_finish;
   }
 
+  // !m_broke_lock && *ret_val == -EBUSY
+
   send_get_lock_info();
+
   return nullptr;
 }
 
 template <typename I>
 void LockRequest<I>::send_get_lock_info() {
   CephContext *cct = m_image_ctx.cct;
+
   std::string oid(ObjectMap::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
+
   ldout(cct, 10) << this << " " << __func__ << ": oid=" << oid << dendl;
 
   librados::ObjectReadOperation op;
@@ -99,6 +117,7 @@ Context *LockRequest<I>::handle_get_lock_info(int *ret_val) {
     *ret_val = rados::cls::lock::get_lock_info_finish(&it, &m_lockers,
                                                       &lock_type, &lock_tag);
   }
+
   if (*ret_val < 0) {
     lderr(cct) << "failed to list object map locks: " << cpp_strerror(*ret_val)
                << dendl;
@@ -107,17 +126,21 @@ Context *LockRequest<I>::handle_get_lock_info(int *ret_val) {
   }
 
   send_break_locks();
+
   return nullptr;
 }
 
 template <typename I>
 void LockRequest<I>::send_break_locks() {
   CephContext *cct = m_image_ctx.cct;
+
   std::string oid(ObjectMap::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
+
   ldout(cct, 10) << this << " " << __func__ << ": oid=" << oid << ", "
                  << "num_lockers=" << m_lockers.size() << dendl;
 
   librados::ObjectWriteOperation op;
+
   for (auto &locker : m_lockers) {
     rados::cls::lock::break_lock(&op, RBD_LOCK_NAME, locker.first.cookie,
                                  locker.first.locker);
@@ -137,14 +160,20 @@ Context *LockRequest<I>::handle_break_locks(int *ret_val) {
   ldout(cct, 10) << this << " " << __func__ << ": r=" << *ret_val << dendl;
 
   m_broke_lock = true;
+
   if (*ret_val == 0 || *ret_val == -ENOENT) {
+
+    // lock again
     send_lock();
+
     return nullptr;
   }
 
   lderr(cct) << "failed to break object map lock: " << cpp_strerror(*ret_val)
              << dendl;
+
   *ret_val = 0;
+
   return m_on_finish;
 }
 

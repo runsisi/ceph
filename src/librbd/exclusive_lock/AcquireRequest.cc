@@ -111,6 +111,7 @@ void AcquireRequest<I>::send_flush_notifies() {
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_flush_notifies>(
     this);
+
   m_image_ctx.image_watcher->flush(ctx);
 }
 
@@ -120,6 +121,7 @@ Context *AcquireRequest<I>::handle_flush_notifies(int *ret_val) {
   ldout(cct, 10) << __func__ << dendl;
 
   assert(*ret_val == 0);
+
   send_lock();
   return nullptr;
 }
@@ -148,13 +150,18 @@ Context *AcquireRequest<I>::handle_lock(int *ret_val) {
   ldout(cct, 10) << __func__ << ": r=" << *ret_val << dendl;
 
   if (*ret_val == 0) {
+
+    // acquire exclusive lock succeeded, refresh image if needed
+
     return send_refresh();
   } else if (*ret_val != -EBUSY) {
     lderr(cct) << "failed to lock: " << cpp_strerror(*ret_val) << dendl;
     return m_on_finish;
   }
 
+  // lock failed, break the current locker and then lock again
   send_get_lockers();
+
   return nullptr;
 }
 
@@ -163,6 +170,8 @@ Context *AcquireRequest<I>::send_refresh() {
   if (!m_image_ctx.state->is_refresh_required()) {
     return send_open_object_map();
   }
+
+  // need to refresh image before open object_map and journal
 
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << __func__ << dendl;
@@ -175,7 +184,9 @@ Context *AcquireRequest<I>::send_refresh() {
   // refresh
   image::RefreshRequest<I> *req = image::RefreshRequest<I>::create(
     m_image_ctx, true, ctx);
+
   req->send();
+
   return nullptr;
 }
 
@@ -185,19 +196,30 @@ Context *AcquireRequest<I>::handle_refresh(int *ret_val) {
   ldout(cct, 10) << __func__ << ": r=" << *ret_val << dendl;
 
   if (*ret_val == -ERESTART) {
+
+    // -ERESTART was set by RefreshRequest<I>::send_flush_aio
+
     // next issued IO or op will (re)-refresh the image and shut down lock
     ldout(cct, 5) << ": exclusive lock dynamically disabled" << dendl;
+
     *ret_val = 0;
   } else if (*ret_val < 0) {
     lderr(cct) << "failed to refresh image: " << cpp_strerror(*ret_val)
                << dendl;
+
     m_error_result = *ret_val;
+
     send_unlock();
     return nullptr;
   }
 
+  // refresh succeeded
+
   return send_open_object_map();
 }
+
+// ImageCtx::object_map is created in AcquireRequest<I>::send_open_journal
+// ImageCtx::journal is created in AcquireRequest<I>::send_open_object_map
 
 template <typename I>
 Context *AcquireRequest<I>::send_open_journal() {
@@ -214,6 +236,7 @@ Context *AcquireRequest<I>::send_open_journal() {
   }
   if (!journal_enabled) {
     apply();
+
     return m_on_finish;
   }
 
@@ -223,12 +246,21 @@ Context *AcquireRequest<I>::send_open_journal() {
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_open_journal>(
     this);
+
+  // new Journal<ImageCtx> instance
   m_journal = m_image_ctx.create_journal();
 
   // journal playback requires object map (if enabled) and itself
+
+  // set ImageCtx::object_map and ImageCtx::journal, before the journal
+  // opened, this is not the same as dynamically enabled journal, see
+  // RefreshRequest<I>::send_v2_open_journal
   apply();
 
+  // the callback will be called until Journal::STATE_READY or Journal::STATE_CLOSED
+  // i.e., the after the journal replaying finshed or failed
   m_journal->open(ctx);
+
   return nullptr;
 }
 
@@ -239,12 +271,19 @@ Context *AcquireRequest<I>::handle_open_journal(int *ret_val) {
 
   if (*ret_val < 0) {
     lderr(cct) << "failed to open journal: " << cpp_strerror(*ret_val) << dendl;
+
     m_error_result = *ret_val;
+
     send_close_journal();
     return nullptr;
   }
 
+  // we have done a lot of things, like refresh image, open object map, open journal,
+  // now do the final step, but sadly we may fail if we are not the tag owner,
+  // we can allocate the local tag only if we are the tag owner,
+  // otherwise we fail and we need to do all these cleanups
   send_allocate_journal_tag();
+
   return nullptr;
 }
 
@@ -254,9 +293,17 @@ void AcquireRequest<I>::send_allocate_journal_tag() {
   ldout(cct, 10) << __func__ << dendl;
 
   RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_allocate_journal_tag>(this);
+
+  // call m_image_ctx->journal->allocate_local_tag to allocate a tag with
+  // tag.mirror_uuid and prev mirror uuid both set to LOCAL_MIRROR_UUID
+  // only call it if the image is the primary, i.e., the tag owner
+  // client io for non-primary image is not allowed, so for non-primary
+  // image the allocate_tag_on_lock call will fail, which results the
+  // whole acquiring exclusive lock fail
   m_image_ctx.get_journal_policy()->allocate_tag_on_lock(ctx);
 }
 
@@ -268,10 +315,13 @@ Context *AcquireRequest<I>::handle_allocate_journal_tag(int *ret_val) {
   if (*ret_val < 0) {
     lderr(cct) << "failed to allocate journal tag: " << cpp_strerror(*ret_val)
                << dendl;
+
     m_error_result = *ret_val;
+
     send_close_journal();
     return nullptr;
   }
+
   return m_on_finish;
 }
 
@@ -283,6 +333,7 @@ void AcquireRequest<I>::send_close_journal() {
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_close_journal>(
     this);
+
   m_journal->close(ctx);
 }
 
@@ -314,7 +365,9 @@ Context *AcquireRequest<I>::send_open_object_map() {
     this);
 
   m_object_map = m_image_ctx.create_object_map(CEPH_NOSNAP);
+
   m_object_map->open(ctx);
+
   return nullptr;
 }
 
@@ -328,6 +381,7 @@ Context *AcquireRequest<I>::handle_open_object_map(int *ret_val) {
                << dendl;
 
     *ret_val = 0;
+
     delete m_object_map;
     m_object_map = nullptr;
   }
@@ -348,6 +402,7 @@ void AcquireRequest<I>::send_close_object_map() {
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_close_object_map>(this);
+
   m_object_map->close(ctx);
 }
 
@@ -358,6 +413,7 @@ Context *AcquireRequest<I>::handle_close_object_map(int *ret_val) {
 
   // object map should never result in an error
   assert(*ret_val == 0);
+
   send_unlock();
   return nullptr;
 }
@@ -388,7 +444,12 @@ Context *AcquireRequest<I>::handle_unlock(int *ret_val) {
     lderr(cct) << "failed to unlock image: " << cpp_strerror(*ret_val) << dendl;
   }
 
+  // reset ImageCtx::object_map and ImageCtx::journal to nullptr and
+  // delete AcquireRequest<I>::m_object_map and AcquireRequest<I>::m_journal,
+  // set ret_val to m_error_result so m_on_finish can pass this error code
+  // out
   revert(ret_val);
+
   return m_on_finish;
 }
 
@@ -462,6 +523,7 @@ Context *AcquireRequest<I>::handle_get_lockers(int *ret_val) {
   m_locker_entity = iter->first.locker;
   m_locker_cookie = iter->first.cookie;
   m_locker_address = stringify(iter->second.addr);
+
   if (m_locker_cookie.empty() || m_locker_address.empty()) {
     ldout(cct, 20) << "no valid lockers detected" << dendl;
     send_lock();
@@ -470,6 +532,7 @@ Context *AcquireRequest<I>::handle_get_lockers(int *ret_val) {
 
   ldout(cct, 10) << "retrieved exclusive locker: "
                  << m_locker_entity << "@" << m_locker_address << dendl;
+
   send_get_watchers();
   return nullptr;
 }
@@ -510,12 +573,17 @@ Context *AcquireRequest<I>::handle_get_watchers(int *ret_val) {
     if ((strncmp(m_locker_address.c_str(),
                  watcher.addr, sizeof(watcher.addr)) == 0) &&
         (m_locker_handle == watcher.cookie)) {
+
+      // the current remote locker is still alive
+
       ldout(cct, 10) << "lock owner is still alive" << dendl;
 
       *ret_val = -EAGAIN;
       return m_on_finish;
     }
   }
+
+  // the current locker is dead, break the lock
 
   send_blacklist();
   return nullptr;
@@ -535,6 +603,8 @@ void AcquireRequest<I>::send_blacklist() {
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_blacklist>(
     this);
+
+  // rados.blacklist_add is sync interface
   m_image_ctx.op_work_queue->queue(new C_BlacklistClient<I>(m_image_ctx,
                                                             m_locker_address,
                                                             ctx), 0);
@@ -550,6 +620,7 @@ Context *AcquireRequest<I>::handle_blacklist(int *ret_val) {
                << dendl;
     return m_on_finish;
   }
+
   send_break_lock();
   return nullptr;
 }
@@ -613,6 +684,7 @@ void AcquireRequest<I>::revert(int *ret_val) {
   delete m_journal;
 
   assert(m_error_result < 0);
+
   *ret_val = m_error_result;
 }
 

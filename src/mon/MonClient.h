@@ -113,6 +113,8 @@ private:
   Messenger *messenger;
 
   string cur_mon;
+
+  // boost::intrusive_ptr<Connection>
   ConnectionRef cur_con;
 
   SimpleRNG rng;
@@ -174,9 +176,19 @@ private:
   string _pick_random_mon();
   void _finish_hunting();
   void _reopen_session(int rank, string name);
+
+  // called by
+  // MonClient::reopen_session
+  // MonClient::get_monmap
+  // MonClient::handle_monmap
+  // MonClient::authenticate
+  // MonClient::ms_handle_reset
+  // MonClient::tick
+  // MonClient::_renew_subs
   void _reopen_session() {
     _reopen_session(-1, string());
   }
+
   void _send_mon_message(Message *m, bool force=false);
 
 public:
@@ -220,6 +232,7 @@ private:
 
     sub_new[what].start = start;
     sub_new[what].flags = flags;
+
     return true;
   }
   void _sub_got(const string &what, version_t got) {
@@ -372,10 +385,18 @@ public:
   void set_messenger(Messenger *m) { messenger = m; }
   entity_addr_t get_myaddr() const { return messenger->get_myaddr(); }
 
+  // never be used
   void send_auth_message(Message *m) {
     _send_mon_message(m, true);
   }
 
+  // called by
+  // Client::init
+  // librados::RadosClient::connect
+  // MDSDaemon::init
+  // MgrStandby::init
+  // OSD::init
+  // MDSUtility::init
   void set_want_keys(uint32_t want) {
     want_keys = want;
     if (auth)

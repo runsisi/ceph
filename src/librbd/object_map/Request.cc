@@ -25,17 +25,22 @@ bool Request::should_complete(int r) {
     if (r < 0) {
       lderr(cct) << "failed to update object map: " << cpp_strerror(r)
 		 << dendl;
+
       return invalidate();
     }
 
     {
       RWLock::WLocker l2(m_image_ctx.object_map_lock);
+
       finish_request();
     }
     return true;
 
   case STATE_INVALIDATE:
+    // this state was set by Request::invalidate
+
     ldout(cct, 20) << "INVALIDATE" << dendl;
+
     if (r < 0) {
       lderr(cct) << "failed to invalidate object map: " << cpp_strerror(r)
 		 << dendl;
@@ -47,6 +52,7 @@ bool Request::should_complete(int r) {
     assert(false);
     break;
   }
+
   return false;
 }
 
@@ -59,10 +65,15 @@ bool Request::invalidate() {
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
   RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
+
+  // for SnapshotRollbackRequest, the m_snap_id is CEPH_NOSNAP, for other
+  // requests derived from object_map::Request, the m_snap_id is the same
+  // as the specific request
   InvalidateRequest<> *req = new InvalidateRequest<>(m_image_ctx, m_snap_id,
                                                      true,
                                                      create_callback_context());
   req->send();
+
   return false;
 }
 

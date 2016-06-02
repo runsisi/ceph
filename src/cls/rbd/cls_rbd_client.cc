@@ -385,6 +385,10 @@ namespace librbd {
       return get_flags_finish(&it, flags, snap_ids, snap_flags);
     }
 
+    // called by
+    // librbd::image::SetFlagsRequest<I>::send_set_flags
+    // librbd::object_map::InvalidateRequest<I>::send
+    // librbd::operation::RebuildObjectMapRequest<I>::send_update_header
     void set_flags(librados::ObjectWriteOperation *op, snapid_t snap_id,
                    uint64_t flags, uint64_t mask)
     {
@@ -551,6 +555,7 @@ namespace librbd {
       sizes->resize(ids.size());
       parents->resize(ids.size());
       protection_statuses->resize(ids.size());
+
       try {
 	for (size_t i = 0; i < names->size(); ++i) {
 	  uint8_t order;
@@ -1228,6 +1233,8 @@ namespace librbd {
       return 0;
     }
 
+    // called by
+    // librbd::mirror_mode_set
     int mirror_uuid_set(librados::IoCtx *ioctx, const std::string &uuid) {
       bufferlist in_bl;
       ::encode(uuid, in_bl);
@@ -1502,6 +1509,7 @@ namespace librbd {
 
     int mirror_image_remove(librados::IoCtx *ioctx, const std::string &image_id) {
       librados::ObjectWriteOperation op;
+
       mirror_image_remove(&op, image_id);
 
       int r = ioctx->operate(RBD_MIRRORING, &op);

@@ -78,6 +78,9 @@ int PipeConnection::send_message(Message *m)
   return static_cast<SimpleMessenger*>(msgr)->send_message(m, this);
 }
 
+// called by
+// MonClient::_reopen_session
+// MonClient::tick
 void PipeConnection::send_keepalive()
 {
   static_cast<SimpleMessenger*>(msgr)->send_keepalive(this);
@@ -89,6 +92,7 @@ void PipeConnection::mark_down()
     static_cast<SimpleMessenger*>(msgr)->mark_down(this);
 }
 
+// called by MDSDaemon::send_command_reply, Server::_session_logged
 void PipeConnection::mark_disposable()
 {
   if (msgr)

@@ -182,6 +182,8 @@ void DispatchQueue::entry()
 	  msgr->ms_deliver_handle_reset(qitem.get_connection());
 	  break;
 	case D_CONN_REFUSED:
+	  // dispatcher->ms_handle_refused, currently only OSD handles this if
+	  // osd_fast_fail_on_connection_refused is enabled, see OSD::ms_handle_refused
 	  msgr->ms_deliver_handle_refused(qitem.get_connection());
 	  break;
 	default:
@@ -250,6 +252,7 @@ void DispatchQueue::discard_local()
   local_messages.clear();
 }
 
+// called by SimpleMessenger::wait, AsyncMessenger::wait
 void DispatchQueue::shutdown()
 {
   // stop my local delivery thread

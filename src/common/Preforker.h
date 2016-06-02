@@ -37,8 +37,12 @@ public:
       forked(false)
   {}
 
+  // called by
+  // rbd-nbd.cc:do_map
+  // ceph_mon.cc:main
   int prefork(std::string &err) {
     assert(!forked);
+
     int r = ::socketpair(AF_UNIX, SOCK_STREAM, 0, fd);
     std::ostringstream oss;
     if (r < 0) {
@@ -56,11 +60,16 @@ public:
       err = oss.str();
       return r;
     }
+
     if (is_child()) {
+
+      // childpid == 0
+
       ::close(fd[0]);
     } else {
       ::close(fd[1]);
     }
+
     return 0;
   }
 
@@ -72,11 +81,15 @@ public:
     return childpid != 0;
   }
 
+  // called by
+  // rbd-nbd.cc:do_map
+  // ceph_mon.cc:main
   int parent_wait(std::string &err_msg) {
     assert(forked);
 
     int r = -1;
     std::ostringstream oss;
+
     int err = safe_read_exact(fd[0], &r, sizeof(r));
     if (err == 0 && r == -1) {
       // daemonize
@@ -102,28 +115,45 @@ public:
          oss << "[" << getpid() << "]" << " returned exit_status " << cpp_strerror(err);
       }
     }
+
     err_msg = oss.str();
     return err;
   }
 
+  // called by
+  // Preforker::exit
+  // ceph_mon.cc:main
   int signal_exit(int r) {
     if (forked) {
+
+      // was set by Preforker::prefork
+
       // tell parent.  this shouldn't fail, but if it does, pass the
       // error back to the parent.
       int ret = safe_write(fd[1], &r, sizeof(r));
       if (ret <= 0)
 	return ret;
     }
+
     return r;
   }
+
+  // called by
+  // rbd-nbd.cc:do_map
+  // ceph_mon.cc:main
   void exit(int r) {
     if (is_child())
         signal_exit(r);
+
     ::exit(r);
   }
 
+  // called by
+  // rbd-nbd.cc:do_map
+  // ceph_mon.cc:main
   void daemonize() {
     assert(forked);
+
     static int r = -1;
     int r2 = ::write(fd[1], &r, sizeof(r));
     r += r2;  // make the compiler shut up about the unused return code from ::write(2).

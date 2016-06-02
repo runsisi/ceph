@@ -154,10 +154,13 @@ public:
         break;
       }
 
+      // initialized to false by ctor, set to true by CephContextServiceThread::reopen_logs
       if (_reopen_logs) {
         _cct->_log->reopen_log_file();
+
         _reopen_logs = false;
       }
+
       _cct->_heartbeat_map->check_touch_file();
 
       // refresh the perf coutners
@@ -166,6 +169,7 @@ public:
     return NULL;
   }
 
+  // called by CephContext::reopen_logs
   void reopen_logs()
   {
     Mutex::Locker l(_lock);
@@ -300,14 +304,18 @@ public:
     if (changed.count(
 	  "enable_experimental_unrecoverable_data_corrupting_features")) {
       ceph_spin_lock(&cct->_feature_lock);
+
       get_str_set(
 	conf->enable_experimental_unrecoverable_data_corrupting_features,
 	cct->_experimental_features);
+
       ceph_spin_unlock(&cct->_feature_lock);
+
       if (!cct->_experimental_features.empty())
 	lderr(cct) << "WARNING: the following dangerous and experimental features are enabled: "
 		   << cct->_experimental_features << dendl;
     }
+
     if (changed.count("crush_location")) {
       cct->crush_location.update_from_conf();
     }
@@ -526,6 +534,7 @@ CephContext::CephContext(uint32_t module_type_, int init_flags_)
   ceph_spin_init(&_feature_lock);
   ceph_spin_init(&_cct_perf_lock);
 
+  // _conf->subsys was initialized by md_config_t::init_subsys
   _log = new ceph::logging::Log(&_conf->subsys);
   _log->start();
 
@@ -600,6 +609,7 @@ CephContext::~CephContext()
   _admin_socket->unregister_command("log flush");
   _admin_socket->unregister_command("log dump");
   _admin_socket->unregister_command("log reopen");
+
   delete _admin_hook;
   delete _admin_socket;
 
@@ -628,6 +638,7 @@ CephContext::~CephContext()
   _log = NULL;
 
   delete _conf;
+
   ceph_spin_destroy(&_service_thread_lock);
   ceph_spin_destroy(&_fork_watchers_lock);
   ceph_spin_destroy(&_associated_objs_lock);
@@ -658,15 +669,21 @@ void CephContext::init_crypto()
   }
 }
 
+// called by
+// common_init_finish
 void CephContext::start_service_thread()
 {
   ceph_spin_lock(&_service_thread_lock);
+
   if (_service_thread) {
     ceph_spin_unlock(&_service_thread_lock);
     return;
   }
+
+  // reopen log file, check heart beat, refresh perf counter
   _service_thread = new CephContextServiceThread(this);
   _service_thread->create("service");
+
   ceph_spin_unlock(&_service_thread_lock);
 
   // make logs flush on_exit()
@@ -679,6 +696,7 @@ void CephContext::start_service_thread()
   _conf->call_all_observers();
 
   // start admin socket
+  // default "$run_dir/$cluster-$name.asok"
   if (_conf->admin_socket.length())
     _admin_socket->init(_conf->admin_socket);
 }
@@ -686,24 +704,33 @@ void CephContext::start_service_thread()
 void CephContext::reopen_logs()
 {
   ceph_spin_lock(&_service_thread_lock);
+
   if (_service_thread)
     _service_thread->reopen_logs();
+
   ceph_spin_unlock(&_service_thread_lock);
 }
 
+// called by
+// CephContext::~CephContext
 void CephContext::join_service_thread()
 {
   ceph_spin_lock(&_service_thread_lock);
+
   CephContextServiceThread *thread = _service_thread;
+
   if (!thread) {
     ceph_spin_unlock(&_service_thread_lock);
     return;
   }
+
   _service_thread = NULL;
+
   ceph_spin_unlock(&_service_thread_lock);
 
   thread->exit_thread();
   thread->join();
+
   delete thread;
 }
 

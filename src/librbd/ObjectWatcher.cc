@@ -42,6 +42,7 @@ struct C_UnwatchAndFlush : public Context {
       assert(r == 0);
       aio_comp->release();
     } else {
+      // watch flushed
       Context::complete(ret_val);
     }
   }
@@ -53,6 +54,9 @@ struct C_UnwatchAndFlush : public Context {
 
 } // anonymous namespace
 
+// overrided by
+// librbd::MirroringWatcher
+// rbd::mirror::MirrorStatusWatchCtx::Watcher
 template <typename I>
 ObjectWatcher<I>::ObjectWatcher(librados::IoCtx &io_ctx, ContextWQT *work_queue)
   : m_io_ctx(io_ctx), m_cct(reinterpret_cast<CephContext*>(io_ctx.cct())),
@@ -73,6 +77,7 @@ void ObjectWatcher<I>::register_watch(Context *on_finish) {
 
   {
     RWLock::WLocker watch_locker(m_watch_lock);
+
     assert(on_finish != nullptr);
     assert(m_on_register_watch == nullptr);
     assert(m_watch_state == WATCH_STATE_UNREGISTERED);
@@ -83,6 +88,9 @@ void ObjectWatcher<I>::register_watch(Context *on_finish) {
 
   librados::AioCompletion *aio_comp = create_rados_safe_callback<
     ObjectWatcher<I>, &ObjectWatcher<I>::handle_register_watch>(this);
+
+  // m_watch_ctx is an instance of ObjectWatcher::WatchCtx which is
+  // derived from librados::WatchCtx2
   int r = m_io_ctx.aio_watch(get_oid(), aio_comp, &m_watch_handle,
                              &m_watch_ctx);
   assert(r == 0);
@@ -112,17 +120,22 @@ void ObjectWatcher<I>::handle_register_watch(int r) {
   on_register_watch->complete(r);
 }
 
+// called by
+// rbd::mirror::MirrorStatusWatchCtx::unregister_watch
 template <typename I>
 void ObjectWatcher<I>::unregister_watch(Context *on_finish) {
   ldout(m_cct, 5) << dendl;
 
   RWLock::WLocker watch_locker(m_watch_lock);
+
   assert(on_finish != nullptr);
   assert(m_on_unregister_watch == nullptr);
+
   assert(m_watch_state != WATCH_STATE_UNREGISTERED &&
          m_watch_state != WATCH_STATE_REGISTERING);
 
   m_on_unregister_watch = on_finish;
+
   if (m_watch_state == WATCH_STATE_REGISTERED) {
     unregister_watch_();
   }
@@ -131,8 +144,10 @@ void ObjectWatcher<I>::unregister_watch(Context *on_finish) {
 template <typename I>
 void ObjectWatcher<I>::unregister_watch_() {
   assert(m_watch_lock.is_wlocked());
+
   assert(m_on_unregister_watch != nullptr);
   assert(m_watch_state == WATCH_STATE_REGISTERED);
+
   m_watch_state = WATCH_STATE_UNREGISTERING;
 
   Context *ctx = create_context_callback<
@@ -149,8 +164,10 @@ void ObjectWatcher<I>::handle_unregister_watch(int r) {
   ldout(m_cct, 20) << ": r=" << r << dendl;
 
   Context *on_unregister_watch = nullptr;
+
   {
     RWLock::WLocker watch_locker(m_watch_lock);
+
     assert(m_watch_state == WATCH_STATE_UNREGISTERING);
 
     if (r < 0) {
@@ -185,6 +202,7 @@ void ObjectWatcher<I>::acknowledge_notify(uint64_t notify_id, uint64_t handle,
                                           bufferlist &out) {
   ldout(m_cct, 15) << ": notify_id=" << notify_id << ", "
                    << "handle=" << handle << dendl;
+
   m_io_ctx.notify_ack(get_oid(), notify_id, handle, out);
 }
 
@@ -193,17 +211,22 @@ void ObjectWatcher<I>::handle_error(uint64_t handle, int err) {
   lderr(m_cct) << ": handle=" << handle << ", " << "err=" << err << dendl;
 
   RWLock::WLocker watch_locker(m_watch_lock);
+
   if (m_watch_state != WATCH_STATE_REGISTERED) {
     return;
   }
 
   m_watch_state = WATCH_STATE_REREGISTERING;
+
   Context *pre_unwatch_ctx = new FunctionContext([this](int r) {
       assert(r == 0);
       Context *ctx = create_context_callback<
         ObjectWatcher<I>, &ObjectWatcher<I>::handle_pre_unwatch>(this);
+
+      // i.e., on_finish->complete(0)
       pre_unwatch(ctx);
     });
+
   m_work_queue->queue(pre_unwatch_ctx, 0);
 }
 
@@ -212,6 +235,7 @@ void ObjectWatcher<I>::handle_pre_unwatch(int r) {
   ldout(m_cct, 20) << dendl;
 
   assert(r == 0);
+
   unwatch();
 }
 
@@ -226,6 +250,7 @@ void ObjectWatcher<I>::unwatch() {
 
   Context *ctx = create_context_callback<
     ObjectWatcher<I>, &ObjectWatcher<I>::handle_unwatch>(this);
+  // call rados.aio_watch_flush to flush watch
   librados::AioCompletion *aio_comp = create_rados_safe_callback(
     new C_UnwatchAndFlush(m_io_ctx, ctx));
   int r = m_io_ctx.aio_unwatch(m_watch_handle, aio_comp);
@@ -256,6 +281,7 @@ void ObjectWatcher<I>::rewatch() {
 
   {
     RWLock::RLocker watch_locker(m_watch_lock);
+
     assert(m_watch_state == WATCH_STATE_REREGISTERING);
   }
 
@@ -275,16 +301,20 @@ void ObjectWatcher<I>::handle_rewatch(int r) {
   if (r < 0) {
     lderr(m_cct) << ": error encountered during re-watch: " << cpp_strerror(r)
                  << dendl;
+
     m_watch_handle = 0;
 
     if (!pending_unregister_watch(0)) {
       rewatch();
     }
+
     return;
   }
 
   Context *ctx = create_context_callback<
     ObjectWatcher<I>, &ObjectWatcher<I>::handle_post_watch>(this);
+
+  // i.e., on_finish->complete(0)
   post_rewatch(ctx);
 }
 
@@ -295,6 +325,7 @@ void ObjectWatcher<I>::handle_post_watch(int r) {
   assert(r == 0);
 
   RWLock::WLocker watch_locker(m_watch_lock);
+
   m_watch_state = WATCH_STATE_REGISTERED;
 
   // handling pending unregister (if any)
@@ -307,12 +338,15 @@ void ObjectWatcher<I>::handle_post_watch(int r) {
 template <typename I>
 bool ObjectWatcher<I>::pending_unregister_watch(int r) {
   Context *on_unregister_watch = nullptr;
+
   {
     RWLock::WLocker watch_locker(m_watch_lock);
+
     assert(m_watch_state == WATCH_STATE_REREGISTERING);
 
     if (m_on_unregister_watch != nullptr) {
       m_watch_state = WATCH_STATE_UNREGISTERED;
+
       std::swap(on_unregister_watch, m_on_unregister_watch);
     }
   }
@@ -337,9 +371,11 @@ ObjectWatcher<I>::C_NotifyAck::C_NotifyAck(ObjectWatcher *object_watcher,
 template <typename I>
 void ObjectWatcher<I>::C_NotifyAck::finish(int r) {
   assert(r == 0);
+
   CephContext *cct = object_watcher->m_cct;
   ldout(cct, 10) << ": C_NotifyAck finish: id=" << notify_id << ", "
                  << "handle=" << handle << dendl;
+
   object_watcher->acknowledge_notify(notify_id, handle, out);
 }
 

@@ -53,28 +53,36 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
     {
       public:
         unsigned cost;
+        // T -> pair<PGRef, PGQueueable>
         T item;
         ListPair(unsigned c, T& i) :
           cost(c),
           item(i)
           {}
     };
+
+    // contains all Ops for a specific client
     class Klass : public bi::set_base_hook<>
     {
       typedef bi::list<ListPair> ListPairs;
       typedef typename ListPairs::iterator Lit;
+
       public:
+        // K -> entity_inst_t
         K key;		// klass
         ListPairs lp;
+
         Klass(K& k) :
           key(k)
           {}
+
       friend bool operator< (const Klass &a, const Klass &b)
         { return a.key < b.key; }
       friend bool operator> (const Klass &a, const Klass &b)
         { return a.key > b.key; }
       friend bool operator== (const Klass &a, const Klass &b)
         { return a.key == b.key; }
+
       void insert(unsigned cost, T& item, bool front) {
         if (front) {
           lp.push_front(*new ListPair(cost, item));
@@ -82,23 +90,30 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
           lp.push_back(*new ListPair(cost, item));
         }
       }
+
       //Get the cost of the next item to dequeue
       unsigned get_cost() const {
         assert(!empty());
+
         return lp.begin()->cost;
       }
+
       T pop() {
 	assert(!lp.empty());
+
 	T ret = lp.begin()->item;
         lp.erase_and_dispose(lp.begin(), DelItem<ListPair>());
         return ret;
       }
+
       bool empty() const {
         return lp.empty();
       }
+
       unsigned get_size() const {
 	return lp.size();
       }
+
       unsigned filter_list_pairs(std::function<bool (T)>& f) {
         unsigned count = 0;
         // intrusive containers can't erase with a reverse_iterator
@@ -115,6 +130,7 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
         }
         return count;
       }
+
       unsigned filter_class(std::list<T>* out) {
         unsigned count = 0;
         for (Lit i = --lp.end();; --i) {
@@ -130,10 +146,13 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
         return count;
       }
     };
+
+    // contains all clients for a specific priority
     class SubQueue : public bi::set_base_hook<>
     {
       typedef bi::rbtree<Klass> Klasses;
       typedef typename Klasses::iterator Kit;
+
       void check_end() {
         if (next == klasses.end()) {
           next = klasses.begin();
@@ -142,44 +161,70 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
       public:
 	unsigned key;	// priority
         Klasses klasses;
+        // the next client
 	Kit next;
+
 	SubQueue(unsigned& p) :
 	  key(p),
 	  next(klasses.begin())
 	  {}
+
       friend bool operator< (const SubQueue &a, const SubQueue &b)
         { return a.key < b.key; }
       friend bool operator> (const SubQueue &a, const SubQueue &b)
         { return a.key > b.key; }
       friend bool operator== (const SubQueue &a, const SubQueue &b)
         { return a.key == b.key; }
+
       bool empty() const {
         return klasses.empty();
       }
+
       void insert(K cl, unsigned cost, T& item, bool front = false) {
         typename Klasses::insert_commit_data insert_data;
+
+        // insert into klasses rbtree, ordered by entity_inst_t
       	std::pair<Kit, bool> ret =
           klasses.insert_unique_check(cl, MapKey<Klass, K>(), insert_data);
       	if (ret.second) {
+
+      	  // the entity_inst_t identified Klass list does not exist, create it
+
       	  ret.first = klasses.insert_unique_commit(*new Klass(cl), insert_data);
+
+      	  // reset the iterator the the begin() if needed
           check_end();
 	}
+
+      	// insert the Op into client's Op list
 	ret.first->insert(cost, item, front);
       }
+
       unsigned get_cost() const {
         assert(!empty());
         return next->get_cost();
       }
+
       T pop() {
+        // pop from the current client, we do rr here, the iterator always reset to
+        // the next client after popped an Op
         T ret = next->pop();
+
         if (next->empty()) {
+
+          // all Ops dequeued for this client
+
           next = klasses.erase_and_dispose(next, DelItem<Klass>());
         } else {
 	  ++next;
 	}
+
+        // reset the iterator the the begin() if needed
         check_end();
+
 	return ret;
       }
+
       unsigned filter_list_pairs(std::function<bool (T)>& f) {
 	unsigned count = 0;
         // intrusive containers can't erase with a reverse_iterator
@@ -199,6 +244,7 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
         check_end();
 	return count;
       }
+
       unsigned filter_class(K& cl, std::list<T>* out) {
 	unsigned count = 0;
         Kit i = klasses.find(cl, MapKey<Klass, K>());
@@ -212,6 +258,7 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
         }
 	return count;
       }
+
       void dump(ceph::Formatter *f) const {
         f->dump_int("num_keys", next->get_size());
         if (!empty()) {
@@ -219,9 +266,11 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
         }
       }
     };
+
     class Queue {
       typedef bi::rbtree<SubQueue> SubQueues;
       typedef typename SubQueues::iterator Sit;
+
       SubQueues queues;
       unsigned total_prio;
       unsigned max_cost;
@@ -232,38 +281,67 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
 	  max_cost(0),
 	  size(0)
 	  {}
+
 	bool empty() const {
 	  return !size;
 	}
+
+	// T: pair<PGRef, PGQueueable>
+	// K: entity_inst_t
 	void insert(unsigned p, K cl, unsigned cost, T& item, bool front = false) {
 	  typename SubQueues::insert_commit_data insert_data;
+
       	  std::pair<typename SubQueues::iterator, bool> ret =
       	    queues.insert_unique_check(p, MapKey<SubQueue, unsigned>(), insert_data);
       	  if (ret.second) {
+
+      	    // the priority identified SubQueue rbtree does not exist, create it
+      	    // and insert it into the queue, ordered by priority
+
       	    ret.first = queues.insert_unique_commit(*new SubQueue(p), insert_data);
+
+      	    // when the SubQueue is removed, the total_prio will be substracted
 	    total_prio += p;
       	  }
+
+      	  // insert the item, i.e., pair<PGRef, PGQueueable>, into SubQueue
       	  ret.first->insert(cl, cost, item, front);
+
 	  if (cost > max_cost) {
 	    max_cost = cost;
 	  }
+
 	  ++size;
 	}
+
+	// T -> pair<PGRef, PGQueueable>
 	T pop(bool strict = false) {
 	  --size;
+
 	  Sit i = --queues.end();
+
 	  if (strict) {
+
+	    // we are strict priority queue
+
 	    T ret = i->pop();
 	    if (i->empty()) {
 	      queues.erase_and_dispose(i, DelItem<SubQueue>());
 	    }
 	    return ret;
 	  }
+
+	  // ok, we are normal queue
+
 	  if (queues.size() > 1) {
+
+	    // more than one SubQueue, need to choose a SubQueue to pop the item
+
 	    while (true) {
 	      // Pick a new priority out of the total priority.
 	      unsigned prio = rand() % total_prio + 1;
 	      unsigned tp = total_prio - i->key;
+
 	      // Find the priority coresponding to the picked number.
 	      // Subtract high priorities to low priorities until the picked number
 	      // is more than the total and try to dequeue that priority.
@@ -273,24 +351,38 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
 		--i;
 		tp -= i->key;
 	      }
+
 	      // Flip a coin to see if this priority gets to run based on cost.
 	      // The next op's cost is multiplied by .9 and subtracted from the
 	      // max cost seen. Ops with lower costs will have a larger value
 	      // and allow them to be selected easier than ops with high costs.
 	      if (max_cost == 0 || rand() % max_cost <=
 		  (max_cost - ((i->get_cost() * 9) / 10))) {
+	        // the cost of the Op to pop seems ok by probability, so pop it
 		break;
 	      }
+
+	      // re-choose the SubQueue to pop
+
+	      // reset the iterator to the last SubQueue
 	      i = --queues.end();
 	    }
 	  }
+
+	  // pop an Op from the chosen SubQueue
 	  T ret = i->pop();
+
 	  if (i->empty()) {
+
+	    // the SubQueue is empty, remove the SubQueue
+
 	    total_prio -= i->key;
 	    queues.erase_and_dispose(i, DelItem<SubQueue>());
 	  }
+
 	  return ret;
 	}
+
        void filter_list_pairs(std::function<bool (T)>& f) {
 	  for (Sit i = queues.begin(); i != queues.end();) {
             size -= i->filter_list_pairs(f);
@@ -302,6 +394,7 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
 	    }
       	  }
 	}
+
 	void filter_class(K& cl, std::list<T>* out) {
 	  for (Sit i = queues.begin(); i != queues.end();) {
 	    size -= i->filter_class(cl, out);
@@ -313,6 +406,7 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
 	    }
 	  }
 	}
+
 	void dump(ceph::Formatter *f) const {
 	  for (typename SubQueues::const_iterator i = queues.begin();
 	        i != queues.end(); ++i) {
@@ -326,6 +420,13 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
 	}
     };
 
+    // private class definitions:
+    // Queue, SubQueue, Klass, ListPair
+    // typedefs:
+    // bi::rbtree<SubQueue> SubQueues
+    // bi::rbtree<Klass> Klasses
+    // bi::list<ListPair> ListPairs
+
     Queue strict;
     Queue normal;
   public:
@@ -335,39 +436,49 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
       {
 	std::srand(time(0));
       }
+
     unsigned length() const override final {
       return strict.size + normal.size;
     }
+
     void remove_by_filter(std::function<bool (T)> f) override final {
       strict.filter_list_pairs(f);
       normal.filter_list_pairs(f);
     }
+
     void remove_by_class(K cl, std::list<T>* removed = 0) override final {
       strict.filter_class(cl, removed);
       normal.filter_class(cl, removed);
     }
+
     bool empty() const override final {
       return !(strict.size + normal.size);
     }
+
     void enqueue_strict(K cl, unsigned p, T item) override final {
       strict.insert(p, cl, 0, item);
     }
     void enqueue_strict_front(K cl, unsigned p, T item) override final {
       strict.insert(p, cl, 0, item, true);
     }
+
     void enqueue(K cl, unsigned p, unsigned cost, T item) override final {
       normal.insert(p, cl, cost, item);
     }
     void enqueue_front(K cl, unsigned p, unsigned cost, T item) override final {
       normal.insert(p, cl, cost, item, true);
     }
+
     T dequeue() override {
       assert(strict.size + normal.size > 0);
+
       if (!strict.empty()) {
 	return strict.pop(true);
       }
+
       return normal.pop();
     }
+
     void dump(ceph::Formatter *f) const override {
       f->open_array_section("high_queues");
       strict.dump(f);

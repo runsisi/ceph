@@ -53,6 +53,7 @@ ImageSyncThrottler<I>::ImageSyncThrottler()
 {
   dout(20) << "Initialized max_concurrent_syncs=" << m_max_concurrent_syncs
            << dendl;
+
   g_ceph_context->_conf->add_observer(this);
 }
 
@@ -67,6 +68,7 @@ ImageSyncThrottler<I>::~ImageSyncThrottler() {
   g_ceph_context->_conf->remove_observer(this);
 }
 
+// called by BootstrapRequest<I>::image_sync
 template <typename I>
 void ImageSyncThrottler<I>::start_sync(I *local_image_ctx, I *remote_image_ctx,
                                        SafeTimer *timer, Mutex *timer_lock,
@@ -80,6 +82,7 @@ void ImageSyncThrottler<I>::start_sync(I *local_image_ctx, I *remote_image_ctx,
 
   PoolImageId pool_image_id(local_image_ctx->md_ctx.get_id(),
                             local_image_ctx->id);
+  // will be insert to inflight queue(m_inflight_syncs) or waiting queue(m_sync_queue)
   C_SyncHolder *sync_holder_ctx = new C_SyncHolder(this, pool_image_id,
                                                    on_finish);
   sync_holder_ctx->m_sync = ImageSync<I>::create(local_image_ctx,
@@ -91,6 +94,7 @@ void ImageSyncThrottler<I>::start_sync(I *local_image_ctx, I *remote_image_ctx,
   sync_holder_ctx->m_sync->get();
 
   bool start = false;
+
   {
     Mutex::Locker l(m_lock);
 
@@ -98,11 +102,13 @@ void ImageSyncThrottler<I>::start_sync(I *local_image_ctx, I *remote_image_ctx,
       assert(m_inflight_syncs.count(pool_image_id) == 0);
       m_inflight_syncs[pool_image_id] = sync_holder_ctx;
       start = true;
+
       dout(10) << "ready to start image sync for local_image_id "
                << local_image_ctx->id << " [" << m_inflight_syncs.size() << "/"
                << m_max_concurrent_syncs << "]" << dendl;
     } else {
       m_sync_queue.push_front(sync_holder_ctx);
+
       dout(10) << "image sync for local_image_id " << local_image_ctx->id
                << " has been queued" << dendl;
     }
@@ -124,7 +130,12 @@ void ImageSyncThrottler<I>::cancel_sync(librados::IoCtx &local_io_ctx,
   {
     Mutex::Locker l(m_lock);
     if (m_inflight_syncs.empty()) {
+
       // no image sync currently running and neither waiting
+
+      // if m_inflight_syncs is empty it means m_sync_queue should be
+      // empty too, see ImageSyncThrottler<I>::handle_sync_finished
+
       return;
     }
 
@@ -136,11 +147,16 @@ void ImageSyncThrottler<I>::cancel_sync(librados::IoCtx &local_io_ctx,
     }
 
     if (!sync_holder) {
+
+      // will be insert to inflight queue(m_inflight_syncs) or waiting queue(m_sync_queue)
+
       for (auto it = m_sync_queue.begin(); it != m_sync_queue.end(); ++it) {
         if ((*it)->m_local_pool_image_id == local_pool_image_id) {
           sync_holder = (*it);
+
           m_sync_queue.erase(it);
           running_sync = false;
+
           break;
         }
       }
@@ -149,10 +165,16 @@ void ImageSyncThrottler<I>::cancel_sync(librados::IoCtx &local_io_ctx,
 
   if (sync_holder) {
     if (running_sync) {
+
+      // cancel the running sync
+
       dout(10) << "canceled running image sync for local_image_id "
                << sync_holder->m_local_pool_image_id.second << dendl;
       sync_holder->m_sync->cancel();
     } else {
+
+      // cancel the waiting sync
+
       dout(10) << "canceled waiting image sync for local_image_id "
                << sync_holder->m_local_pool_image_id.second << dendl;
       sync_holder->m_on_finish->complete(-ECANCELED);
@@ -174,13 +196,19 @@ void ImageSyncThrottler<I>::handle_sync_finished(C_SyncHolder *sync_holder) {
 
     if (m_inflight_syncs.size() < m_max_concurrent_syncs &&
         !m_sync_queue.empty()) {
+
+      // move waiting sync to inflight sync
+
+      // new waiting syncs always put front of the queue, see ImageSyncThrottler<I>::start_sync
       next_sync_holder = m_sync_queue.back();
       m_sync_queue.pop_back();
 
       assert(
         m_inflight_syncs.count(next_sync_holder->m_local_pool_image_id) == 0);
+
       m_inflight_syncs[next_sync_holder->m_local_pool_image_id] =
         next_sync_holder;
+
       dout(10) << "ready to start image sync for local_image_id "
                << next_sync_holder->m_local_pool_image_id.second
                << " [" << m_inflight_syncs.size() << "/"
@@ -192,6 +220,9 @@ void ImageSyncThrottler<I>::handle_sync_finished(C_SyncHolder *sync_holder) {
   }
 
   if (next_sync_holder) {
+
+    // start the next sync
+
     next_sync_holder->m_sync->send();
   }
 }
@@ -203,13 +234,18 @@ void ImageSyncThrottler<I>::set_max_concurrent_syncs(uint32_t max) {
   assert(max > 0);
 
   std::list<C_SyncHolder *> next_sync_holders;
+
   {
     Mutex::Locker l(m_lock);
+
     this->m_max_concurrent_syncs = max;
 
     // Start waiting syncs in the case of available free slots
     while(m_inflight_syncs.size() < m_max_concurrent_syncs
           && !m_sync_queue.empty()) {
+
+      // start new syncs if available
+
         C_SyncHolder *next_sync_holder = m_sync_queue.back();
         next_sync_holders.push_back(next_sync_holder);
         m_sync_queue.pop_back();
@@ -254,6 +290,7 @@ const char** ImageSyncThrottler<I>::get_tracked_conf_keys() const {
     "rbd_mirror_concurrent_image_syncs",
     NULL
   };
+
   return KEYS;
 }
 

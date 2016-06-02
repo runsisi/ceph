@@ -43,6 +43,7 @@ void RemoveRequest<I>::stat_journal() {
   ldout(m_cct, 20) << this << " " << __func__ << dendl;
 
   ImageCtx::get_timer_instance(m_cct, &m_timer, &m_timer_lock);
+
   m_journaler = new Journaler(m_op_work_queue, m_timer, m_timer_lock,
                               m_ioctx, m_image_id, m_image_client_id, {});
 
@@ -58,6 +59,7 @@ Context *RemoveRequest<I>::handle_stat_journal(int *result) {
 
   if ((*result < 0) && (*result != -ENOENT)) {
     lderr(m_cct) << "failed to stat journal header: " << cpp_strerror(*result) << dendl;
+
     shut_down_journaler(*result);
     return nullptr;
   }
@@ -87,6 +89,7 @@ Context *RemoveRequest<I>::handle_init_journaler(int *result) {
 
   if ((*result < 0) && (*result != -ENOENT)) {
     lderr(m_cct) << "failed to init journaler: " << cpp_strerror(*result) << dendl;
+
     shut_down_journaler(*result);
     return nullptr;
   }

@@ -296,15 +296,19 @@ void *Accepter::entry()
   pfd[1].events = POLLIN | POLLERR | POLLNVAL | POLLHUP;
   while (!done) {
     ldout(msgr->cct,20) << __func__ << " calling poll for sd:" << listen_sd << dendl;
+
     int r = poll(pfd, 2, -1);
     if (r < 0) {
       if (errno == EINTR) {
         continue;
       }
+
       ldout(msgr->cct,1) << __func__ << " poll got error"  
  			  << " errno " << errno << " " << cpp_strerror(errno) << dendl;
+
       break;
     }
+
     ldout(msgr->cct,10) << __func__ << " poll returned oke: " << r << dendl;
     ldout(msgr->cct,20) << __func__ <<  " pfd.revents[0]=" << pfd[0].revents << dendl;
     ldout(msgr->cct,20) << __func__ <<  " pfd.revents[1]=" << pfd[1].revents << dendl;
@@ -312,8 +316,10 @@ void *Accepter::entry()
     if (pfd[0].revents & (POLLERR | POLLNVAL | POLLHUP)) {
       ldout(msgr->cct,1) << __func__ << " poll got errors in revents "  
  			 <<  pfd[0].revents << dendl;
+
       break;
     }
+
     if (pfd[1].revents & (POLLIN | POLLERR | POLLNVAL | POLLHUP)) {
       // We got "signaled" to exit the poll
       // clean the selfpipe
@@ -322,13 +328,16 @@ void *Accepter::entry()
           ldout(msgr->cct,1) << __func__ << " Cannot read selfpipe: "
  			      << " errno " << errno << " " << cpp_strerror(errno) << dendl;
         }
+
       break;
     }
+
     if (done) break;
 
     // accept
     sockaddr_storage ss;
     socklen_t slen = sizeof(ss);
+
     int sd = ::accept(listen_sd, (sockaddr*)&ss, &slen);
     if (sd >= 0) {
       int r = set_close_on_exec(sd);
@@ -336,19 +345,23 @@ void *Accepter::entry()
 	ldout(msgr->cct,1) << __func__ << " set_close_on_exec() failed "
 	      << cpp_strerror(r) << dendl;
       }
+
       errors = 0;
+
       ldout(msgr->cct,10) << __func__ << " incoming on sd " << sd << dendl;
       
       msgr->add_accept_pipe(sd);
     } else {
       ldout(msgr->cct,0) << __func__ << " no incoming connection?  sd = " << sd
 	      << " errno " << errno << " " << cpp_strerror(errno) << dendl;
+
       if (++errors > 4)
 	break;
     }
   }
 
   ldout(msgr->cct,20) << __func__ << " closing" << dendl;
+
   // socket is closed right after the thread has joined.
   // closing it here might race
   if (shutdown_rd_fd >= 0) {
@@ -357,6 +370,7 @@ void *Accepter::entry()
   }
 
   ldout(msgr->cct,10) << __func__ << " stopping" << dendl;
+
   return 0;
 }
 

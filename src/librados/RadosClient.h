@@ -43,6 +43,7 @@ class librados::RadosClient : public Dispatcher
 public:
   using Dispatcher::cct;
   md_config_t *conf;
+
 private:
   enum {
     DISCONNECTED,
@@ -80,6 +81,7 @@ private:
   int wait_for_osdmap();
 
 public:
+  // will be started by librados::RadosClient::connect
   Finisher finisher;
 
   explicit RadosClient(CephContext *cct_);

@@ -201,6 +201,7 @@ public:
   static uint32_t _reverse_bits(uint32_t v) {
     if (v == 0)
       return v;
+
     // reverse bits
     // swap odd and even bits
     v = ((v >> 1) & 0x55555555) | ((v & 0x55555555) << 1);
@@ -212,8 +213,10 @@ public:
     v = ((v >> 8) & 0x00FF00FF) | ((v & 0x00FF00FF) << 8);
     // swap 2-byte long pairs
     v = ( v >> 16             ) | ( v               << 16);
+
     return v;
   }
+
   static uint32_t _reverse_nibbles(uint32_t retval) {
     // reverse nibbles
     retval = ((retval & 0x0f0f0f0f) << 4) | ((retval & 0xf0f0f0f0) >> 4);
@@ -256,10 +259,13 @@ public:
   // once you change build_hash_cache()
   void build_hash_cache() {
     nibblewise_key_cache = _reverse_nibbles(hash);
+
     hash_reverse_bits = _reverse_bits(hash);
   }
+
   void set_bitwise_key_u32(uint32_t value) {
     hash = _reverse_bits(value);
+
     // below is identical to build_hash_cache() and shall be
     // updated correspondingly if you change build_hash_cache() 
     nibblewise_key_cache = _reverse_nibbles(hash);
@@ -269,6 +275,7 @@ public:
   const string& get_effective_key() const {
     if (key.length())
       return key;
+
     return oid.name;
   }
 

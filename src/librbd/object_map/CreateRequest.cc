@@ -20,6 +20,8 @@ namespace object_map {
 using util::create_context_callback;
 using util::create_rados_ack_callback;
 
+// created by
+// librbd::operation::EnableFeaturesRequest<I>::send_create_object_map
 template <typename I>
 CreateRequest<I>::CreateRequest(I *image_ctx, Context *on_finish)
   : m_image_ctx(image_ctx), m_on_finish(on_finish) {
@@ -33,7 +35,9 @@ void CreateRequest<I>::send() {
 
   {
     RWLock::WLocker snap_locker(m_image_ctx->snap_lock);
+
     m_snap_ids.push_back(CEPH_NOSNAP);
+
     for (auto it : m_image_ctx->snap_info) {
       max_size = MAX(max_size, it.second.size);
       m_snap_ids.push_back(it.first);
@@ -46,6 +50,7 @@ void CreateRequest<I>::send() {
   }
 
   lderr(cct) << "image size not compatible with object map" << dendl;
+
   m_on_finish->complete(-EINVAL);
 }
 
