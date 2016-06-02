@@ -42,6 +42,8 @@ void MonmapMonitor::create_initial()
   pending_map.epoch = 1;
 }
 
+// called by
+// PaxosService::refresh
 void MonmapMonitor::update_from_paxos(bool *need_bootstrap)
 {
   version_t version = get_last_committed();
@@ -612,25 +614,35 @@ int MonmapMonitor::get_monmap(bufferlist &bl)
   return 0;
 }
 
+// called by
+// MonmapMonitor::update_from_paxos
 void MonmapMonitor::check_subs()
 {
   const string type = "monmap";
+
   auto subs = mon->session_map.subs.find(type);
   if (subs == mon->session_map.subs.end())
     return;
+
   for (auto sub : *subs->second) {
     check_sub(sub);
   }
 }
 
+// called by
+// MonmapMonitor::check_subs
+// Monitor::handle_subscribe
 void MonmapMonitor::check_sub(Subscription *sub)
 {
   const auto epoch = mon->monmap->get_epoch();
+
   dout(10) << __func__
 	   << " monmap next " << sub->next
 	   << " have " << epoch << dendl;
+
   if (sub->next <= epoch) {
     mon->send_latest_monmap(sub->session->con.get());
+
     if (sub->onetime)
       mon->session_map.remove_sub(sub);
     else

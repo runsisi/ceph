@@ -177,6 +177,7 @@ std::string AdminSocket::destroy_shutdown_pipe()
   return "";
 }
 
+// called by AdminSocket::init
 std::string AdminSocket::bind_and_listen(const std::string &sock_path, int *fd)
 {
   ldout(m_cct, 5) << "bind_and_listen " << sock_path << dendl;
@@ -557,6 +558,7 @@ public:
   }
 };
 
+// called by CephContext::start_service_thread
 bool AdminSocket::init(const std::string &path)
 {
   ldout(m_cct, 5) << "init " << path << dendl;
@@ -569,6 +571,7 @@ bool AdminSocket::init(const std::string &path)
     lderr(m_cct) << "AdminSocketConfigObs::init: error: " << err << dendl;
     return false;
   }
+
   int sock_fd;
   err = bind_and_listen(path, &sock_fd);
   if (!err.empty()) {
@@ -595,6 +598,7 @@ bool AdminSocket::init(const std::string &path)
 		   m_getdescs_hook, "list available commands");
 
   create("admin_socket");
+
   add_cleanup_file(m_path.c_str());
   return true;
 }

@@ -62,12 +62,17 @@ public:
     CephContext *_dout_cct = cct;					\
     std::ostream* _dout = &_dout_os;
 
+// specify the subsys explicitly, need to define dout_prefix explicitly, i.e., *_dout << prefix
 #define lsubdout(cct, sub, v)  dout_impl(cct, ceph_subsys_##sub, v) dout_prefix
+// dout_subsys should be defined at the beginning of the source file
 #define ldout(cct, v)  dout_impl(cct, dout_subsys, v) dout_prefix
+// default log level for ceph_subsys_, i.e., default subsys is 0/5
 #define lderr(cct) dout_impl(cct, ceph_subsys_, -1) dout_prefix
 
+// specify <cct, subsys, level, prefix> explicitly
 #define ldpp_dout(dpp, v) if (dpp) dout_impl(dpp->get_cct(), dpp->get_subsys(), v) (*_dout << dpp->gen_prefix())
 
+// no prefix defined, i.e., only *_dout defined
 #define lgeneric_subdout(cct, sub, v) dout_impl(cct, ceph_subsys_##sub, v) *_dout
 #define lgeneric_dout(cct, v) dout_impl(cct, ceph_subsys_, v) *_dout
 #define lgeneric_derr(cct) dout_impl(cct, ceph_subsys_, -1) *_dout

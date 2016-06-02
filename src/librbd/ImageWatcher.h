@@ -115,6 +115,8 @@ private:
     watch_notify::AsyncRequestId m_async_request_id;
   };
 
+  // created by
+  // ImageWatcher<I>::prepare_async_request
   class RemoteContext : public Context {
   public:
     RemoteContext(ImageWatcher &image_watcher,
@@ -137,6 +139,9 @@ private:
     ProgressContext *m_prog_ctx;
   };
 
+  // used by
+  // ImageWatcher<I>::handle_notify, to delay handling the payload of
+  // the notify, i.e., the image has to be refreshed first
   struct C_ProcessPayload : public Context {
     ImageWatcher *image_watcher;
     uint64_t notify_id;

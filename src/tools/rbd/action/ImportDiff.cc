@@ -43,9 +43,11 @@ static int do_import_diff(librbd::Image &image, const char *path,
       std::cerr << "rbd: error opening " << path << std::endl;
       return r;
     }
+
     r = ::fstat(fd, &stat_buf);
     if (r < 0)
       goto done;
+
     size = (uint64_t)stat_buf.st_size;
   }
 
@@ -74,6 +76,7 @@ static int do_import_diff(librbd::Image &image, const char *path,
       r = utils::read_string(fd, 4096, &from);   // 4k limit to make sure we don't get a garbage string
       if (r < 0)
         goto done;
+
       dout(2) << " from snap " << from << dendl;
 
       bool exists; 
@@ -92,6 +95,7 @@ static int do_import_diff(librbd::Image &image, const char *path,
       r = utils::read_string(fd, 4096, &to);   // 4k limit to make sure we don't get a garbage string
       if (r < 0)
         goto done;
+
       dout(2) << "   to snap " << to << dendl;
 
       // verify this snap isn't already present
@@ -112,10 +116,12 @@ static int do_import_diff(librbd::Image &image, const char *path,
       r = safe_read_exact(fd, buf, 8);
       if (r < 0)
         goto done;
+
       bufferlist bl;
       bl.append(buf, 8);
       bufferlist::iterator p = bl.begin();
       ::decode(end_size, p);
+
       uint64_t cur_size;
       image.size(&cur_size);
       if (cur_size != end_size) {
@@ -124,6 +130,7 @@ static int do_import_diff(librbd::Image &image, const char *path,
       } else {
         dout(2) << "size " << end_size << " (no change)" << dendl;
       }
+
       if (from_stdin)
         size = end_size;
     } else if (tag == 'w' || tag == 'z') {
@@ -132,6 +139,7 @@ static int do_import_diff(librbd::Image &image, const char *path,
       r = safe_read_exact(fd, buf, 16);
       if (r < 0)
         goto done;
+
       bufferlist bl;
       bl.append(buf, 16);
       bufferlist::iterator p = bl.begin();
@@ -143,12 +151,16 @@ static int do_import_diff(librbd::Image &image, const char *path,
         r = safe_read_exact(fd, bp.c_str(), len);
         if (r < 0)
           goto done;
+
         bufferlist data;
         data.append(bp);
+
         dout(2) << " write " << off << "~" << len << dendl;
+
         image.write2(off, len, data, LIBRADOS_OP_FLAG_FADVISE_NOCACHE);
       } else {
         dout(2) << " zero " << off << "~" << len << dendl;
+
         image.discard(off, len);
       }
     } else {
@@ -157,6 +169,7 @@ static int do_import_diff(librbd::Image &image, const char *path,
       r = -EINVAL;
       goto done;
     }
+
     if (!from_stdin) {
       // progress through input
       uint64_t off = lseek64(fd, 0, SEEK_CUR);
@@ -167,9 +180,11 @@ static int do_import_diff(librbd::Image &image, const char *path,
       pc.update_progress(off, size);
     }
   }
+
   // take final snap
   if (to.length()) {
     dout(2) << " create end snap " << to << dendl;
+
     r = image.snap_create(to.c_str());
   }
 

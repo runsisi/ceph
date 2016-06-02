@@ -70,49 +70,71 @@ class Finisher {
   /// Add a context to complete, optionally specifying a parameter for the complete function.
   void queue(Context *c, int r = 0) {
     finisher_lock.Lock();
+
     if (finisher_queue.empty()) {
       finisher_cond.Signal();
     }
+
     if (r) {
       finisher_queue_rval.push_back(pair<Context*, int>(c, r));
       finisher_queue.push_back(NULL);
     } else
       finisher_queue.push_back(c);
+
     if (logger)
       logger->inc(l_finisher_queue_len);
+
     finisher_lock.Unlock();
   }
+
   void queue(vector<Context*>& ls) {
     finisher_lock.Lock();
+
     if (finisher_queue.empty()) {
       finisher_cond.Signal();
     }
+
     finisher_queue.insert(finisher_queue.end(), ls.begin(), ls.end());
+
     if (logger)
       logger->inc(l_finisher_queue_len, ls.size());
+
     finisher_lock.Unlock();
+
     ls.clear();
   }
+
   void queue(deque<Context*>& ls) {
     finisher_lock.Lock();
+
     if (finisher_queue.empty()) {
       finisher_cond.Signal();
     }
+
     finisher_queue.insert(finisher_queue.end(), ls.begin(), ls.end());
+
     if (logger)
       logger->inc(l_finisher_queue_len, ls.size());
+
     finisher_lock.Unlock();
+
     ls.clear();
   }
+
   void queue(list<Context*>& ls) {
     finisher_lock.Lock();
+
     if (finisher_queue.empty()) {
       finisher_cond.Signal();
     }
+
     finisher_queue.insert(finisher_queue.end(), ls.begin(), ls.end());
+
     if (logger)
       logger->inc(l_finisher_queue_len, ls.size());
+
     finisher_lock.Unlock();
+
     ls.clear();
   }
 
@@ -148,15 +170,21 @@ class Finisher {
     finisher_thread(this) {
     PerfCountersBuilder b(cct, string("finisher-") + name,
 			  l_finisher_first, l_finisher_last);
+
     b.add_u64(l_finisher_queue_len, "queue_len");
     b.add_time_avg(l_finisher_complete_lat, "complete_latency");
+
     logger = b.create_perf_counters();
+
     cct->get_perfcounters_collection()->add(logger);
+
     logger->set(l_finisher_queue_len, 0);
     logger->set(l_finisher_complete_lat, 0);
   }
 
   ~Finisher() {
+    // for MonClient, the MonClient::finisher is an anonymous finsher, so
+    // the logger is NULL
     if (logger && cct) {
       cct->get_perfcounters_collection()->remove(logger);
       delete logger;

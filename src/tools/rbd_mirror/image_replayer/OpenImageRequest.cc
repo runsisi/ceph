@@ -75,6 +75,7 @@ void OpenImageRequest<I>::send_close_image(int r) {
       this);
   CloseImageRequest<I> *request = CloseImageRequest<I>::create(
     m_image_ctx, m_work_queue, true, ctx);
+
   request->send();
 }
 

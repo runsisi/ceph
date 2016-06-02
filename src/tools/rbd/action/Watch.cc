@@ -72,6 +72,10 @@ static int do_watch(librados::IoCtx& pp, librbd::Image &image,
 
   uint64_t cookie;
   RbdWatchCtx ctx(pp, imgname, header_oid);
+
+  // because we opened the image with read-only, so no image_watcher registered
+  // for this image, see OpenRequest<I>::send_register_watch, so we do it
+  // manually
   r = pp.watch2(header_oid, &cookie, &ctx);
   if (r < 0) {
     std::cerr << "rbd: watch failed" << std::endl;
@@ -99,6 +103,7 @@ int execute(const po::variables_map &vm) {
   std::string pool_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
     vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
     &snap_name, utils::SNAPSHOT_PRESENCE_NONE, utils::SPEC_VALIDATION_NONE);
@@ -109,6 +114,8 @@ int execute(const po::variables_map &vm) {
   librados::Rados rados;
   librados::IoCtx io_ctx;
   librbd::Image image;
+
+  // opened with read-only
   r = utils::init_and_open_image(pool_name, image_name, "", true, &rados,
                                  &io_ctx, &image);
   if (r < 0) {

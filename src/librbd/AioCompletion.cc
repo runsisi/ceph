@@ -46,7 +46,11 @@ void AioCompletion::finalize(ssize_t rval)
   ldout(cct, 20) << this << " " << __func__ << ": r=" << rval << ", "
                  << "read_buf=" << reinterpret_cast<void*>(read_buf) << ", "
                  << "real_bl=" <<  reinterpret_cast<void*>(read_bl) << dendl;
+
   if (rval >= 0 && aio_type == AIO_TYPE_READ) {
+
+    // destriper is constructed by C_AioRead::finish
+
     if (read_buf && !read_bl) {
       destriper.assemble_result(cct, read_buf, read_buf_len);
     } else {
@@ -72,6 +76,7 @@ void AioCompletion::finalize(ssize_t rval)
 
 void AioCompletion::complete() {
   assert(lock.is_locked());
+
   assert(ictx != nullptr);
   CephContext *cct = ictx->cct;
 
@@ -98,6 +103,7 @@ void AioCompletion::complete() {
   // inform the journal that the op has successfully committed
   if (journal_tid != 0) {
     assert(ictx->journal != NULL);
+
     ictx->journal->commit_io_event(journal_tid, rval);
   }
 
@@ -125,6 +131,14 @@ void AioCompletion::complete() {
   tracepoint(librbd, aio_complete_exit);
 }
 
+// called by:
+// static AioCompletion::create_and_start
+// AioImageRequestWQ::aio_read
+// AioImageRequestWQ::aio_write
+// AioImageRequestWQ::aio_discard
+// AioImageRequestWQ::aio_flush
+// C_OpenComplete::C_OpenComplete
+// C_CloseComplete::C_CloseComplete
 void AioCompletion::init_time(ImageCtx *i, aio_type_t t) {
   Mutex::Locker locker(lock);
   if (ictx == nullptr) {
@@ -134,11 +148,21 @@ void AioCompletion::init_time(ImageCtx *i, aio_type_t t) {
   }
 }
 
+// called by
+// librbd::AioCompletion::create_and_start
+// librbd::AioImageFlush<I>::send_request
+// librbd::AioImageRequest<I>::start_op
+// librbd::AioImageRequestWQ::aio_read
+// librbd::AioImageRequestWQ::aio_write
+// librbd::AioImageRequestWQ::aio_discard
 void AioCompletion::start_op(bool ignore_type) {
   Mutex::Locker locker(lock);
+
   assert(ictx != nullptr);
   assert(!async_op.started());
+
   if (state == STATE_PENDING && (ignore_type || aio_type != AIO_TYPE_FLUSH)) {
+    // push front of m_image_ctx->async_ops
     async_op.start_op(*ictx);
   }
 }
@@ -171,6 +195,8 @@ void AioCompletion::set_request_count(uint32_t count) {
   unblock();
 }
 
+// called by C_AioRequest::finish
+// complete image request, i.e., read, write, discard, flush
 void AioCompletion::complete_request(ssize_t r)
 {
   lock.Lock();
@@ -183,15 +209,23 @@ void AioCompletion::complete_request(ssize_t r)
     else if (r > 0)
       rval += r;
   }
+
   assert(pending_count);
   int count = --pending_count;
 
   ldout(cct, 20) << this << " " << __func__ << ": cb=" << complete_cb << ", "
                  << "pending=" << pending_count << dendl;
+
   if (!count && blockers == 0) {
+
+    // complete all object requests, so complete the image request
+
+    // assemble result buffer for image read request
     finalize(rval);
+
     complete();
   }
+
   put_unlock();
 }
 

@@ -55,7 +55,9 @@ public:
   void release_leader();
 
 private:
+  // <id, name, global id>
   typedef PoolWatcher::ImageId ImageId;
+  // std::set<ImageId>, i.e., std::set< <id, name, global id> >
   typedef PoolWatcher::ImageIds ImageIds;
 
   void init_local_mirroring_images();

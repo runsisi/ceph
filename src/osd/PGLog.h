@@ -573,6 +573,7 @@ public:
   //////////////////// get or set missing ////////////////////
 
   const pg_missing_tracker_t& get_missing() const { return missing; }
+
   void resort_missing(bool sort_bitwise) {
     missing.resort(sort_bitwise);
   }
@@ -665,6 +666,8 @@ public:
     mark_dirty_to(eversion_t::max());
   }
 
+  // called by
+  // PrimaryLogPG::recover_got
   void recover_got(hobject_t oid, eversion_t v, pg_info_t &info) {
     if (missing.is_missing(oid, v)) {
       missing.got(oid, v);

@@ -43,9 +43,11 @@ void SnapshotProtectRequest<I>::send_op() {
 template <typename I>
 bool SnapshotProtectRequest<I>::should_complete(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": state=" << m_state << ", "
                 << "r=" << r << dendl;
+
   if (r < 0) {
     if (r == -EBUSY) {
       ldout(cct, 1) << "snapshot is already protected" << dendl;
@@ -53,6 +55,7 @@ bool SnapshotProtectRequest<I>::should_complete(int r) {
       lderr(cct) << "encountered error: " << cpp_strerror(r) << dendl;
     }
   }
+
   return true;
 }
 
@@ -76,10 +79,12 @@ void SnapshotProtectRequest<I>::send_protect_snap() {
 template <typename I>
 int SnapshotProtectRequest<I>::verify_and_send_protect_snap() {
   I &image_ctx = this->m_image_ctx;
+
   RWLock::RLocker md_locker(image_ctx.md_lock);
   RWLock::RLocker snap_locker(image_ctx.snap_lock);
 
   CephContext *cct = image_ctx.cct;
+
   if ((image_ctx.features & RBD_FEATURE_LAYERING) == 0) {
     lderr(cct) << "image must support layering" << dendl;
     return -ENOSYS;

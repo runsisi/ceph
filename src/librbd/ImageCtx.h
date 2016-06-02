@@ -118,7 +118,7 @@ namespace librbd {
     uint64_t features;
     std::string object_prefix;
     char *format_string;
-    std::string header_oid;
+    std::string header_oid; // only used for old-format images
     std::string id; // only used for new-format images
     parent_info parent_md;
     ImageCtx *parent;
@@ -138,7 +138,9 @@ namespace librbd {
 
     std::map<uint64_t, CopyupRequest*> copyup_list;
 
+    // librbd::AioImageRequest<I>
     xlist<AsyncOperation*> async_ops;
+    // librbd::operation::Request<I>, librbd::object_map::Request<I>
     xlist<AsyncRequest<>*> async_requests;
     std::list<Context*> async_requests_waiters;
 

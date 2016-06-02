@@ -18,12 +18,15 @@ namespace po = boost::program_options;
 static int do_object_map_rebuild(librbd::Image &image, bool no_progress)
 {
   utils::ProgressContext pc("Object Map Rebuild", no_progress);
+
   int r = image.rebuild_object_map(pc);
   if (r < 0) {
     pc.fail();
     return r;
   }
+
   pc.finish();
+
   return 0;
 }
 
@@ -39,6 +42,7 @@ int execute_rebuild(const po::variables_map &vm) {
   std::string pool_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
     vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
     &snap_name, utils::SNAPSHOT_PRESENCE_PERMITTED,
@@ -50,6 +54,7 @@ int execute_rebuild(const po::variables_map &vm) {
   librados::Rados rados;
   librados::IoCtx io_ctx;
   librbd::Image image;
+
   r = utils::init_and_open_image(pool_name, image_name, snap_name, false,
                                  &rados, &io_ctx, &image);
   if (r < 0) {
@@ -62,18 +67,22 @@ int execute_rebuild(const po::variables_map &vm) {
               << std::endl;
     return r;
   }
+
   return 0;
 }
 
 static int do_object_map_check(librbd::Image &image, bool no_progress)
 {
   utils::ProgressContext pc("Object Map Check", no_progress);
+
   int r = image.check_object_map(pc);
   if (r < 0) {
     pc.fail();
     return r;
   }
+
   pc.finish();
+
   return 0;
 }
 
@@ -89,6 +98,7 @@ int execute_check(const po::variables_map &vm) {
   std::string pool_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
     vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
     &snap_name, utils::SNAPSHOT_PRESENCE_PERMITTED,
@@ -100,6 +110,7 @@ int execute_check(const po::variables_map &vm) {
   librados::Rados rados;
   librados::IoCtx io_ctx;
   librbd::Image image;
+
   r = utils::init_and_open_image(pool_name, image_name, snap_name, false,
 				 &rados, &io_ctx, &image);
   if (r < 0) {
@@ -112,6 +123,7 @@ int execute_check(const po::variables_map &vm) {
 	      << std::endl;
     return r;
   }
+
   return 0;
 }
 

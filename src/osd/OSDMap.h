@@ -352,12 +352,15 @@ public:
     assert(o < max_osd);
     return osd_state[o];
   }
+
   int get_state(int o, set<string>& st) const {
     assert(o < max_osd);
+
     unsigned t = osd_state[o];
     calc_state_set(t, st);
     return osd_state[o];
   }
+
   void set_state(int o, unsigned s) {
     assert(o < max_osd);
     osd_state[o] = s;
@@ -756,6 +759,7 @@ public:
   pg_t raw_pg_to_pg(pg_t pg) const {
     map<int64_t,pg_pool_t>::const_iterator p = pools.find(pg.pool());
     assert(p != pools.end());
+
     return p->second.raw_pg_to_pg(pg);
   }
 

@@ -30,12 +30,17 @@ using librbd::util::create_context_callback;
 
 namespace {
 
+// AutomaticPolicy -> <true, release upon requested>
+// StandardPolicy -> <false, return -EROFS>
+// MirrorExclusiveLockPolicy -> <false, return -EROFS>
 struct MirrorExclusiveLockPolicy : public librbd::exclusive_lock::Policy {
 
+  // checked by librbd::AioImageRequestWQ::queue and librbd::lock_acquire
   virtual bool may_auto_request_lock() {
     return false;
   }
 
+  // always return return -EROFS, called by ImageWatcher<I>::handle_payload
   virtual int lock_requested(bool force) {
     // TODO: interlock is being requested (e.g. local promotion)
     // Wait for demote event from peer or abort replay on forced
@@ -45,20 +50,31 @@ struct MirrorExclusiveLockPolicy : public librbd::exclusive_lock::Policy {
 
 };
 
+// DisabledPolicy -> <assert, true, assert>
+// StandardPolicy -> <false, false, allocate tag if is primary else return -EPERM>
+// MirrorJournalPolicy -> <true, false, finish with do nothing>
+// DeleteJournalPolicy -> <true, false, finish with do nothing>
 struct MirrorJournalPolicy : public librbd::journal::Policy {
   ContextWQ *work_queue;
 
   MirrorJournalPolicy(ContextWQ *work_queue) : work_queue(work_queue) {
   }
 
+  // checked by Journal<I>::is_journal_appending
   virtual bool append_disabled() const {
     // avoid recording any events to the local journal
     return true;
   }
+
+  // checked by
+  // AcquireRequest<I>::send_open_journal and
+  // RefreshRequest<I>::send_v2_open_journal
   virtual bool journal_disabled() const {
     return false;
   }
 
+  // called by
+  // AcquireRequest<I>::handle_open_journal -> AcquireRequest<I>::send_allocate_journal_tag
   virtual void allocate_tag_on_lock(Context *on_finish) {
     // rbd-mirror will manually create tags by copying them from the peer
     work_queue->queue(on_finish, 0);
@@ -90,9 +106,13 @@ void OpenLocalImageRequest<I>::send_open_image() {
 
   *m_local_image_ctx = I::create(m_local_image_name, m_local_image_id, nullptr,
                                  m_local_io_ctx, false);
+
   {
     RWLock::WLocker owner_locker((*m_local_image_ctx)->owner_lock);
     RWLock::WLocker snap_locker((*m_local_image_ctx)->snap_lock);
+
+    // we lock the image exclusively, we will not release the exclusive
+    // lock upon other peers requests
     (*m_local_image_ctx)->set_exclusive_lock_policy(
       new MirrorExclusiveLockPolicy());
     (*m_local_image_ctx)->set_journal_policy(
@@ -139,6 +159,7 @@ void OpenLocalImageRequest<I>::handle_is_primary(int r) {
     derr << ": error querying local image primary status: " << cpp_strerror(r)
          << dendl;
     send_close_image(false, r);
+
     return;
   }
 
@@ -146,7 +167,9 @@ void OpenLocalImageRequest<I>::handle_is_primary(int r) {
   // we aren't going to mirror peer data into this image anyway
   if (m_primary) {
     dout(10) << ": local image is primary -- skipping image replay" << dendl;
+
     send_close_image(false, -EREMOTEIO);
+
     return;
   }
 
@@ -181,7 +204,9 @@ void OpenLocalImageRequest<I>::handle_lock_image(int r) {
   if (r < 0) {
     derr << ": failed to lock image '" << m_local_image_id << "': "
        << cpp_strerror(r) << dendl;
+
     send_close_image(false, r);
+
     return;
   }
 
@@ -211,6 +236,7 @@ void OpenLocalImageRequest<I>::send_close_image(bool destroy_only, int r) {
       this);
   CloseImageRequest<I> *request = CloseImageRequest<I>::create(
     m_local_image_ctx, m_work_queue, destroy_only, ctx);
+
   request->send();
 }
 
@@ -219,6 +245,7 @@ void OpenLocalImageRequest<I>::handle_close_image(int r) {
   dout(20) << dendl;
 
   assert(r == 0);
+
   finish(m_ret_val);
 }
 
@@ -227,6 +254,7 @@ void OpenLocalImageRequest<I>::finish(int r) {
   dout(20) << ": r=" << r << dendl;
 
   m_on_finish->complete(r);
+
   delete this;
 }
 

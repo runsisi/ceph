@@ -35,6 +35,10 @@ ExclusiveLock<I>::ExclusiveLock(I &image_ctx)
   ML<I>::set_state_uninitialized();
 }
 
+// called by:
+// ImageWatcher::handle_payload
+// C_InvokeAsyncRequest::send_acquire_exclusive_lock
+// Operations<I>::prepare_image_update
 template <typename I>
 bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
   Mutex::Locker locker(ML<I>::m_lock);
@@ -48,11 +52,16 @@ bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
   return accept_requests;
 }
 
+// called by:
+// librbd::update_features
+// librbd::mirror_image_demote
+// OpenLocalImageRequest<I>::send_lock_image
 template <typename I>
 void ExclusiveLock<I>::block_requests(int r) {
   Mutex::Locker locker(ML<I>::m_lock);
 
   m_request_blocked_count++;
+
   if (m_request_blocked_ret_val == 0) {
     m_request_blocked_ret_val = r;
   }
@@ -60,12 +69,17 @@ void ExclusiveLock<I>::block_requests(int r) {
   ldout(m_image_ctx.cct, 20) << dendl;
 }
 
+// called by:
+// librbd::update_features
+// librbd::mirror_image_demote
 template <typename I>
 void ExclusiveLock<I>::unblock_requests() {
   Mutex::Locker locker(ML<I>::m_lock);
 
   assert(m_request_blocked_count > 0);
+
   m_request_blocked_count--;
+
   if (m_request_blocked_count == 0) {
     m_request_blocked_ret_val = 0;
   }
@@ -83,6 +97,9 @@ void ExclusiveLock<I>::init(uint64_t features, Context *on_init) {
     ML<I>::set_state_initializing();
   }
 
+  // block r/w until exclusive lock locked, see ExclusiveLock<I>::handle_acquire_lock
+
+  // ExclusiveLock<I>::handle_init_complete
   m_image_ctx.aio_work_queue->block_writes(new C_InitComplete(this, features,
                                                               on_init));
 }
@@ -97,6 +114,9 @@ void ExclusiveLock<I>::shut_down(Context *on_shut_down) {
   handle_peer_notification(0);
 }
 
+// called by:
+// C_InvokeAsyncRequest::send_acquire_exclusive_lock
+// Operations<I>::prepare_image_update
 template <typename I>
 void ExclusiveLock<I>::handle_peer_notification(int r) {
   Mutex::Locker locker(ML<I>::m_lock);
@@ -137,6 +157,11 @@ void ExclusiveLock<I>::shutdown_handler(int r, Context *on_finish) {
   m_image_ctx.image_watcher->flush(on_finish);
 }
 
+// called by
+// ExclusiveLock<I>::shut_down
+// ImageWatcher<I>::handle_request_lock
+// ImageWatcher<I>::handle_payload(const AcquiredLockPayload)
+// ImageWatcher<I>::handle_payload(const ReleasedLockPayload)
 template <typename I>
 void ExclusiveLock<I>::pre_acquire_lock_handler(Context *on_finish) {
   ldout(m_image_ctx.cct, 10) << dendl;
@@ -237,6 +262,8 @@ void ExclusiveLock<I>::handle_post_acquired_lock(int r) {
 
   if (r >= 0) {
     m_image_ctx.image_watcher->notify_acquired_lock();
+
+    // unblock io, see AioImageRequestWQ::_void_dequeue
     m_image_ctx.aio_work_queue->clear_require_lock_on_read();
     m_image_ctx.aio_work_queue->unblock_writes();
   }

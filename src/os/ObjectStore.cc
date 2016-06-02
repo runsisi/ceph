@@ -184,11 +184,19 @@ int ObjectStore::queue_transactions(
   Context *oncomplete,
   TrackedOpRef op = TrackedOpRef())
 {
+  // oncomplete will be called when _complete deleted
   RunOnDeleteRef _complete (std::make_shared<RunOnDelete>(oncomplete));
+
+  // inc ref of _complete
   Context *_onreadable = new Wrapper<RunOnDeleteRef>(
     onreadable, _complete);
+
+  // inc ref of _complete
   Context *_oncommit = new Wrapper<RunOnDeleteRef>(
     oncommit, _complete);
+
+  // _complete will be deleted when both _onreadable and _oncommit completed
+  // which will result oncomplete be called
   return queue_transactions(osr, tls, _onreadable, _oncommit,
 			    onreadable_sync, op);
 }

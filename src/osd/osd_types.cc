@@ -1224,17 +1224,22 @@ unsigned pg_pool_t::get_pg_num_divisor(pg_t pgid) const
  */
 bool pg_pool_t::is_pool_snaps_mode() const
 {
+  // the second check is to exclude when no snapshot added yet, we are
+  // not be able to determine the snap mode
   return removed_snaps.empty() && get_snap_seq() > 0;
 }
 
 bool pg_pool_t::is_unmanaged_snaps_mode() const
 {
+  // the second check is to exclude when no snapshot added yet, we are
+  // not be able to determine the snap mode
   return removed_snaps.size() && get_snap_seq() > 0;
 }
 
 bool pg_pool_t::is_removed_snap(snapid_t s) const
 {
   if (is_pool_snaps_mode())
+    // we need the first check to exclude the never existed snap
     return s <= get_snap_seq() && snaps.count(s) == 0;
   else
     return removed_snaps.contains(s);
@@ -1244,10 +1249,13 @@ bool pg_pool_t::is_removed_snap(snapid_t s) const
  * build set of known-removed sets from either pool snaps or
  * explicit removed_snaps set.
  */
+// called by
+// PGPool::update, which called by PG::handle_advance_map
 void pg_pool_t::build_removed_snaps(interval_set<snapid_t>& rs) const
 {
   if (is_pool_snaps_mode()) {
     rs.clear();
+
     for (snapid_t s = 1; s <= get_snap_seq(); s = s + 1)
       if (snaps.count(s) == 0)
 	rs.insert(s);
@@ -1269,6 +1277,7 @@ snapid_t pg_pool_t::snap_exists(const char *s) const
 void pg_pool_t::add_snap(const char *n, utime_t stamp)
 {
   assert(!is_unmanaged_snaps_mode());
+
   snapid_t s = get_snap_seq() + 1;
   snap_seq = s;
   snaps[s].snapid = s;
@@ -1276,13 +1285,22 @@ void pg_pool_t::add_snap(const char *n, utime_t stamp)
   snaps[s].stamp = stamp;
 }
 
+// called by
+// OSDMonitor::prepare_pool_op
 void pg_pool_t::add_unmanaged_snap(uint64_t& snapid)
 {
   if (removed_snaps.empty()) {
+
+    // the snap mode has not determined yet, add a dummy removed snap to
+    // flag this is a unmanaged snap mode
+
     assert(!is_pool_snaps_mode());
+
     removed_snaps.insert(snapid_t(1));
+
     snap_seq = 1;
   }
+
   snapid = snap_seq = snap_seq + 1;
 }
 
@@ -1293,22 +1311,33 @@ void pg_pool_t::remove_snap(snapid_t s)
   snap_seq = snap_seq + 1;
 }
 
+// called by
+// OSDMonitor::prepare_pool_op
 void pg_pool_t::remove_unmanaged_snap(snapid_t s)
 {
   assert(is_unmanaged_snaps_mode());
+
+  // pg_pool_t::removed_snaps is also used by mds, see OSDMonitor::prepare_remove_snaps
   removed_snaps.insert(s);
+
+  // remove a snap will also increase the snap_seq by 1
   snap_seq = snap_seq + 1;
+
   removed_snaps.insert(get_snap_seq());
 }
 
+// called by
+// PGPool::update
 SnapContext pg_pool_t::get_snap_context() const
 {
   vector<snapid_t> s(snaps.size());
   unsigned i = 0;
+
   for (map<snapid_t, pool_snap_info_t>::const_reverse_iterator p = snaps.rbegin();
        p != snaps.rend();
        ++p)
     s[i++] = p->first;
+
   return SnapContext(get_snap_seq(), s);
 }
 
@@ -1316,12 +1345,15 @@ uint32_t pg_pool_t::hash_key(const string& key, const string& ns) const
 {
  if (ns.empty()) 
     return ceph_str_hash(object_hash, key.data(), key.length());
+
   int nsl = ns.length();
   int len = key.length() + nsl + 1;
   char buf[len];
   memcpy(&buf[0], ns.data(), nsl);
+  // unit separator
   buf[nsl] = '\037';
   memcpy(&buf[nsl+1], key.data(), key.length());
+
   return ceph_str_hash(object_hash, &buf[0], len);
 }
 
@@ -1336,6 +1368,7 @@ uint32_t pg_pool_t::raw_hash_to_pg(uint32_t v) const
 pg_t pg_pool_t::raw_pg_to_pg(pg_t pg) const
 {
   pg.set_ps(ceph_stable_mod(pg.ps(), pg_num, pg_num_mask));
+
   return pg;
 }
   

@@ -72,6 +72,8 @@ void LogMonitor::create_initial()
   pending_log.insert(pair<utime_t,LogEntry>(e.stamp, e));
 }
 
+// called by
+// PaxosService::refresh
 void LogMonitor::update_from_paxos(bool *need_bootstrap)
 {
   dout(10) << __func__ << dendl;
@@ -446,9 +448,12 @@ int LogMonitor::sub_name_to_id(const string& n)
   return CLOG_UNKNOWN;
 }
 
+// called by
+// LogMonitor::update_from_paxos
 void LogMonitor::check_subs()
 {
   dout(10) << __func__ << dendl;
+
   for (map<string, xlist<Subscription*>*>::iterator i = mon->session_map.subs.begin();
        i != mon->session_map.subs.end();
        ++i) {
@@ -459,6 +464,9 @@ void LogMonitor::check_subs()
   }
 }
 
+// called by
+// LogMonitor::check_subs
+// Monitor::handle_subscribe
 void LogMonitor::check_sub(Subscription *s)
 {
   dout(10) << __func__ << " client wants " << s->type << " ver " << s->next << dendl;

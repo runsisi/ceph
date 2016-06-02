@@ -20,6 +20,8 @@
 
 class KeyServer;
 
+// used by
+// get_auth_service_handler, which called by AuthMonitor::prep_auth
 class CephxServiceHandler  : public AuthServiceHandler {
   KeyServer *key_server;
   uint64_t server_challenge;

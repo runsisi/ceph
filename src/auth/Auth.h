@@ -187,16 +187,27 @@ struct RotatingSecrets {
     ::decode(max_ver, bl);
   }
   
+  // called by
+  // KeyServer::_rotate_secret
   uint64_t add(ExpiringCryptoKey& key) {
     secrets[++max_ver] = key;
+
+    // max 3 keys
     while (secrets.size() > KEY_ROTATE_NUM)
       secrets.erase(secrets.begin());
+
     return max_ver;
   }
   
+  // called by
+  // RotatingKeyRing::need_new_secrets()
   bool need_new_secrets() const {
     return secrets.size() < KEY_ROTATE_NUM;
   }
+
+  // called by
+  // KeyServer::_rotate_secret
+  // RotatingKeyRing::need_new_secrets(utime_t now)
   bool need_new_secrets(utime_t now) const {
     return secrets.size() < KEY_ROTATE_NUM || current().expiration <= now;
   }
@@ -204,19 +215,23 @@ struct RotatingSecrets {
   ExpiringCryptoKey& previous() {
     return secrets.begin()->second;
   }
+
   ExpiringCryptoKey& current() {
     map<uint64_t, ExpiringCryptoKey>::iterator p = secrets.begin();
     ++p;
     return p->second;
   }
+
   const ExpiringCryptoKey& current() const {
     map<uint64_t, ExpiringCryptoKey>::const_iterator p = secrets.begin();
     ++p;
     return p->second;
   }
+
   ExpiringCryptoKey& next() {
     return secrets.rbegin()->second;
   }
+
   bool empty() {
     return secrets.empty();
   }
@@ -226,7 +241,10 @@ struct RotatingSecrets {
 WRITE_CLASS_ENCODER(RotatingSecrets)
 
 
-
+// overrided by
+// KeyServer, member of Monitor
+// RotatingKeyRing, member of MonClient
+// KeyRing
 class KeyStore {
 public:
   virtual ~KeyStore() {}
@@ -238,6 +256,7 @@ public:
 static inline bool auth_principal_needs_rotating_keys(EntityName& name)
 {
   uint32_t ty(name.get_type());
+
   return ((ty == CEPH_ENTITY_TYPE_OSD)
       || (ty == CEPH_ENTITY_TYPE_MDS)
       || (ty == CEPH_ENTITY_TYPE_MGR));

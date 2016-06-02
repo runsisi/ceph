@@ -48,6 +48,7 @@ public:
     }
 
     C_OrderedThrottle *ctx = m_export_diff_context->throttle.start_op(this);
+
     if (m_exists) {
       librbd::RBD::AioCompletion *aio_completion =
         new librbd::RBD::AioCompletion(ctx, &utils::aio_context_callback);
@@ -62,6 +63,7 @@ public:
     } else {
       ctx->complete(0);
     }
+
     return 0;
   }
 
@@ -157,6 +159,7 @@ static int do_export_diff(librbd::Image& image, const char *fromsnapname,
 
     tag = 's';
     ::encode(tag, bl);
+
     uint64_t endsize = info.size;
     ::encode(endsize, bl);
 
@@ -165,8 +168,10 @@ static int do_export_diff(librbd::Image& image, const char *fromsnapname,
       return r;
     }
   }
+
   ExportDiffContext edc(&image, fd, info.size,
                         g_conf->rbd_concurrent_management_ops, no_progress);
+
   r = image.diff_iterate2(fromsnapname, 0, info.size, true, whole_object,
                           &C_ExportDiff::export_diff_cb, (void *)&edc);
   if (r < 0) {

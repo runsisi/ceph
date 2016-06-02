@@ -111,6 +111,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
 int validate_mirroring_enabled(ImageCtx *ictx) {
   CephContext *cct = ictx->cct;
   cls::rbd::MirrorImage mirror_image_internal;
+
   int r = cls_client::mirror_image_get(&ictx->md_ctx, ictx->id,
       &mirror_image_internal);
   if (r < 0 && r != -ENOENT) {
@@ -122,6 +123,7 @@ int validate_mirroring_enabled(ImageCtx *ictx) {
     lderr(cct) << "mirroring is not currently enabled" << dendl;
     return -EINVAL;
   }
+
   return 0;
 }
 
@@ -147,6 +149,12 @@ int mirror_image_enable_internal(ImageCtx *ictx) {
   return 0;
 }
 
+// called by
+// librbd::remove(force, !force)
+// mirror_image_disable(force, true)
+// force means even if the image is not primary we still to disable mirroring
+// remove means if there are mirror peer clients for this image should we
+// remove omap pairs from RBD_MIRRORING object for this image
 int mirror_image_disable_internal(ImageCtx *ictx, bool force,
                                   bool remove=true) {
   CephContext *cct = ictx->cct;
@@ -154,6 +162,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
   mirror::DisableRequest<ImageCtx> *req =
     mirror::DisableRequest<ImageCtx>::create(ictx, force, remove, &cond);
+
   req->send();
 
   int r = cond.wait();
@@ -210,12 +219,15 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 		    bool *old_format, uint64_t *size)
   {
     CephContext *cct = (CephContext *)io_ctx.cct();
+
     if (old_format)
       *old_format = true;
+
     int r = io_ctx.stat(util::old_header_name(name), size, NULL);
     if (r == -ENOENT) {
       if (old_format)
 	*old_format = false;
+
       r = io_ctx.stat(util::id_obj_name(name), size, NULL);
       if (r < 0)
 	return r;
@@ -226,6 +238,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     ldout(cct, 20) << "detect format of " << name << " : "
 		   << (old_format ? (*old_format ? "old" : "new") :
 		       "don't care")  << dendl;
+
     return 0;
   }
 
@@ -263,9 +276,13 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
   void image_info(ImageCtx *ictx, image_info_t& info, size_t infosize)
   {
     int obj_order = ictx->order;
+
     ictx->snap_lock.get_read();
+
     info.size = ictx->get_image_size(ictx->snap_id);
+
     ictx->snap_lock.put_read();
+
     info.obj_size = 1ULL << obj_order;
     info.num_objs = Striper::get_num_objects(ictx->layout, info.size);
     info.order = obj_order;
@@ -295,10 +312,15 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 	   ictx->exclusive_lock->is_lock_owner());
 
     C_SaferCond ctx;
+
+    // ImageCtx::size is protected by ImageCtx::snap_lock, see ImageCtx::get_current_size
     ictx->snap_lock.get_read();
+
     operation::TrimRequest<> *req = operation::TrimRequest<>::create(
       *ictx, &ctx, ictx->size, newsize, prog_ctx);
+
     ictx->snap_lock.put_read();
+
     req->send();
 
     int r = ctx.wait();
@@ -675,12 +697,15 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return 0;
   }
 
+  // called by
+  // librbd::snap_remove
   int flatten_children(ImageCtx *ictx, const char* snap_name, ProgressContext& pctx)
   {
     CephContext *cct = ictx->cct;
     ldout(cct, 20) << "children flatten " << ictx->name << dendl;
 
     RWLock::RLocker l(ictx->snap_lock);
+
     snap_t snap_id = ictx->get_snap_id(snap_name);
     parent_spec parent_spec(ictx->md_ctx.get_id(), ictx->id, snap_id);
     map< pair<int64_t, string>, set<string> > image_info;
@@ -696,7 +721,11 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 
     size_t i = 0;
     Rados rados(ictx->md_ctx);
+
     for ( auto &info : image_info){
+
+      // iterate all children images
+
       string pool = info.first.second;
       IoCtx ioctx;
       r = rados.ioctx_create2(info.first.first, ioctx);
@@ -715,6 +744,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
           delete imctx;
 	  return r;
 	}
+
 	librbd::NoOpProgressContext prog_ctx;
 	r = imctx->operations->flatten(prog_ctx);
 	if (r < 0) {
@@ -727,7 +757,9 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 	if ((imctx->features & RBD_FEATURE_DEEP_FLATTEN) == 0 &&
 	    !imctx->snaps.empty()) {
 	  imctx->parent_lock.get_read();
+
 	  parent_info parent_info = imctx->parent_md;
+
 	  imctx->parent_lock.put_read();
 
 	  r = cls_client::remove_child(&imctx->md_ctx, RBD_CHILDREN,
@@ -738,9 +770,12 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 	    return r;
 	  }
 	}
+
 	imctx->state->close();
       }
+
       pctx.update_progress(++i, size);
+
       assert(i <= size);
     }
 
@@ -799,6 +834,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       return 0;
 
     image_info.clear();
+
     // search all pools for children depending on this snapshot
     Rados rados(ictx->md_ctx);
     std::list<std::pair<int64_t, string> > pools;
@@ -844,6 +880,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 		   << dendl;
 	return r;
       }
+
       image_info.insert(make_pair(make_pair(it->first, it->second), image_ids));
     }
 
@@ -937,6 +974,10 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return 0;
   }
 
+  // if non_primary_global_image_id is not empty then we are creating a mirror image,
+  // it is the global image id of the remote image and is used to automatically enable
+  // the mirroring of the local created mirror image if we are in pool mirror mode
+  // primary_mirror_uuid is used to set tag.mirror_uuid of the newly create tag
   int create(librados::IoCtx& io_ctx, const char *imgname, uint64_t size,
 	     int *order)
   {
@@ -955,6 +996,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return r;
   }
 
+  // w/ striping options w/o journal options w/o mirror options
   int create(IoCtx& io_ctx, const char *imgname, uint64_t size,
 	     bool old_format, uint64_t features, int *order,
 	     uint64_t stripe_unit, uint64_t stripe_count)
@@ -964,6 +1006,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 
     uint64_t order_ = *order;
     uint64_t format = old_format ? 1 : 2;
+
     ImageOptions opts;
     int r;
 
@@ -978,15 +1021,18 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     r = opts.set(RBD_IMAGE_OPTION_STRIPE_COUNT, stripe_count);
     assert(r == 0);
 
+    // w/ striping options w/o journal options w/o mirror options
     r = create(io_ctx, imgname, size, opts, "", "", false);
 
     int r1 = opts.get(RBD_IMAGE_OPTION_ORDER, &order_);
     assert(r1 == 0);
+
     *order = order_;
 
     return r;
   }
 
+  // striping options + journal options + mirror options
   int create(IoCtx& io_ctx, const char *imgname, uint64_t size,
 	     ImageOptions& opts,
              const std::string &non_primary_global_image_id,
@@ -994,6 +1040,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
              bool skip_mirror_enable)
   {
     CephContext *cct = (CephContext *)io_ctx.cct();
+
     ldout(cct, 10) << __func__ << " name=" << imgname << ", "
                    << "size=" << size << ", opts=" << opts << dendl;
 
@@ -1073,6 +1120,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 	    IoCtx& c_ioctx, const char *c_name, ImageOptions& c_opts)
   {
     CephContext *cct = (CephContext *)p_ioctx.cct();
+
     if (p_snap_name == NULL) {
       lderr(cct) << "image to be cloned must be a snapshot" << dendl;
       return -EINVAL;
@@ -1347,6 +1395,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       return r;
 
     image_info(ictx, info, infosize);
+
     return 0;
   }
 
@@ -1389,6 +1438,9 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return ictx->get_parent_overlap(ictx->snap_id, overlap);
   }
 
+  // called by
+  // librbd::Image::parent_info
+  // rbd_get_parent_info
   int get_parent_info(ImageCtx *ictx, string *parent_pool_name,
 		      string *parent_name, string *parent_snap_name)
   {
@@ -1484,6 +1536,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return 0;
   }
 
+  // called by rbd_lock_acquire/Image::lock_acquire
   int lock_acquire(ImageCtx *ictx, rbd_lock_mode_t lock_mode)
   {
     CephContext *cct = ictx->cct;
@@ -1495,6 +1548,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     }
 
     C_SaferCond lock_ctx;
+
     {
       RWLock::WLocker l(ictx->owner_lock);
 
@@ -1504,7 +1558,13 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       }
 
       if (ictx->get_exclusive_lock_policy()->may_auto_request_lock()) {
-	ictx->set_exclusive_lock_policy(
+
+        // only true for AutomaticPolicy, always be false for StandardPolicy
+        // and MirrorExclusiveLockPolicy, so if initially we have the
+        // AutomaticPolicy then once the external program try to request the
+        // exclusive lock explicitly, we will transit into StandardPolicy
+
+        ictx->set_exclusive_lock_policy(
 	  new exclusive_lock::StandardPolicy(ictx));
       }
 
@@ -1651,11 +1711,18 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return 0;
   }
 
+  // called by
+  // rbd_remove
+  // rbd_remove_with_progress
+  // RBD::remove
+  // RBD::remove_with_progress
+  // librbd::clone, when failed
   int remove(IoCtx& io_ctx, const std::string &image_name,
              const std::string &image_id, ProgressContext& prog_ctx,
              bool force)
   {
     CephContext *cct((CephContext *)io_ctx.cct());
+
     ldout(cct, 20) << "remove " << &io_ctx << " "
                    << (image_id.empty() ? image_name : image_id) << dendl;
 
@@ -1663,6 +1730,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     std::string id(image_id);
     bool old_format = false;
     bool unknown_format = true;
+
     ImageCtx *ictx = new ImageCtx(
       (id.empty() ? name : std::string()), id, nullptr, io_ctx, false);
     int r = ictx->state->open(true);
@@ -1679,12 +1747,16 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       name = ictx->name;
       id = ictx->id;
 
+      // check exclusive_lock
+
       ictx->owner_lock.get_read();
+
       if (ictx->exclusive_lock != nullptr) {
         if (force) {
           // releasing read lock to avoid a deadlock when upgrading to
           // write lock in the shut_down process
           ictx->owner_lock.put_read();
+
           if (ictx->exclusive_lock != nullptr) {
             C_SaferCond ctx;
             ictx->exclusive_lock->shut_down(&ctx);
@@ -1695,19 +1767,29 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
               ictx->state->close();
               return r;
             }
+
             assert (ictx->exclusive_lock == nullptr);
+
             ictx->owner_lock.get_read();
           }
         } else {
+          // try exclusive lock
           r = ictx->operations->prepare_image_update();
           if (r < 0 || !ictx->exclusive_lock->is_lock_owner()) {
 	    lderr(cct) << "cannot obtain exclusive lock - not removing" << dendl;
+
 	    ictx->owner_lock.put_read();
+
 	    ictx->state->close();
+
             return -EBUSY;
           }
         }
       }
+
+      // check snapshots
+      // check watchers
+      // check consistency group
 
       if (ictx->snaps.size()) {
 	lderr(cct) << "image has snapshots - not removing" << dendl;
@@ -1751,11 +1833,18 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 	return -EMLINK;
       }
 
+      // trim image
+      // remove from RBD_CHILDREN
+      // disable mirroring
+      // close image
+
       trim_image(ictx, 0, prog_ctx);
 
       ictx->parent_lock.get_read();
+
       // struct assignment
       parent_info parent_info = ictx->parent_md;
+
       ictx->parent_lock.put_read();
 
       r = cls_client::remove_child(&ictx->md_ctx, RBD_CHILDREN,
@@ -1779,9 +1868,13 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       }
 
       ictx->owner_lock.put_read();
+
       ictx->state->close();
 
+      // remove "rbd_header.xxx" object
+
       ldout(cct, 2) << "removing header..." << dendl;
+
       r = io_ctx.remove(header_oid);
       if (r < 0 && r != -ENOENT) {
 	lderr(cct) << "error removing header: " << cpp_strerror(-r) << dendl;
@@ -1791,19 +1884,40 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 
     if (old_format || unknown_format) {
       ldout(cct, 2) << "removing rbd image from v1 directory..." << dendl;
+
       r = tmap_rm(io_ctx, name);
+
+      // if removing from v1 directory succeeded, then the image is
+      // old format, so even if our opening image failed, we can still
+      // determine the image format by this operation
       old_format = (r == 0);
+
       if (r < 0 && !unknown_format) {
+
+        // !unknown_format, so our opening ImageCtx succeeded
+        // we are here, so the image is old format
+        // but our removing from v1 directory failed
+
         if (r != -ENOENT) {
           lderr(cct) << "error removing image from v1 directory: "
                      << cpp_strerror(-r) << dendl;
         }
+
 	return r;
       }
     }
+
     if (!old_format) {
+
+      // remove journaling objects
+      // remove object_map objects
+      // remove from RBD_MIRRORING
+      // remove "rbd_id.xxx" object
+      // remove from RBD_DIRECTORY
+
       if (id.empty()) {
         ldout(cct, 5) << "attempting to determine image id" << dendl;
+
         r = cls_client::dir_get_id(&io_ctx, RBD_DIRECTORY, name, &id);
         if (r < 0 && r != -ENOENT) {
           lderr(cct) << "error getting id of image" << dendl;
@@ -1811,6 +1925,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
         }
       } else if (name.empty()) {
         ldout(cct, 5) << "attempting to determine image name" << dendl;
+
         r = cls_client::dir_get_name(&io_ctx, RBD_DIRECTORY, id, &name);
         if (r < 0 && r != -ENOENT) {
           lderr(cct) << "error getting name of image" << dendl;
@@ -1819,7 +1934,11 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       }
 
       if (!id.empty()) {
+
+        // image id is used as journal id
+
         ldout(cct, 10) << "removing journal..." << dendl;
+
         r = Journal<>::remove(io_ctx, id);
         if (r < 0 && r != -ENOENT) {
           lderr(cct) << "error removing image journal" << dendl;
@@ -1827,6 +1946,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
         }
 
         ldout(cct, 10) << "removing object map..." << dendl;
+
         r = ObjectMap<>::remove(io_ctx, id);
         if (r < 0 && r != -ENOENT) {
           lderr(cct) << "error removing image object map" << dendl;
@@ -1835,6 +1955,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 
         ldout(cct, 10) << "removing image from rbd_mirroring object..."
                        << dendl;
+
         r = cls_client::mirror_image_remove(&io_ctx, id);
         if (r < 0 && r != -ENOENT && r != -EOPNOTSUPP) {
           lderr(cct) << "failed to remove image from mirroring directory: "
@@ -1844,6 +1965,8 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       }
 
       ldout(cct, 2) << "removing id object..." << dendl;
+
+      // "rbd_id." + name
       r = io_ctx.remove(util::id_obj_name(name));
       if (r < 0 && r != -ENOENT) {
 	lderr(cct) << "error removing id object: " << cpp_strerror(r)
@@ -1852,6 +1975,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       }
 
       ldout(cct, 2) << "removing rbd image from v2 directory..." << dendl;
+
       r = cls_client::dir_remove_image(&io_ctx, RBD_DIRECTORY, name, id);
       if (r < 0) {
         if (r != -ENOENT) {
@@ -1863,6 +1987,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     }
 
     ldout(cct, 2) << "done." << dendl;
+
     return 0;
   }
 
@@ -1900,6 +2025,11 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return 0;
   }
 
+  // called by
+  // Image::snap_remove
+  // Image::snap_remove2
+  // rbd_snap_remove
+  // rbd_snap_remove2
   int snap_remove(ImageCtx *ictx, const char *snap_name, uint32_t flags, ProgressContext& pctx)
   {
     ldout(ictx->cct, 20) << "snap_remove " << ictx << " " << snap_name << " flags: " << flags << dendl;
@@ -1911,6 +2041,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     if (r < 0) {
       return r;
     }
+
     if (boost::get<cls::rbd::UserSnapshotNamespace>(&snap_namespace) == nullptr) {
       return -EINVAL;
     }
@@ -1918,6 +2049,9 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     r = ictx->state->refresh_if_required();
     if (r < 0)
       return r;
+
+    // RBD_SNAP_REMOVE_FORCE = (RBD_SNAP_REMOVE_UNPROTECT | RBD_SNAP_REMOVE_FLATTEN), which
+    // was set by rbd::action::snap::do_remove_snap
 
     if (flags & RBD_SNAP_REMOVE_FLATTEN) {
 	r = flatten_children(ictx, snap_name, pctx);
@@ -1943,6 +2077,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       if (r < 0) {
 	return r;
       }
+
       if (is_protected) {
 	lderr(ictx->cct) << "snapshot is still protected after unprotection" << dendl;
 	ceph_abort();
@@ -1950,9 +2085,11 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     }
 
     C_SaferCond ctx;
+
     ictx->operations->snap_remove(snap_name, &ctx);
 
     r = ctx.wait();
+
     return r;
   }
 
@@ -2170,6 +2307,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 
     C_SaferCond ctx;
     std::string name(snap_name == nullptr ? "" : snap_name);
+
     ictx->state->snap_set(name, &ctx);
 
     int r = ctx.wait();
@@ -2408,6 +2546,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     // ensure previous writes are visible to listsnaps
     {
       RWLock::RLocker owner_locker(ictx->owner_lock);
+
       ictx->flush();
     }
 
@@ -2417,7 +2556,9 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     }
 
     ictx->snap_lock.get_read();
+
     r = clip_io(ictx, off, &len);
+
     ictx->snap_lock.put_read();
     if (r < 0) {
       return r;
@@ -2425,7 +2566,9 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 
     DiffIterate command(*ictx, fromsnapname, off, len, include_parent,
                         whole_object, cb, arg);
+
     r = command.execute();
+
     return r;
   }
 
@@ -2433,10 +2576,16 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
   int clip_io(ImageCtx *ictx, uint64_t off, uint64_t *len)
   {
     assert(ictx->snap_lock.is_locked());
+
     uint64_t image_size = ictx->get_image_size(ictx->snap_id);
+
+    // ictx->snap_exists should always be true unless be set to false by
+    // RefreshRequest<I>::apply, which means we are reading from a non-exist snapshot,
+    // i.e., the snapshot has been removed when we are still being reading from it
     bool snap_exists = ictx->snap_exists;
 
     if (!snap_exists)
+      // the snaphost we previously operated has been removed
       return -ENOENT;
 
     // special-case "len == 0" requests: always valid
@@ -2580,6 +2729,8 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return 0;
   }
 
+  // called by rbd_mirror_image_disable/Image::mirror_image_disable
+  // and mirror_mode_set
   int mirror_image_disable(ImageCtx *ictx, bool force) {
     CephContext *cct = ictx->cct;
     ldout(cct, 20) << "mirror_image_disable " << ictx << dendl;
@@ -2618,6 +2769,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       lderr(cct) << "failed to retrieve mirror image metadata: " << cpp_strerror(r) << dendl;
       return r;
     }
+
     mirror_image_internal.state = cls::rbd::MIRROR_IMAGE_STATE_DISABLING;
     r = cls_client::mirror_image_set(&ictx->md_ctx, ictx->id, mirror_image_internal);
     if (r < 0) {
@@ -2674,6 +2826,10 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
         }
       }
 
+      // force means even if the image is not primary we still to set the mirror state to MIRROR_IMAGE_STATE_DISABLING
+      // remove means remove image mirror state omap key, so the mirroring is disabled definitely
+      // note: the third parameter 'remove' is default to true, so the mirroring info
+      // of this image is removed from the RBD_MIRRORING object
       r = mirror_image_disable_internal(ictx, force);
       if (r < 0) {
         rollback = true;
@@ -2709,6 +2865,11 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       lderr(cct) << "image is already primary" << dendl;
       return -EINVAL;
     } else if (mirror_uuid != Journal<>::ORPHAN_MIRROR_UUID && !force) {
+
+      // see Journal<I>::demote
+      // TODO: the newly created local mirror image should have mirror_uuid set to
+      // primary mirror uuid, see Journal<I>::create ???
+
       lderr(cct) << "image is still primary within a remote cluster" << dendl;
       return -EBUSY;
     }
@@ -2716,17 +2877,20 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     // TODO: need interlock with local rbd-mirror daemon to ensure it has stopped
     //       replay
 
+    // allocate a tag with tag.mirror uuid set to LOCAL_MIRROR_UUID
     r = Journal<>::promote(ictx);
     if (r < 0) {
       lderr(cct) << "failed to promote image: " << cpp_strerror(r)
                  << dendl;
       return r;
     }
+
     return 0;
   }
 
   int mirror_image_demote(ImageCtx *ictx) {
     CephContext *cct = ictx->cct;
+
     ldout(cct, 20) << __func__ << ": ictx=" << ictx << dendl;
 
     int r = ictx->state->refresh_if_required();
@@ -2740,6 +2904,8 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     }
 
     bool is_primary;
+
+    // test if the last exclusive lock owner is the local master client
     r = Journal<>::is_tag_owner(ictx, &is_primary);
     if (r < 0) {
       lderr(cct) << "failed to determine tag ownership: " << cpp_strerror(r)
@@ -2753,6 +2919,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     }
 
     RWLock::RLocker owner_lock(ictx->owner_lock);
+
     if (ictx->exclusive_lock == nullptr) {
       lderr(cct) << "exclusive lock is not active" << dendl;
       return -EINVAL;
@@ -2772,7 +2939,9 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 
     // don't block holding lock since refresh might be required
     ictx->owner_lock.put_read();
+
     r = lock_ctx.wait();
+
     ictx->owner_lock.get_read();
 
     if (r < 0) {
@@ -2780,6 +2949,10 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       return r;
     } else if (ictx->exclusive_lock == nullptr ||
                !ictx->exclusive_lock->is_lock_owner()) {
+
+      // exclusive lock feature may have been disabled, see
+      // https://github.com/ceph/ceph/pull/9657/files
+
       lderr(cct) << "failed to acquire exclusive lock" << dendl;
       return -EROFS;
     }
@@ -2791,14 +2964,22 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     };
 
     RWLock::RLocker snap_locker(ictx->snap_lock);
+
     if (ictx->journal == nullptr) {
       lderr(cct) << "journal is not active" << dendl;
       return -EINVAL;
     } else if (!ictx->journal->is_tag_owner()) {
+
+      // we may have called Journal<I>::demote to demote the image at the same time, and
+      // we are no longer the tag owner
+
+      // TODO: see AcquireRequest<I>::send_allocate_journal_tag, we should be tag owner ???
+
       lderr(cct) << "image is not currently the primary" << dendl;
       return -EINVAL;
     }
 
+    // allocate a new tag with tag.mirror uuid set to ORPHAN_MIRROR_UUID
     r = ictx->journal->demote();
     if (r < 0) {
       lderr(cct) << "failed to demote image: " << cpp_strerror(r)
@@ -2808,6 +2989,9 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return 0;
   }
 
+  // called by
+  // RBD::mirror_image_resync
+  // rbd_mirror_image_resync
   int mirror_image_resync(ImageCtx *ictx) {
     CephContext *cct = ictx->cct;
     ldout(cct, 20) << __func__ << ": ictx=" << ictx << dendl;
@@ -2834,6 +3018,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     }
 
     // flag the journal indicating that we want to rebuild the local image
+    // set ImageClientMeta::resync_requested
     r = Journal<>::request_resync(ictx);
     if (r < 0) {
       lderr(cct) << "failed to request resync: " << cpp_strerror(r) << dendl;
@@ -2846,17 +3031,22 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
   int mirror_image_get_info(ImageCtx *ictx, mirror_image_info_t *mirror_image_info,
                             size_t info_size) {
     CephContext *cct = ictx->cct;
+
     ldout(cct, 20) << __func__ << ": ictx=" << ictx << dendl;
+
     if (info_size < sizeof(mirror_image_info_t)) {
       return -ERANGE;
     }
 
+    // ictx->state constructed by ImageCtx ctor
     int r = ictx->state->refresh_if_required();
     if (r < 0) {
       return r;
     }
 
     cls::rbd::MirrorImage mirror_image_internal;
+
+    // get <image global id, enum image mirror state> by image id
     r = cls_client::mirror_image_get(&ictx->md_ctx, ictx->id,
         &mirror_image_internal);
     if (r < 0 && r != -ENOENT) {
@@ -2865,6 +3055,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       return r;
     }
 
+    // populate mirror image info
     mirror_image_info->global_id = mirror_image_internal.global_image_id;
     if (r == -ENOENT) {
       mirror_image_info->state = RBD_MIRROR_IMAGE_DISABLED;
@@ -2874,6 +3065,9 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     }
 
     if (mirror_image_info->state == RBD_MIRROR_IMAGE_ENABLED) {
+
+      // get tag owner to check if this image is primary
+
       r = Journal<>::is_tag_owner(ictx, &mirror_image_info->primary);
       if (r < 0) {
         lderr(cct) << "failed to check tag ownership: "
@@ -2900,12 +3094,14 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       return r;
     }
 
+    // <image global id, enum image mirror state, bool primary>
     mirror_image_info_t info;
     r = mirror_image_get_info(ictx, &info, sizeof(info));
     if (r < 0) {
       return r;
     }
 
+    // <image mirror status state, description, last update time, bool up>
     cls::rbd::MirrorImageStatus
       s(cls::rbd::MIRROR_IMAGE_STATUS_STATE_UNKNOWN, "status not found");
 
@@ -2923,6 +3119,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       s.description,
       s.last_update.sec(),
       s.up};
+
     return 0;
   }
 
@@ -2981,6 +3178,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return 0;
   }
 
+  // called by rbd_mirror_mode_set/RBD::mirror_mode_set
   int mirror_mode_set(IoCtx& io_ctx, rbd_mirror_mode_t mirror_mode) {
     CephContext *cct = reinterpret_cast<CephContext *>(io_ctx.cct());
     ldout(cct, 20) << __func__ << dendl;
@@ -3023,8 +3221,15 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     if (current_mirror_mode == next_mirror_mode) {
       return 0;
     } else if (current_mirror_mode == cls::rbd::MIRROR_MODE_DISABLED) {
+
+      // every mirror enabled pool has an uuid, which is used to identify
+      // the mirror peer client
+
       uuid_d uuid_gen;
       uuid_gen.generate_random();
+
+      // set this uuid on rbd_mirroring object, this uuid is used identify the
+      // mirror peer client, see ImageReplayer<I>::allocate_local_tag
       r = cls_client::mirror_uuid_set(&io_ctx, uuid_gen.to_string());
       if (r < 0) {
         lderr(cct) << "Failed to allocate mirroring uuid: " << cpp_strerror(r)
@@ -3034,6 +3239,12 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     }
 
     if (current_mirror_mode != cls::rbd::MIRROR_MODE_IMAGE) {
+
+      // current mirror mode is MIRROR_MODE_DISABLED or MIRROR_MODE_POOL
+
+      // note: either enable to MIRROR_MODE_POOL or disable from MIRROR_MODE_POOL
+      // the mirror mode of the pool need to set to MIRROR_MODE_IMAGE
+
       r = cls_client::mirror_mode_set(&io_ctx, cls::rbd::MIRROR_MODE_IMAGE);
       if (r < 0) {
         lderr(cct) << "failed to set mirror mode to image: "
@@ -3052,6 +3263,11 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     if (next_mirror_mode == cls::rbd::MIRROR_MODE_IMAGE) {
       return 0;
     }
+
+    // MIRROR_MODE_DISABLED     -> RBD_MIRROR_MODE_POOL or
+    // MIRROR_MODE_IMAGE        -> RBD_MIRROR_MODE_POOL or
+    // RBD_MIRROR_MODE_POOL     -> MIRROR_MODE_DISABLED or
+    // MIRROR_MODE_IMAGE        -> MIRROR_MODE_DISABLED
 
     if (next_mirror_mode == cls::rbd::MIRROR_MODE_POOL) {
       map<string, string> images;
@@ -3073,6 +3289,9 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
         }
 
         if ((features & RBD_FEATURE_JOURNALING) != 0) {
+
+          // only enable mirror for those images has journaling enabled
+
           ImageCtx *img_ctx = new ImageCtx("", img_pair.second, nullptr,
                                            io_ctx, false);
           r = img_ctx->state->open(false);
@@ -3100,6 +3319,10 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
         }
       }
     } else if (next_mirror_mode == cls::rbd::MIRROR_MODE_DISABLED) {
+
+      // RBD_MIRROR_MODE_POOL     -> MIRROR_MODE_DISABLED or
+      // MIRROR_MODE_IMAGE        -> MIRROR_MODE_DISABLED
+
       std::set<std::string> image_ids;
       r = list_mirror_images(io_ctx, image_ids);
       if (r < 0) {
@@ -3109,19 +3332,28 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 
       for (const auto& img_id : image_ids) {
         if (current_mirror_mode == cls::rbd::MIRROR_MODE_IMAGE) {
+
+          // MIRROR_MODE_IMAGE        -> MIRROR_MODE_DISABLED
+
           cls::rbd::MirrorImage mirror_image;
+
           r = cls_client::mirror_image_get(&io_ctx, img_id, &mirror_image);
           if (r < 0 && r != -ENOENT) {
             lderr(cct) << "failed to retrieve mirroring state for image id "
                        << img_id << ": " << cpp_strerror(r) << dendl;
             return r;
           }
+
           if (mirror_image.state == cls::rbd::MIRROR_IMAGE_STATE_ENABLED) {
             lderr(cct) << "Failed to disable mirror mode: there are still "
                        << "images with mirroring enabled" << dendl;
             return -EINVAL;
           }
         } else {
+
+          // RBD_MIRROR_MODE_POOL     -> MIRROR_MODE_DISABLED
+          // we disable the mirroring automatically for all images in this pool
+
           ImageCtx *img_ctx = new ImageCtx("", img_id, nullptr, io_ctx, false);
           r = img_ctx->state->open(false);
           if (r < 0) {
@@ -3131,6 +3363,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
             return r;
           }
 
+          // only if mirror mode is MIRROR_MODE_IMAGE then the image can be disabled
           r = mirror_image_disable(img_ctx, false);
           if (r < 0) {
             lderr(cct) << "error disabling mirroring for image id " << img_id
@@ -3180,6 +3413,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       uuid_d uuid_gen;
       uuid_gen.generate_random();
 
+      // this uuid is used to remove peer, see mirror_peer_remove
       *uuid = uuid_gen.to_string();
       r = cls_client::mirror_peer_add(&io_ctx, *uuid, cluster_name,
                                       client_name);
@@ -3204,6 +3438,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
                  << cpp_strerror(r) << dendl;
       return r;
     }
+
     return 0;
   }
 
@@ -3347,6 +3582,8 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     }
   };
 
+  // called by
+  // librbd::AioImageRead<I>::send_request
   void readahead(ImageCtx *ictx,
                  const vector<pair<uint64_t,uint64_t> >& image_extents)
   {

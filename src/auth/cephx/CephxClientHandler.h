@@ -22,6 +22,8 @@
 class CephContext;
 class KeyRing;
 
+// used by
+// get_auth_client_handler, which called by MonClient::handle_auth
 class CephxClientHandler : public AuthClientHandler {
   bool starting;
 
@@ -32,9 +34,11 @@ class CephxClientHandler : public AuthClientHandler {
   CephXTicketHandler* ticket_handler;
 
   RotatingKeyRing *rotating_secrets;
-  KeyRing *keyring;
+  KeyRing *keyring; // the configured keyring from keyring/key/keyfile
 
 public:
+  // called by
+  // get_auth_client_handler
   CephxClientHandler(CephContext *cct_, RotatingKeyRing *rsecrets) 
     : AuthClientHandler(cct_),
       starting(false),
@@ -52,6 +56,7 @@ public:
     starting = true;
     server_challenge = 0;
   }
+
   void prepare_build_request();
   int build_request(bufferlist& bl) const;
   int handle_response(int ret, bufferlist::iterator& iter);
@@ -65,6 +70,7 @@ public:
 
   void set_global_id(uint64_t id) {
     RWLock::WLocker l(lock);
+
     global_id = id;
     tickets.global_id = id;
   }

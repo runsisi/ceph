@@ -23,8 +23,10 @@ void AsyncOpTracker::finish_op() {
   Context *on_finish = nullptr;
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_pending_ops > 0);
     if (--m_pending_ops == 0) {
+      // m_on_finish was set by AsyncOpTracker::wait_for_ops
       std::swap(on_finish, m_on_finish);
     }
   }
@@ -34,15 +36,25 @@ void AsyncOpTracker::finish_op() {
   }
 }
 
+// called by
+// JournalMetadata::shut_down
+// JournalMetadata::wait_for_ops, which was called by Journaler::~Journaler
+// JournalPlayer::shut_down
+// JournalTrimmer::shut_down
+// JournalTrimmer::remove_objects
+// ImageReplayer<I>::shut_down
 void AsyncOpTracker::wait_for_ops(Context *on_finish) {
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_on_finish == nullptr);
+
     if (m_pending_ops > 0) {
       m_on_finish = on_finish;
       return;
     }
   }
+
   on_finish->complete(0);
 }
 

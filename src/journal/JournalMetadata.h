@@ -131,8 +131,14 @@ public:
     *commit_position = m_client.commit_position;
   }
 
+  // called by
+  // Journaler::get_cached_client
+  // JournalTrimmer::remove_objects
+  // JournalTrimmer::handle_metadata_updated
   void get_registered_clients(RegisteredClients *registered_clients) {
     Mutex::Locker locker(m_lock);
+
+    // m_registered_clients was set by JournalMetadata::handle_refresh_complete
     *registered_clients = m_registered_clients;
   }
 
@@ -140,6 +146,7 @@ public:
     Mutex::Locker locker(m_lock);
     return m_allocated_entry_tids[tag_tid]++;
   }
+  
   void reserve_entry_tid(uint64_t tag_tid, uint64_t entry_tid);
   bool get_last_allocated_entry_tid(uint64_t tag_tid, uint64_t *entry_tid) const;
 
@@ -174,6 +181,8 @@ private:
   };
   typedef std::map<uint64_t, CommitEntry> CommitTids;
 
+  // a member variable of JournalMetadata, the watch context is registered
+  // by JournalMetadata::init or JournalMetadata::handle_watch_reset
   struct C_WatchCtx : public librados::WatchCtx2 {
     JournalMetadata *journal_metadata;
 
@@ -189,6 +198,7 @@ private:
     }
   };
 
+  // used by JournalMetadata::schedule_watch_reset
   struct C_WatchReset : public Context {
     JournalMetadata *journal_metadata;
 
@@ -220,6 +230,7 @@ private:
     };
   };
 
+  // used by JournalMetadata::async_notify_update
   struct C_AioNotify : public Context {
     JournalMetadata* journal_metadata;
     Context *on_safe;
@@ -231,14 +242,25 @@ private:
     virtual ~C_AioNotify() {
       journal_metadata->m_async_op_tracker.finish_op();
     }
+
     virtual void finish(int r) {
+      // only a debug message, nothing else
       journal_metadata->handle_notified(r);
+
       if (on_safe != nullptr) {
         on_safe->complete(0);
       }
     }
   };
 
+  // used by:
+  // JournalMetadata::register_client
+  // JournalMetadata::update_client
+  // JournalMetadata::unregister_client
+  // JournalMetadata::allocate_tag
+  // JournalMetadata::set_minimum_set
+  // JournalMetadata::set_active_set
+  // JournalMetadata::handle_commit_position_task
   struct C_NotifyUpdate : public Context {
     JournalMetadata* journal_metadata;
     Context *on_safe;
@@ -250,11 +272,15 @@ private:
     virtual ~C_NotifyUpdate() {
       journal_metadata->m_async_op_tracker.finish_op();
     }
+
     virtual void finish(int r) {
       if (r == 0) {
+        // notify other rados clients
         journal_metadata->async_notify_update(on_safe);
         return;
       }
+
+      // the rados op failed, finish the callback directly
       if (on_safe != NULL) {
         on_safe->complete(r);
       }
@@ -270,14 +296,19 @@ private:
       Mutex::Locker locker(journal_metadata->m_lock);
       journal_metadata->m_async_op_tracker.start_op();
     }
+
     virtual ~C_ImmutableMetadata() {
       journal_metadata->m_async_op_tracker.finish_op();
     }
+
     virtual void finish(int r) {
+
+      // call JournalMetadata::refresh to get mutable metadata
       journal_metadata->handle_immutable_metadata(r, on_finish);
     }
   };
 
+  // used by JournalMetadata::refresh
   struct C_Refresh : public Context {
     JournalMetadata* journal_metadata;
     uint64_t minimum_set;
@@ -291,13 +322,19 @@ private:
       Mutex::Locker locker(journal_metadata->m_lock);
       journal_metadata->m_async_op_tracker.start_op();
     }
+
     virtual ~C_Refresh() {
       journal_metadata->m_async_op_tracker.finish_op();
     }
+
     virtual void finish(int r) {
       journal_metadata->handle_refresh_complete(this, r);
     }
   };
+
+  // C_WatchCtx, C_WatchReset, C_CommitPositionTask,
+  // C_AioNoty, C_NotifyUpdate,
+  // C_ImmutableMetadata, C_Refresh
 
   librados::IoCtx m_ioctx;
   CephContext *m_cct;
@@ -326,6 +363,7 @@ private:
 
   uint64_t m_minimum_set;
   uint64_t m_active_set;
+  // set<Client>
   RegisteredClients m_registered_clients;
   Client m_client;
 

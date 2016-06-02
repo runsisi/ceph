@@ -98,6 +98,7 @@ protected:
   uint64_t m_object_no, m_object_off, m_object_len;
   librados::snap_t m_snap_id;
   Context *m_completion;
+  // std::vector<std::pair<uint64_t, uint64_t> >
   Extents m_parent_extents;
   bool m_hide_enoent;
 
@@ -190,6 +191,12 @@ private:
   void read_from_parent(Extents&& image_extents);
 };
 
+// derived by
+// AioObjectWrite
+// AioObjectRemove
+// AioObjectTrim
+// AioObjectTruncate
+// AioObjectZero
 class AbstractAioObjectWrite : public AioObjectRequest<> {
 public:
   AbstractAioObjectWrite(ImageCtx *ictx, const std::string &oid,
@@ -330,6 +337,7 @@ public:
     } else {
       m_object_state = OBJECT_PENDING;
     }
+
     *new_state = m_object_state;
     return true;
   }

@@ -141,7 +141,11 @@ public:
   LogClient log_client;
   LogChannelRef clog;
   LogChannelRef audit_clog;
+
+  // loaded by Monitor::preinit
+  // used by Monitor::ms_get_authorizer, Monitor::ms_verify_authorizer
   KeyRing keyring;
+
   KeyServer key_server;
 
   AuthMethodList auth_cluster_required;
@@ -329,7 +333,9 @@ private:
 
   struct C_SyncTimeout : public Context {
     Monitor *mon;
+
     explicit C_SyncTimeout(Monitor *m) : mon(m) {}
+
     void finish(int r) {
       mon->sync_timeout();
     }
@@ -519,13 +525,19 @@ private:
   void handle_timecheck_peon(MonOpRequestRef op);
   void handle_timecheck(MonOpRequestRef op);
 
+  // called by
+  // Monitor::timecheck_check_skews
+  // Monitor::timecheck_status
   /**
    * Returns 'true' if this is considered to be a skew; 'false' otherwise.
    */
   bool timecheck_has_skew(const double skew_bound, double *abs) const {
     double abs_skew = std::fabs(skew_bound);
+
     if (abs)
       *abs = abs_skew;
+
+    // default 0.050
     return (abs_skew > g_conf->mon_clock_drift_allowed);
   }
 
@@ -541,7 +553,9 @@ private:
 
   struct C_ProbeTimeout : public Context {
     Monitor *mon;
+
     explicit C_ProbeTimeout(Monitor *m) : mon(m) {}
+
     void finish(int r) {
       mon->probe_timeout(r);
     }

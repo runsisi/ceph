@@ -332,7 +332,9 @@ void ECBackend::handle_recovery_push(
   if (op.after_progress.data_complete && !oneshot) {
     dout(10) << __func__ << ": Removing oid "
 	     << tobj.hobj << " from the temp collection" << dendl;
+
     clear_temp_obj(tobj.hobj);
+
     m->t.remove(coll, ghobject_t(
 	op.soid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
     m->t.collection_move_rename(
@@ -340,10 +342,12 @@ void ECBackend::handle_recovery_push(
       coll, ghobject_t(
 	op.soid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
   }
+
   if (op.after_progress.data_complete) {
     if ((get_parent()->pgb_is_primary())) {
       assert(recovery_ops.count(op.soid));
       assert(recovery_ops[op.soid].obc);
+
       get_parent()->on_local_recover(
 	op.soid,
 	op.recovery_info,
@@ -357,6 +361,7 @@ void ECBackend::handle_recovery_push(
 	&m->t);
     }
   }
+
   m->push_replies[get_parent()->primary_shard()].push_back(PushReplyOp());
   m->push_replies[get_parent()->primary_shard()].back().soid = op.soid;
 }
@@ -523,6 +528,7 @@ void ECBackend::continue_recovery_op(
   RecoveryMessages *m)
 {
   dout(10) << __func__ << ": continuing " << op << dendl;
+
   while (1) {
     switch (op.state) {
     case RecoveryOp::IDLE: {
@@ -626,12 +632,14 @@ void ECBackend::continue_recovery_op(
       if (op.waiting_on_pushes.empty()) {
 	if (op.recovery_progress.data_complete) {
 	  op.state = RecoveryOp::COMPLETE;
+
 	  for (set<pg_shard_t>::iterator i = op.missing_on.begin();
 	       i != op.missing_on.end();
 	       ++i) {
 	    if (*i != get_parent()->primary_shard()) {
 	      dout(10) << __func__ << ": on_peer_recover on " << *i
 		       << ", obj " << op.hoid << dendl;
+
 	      get_parent()->on_peer_recover(
 		*i,
 		op.hoid,
@@ -639,20 +647,27 @@ void ECBackend::continue_recovery_op(
 		object_stat_sum_t());
 	    }
 	  }
+
 	  object_stat_sum_t stat;
 	  stat.num_bytes_recovered = op.recovery_info.size;
 	  stat.num_keys_recovered = 0; // ??? op ... omap_entries.size(); ?
 	  stat.num_objects_recovered = 1;
+
 	  get_parent()->on_global_recover(op.hoid, stat);
+
 	  dout(10) << __func__ << ": WRITING return " << op << dendl;
+
 	  recovery_ops.erase(op.hoid);
 	  return;
 	} else {
 	  op.state = RecoveryOp::IDLE;
+
 	  dout(10) << __func__ << ": WRITING continue " << op << dendl;
+
 	  continue;
 	}
       }
+
       return;
     }
     // should never be called once complete
@@ -1299,6 +1314,8 @@ void ECBackend::filter_read_op(
   }
 }
 
+// called by
+// ReplicatedPG::check_recovery_sources
 void ECBackend::check_recovery_sources(const OSDMapRef& osdmap)
 {
   set<ceph_tid_t> tids_to_filter;
@@ -1322,6 +1339,9 @@ void ECBackend::check_recovery_sources(const OSDMapRef& osdmap)
   }
 }
 
+// called by
+// ReplicatedPG::on_shutdown
+// ReplicatedPG::on_change, called by PG::start_peering_interval
 void ECBackend::on_change()
 {
   dout(10) << __func__ << dendl;
@@ -1335,12 +1355,14 @@ void ECBackend::on_change()
   for (auto &&op: tid_to_op_map) {
     cache.release_write_pin(op.second.pin);
   }
+
   tid_to_op_map.clear();
 
   for (map<ceph_tid_t, ReadOp>::iterator i = tid_to_read_map.begin();
        i != tid_to_read_map.end();
        ++i) {
     dout(10) << __func__ << ": cancelling " << i->second << dendl;
+
     for (map<hobject_t, read_request_t, hobject_t::BitwiseComparator>::iterator j =
 	   i->second.to_read.begin();
 	 j != i->second.to_read.end();
@@ -1349,17 +1371,24 @@ void ECBackend::on_change()
       j->second.cb = 0;
     }
   }
+
   tid_to_read_map.clear();
   in_progress_client_reads.clear();
   shard_to_read_map.clear();
+
   clear_recovery_state();
 }
 
+// called by
+// ECBackend::on_change
+// ReplicatedPG::_clear_recovery_state, which called by PG::clear_recovery_state
 void ECBackend::clear_recovery_state()
 {
   recovery_ops.clear();
 }
 
+// called by
+// PrimaryLogPG::on_flushed
 void ECBackend::on_flushed()
 {
 }

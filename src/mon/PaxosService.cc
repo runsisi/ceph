@@ -32,7 +32,9 @@ static ostream& _prefix(std::ostream *_dout, Monitor *mon, Paxos *paxos, string 
 bool PaxosService::dispatch(MonOpRequestRef op)
 {
   assert(op->is_type_service() || op->is_type_command());
+
   PaxosServiceMessage *m = static_cast<PaxosServiceMessage*>(op->get_req());
+
   op->mark_event("psvc:dispatch");
 
   dout(10) << "dispatch " << m << " " << *m
@@ -66,6 +68,7 @@ bool PaxosService::dispatch(MonOpRequestRef op)
   // make sure our map is readable and up to date
   if (!is_readable(m->version)) {
     dout(10) << " waiting for paxos -> readable (v" << m->version << ")" << dendl;
+
     wait_for_readable(op, new C_RetryMessage(this, op), m->version);
     return true;
   }
@@ -83,6 +86,7 @@ bool PaxosService::dispatch(MonOpRequestRef op)
   // writeable?
   if (!is_writeable()) {
     dout(10) << " waiting for paxos -> writeable" << dendl;
+
     wait_for_writeable(op, new C_RetryMessage(this, op));
     return true;
   }
@@ -90,6 +94,7 @@ bool PaxosService::dispatch(MonOpRequestRef op)
   // update
   if (prepare_update(op)) {
     double delay = 0.0;
+
     if (should_propose(delay)) {
       if (delay == 0.0) {
 	propose_pending();
@@ -104,8 +109,10 @@ bool PaxosService::dispatch(MonOpRequestRef op)
 	    PaxosService *ps;
 	  public:
 	    explicit C_Propose(PaxosService *p) : ps(p) { }
+
 	    void finish(int r) {
 	      ps->proposal_timer = 0;
+
 	      if (r >= 0)
 		ps->propose_pending();
 	      else if (r == -ECANCELED || r == -EAGAIN)
@@ -116,7 +123,9 @@ bool PaxosService::dispatch(MonOpRequestRef op)
 	  };
 
 	  proposal_timer = new C_Propose(this);
+
 	  dout(10) << " setting proposal_timer " << proposal_timer << " with delay of " << delay << dendl;
+
 	  mon->timer.add_event_after(delay, proposal_timer);
 	} else { 
 	  dout(10) << " proposal_timer already set" << dendl;
@@ -125,10 +134,13 @@ bool PaxosService::dispatch(MonOpRequestRef op)
     } else {
       dout(10) << " not proposing" << dendl;
     }
-  }     
+  }
+
   return true;
 }
 
+// called by
+// Monitor::refresh_from_paxos
 void PaxosService::refresh(bool *need_bootstrap)
 {
   // update cached versions
@@ -138,8 +150,10 @@ void PaxosService::refresh(bool *need_bootstrap)
   version_t new_format = get_value("format_version");
   if (new_format != format_version) {
     dout(1) << __func__ << " upgraded, format " << format_version << " -> " << new_format << dendl;
+
     on_upgrade();
   }
+
   format_version = new_format;
 
   dout(10) << __func__ << dendl;
@@ -147,6 +161,8 @@ void PaxosService::refresh(bool *need_bootstrap)
   update_from_paxos(need_bootstrap);
 }
 
+// called by
+// Monitor::refresh_from_paxos
 void PaxosService::post_refresh()
 {
   dout(10) << __func__ << dendl;
@@ -171,6 +187,7 @@ bool PaxosService::should_propose(double& delay)
       delay = (double)(g_conf->paxos_propose_interval + paxos->last_commit_time
 		       - now);
   }
+
   return true;
 }
 
@@ -178,6 +195,7 @@ bool PaxosService::should_propose(double& delay)
 void PaxosService::propose_pending()
 {
   dout(10) << "propose_pending" << dendl;
+
   assert(have_pending);
   assert(!proposing);
   assert(mon->is_leader());
@@ -185,7 +203,9 @@ void PaxosService::propose_pending()
 
   if (proposal_timer) {
     dout(10) << " canceling proposal_timer " << proposal_timer << dendl;
+
     mon->timer.cancel_event(proposal_timer);
+
     proposal_timer = NULL;
   }
 
@@ -204,6 +224,7 @@ void PaxosService::propose_pending()
     encode_full(t);
 
   encode_pending(t);
+
   have_pending = false;
 
   if (format_version > 0) {
@@ -212,6 +233,7 @@ void PaxosService::propose_pending()
 
   // apply to paxos
   proposing = true;
+
   /**
    * Callback class used to mark us as active once a proposal finishes going
    * through Paxos.
@@ -236,7 +258,9 @@ void PaxosService::propose_pending()
 	assert(0 == "bad return value for C_Committed");
     }
   };
+
   paxos->queue_pending_finisher(new C_Committed(this));
+
   paxos->trigger_propose();
 }
 
@@ -289,8 +313,10 @@ void PaxosService::_active()
     dout(10) << "_acting - proposing" << dendl;
     return;
   }
+
   if (!is_active()) {
     dout(10) << "_active - not active" << dendl;
+
     /**
      * Callback used to make sure we call the PaxosService::_active function
      * whenever a condition is fulfilled.
@@ -303,27 +329,33 @@ void PaxosService::_active()
       PaxosService *svc;
     public:
       explicit C_Active(PaxosService *s) : svc(s) {}
+
       void finish(int r) {
 	if (r >= 0)
 	  svc->_active();
       }
     };
+
     wait_for_active_ctx(new C_Active(this));
     return;
   }
+
   dout(10) << "_active" << dendl;
 
   // create pending state?
   if (mon->is_leader()) {
     dout(7) << "_active creating new pending" << dendl;
+
     if (!have_pending) {
       create_pending();
+
       have_pending = true;
     }
 
     if (get_last_committed() == 0) {
       // create initial state
       create_initial();
+
       propose_pending();
       return;
     }

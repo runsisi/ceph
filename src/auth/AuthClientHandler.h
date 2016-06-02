@@ -41,9 +41,14 @@ public:
 
   void init(EntityName& n) { name = n; }
   
+  // called by
+  // MonClient::handle_auth
+  // MonClient::set_want_keys
   void set_want_keys(__u32 keys) {
     RWLock::WLocker l(lock);
+
     want = keys | CEPH_ENTITY_TYPE_AUTH;
+
     validate_tickets();
   }
 

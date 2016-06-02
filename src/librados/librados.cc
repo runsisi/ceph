@@ -1564,10 +1564,12 @@ int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 				 snap_t snap_seq, std::vector<snap_t>& snaps)
 {
   object_t obj(oid);
+
   vector<snapid_t> snv;
   snv.resize(snaps.size());
   for (size_t i = 0; i < snaps.size(); ++i)
     snv[i] = snaps[i];
+
   SnapContext snapc(snap_seq, snv);
   return io_ctx_impl->aio_operate(obj, &o->impl->o, c->pc,
 				  snapc, 0);
@@ -1616,12 +1618,19 @@ void librados::IoCtx::snap_set_read(snap_t seq)
   io_ctx_impl->set_snap_read(seq);
 }
 
+// called by
+// librbd::image::RefreshRequest<I>::apply
+// librbd::operation::SnapshotCreateRequest<I>::update_snap_context
 int librados::IoCtx::selfmanaged_snap_set_write_ctx(snap_t seq, vector<snap_t>& snaps)
 {
+  // vector<snap_t> -> vector<snapid_t>
   vector<snapid_t> snv;
   snv.resize(snaps.size());
+
   for (unsigned i=0; i<snaps.size(); i++)
     snv[i] = snaps[i];
+
+  // set librados::IoCtxImpl::snapc
   return io_ctx_impl->set_snap_write_context(seq, snv);
 }
 
@@ -2259,7 +2268,9 @@ librados::Rados::Rados() : client(NULL)
 librados::Rados::Rados(IoCtx &ioctx)
 {
   client = ioctx.io_ctx_impl->client;
+
   assert(client != NULL);
+
   client->get();
 }
 
@@ -2312,8 +2323,10 @@ void librados::Rados::shutdown()
 {
   if (!client)
     return;
+
   if (client->put()) {
     client->shutdown();
+
     delete client;
     client = NULL;
   }
@@ -2786,6 +2799,7 @@ extern "C" int rados_create(rados_t *pcluster, const char * const id)
   if (id) {
     iparams.name.set(CEPH_ENTITY_TYPE_CLIENT, id);
   }
+
   CephContext *cct = rados_create_cct("", &iparams);
 
   tracepoint(librados, rados_create_enter, id);

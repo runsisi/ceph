@@ -44,6 +44,7 @@ void CloseImageRequest<I>::close_image() {
 
   Context *ctx = create_context_callback<
     CloseImageRequest<I>, &CloseImageRequest<I>::handle_close_image>(this);
+
   (*m_image_ctx)->state->close(ctx);
 }
 
@@ -67,6 +68,7 @@ void CloseImageRequest<I>::switch_thread_context() {
   Context *ctx = create_context_callback<
     CloseImageRequest<I>, &CloseImageRequest<I>::handle_switch_thread_context>(
       this);
+
   m_work_queue->queue(ctx, 0);
 }
 

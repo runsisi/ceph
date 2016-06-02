@@ -17,10 +17,12 @@ public:
   AutomaticPolicy(ImageCtx *image_ctx) : m_image_ctx(image_ctx) {
   }
 
+  // checked by librbd::AioImageRequestWQ::queue and librbd::lock_acquire
   virtual bool may_auto_request_lock() {
     return true;
   }
 
+  // always release the exclusive lock, called by ImageWatcher<I>::handle_payload
   virtual int lock_requested(bool force);
 
 private:

@@ -13,6 +13,8 @@
 namespace librbd {
 namespace operation {
 
+// created by
+// librbd::Operations<I>::execute_snap_set_limit
 template <typename I>
 SnapshotLimitRequest<I>::SnapshotLimitRequest(I &image_ctx,
 					      Context *on_finish,
@@ -20,6 +22,9 @@ SnapshotLimitRequest<I>::SnapshotLimitRequest(I &image_ctx,
   : Request<I>(image_ctx, on_finish), m_snap_limit(limit) {
 }
 
+// called by
+// librbd::operation::Request::send, because the SnapshotLimitRequest is
+// derived from librbd::operation::Request
 template <typename I>
 void SnapshotLimitRequest<I>::send_op() {
   send_limit_snaps();
@@ -28,18 +33,21 @@ void SnapshotLimitRequest<I>::send_op() {
 template <typename I>
 bool SnapshotLimitRequest<I>::should_complete(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << "r=" << r << dendl;
 
   if (r < 0) {
     lderr(cct) << "encountered error: " << cpp_strerror(r) << dendl;
   }
+
   return true;
 }
 
 template <typename I>
 void SnapshotLimitRequest<I>::send_limit_snaps() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
 
   CephContext *cct = image_ctx.cct;
