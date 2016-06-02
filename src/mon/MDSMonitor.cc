@@ -96,6 +96,8 @@ void MDSMonitor::get_store_prefixes(std::set<string>& s) const
   s.insert(MDS_HEALTH_PREFIX);
 }
 
+// called by
+// PaxosService::refresh
 void MDSMonitor::update_from_paxos(bool *need_bootstrap)
 {
   version_t version = get_last_committed();
@@ -104,6 +106,7 @@ void MDSMonitor::update_from_paxos(bool *need_bootstrap)
 
   dout(10) << __func__ << " version " << version
 	   << ", my e " << fsmap.epoch << dendl;
+
   assert(version > fsmap.epoch);
 
   load_health();
@@ -111,15 +114,19 @@ void MDSMonitor::update_from_paxos(bool *need_bootstrap)
   // read and decode
   bufferlist fsmap_bl;
   fsmap_bl.clear();
+
   int err = get_version(version, fsmap_bl);
   assert(err == 0);
 
   assert(fsmap_bl.length() > 0);
+
   dout(10) << __func__ << " got " << version << dendl;
+
   fsmap.decode(fsmap_bl);
 
   // new map
   dout(4) << "new map" << dendl;
+
   print_map(fsmap, 0);
   if (!g_conf->mon_mds_skip_sanity) {
     fsmap.sanity();
@@ -1469,6 +1476,8 @@ int MDSMonitor::filesystem_command(
   return r;
 }
 
+// called by
+// MDSMonitor::update_from_paxos
 void MDSMonitor::check_subs()
 {
   std::list<std::string> types;
@@ -1499,7 +1508,9 @@ void MDSMonitor::check_subs()
   }
 }
 
-
+// called by
+// MDSMonitor::check_subs
+// Monitor::handle_subscribe
 void MDSMonitor::check_sub(Subscription *sub)
 {
   dout(20) << __func__ << ": " << sub->type << dendl;

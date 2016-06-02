@@ -14,6 +14,8 @@ class ProgressContext;
 
 namespace operation {
 
+// created by
+// Operations<I>::execute_flatten
 template <typename ImageCtxT = ImageCtx>
 class FlattenRequest : public Request<ImageCtxT>
 {

@@ -93,6 +93,8 @@ string last_snap_key(int64_t pool)
 
 namespace Scrub {
 
+// called by
+// PG::chunky_scrub
 Store*
 Store::create(ObjectStore* store,
 	      ObjectStore::Transaction* t,
@@ -101,8 +103,11 @@ Store::create(ObjectStore* store,
 {
   assert(store);
   assert(t);
+
+  // object name: ss << "scrub_" << pgid in a temp pool: hobject_t::POOL_TEMP_START - pgid.pool()
   ghobject_t oid = make_scrub_object(pgid);
   t->touch(coll, oid);
+
   return new Store{coll, oid, store};
 }
 
@@ -110,7 +115,7 @@ Store::Store(const coll_t& coll, const ghobject_t& oid, ObjectStore* store)
   : coll(coll),
     hoid(oid),
     driver(store, coll, hoid),
-    backend(&driver)
+    backend(&driver) // MapCacher::MapCacher<std::string, bufferlist>
 {}
 
 Store::~Store()
@@ -151,6 +156,8 @@ void Store::cleanup(ObjectStore::Transaction* t)
   t->remove(coll, hoid);
 }
 
+// called by
+// PrimaryLogPG::do_scrub_ls
 std::vector<bufferlist>
 Store::get_snap_errors(ObjectStore* store,
 		       int64_t pool,
@@ -160,9 +167,12 @@ Store::get_snap_errors(ObjectStore* store,
   const string begin = (start.name.empty() ?
 			first_snap_key(pool) : to_snap_key(pool, start));
   const string end = last_snap_key(pool);
+
   return get_errors(store, begin, end, max_return);     
 }
 
+// called by
+// PrimaryLogPG::do_scrub_ls
 std::vector<bufferlist>
 Store::get_object_errors(ObjectStore* store,
 			 int64_t pool,
@@ -172,6 +182,7 @@ Store::get_object_errors(ObjectStore* store,
   const string begin = (start.name.empty() ?
 			first_object_key(pool) : to_object_key(pool, start));
   const string end = last_object_key(pool);
+
   return get_errors(store, begin, end, max_return);
 }
 
@@ -186,9 +197,11 @@ Store::get_errors(ObjectStore* store,
   while (max_return && !backend.get_next(next.first, &next)) {
     if (next.first >= end)
       break;
+
     errors.push_back(next.second);
     max_return--;
   }
+
   return errors;
 }
 

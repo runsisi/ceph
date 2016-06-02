@@ -224,6 +224,9 @@ private:
 
   void _do_push(OpRequestRef op);
   void _do_pull_response(OpRequestRef op);
+
+  // called by
+  // ReplicatedBackend::handle_message, for MSG_OSD_PG_PUSH
   void do_push(OpRequestRef op) {
     if (is_primary()) {
       _do_pull_response(op);
@@ -231,6 +234,7 @@ private:
       _do_push(op);
     }
   }
+
   void do_pull(OpRequestRef op);
   void do_push_reply(OpRequestRef op);
 
@@ -350,6 +354,8 @@ public:
   friend class C_OSD_OnOpCommit;
   friend class C_OSD_OnOpApplied;
 
+  // called by
+  // PrimaryLogPG::submit_log_entries
   void call_write_ordered(std::function<void(void)> &&cb) override {
     // ReplicatedBackend submits writes inline in submit_transaction, so
     // we can just call the callback.

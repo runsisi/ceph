@@ -135,6 +135,8 @@ BOOST_FUSION_ADAPT_STRUCT(StringConstraint,
 
 // </magic>
 
+// called by
+// MonCapGrant::get_allowed
 void MonCapGrant::expand_profile(int daemon_type, const EntityName& name) const
 {
   // only generate this list once
@@ -175,12 +177,14 @@ void MonCapGrant::expand_profile_mon(const EntityName& name) const
     profile_grants.push_back(MonCapGrant("mon", MON_CAP_ALL));
     profile_grants.push_back(MonCapGrant("log", MON_CAP_ALL));
   }
+
   if (profile == "osd") {
     profile_grants.push_back(MonCapGrant("osd", MON_CAP_ALL));
     profile_grants.push_back(MonCapGrant("mon", MON_CAP_R));
     profile_grants.push_back(MonCapGrant("pg", MON_CAP_R | MON_CAP_W));
     profile_grants.push_back(MonCapGrant("log", MON_CAP_W));
   }
+
   if (profile == "mds") {
     profile_grants.push_back(MonCapGrant("mds", MON_CAP_ALL));
     profile_grants.push_back(MonCapGrant("mon", MON_CAP_R));
@@ -218,12 +222,14 @@ void MonCapGrant::expand_profile_mon(const EntityName& name) const
     profile_grants.push_back(MonCapGrant("config-key exists", "key", constraint));
     profile_grants.push_back(MonCapGrant("config-key delete", "key", constraint));
   }
+
   if (profile == "bootstrap-osd") {
     profile_grants.push_back(MonCapGrant("mon", MON_CAP_R));  // read monmap
     profile_grants.push_back(MonCapGrant("osd", MON_CAP_R));  // read osdmap
     profile_grants.push_back(MonCapGrant("mon getmap"));
     profile_grants.push_back(MonCapGrant("osd new"));
   }
+
   if (profile == "bootstrap-mds") {
     profile_grants.push_back(MonCapGrant("mon", MON_CAP_R));  // read monmap
     profile_grants.push_back(MonCapGrant("osd", MON_CAP_R));  // read osdmap
@@ -277,6 +283,7 @@ void MonCapGrant::expand_profile_mon(const EntityName& name) const
     profile_grants.push_back(MonCapGrant("osd", MON_CAP_R));
     profile_grants.push_back(MonCapGrant("pg", MON_CAP_R));
   }
+
   if (profile == "simple-rados-client") {
     profile_grants.push_back(MonCapGrant("mon", MON_CAP_R));
     profile_grants.push_back(MonCapGrant("osd", MON_CAP_R));
@@ -303,6 +310,8 @@ void MonCapGrant::expand_profile_mon(const EntityName& name) const
   }
 }
 
+// called by
+// MonCap::is_capable
 mon_rwxa_t MonCapGrant::get_allowed(CephContext *cct,
 				    int daemon_type,
 				    EntityName name,
@@ -317,14 +326,18 @@ mon_rwxa_t MonCapGrant::get_allowed(CephContext *cct,
       a = a | p->get_allowed(cct, daemon_type, name, s, c, c_args);
     return a;
   }
+
   if (service.length()) {
     if (service != s)
       return 0;
+
     return allow;
   }
+
   if (command.length()) {
     if (command != c)
       return 0;
+
     for (map<string,StringConstraint>::const_iterator p = command_args.begin(); p != command_args.end(); ++p) {
       map<string,string>::const_iterator q = c_args.find(p->first);
       // argument must be present if a constraint exists
@@ -353,8 +366,10 @@ mon_rwxa_t MonCapGrant::get_allowed(CephContext *cct,
         break;
       }
     }
+
     return MON_CAP_ALL;
   }
+
   return allow;
 }
 
@@ -373,16 +388,22 @@ bool MonCap::is_allow_all() const
   for (vector<MonCapGrant>::const_iterator p = grants.begin(); p != grants.end(); ++p)
     if (p->is_allow_all())
       return true;
+
   return false;
 }
 
 void MonCap::set_allow_all()
 {
   grants.clear();
+
   grants.push_back(MonCapGrant(MON_CAP_ANY));
   text = "allow *";
 }
 
+// called by
+// Monitor::_allowed_command
+// OSDMonitor::preprocess_remove_snaps
+// MonSession::is_capable
 bool MonCap::is_capable(CephContext *cct,
 			int daemon_type,
 			EntityName name,
@@ -397,7 +418,9 @@ bool MonCap::is_capable(CephContext *cct,
 		   << (op_may_exec ? " exec":"")
 		   << " on cap " << *this
 		   << dendl;
+
   mon_rwxa_t allow = 0;
+
   for (vector<MonCapGrant>::const_iterator p = grants.begin();
        p != grants.end(); ++p) {
     if (cct)
@@ -406,6 +429,7 @@ bool MonCap::is_capable(CephContext *cct,
     if (p->is_allow_all()) {
       if (cct)
 	ldout(cct, 20) << " allow all" << dendl;
+
       return true;
     }
 
@@ -417,9 +441,11 @@ bool MonCap::is_capable(CephContext *cct,
 	(!op_may_exec || (allow & MON_CAP_X))) {
       if (cct)
 	ldout(cct, 20) << " match" << dendl;
+
       return true;
     }
   }
+
   return false;
 }
 
@@ -490,6 +516,7 @@ struct MonCapParser : qi::grammar<Iterator, MonCap()>
       lexeme['"' >> +(char_ - '"') >> '"'] | 
       lexeme['\'' >> +(char_ - '\'') >> '\''];
     unquoted_word %= +char_("a-zA-Z0-9_.-");
+
     str %= quoted_string | unquoted_word;
 
     spaces = +(lit(' ') | lit('\n') | lit('\t'));
@@ -502,6 +529,7 @@ struct MonCapParser : qi::grammar<Iterator, MonCap()>
                  qi::attr(StringConstraint::MATCH_TYPE_REGEX) >> str;
     kv_pair = str >> (str_match | str_prefix | str_regex);
     kv_map %= kv_pair >> *(spaces >> kv_pair);
+
     command_match = -spaces >> lit("allow") >> spaces >> lit("command") >> (lit('=') | spaces)
 			    >> qi::attr(string()) >> qi::attr(string())
 			    >> str
@@ -545,9 +573,11 @@ struct MonCapParser : qi::grammar<Iterator, MonCap()>
 
     // moncap := grant [grant ...]
     grants %= (grant % (*lit(' ') >> (lit(';') | lit(',')) >> *lit(' ')));
+
     moncap = grants  [_val = phoenix::construct<MonCap>(_1)]; 
 
   }
+
   qi::rule<Iterator> spaces;
   qi::rule<Iterator, unsigned()> rwxa;
   qi::rule<Iterator, string()> quoted_string;
@@ -567,6 +597,11 @@ struct MonCapParser : qi::grammar<Iterator, MonCap()>
   qi::rule<Iterator, MonCap()> moncap;
 };
 
+// called by
+// AuthMonitor::prep_auth
+// AuthMonitor::valid_caps
+// MonCap::decode
+// Monitor::Monitor
 bool MonCap::parse(const string& str, ostream *err)
 {
   string s = str;
@@ -574,7 +609,9 @@ bool MonCap::parse(const string& str, ostream *err)
   string::iterator end = s.end();
 
   MonCapParser<string::iterator> g;
+
   bool r = qi::parse(iter, end, g, *this);
+
   //MonCapGrant foo;
   //bool r = qi::phrase_parse(iter, end, g, ascii::space, foo);
   if (r && iter == end) {

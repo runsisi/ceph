@@ -31,6 +31,8 @@ const std::string SERVICE_DAEMON_ERROR_COUNT_KEY("image_error_count");
 using librbd::util::create_async_context_callback;
 using librbd::util::create_context_callback;
 
+// created by
+// PoolReplayer::init
 template <typename I>
 InstanceReplayer<I>::InstanceReplayer(
     Threads<I> *threads, ServiceDaemon<I>* service_daemon,
@@ -129,6 +131,8 @@ void InstanceReplayer<I>::release_all(Context *on_finish) {
   gather_ctx->activate();
 }
 
+// called by
+// InstanceWatcher<I>::handle_image_acquire
 template <typename I>
 void InstanceReplayer<I>::acquire_image(InstanceWatcher<I> *instance_watcher,
                                         const std::string &global_image_id,
@@ -165,6 +169,8 @@ void InstanceReplayer<I>::acquire_image(InstanceWatcher<I> *instance_watcher,
   m_threads->work_queue->queue(on_finish, 0);
 }
 
+// called by
+// InstanceWatcher<I>::handle_image_release
 template <typename I>
 void InstanceReplayer<I>::release_image(const std::string &global_image_id,
                                         Context *on_finish) {

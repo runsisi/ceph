@@ -24,6 +24,9 @@ namespace mirror {
 
 using util::create_rados_callback;
 
+// called by
+// librbd::mirror_image_disable_internal
+// librbd::operation::DisableFeaturesRequest<I>::send_disable_mirror_image, force->false, remove->true
 template <typename I>
 DisableRequest<I>::DisableRequest(I *image_ctx, bool force, bool remove,
                                   Context *on_finish)
@@ -41,6 +44,7 @@ void DisableRequest<I>::send_get_mirror_image() {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
+  // to get mirror state of this image
   librados::ObjectReadOperation op;
   cls_client::mirror_image_get_start(&op, m_image_ctx->id);
 
@@ -112,7 +116,10 @@ Context *DisableRequest<I>::handle_get_tag_owner(int *result) {
     return m_on_finish;
   }
 
+  // 1) the image is primary or 2) non-primary, but force to disable mirror
+
   send_set_mirror_image();
+
   return nullptr;
 }
 
@@ -147,6 +154,7 @@ Context *DisableRequest<I>::handle_set_mirror_image(int *result) {
   }
 
   send_notify_mirroring_watcher();
+
   return nullptr;
 }
 
@@ -159,6 +167,7 @@ void DisableRequest<I>::send_notify_mirroring_watcher() {
   Context *ctx = util::create_context_callback<
     klass, &klass::handle_notify_mirroring_watcher>(this);
 
+  // no one cares this notification, coz MirroringWatcher never be instanced
   MirroringWatcher<I>::notify_image_updated(
     m_image_ctx->md_ctx, cls::rbd::MIRROR_IMAGE_STATE_DISABLING,
     m_image_ctx->id, m_mirror_image.global_image_id, ctx);
@@ -186,15 +195,21 @@ void DisableRequest<I>::send_promote_image() {
     return;
   }
 
+  // force to disable mirroring
+
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   // Not primary -- shouldn't have the journal open
+  // librbd::journal::StandardPolicy<I>::allocate_tag_on_lock will forbid the
+  // open of the journal, which results the error of acquiring the exclusive lock
   assert(m_image_ctx->journal == nullptr);
 
   using klass = DisableRequest<I>;
   Context *ctx = util::create_context_callback<
     klass, &klass::handle_promote_image>(this);
+
+  // force promote
   auto req = journal::PromoteRequest<I>::create(m_image_ctx, true, ctx);
   req->send();
 }
@@ -210,6 +225,7 @@ Context *DisableRequest<I>::handle_promote_image(int *result) {
   }
 
   send_get_clients();
+
   return nullptr;
 }
 
@@ -223,6 +239,7 @@ void DisableRequest<I>::send_get_clients() {
     klass, &klass::handle_get_clients>(this);
 
   std::string header_oid = ::journal::Journaler::header_oid(m_image_ctx->id);
+
   m_clients.clear();
   cls::journal::client::client_list(m_image_ctx->md_ctx, header_oid, &m_clients,
                                     ctx);
@@ -245,6 +262,7 @@ Context *DisableRequest<I>::handle_get_clients(int *result) {
 
   for (auto client : m_clients) {
     journal::ClientData client_data;
+
     bufferlist::iterator bl_it = client.data.begin();
     try {
       ::decode(client_data, bl_it);
@@ -259,6 +277,8 @@ Context *DisableRequest<I>::handle_get_clients(int *result) {
       continue;
     }
 
+    // mirror peer client, we are to clear its sync points and unregister it
+
     if (m_current_ops.find(client.id) != m_current_ops.end()) {
       // Should not happen.
       lderr(cct) << this << " " << __func__ << ": clients with the same id "
@@ -266,6 +286,7 @@ Context *DisableRequest<I>::handle_get_clients(int *result) {
       continue;
     }
 
+    // std::map<std::string, int>
     m_current_ops[client.id] = 0;
     m_ret[client.id] = 0;
 
@@ -280,7 +301,7 @@ Context *DisableRequest<I>::handle_get_clients(int *result) {
       // no snaps to remove
       send_unregister_client(client.id);
     }
-  }
+  } // for-each m_clients
 
   if (m_current_ops.empty()) {
     if (m_error_result < 0) {
@@ -293,6 +314,9 @@ Context *DisableRequest<I>::handle_get_clients(int *result) {
     // no mirror clients to unregister
     send_remove_mirror_image();
   }
+
+  // if there is any in progress sync point removal process, then wait
+  // these process to finish
 
   return nullptr;
 }
@@ -307,6 +331,7 @@ void DisableRequest<I>::send_remove_snap(const std::string &client_id,
 
   assert(m_lock.is_locked());
 
+  // will be decreased by DisableRequest<I>::handle_remove_snap
   m_current_ops[client_id]++;
 
   Context *ctx = create_context_callback(
@@ -331,6 +356,8 @@ Context *DisableRequest<I>::handle_remove_snap(int *result,
   Mutex::Locker locker(m_lock);
 
   assert(m_current_ops[client_id] > 0);
+
+  // was increased by DisableRequest<I>::send_remove_snap
   m_current_ops[client_id]--;
 
   if (*result < 0 && *result != -ENOENT) {
@@ -341,6 +368,10 @@ Context *DisableRequest<I>::handle_remove_snap(int *result,
   }
 
   if (m_current_ops[client_id] == 0) {
+
+    // all sync points for this mirror peer client have cleared, now
+    // unregister the mirror peer client
+
     send_unregister_client(client_id);
   }
 
@@ -354,12 +385,16 @@ void DisableRequest<I>::send_unregister_client(
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   assert(m_lock.is_locked());
+
   assert(m_current_ops[client_id] == 0);
 
   Context *ctx = create_context_callback(
     &DisableRequest<I>::handle_unregister_client, client_id);
 
   if (m_ret[client_id] < 0) {
+
+    // failed to remove some sync points
+
     m_image_ctx->op_work_queue->queue(ctx, m_ret[client_id]);
     return;
   }
@@ -382,7 +417,13 @@ Context *DisableRequest<I>::handle_unregister_client(
   ldout(cct, 10) << this << " " << __func__ << ": r=" << *result << dendl;
 
   Mutex::Locker locker(m_lock);
+
+  // m_current_ops[client_id] was increased by DisableRequest<I>::send_remove_snap,
+  // and decreased by DisableRequest<I>::handle_remove_snap
   assert(m_current_ops[client_id] == 0);
+
+  // all sync points have been cleared for this mirror peer client, and
+  // the mirror peer client has been unregistered from the journal header
   m_current_ops.erase(client_id);
 
   if (*result < 0 && *result != -ENOENT) {
@@ -392,15 +433,24 @@ Context *DisableRequest<I>::handle_unregister_client(
   }
 
   if (!m_current_ops.empty()) {
+
+    // not all mirror peer clients have unregistered
+
     return nullptr;
   }
 
+  // all mirror peer clients have finished their snap removal process
+
   if (m_error_result < 0) {
+
+    // failed to unregister this mirror peer client
+
     *result = m_error_result;
     return m_on_finish;
   }
 
   send_get_clients();
+
   return nullptr;
 }
 
@@ -410,6 +460,8 @@ void DisableRequest<I>::send_remove_mirror_image() {
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   librados::ObjectWriteOperation op;
+
+  // remove omap "image_", "global_", "status_global_" from RBD_MIRRORING object
   cls_client::mirror_image_remove(&op, m_image_ctx->id);
 
   using klass = DisableRequest<I>;
@@ -479,6 +531,7 @@ Context *DisableRequest<I>::create_context_callback(
 
   return new FunctionContext([this, handle, client_id](int r) {
       Context *on_finish = (this->*handle)(&r, client_id);
+
       if (on_finish != nullptr) {
         on_finish->complete(r);
         delete this;

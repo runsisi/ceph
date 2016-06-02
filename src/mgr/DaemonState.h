@@ -61,11 +61,15 @@ class PerfCounterInstance
 
 typedef std::map<std::string, PerfCounterType> PerfCounterTypes;
 
+// created by
+// as member of:
+// DaemonState
 // Performance counters for one daemon
 class DaemonPerfCounters
 {
   public:
   // The record of perf stat types, shared between daemons
+  // NOTE: types is a reference of DaemonStateIndex::types, see DaemonState::DaemonState
   PerfCounterTypes &types;
 
   DaemonPerfCounters(PerfCounterTypes &types_)
@@ -82,6 +86,10 @@ class DaemonPerfCounters
   }
 };
 
+// created by
+// Mgr::load_all_metadata
+// MetadataUpdate::finish
+// Mgr::load_all_metadata
 // The state that we store about one daemon
 class DaemonState
 {
@@ -109,6 +117,7 @@ class DaemonState
   // The perf counters received in MMgrReport messages
   DaemonPerfCounters perf_counters;
 
+  // NOTE: the parameter types_ is a reference of DaemonStateIndex::types
   DaemonState(PerfCounterTypes &types_)
     : perf_counters(types_)
   {
@@ -119,8 +128,8 @@ typedef std::shared_ptr<DaemonState> DaemonStatePtr;
 typedef std::map<DaemonKey, DaemonStatePtr> DaemonStateCollection;
 
 
-
-
+// created by
+// as member of Mgr
 /**
  * Fuse the collection of per-daemon metadata from Ceph into
  * a view that can be queried by service type, ID or also
@@ -132,7 +141,11 @@ class DaemonStateIndex
   mutable RWLock lock = {"DaemonStateIndex", true, true, true};
 
   std::map<std::string, DaemonStateCollection> by_server;
+
+  // std::map<DaemonKey, DaemonStatePtr>
   DaemonStateCollection all;
+
+  // std::pair<entity_type_t, std::string>
   std::set<DaemonKey> updating;
 
   void _erase(const DaemonKey& dmk);
@@ -142,6 +155,7 @@ class DaemonStateIndex
 
   // FIXME: shouldn't really be public, maybe construct DaemonState
   // objects internally to avoid this.
+  // std::map<std::string, PerfCounterType>
   PerfCounterTypes types;
 
   void insert(DaemonStatePtr dm);

@@ -26,6 +26,8 @@
 namespace librbd {
 namespace operation {
 
+// created by
+// TrimRequest<I>::send_copyup_objects
 template <typename I>
 class C_CopyupObject : public C_AsyncObjectThrottle<I> {
 public:
@@ -38,17 +40,20 @@ public:
 
   int send() override {
     I &image_ctx = this->m_image_ctx;
+
     assert(image_ctx.owner_lock.is_locked());
     assert(image_ctx.exclusive_lock == nullptr ||
            image_ctx.exclusive_lock->is_lock_owner());
 
     string oid = image_ctx.get_object_name(m_object_no);
+
     ldout(image_ctx.cct, 10) << "removing (with copyup) " << oid << dendl;
 
     auto req = io::ObjectRequest<I>::create_discard(
       &image_ctx, oid, m_object_no, 0, image_ctx.layout.object_size, m_snapc,
       false, false, {}, this);
     req->send();
+
     return 0;
   }
 private:
@@ -56,6 +61,8 @@ private:
   uint64_t m_object_no;
 };
 
+// created by
+// TrimRequest<I>::send_remove_objects
 template <typename I>
 class C_RemoveObject : public C_AsyncObjectThrottle<I> {
 public:
@@ -67,12 +74,14 @@ public:
 
   int send() override {
     I &image_ctx = this->m_image_ctx;
+
     assert(image_ctx.owner_lock.is_locked());
     assert(image_ctx.exclusive_lock == nullptr ||
            image_ctx.exclusive_lock->is_lock_owner());
 
     {
       RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
       if (image_ctx.object_map != nullptr &&
           !image_ctx.object_map->object_may_exist(m_object_no)) {
         return 1;
@@ -80,6 +89,7 @@ public:
     }
 
     string oid = image_ctx.get_object_name(m_object_no);
+
     ldout(image_ctx.cct, 10) << "removing " << oid << dendl;
 
     librados::AioCompletion *rados_completion =
@@ -94,6 +104,11 @@ private:
   uint64_t m_object_no;
 };
 
+// created by
+// RemoveRequest<I>::trim_image
+// RebuildObjectMapRequest<I>::send_trim_image
+// ResizeRequest<I>::send_trim_image
+// librbd::trim_image
 template <typename I>
 TrimRequest<I>::TrimRequest(I &image_ctx, Context *on_finish,
                             uint64_t original_size, uint64_t new_size,
@@ -101,7 +116,7 @@ TrimRequest<I>::TrimRequest(I &image_ctx, Context *on_finish,
   : AsyncRequest<I>(image_ctx, on_finish), m_new_size(new_size),
     m_prog_ctx(prog_ctx)
 {
-  uint64_t period = image_ctx.get_stripe_period();
+  uint64_t period = image_ctx.get_stripe_period(); // stripe_count * (1ull << order);
   uint64_t new_num_periods = ((m_new_size + period - 1) / period);
   m_delete_off = std::min(new_num_periods * period, original_size);
   // first object we can delete free and clear
@@ -121,8 +136,10 @@ template <typename I>
 bool TrimRequest<I>::should_complete(int r)
 {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " should_complete: r=" << r << dendl;
+
   if (r == -ERESTART) {
     ldout(cct, 5) << "trim operation interrupted" << dendl;
     return true;
@@ -132,6 +149,7 @@ bool TrimRequest<I>::should_complete(int r)
   }
 
   RWLock::RLocker owner_lock(image_ctx.owner_lock);
+
   switch (m_state) {
   case STATE_PRE_TRIM:
     ldout(cct, 5) << " PRE_TRIM" << dendl;
@@ -175,9 +193,13 @@ void TrimRequest<I>::send() {
   send_pre_trim();
 }
 
+// called by
+// TrimRequest<I>::should_complete
+// TrimRequest<I>::send_pre_copyup
 template<typename I>
 void TrimRequest<I>::send_pre_trim() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
 
   if (m_delete_start >= m_num_objects) {
@@ -207,20 +229,25 @@ void TrimRequest<I>::send_pre_trim() {
   send_copyup_objects();
 }
 
+// called by
+// TrimRequest<I>::send
 template<typename I>
 void TrimRequest<I>::send_copyup_objects() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
 
   ::SnapContext snapc;
   bool has_snapshots;
   uint64_t parent_overlap;
+
   {
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
     RWLock::RLocker parent_locker(image_ctx.parent_lock);
 
     snapc = image_ctx.snapc;
     has_snapshots = !image_ctx.snaps.empty();
+
     int r = image_ctx.get_parent_overlap(CEPH_NOSNAP, &parent_overlap);
     assert(r == 0);
   }
@@ -257,6 +284,7 @@ void TrimRequest<I>::send_copyup_objects() {
 template <typename I>
 void TrimRequest<I>::send_remove_objects() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
 
   ldout(image_ctx.cct, 5) << this << " send_remove_objects: "
@@ -277,10 +305,12 @@ void TrimRequest<I>::send_remove_objects() {
 template<typename I>
 void TrimRequest<I>::send_post_trim() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
 
   {
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     if (image_ctx.object_map != nullptr) {
       ldout(image_ctx.cct, 5) << this << " send_post_trim:"
                               << " delete_start_min=" << m_delete_start_min
@@ -290,6 +320,7 @@ void TrimRequest<I>::send_post_trim() {
       assert(image_ctx.exclusive_lock->is_lock_owner());
 
       RWLock::WLocker object_map_locker(image_ctx.object_map_lock);
+
       if (image_ctx.object_map->template aio_update<AsyncRequest<I> >(
             CEPH_NOSNAP, m_delete_start_min, m_num_objects, OBJECT_NONEXISTENT,
             OBJECT_PENDING, {}, this)) {
@@ -304,8 +335,11 @@ void TrimRequest<I>::send_post_trim() {
 template <typename I>
 void TrimRequest<I>::send_clean_boundary() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
+
   CephContext *cct = image_ctx.cct;
+
   if (m_delete_off <= m_new_size) {
     send_finish(0);
     return;
@@ -314,15 +348,20 @@ void TrimRequest<I>::send_clean_boundary() {
   // should have been canceled prior to releasing lock
   assert(image_ctx.exclusive_lock == nullptr ||
          image_ctx.exclusive_lock->is_lock_owner());
+
   uint64_t delete_len = m_delete_off - m_new_size;
+
   ldout(image_ctx.cct, 5) << this << " send_clean_boundary: "
 			    << " delete_off=" << m_delete_off
 			    << " length=" << delete_len << dendl;
+
   m_state = STATE_CLEAN_BOUNDARY;
 
   ::SnapContext snapc;
+
   {
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     snapc = image_ctx.snapc;
   }
 
@@ -334,9 +373,11 @@ void TrimRequest<I>::send_clean_boundary() {
 
   ContextCompletion *completion =
     new ContextCompletion(this->create_async_callback_context(), true);
+
   for (vector<ObjectExtent>::iterator p = extents.begin();
        p != extents.end(); ++p) {
     ldout(cct, 20) << " ex " << *p << dendl;
+
     Context *req_comp = new C_ContextCompletion(*completion);
 
     if (p->offset == 0) {
@@ -349,12 +390,14 @@ void TrimRequest<I>::send_clean_boundary() {
                                                     true, {}, req_comp);
     req->send();
   }
+
   completion->finish_adding_requests();
 }
 
 template <typename I>
 void TrimRequest<I>::send_finish(int r) {
   m_state = STATE_FINISHED;
+
   this->async_complete(r);
 }
 

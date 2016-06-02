@@ -44,6 +44,8 @@ public:
     STATE_ADD_SNAPSHOT
   };
 
+  // created by
+  // librbd::ObjectMap::snapshot_add
   SnapshotCreateRequest(ImageCtx &image_ctx, ceph::BitVector<2> *object_map,
                         uint64_t snap_id, Context *on_finish)
     : Request(image_ctx, snap_id, on_finish),

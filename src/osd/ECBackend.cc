@@ -208,6 +208,8 @@ PGBackend::RecoveryHandle *ECBackend::open_recovery_op()
   return new ECRecoveryHandle;
 }
 
+// called by
+// OnRecoveryReadComplete::finish
 void ECBackend::_failed_push(const hobject_t &hoid,
   pair<RecoveryMessages *, ECBackend::read_result_t &> &in)
 {
@@ -339,7 +341,9 @@ void ECBackend::handle_recovery_push(
   if (op.after_progress.data_complete && !oneshot) {
     dout(10) << __func__ << ": Removing oid "
 	     << tobj.hobj << " from the temp collection" << dendl;
+
     clear_temp_obj(tobj.hobj);
+
     m->t.remove(coll, ghobject_t(
 	op.soid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
     m->t.collection_move_rename(
@@ -347,10 +351,12 @@ void ECBackend::handle_recovery_push(
       coll, ghobject_t(
 	op.soid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
   }
+
   if (op.after_progress.data_complete) {
     if ((get_parent()->pgb_is_primary())) {
       assert(recovery_ops.count(op.soid));
       assert(recovery_ops[op.soid].obc);
+
       get_parent()->on_local_recover(
 	op.soid,
 	op.recovery_info,
@@ -366,6 +372,7 @@ void ECBackend::handle_recovery_push(
 	&m->t);
     }
   }
+
   m->push_replies[get_parent()->primary_shard()].push_back(PushReplyOp());
   m->push_replies[get_parent()->primary_shard()].back().soid = op.soid;
 }
@@ -537,6 +544,7 @@ void ECBackend::continue_recovery_op(
   RecoveryMessages *m)
 {
   dout(10) << __func__ << ": continuing " << op << dendl;
+
   while (1) {
     switch (op.state) {
     case RecoveryOp::IDLE: {
@@ -567,6 +575,7 @@ void ECBackend::continue_recovery_op(
 	recovery_ops.erase(op.hoid);
 	return;
       }
+
       m->read(
 	this,
 	op.hoid,
@@ -640,32 +649,39 @@ void ECBackend::continue_recovery_op(
       if (op.waiting_on_pushes.empty()) {
 	if (op.recovery_progress.data_complete) {
 	  op.state = RecoveryOp::COMPLETE;
+
 	  for (set<pg_shard_t>::iterator i = op.missing_on.begin();
 	       i != op.missing_on.end();
 	       ++i) {
 	    if (*i != get_parent()->primary_shard()) {
 	      dout(10) << __func__ << ": on_peer_recover on " << *i
 		       << ", obj " << op.hoid << dendl;
+
 	      get_parent()->on_peer_recover(
 		*i,
 		op.hoid,
 		op.recovery_info);
 	    }
 	  }
+
 	  object_stat_sum_t stat;
 	  stat.num_bytes_recovered = op.recovery_info.size;
 	  stat.num_keys_recovered = 0; // ??? op ... omap_entries.size(); ?
 	  stat.num_objects_recovered = 1;
 	  get_parent()->on_global_recover(op.hoid, stat, false);
 	  dout(10) << __func__ << ": WRITING return " << op << dendl;
+
 	  recovery_ops.erase(op.hoid);
 	  return;
 	} else {
 	  op.state = RecoveryOp::IDLE;
+
 	  dout(10) << __func__ << ": WRITING continue " << op << dendl;
+
 	  continue;
 	}
       }
+
       return;
     }
     // should never be called once complete
@@ -677,18 +693,26 @@ void ECBackend::continue_recovery_op(
   }
 }
 
+// called by
+// PrimaryLogPG::maybe_kick_recovery
+// PrimaryLogPG::recover_primary, which called by PrimaryLogPG::start_recovery_ops
+// PrimaryLogPG::recover_replicas, which called by PrimaryLogPG::start_recovery_ops
+// PrimaryLogPG::recover_backfill, which called by PrimaryLogPG::start_recovery_ops
 void ECBackend::run_recovery_op(
   RecoveryHandle *_h,
   int priority)
 {
   ECRecoveryHandle *h = static_cast<ECRecoveryHandle*>(_h);
+
   RecoveryMessages m;
   for (list<RecoveryOp>::iterator i = h->ops.begin();
        i != h->ops.end();
        ++i) {
     dout(10) << __func__ << ": starting " << *i << dendl;
     assert(!recovery_ops.count(i->hoid));
+
     RecoveryOp &op = recovery_ops.insert(make_pair(i->hoid, *i)).first->second;
+
     continue_recovery_op(op, &m);
   }
 
@@ -697,6 +721,10 @@ void ECBackend::run_recovery_op(
   delete _h;
 }
 
+// called by
+// PrimaryLogPG::recover_missing,
+// PrimaryLogPG::prep_object_replica_pushes,
+// PrimaryLogPG::prep_backfill_object_push
 int ECBackend::recover_object(
   const hobject_t &hoid,
   eversion_t v,
@@ -705,16 +733,20 @@ int ECBackend::recover_object(
   RecoveryHandle *_h)
 {
   ECRecoveryHandle *h = static_cast<ECRecoveryHandle*>(_h);
+
   h->ops.push_back(RecoveryOp());
+
   h->ops.back().v = v;
   h->ops.back().hoid = hoid;
   h->ops.back().obc = obc;
   h->ops.back().recovery_info.soid = hoid;
   h->ops.back().recovery_info.version = v;
+
   if (obc) {
     h->ops.back().recovery_info.size = obc->obs.oi.size;
     h->ops.back().recovery_info.oi = obc->obs.oi;
   }
+
   if (hoid.is_snap()) {
     if (obc) {
       assert(obc->ssc);
@@ -726,27 +758,36 @@ int ECBackend::recover_object(
       assert(0 == "neither obc nor head set for a snap object");
     }
   }
+
   h->ops.back().recovery_progress.omap_complete = true;
+
   for (set<pg_shard_t>::const_iterator i =
 	 get_parent()->get_actingbackfill_shards().begin();
        i != get_parent()->get_actingbackfill_shards().end();
        ++i) {
     dout(10) << "checking " << *i << dendl;
+
     if (get_parent()->get_shard_missing(*i).is_missing(hoid)) {
       h->ops.back().missing_on.insert(*i);
       h->ops.back().missing_on_shards.insert(i->shard);
     }
   }
+
   dout(10) << __func__ << ": built op " << h->ops.back() << dendl;
   return 0;
 }
 
+// called by
+// PrimaryLogPG::do_request
 bool ECBackend::can_handle_while_inactive(
   OpRequestRef _op)
 {
   return false;
 }
 
+// called by
+// PrimaryLogPG::do_request, i.e., the Op has been dequeued from
+// the OSD::OpShardedWQ, so the method name may be a little misleading
 bool ECBackend::_handle_message(
   OpRequestRef _op)
 {
@@ -894,6 +935,7 @@ void ECBackend::sub_write_applied(
   ceph_tid_t tid, eversion_t version,
   const ZTracer::Trace &trace) {
   parent->op_applied(version);
+
   if (get_parent()->pgb_is_primary()) {
     ECSubWriteReply reply;
     reply.from = get_parent()->whoami_shard();
@@ -927,14 +969,20 @@ void ECBackend::handle_sub_write(
 {
   if (msg)
     msg->mark_started();
+
   trace.event("handle_sub_write");
+
   assert(!get_parent()->get_log().get_missing().is_missing(op.soid));
+
   if (!get_parent()->pgb_is_primary())
     get_parent()->update_stats(op.stats);
+
   ObjectStore::Transaction localt;
+
   if (!op.temp_added.empty()) {
     add_temp_objs(op.temp_added);
   }
+
   if (op.backfill) {
     for (set<hobject_t>::iterator i = op.temp_removed.begin();
 	 i != op.temp_removed.end();
@@ -949,7 +997,9 @@ void ECBackend::handle_sub_write(
 	  get_parent()->whoami_shard().shard));
     }
   }
+
   clear_temp_objs(op.temp_removed);
+
   get_parent()->log_operation(
     op.log_entries,
     op.updated_hit_set_history,
@@ -967,6 +1017,7 @@ void ECBackend::handle_sub_write(
     dout(10) << "Queueing onreadable_sync: " << on_local_applied_sync << dendl;
     localt.register_on_applied_sync(on_local_applied_sync);
   }
+
   localt.register_on_commit(
     get_parent()->bless_context(
       new SubWriteCommitted(
@@ -976,10 +1027,12 @@ void ECBackend::handle_sub_write(
   localt.register_on_applied(
     get_parent()->bless_context(
       new SubWriteApplied(this, msg, op.tid, op.at_version, trace)));
+
   vector<ObjectStore::Transaction> tls;
   tls.reserve(2);
   tls.push_back(std::move(op.t));
   tls.push_back(std::move(localt));
+
   get_parent()->queue_transactions(tls, msg);
 }
 
@@ -1373,6 +1426,8 @@ void ECBackend::filter_read_op(
   }
 }
 
+// called by
+// ReplicatedPG::check_recovery_sources
 void ECBackend::check_recovery_sources(const OSDMapRef& osdmap)
 {
   set<ceph_tid_t> tids_to_filter;
@@ -1396,6 +1451,9 @@ void ECBackend::check_recovery_sources(const OSDMapRef& osdmap)
   }
 }
 
+// called by
+// ReplicatedPG::on_shutdown
+// ReplicatedPG::on_change, called by PG::start_peering_interval
 void ECBackend::on_change()
 {
   dout(10) << __func__ << dendl;
@@ -1409,6 +1467,7 @@ void ECBackend::on_change()
   for (auto &&op: tid_to_op_map) {
     cache.release_write_pin(op.second.pin);
   }
+
   tid_to_op_map.clear();
 
   for (map<ceph_tid_t, ReadOp>::iterator i = tid_to_read_map.begin();
@@ -1423,12 +1482,17 @@ void ECBackend::on_change()
       j->second.cb = nullptr;
     }
   }
+
   tid_to_read_map.clear();
   in_progress_client_reads.clear();
   shard_to_read_map.clear();
+
   clear_recovery_state();
 }
 
+// called by
+// ECBackend::on_change
+// ReplicatedPG::_clear_recovery_state, which called by PG::clear_recovery_state
 void ECBackend::clear_recovery_state()
 {
   recovery_ops.clear();
@@ -1456,6 +1520,8 @@ void ECBackend::dump_recovery_info(Formatter *f) const
   f->close_section();
 }
 
+// called by
+// PrimaryLogPG::issue_repop
 void ECBackend::submit_transaction(
   const hobject_t &hoid,
   const object_stat_sum_t &delta_stats,
@@ -1474,7 +1540,9 @@ void ECBackend::submit_transaction(
   )
 {
   assert(!tid_to_op_map.count(tid));
+
   Op *op = &(tid_to_op_map[tid]);
+
   op->hoid = hoid;
   op->delta_stats = delta_stats;
   op->version = at_version;
@@ -1492,7 +1560,9 @@ void ECBackend::submit_transaction(
     op->trace = client_op->pg_trace;
   
   dout(10) << __func__ << ": op " << *op << " starting" << dendl;
+
   start_rmw(op, std::move(t));
+
   dout(10) << "onreadable_sync: " << op->on_local_applied_sync << dendl;
 }
 
@@ -1813,6 +1883,7 @@ void ECBackend::start_rmw(Op *op, PGTransactionUPtr &&t)
   dout(10) << __func__ << ": " << *op << dendl;
 
   waiting_state.push_back(*op);
+
   check_ops();
 }
 
@@ -1996,7 +2067,10 @@ bool ECBackend::try_reads_to_commit()
     map<shard_id_t, ObjectStore::Transaction>::iterator iter =
       trans.find(i->shard);
     assert(iter != trans.end());
+
+    // send op_t? if the peer is a backfill target, do not send op_t
     bool should_send = get_parent()->should_send_op(*i, op->hoid);
+
     const pg_stat_t &stats =
       should_send ?
       get_info().stats :
@@ -2030,14 +2104,17 @@ bool ECBackend::try_reads_to_commit()
       local_write_op.claim(sop);
     } else {
       MOSDECSubOpWrite *r = new MOSDECSubOpWrite(sop);
+
       r->pgid = spg_t(get_parent()->primary_spg_t().pgid, i->shard);
       r->map_epoch = get_parent()->get_epoch();
       r->min_epoch = get_parent()->get_interval_start_epoch();
       r->trace = trace;
+
       get_parent()->send_message_osd_cluster(
 	i->osd, r, get_parent()->get_epoch());
     }
-  }
+  } // for-each PG::actingbackfill
+
   if (should_write_local) {
     handle_sub_write(
       get_parent()->whoami_shard(),
@@ -2105,6 +2182,10 @@ void ECBackend::check_ops()
 	 try_finish_rmw());
 }
 
+// called by
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_SYNC_READ, CEPH_OSD_OP_READ,
+// CEPH_OSD_OP_MAPEXT
+// PrimaryLogPG::fill_in_copy_get
 int ECBackend::objects_read_sync(
   const hobject_t &hoid,
   uint64_t off,
@@ -2115,6 +2196,8 @@ int ECBackend::objects_read_sync(
   return -EOPNOTSUPP;
 }
 
+// called by
+// PrimaryLogPG::OpContext::start_async_reads
 void ECBackend::objects_read_async(
   const hobject_t &hoid,
   const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
@@ -2382,6 +2465,8 @@ int ECBackend::send_all_remaining_reads(
   return 0;
 }
 
+// called by
+// PrimaryLogPG::get_object_context
 int ECBackend::objects_get_attrs(
   const hobject_t &hoid,
   map<string, bufferlist> *out)
@@ -2417,6 +2502,8 @@ void ECBackend::rollback_append(
       old_size));
 }
 
+// called by
+// PGBackend::be_scan_list
 void ECBackend::be_deep_scrub(
   const hobject_t &poid,
   uint32_t seed,

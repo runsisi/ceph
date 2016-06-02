@@ -17,6 +17,8 @@
 
 #include "messages/PaxosServiceMessage.h"
 
+// created by
+// OSDService::prepare_to_stop
 class MOSDMarkMeDown : public PaxosServiceMessage {
 
   static const int HEAD_VERSION = 2;

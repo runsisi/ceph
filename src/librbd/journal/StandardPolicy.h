@@ -18,12 +18,21 @@ public:
   StandardPolicy(ImageCtxT *image_ctx) : m_image_ctx(image_ctx) {
   }
 
+  // checked by Journal<I>::is_journal_appending
   bool append_disabled() const override {
     return false;
   }
+
+  // checked by
+  // AcquireRequest<I>::send_open_journal and
+  // RefreshRequest<I>::send_v2_open_journal
   bool journal_disabled() const override {
     return false;
   }
+
+  // allocate tag if we are the primary, else return -EPERM
+  // called by
+  // AcquireRequest<I>::handle_open_journal -> AcquireRequest<I>::send_allocate_journal_tag
   void allocate_tag_on_lock(Context *on_finish) override;
 
 private:

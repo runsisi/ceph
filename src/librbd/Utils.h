@@ -20,6 +20,13 @@ namespace util {
 
 namespace detail {
 
+// rados_callback, rados_state_callback:
+//   (obj->*MF)(rados_aio_get_return_value(c))
+// C_CallbackAdapter, C_StateCallbackAdapter:
+//   (obj->*MF)(r)
+// C_AsyncCallback:
+//   op_work_queue->queue(on_finish, r)
+
 template <typename T>
 void rados_callback(rados_completion_t c, void *arg) {
   reinterpret_cast<T*>(arg)->complete(rados_aio_get_return_value(c));
@@ -28,17 +35,23 @@ void rados_callback(rados_completion_t c, void *arg) {
 template <typename T, void(T::*MF)(int)>
 void rados_callback(rados_completion_t c, void *arg) {
   T *obj = reinterpret_cast<T*>(arg);
+
   int r = rados_aio_get_return_value(c);
+
   (obj->*MF)(r);
 }
 
 template <typename T, Context*(T::*MF)(int*), bool destroy>
 void rados_state_callback(rados_completion_t c, void *arg) {
   T *obj = reinterpret_cast<T*>(arg);
+
   int r = rados_aio_get_return_value(c);
+
   Context *on_finish = (obj->*MF)(&r);
+
   if (on_finish != nullptr) {
     on_finish->complete(r);
+
     if (destroy) {
       delete obj;
     }
@@ -67,13 +80,25 @@ public:
 
 protected:
   void complete(int r) override {
+    // call member function T::MF first
     Context *on_finish = (obj->*MF)(&r);
+
+    // if T::MF returns nullptr which means the T::MF will continue the
+    // state machine, while if it returns non-nullptr which means the
+    // state machine are to be terminated here
+
     if (on_finish != nullptr) {
+
+      // terminate the state machine
+
       on_finish->complete(r);
+
       if (destroy) {
         delete obj;
       }
     }
+
+    // delete this wrapper context
     Context::complete(r);
   }
   void finish(int r) override {
@@ -130,6 +155,7 @@ librados::AioCompletion *create_rados_callback(T *obj) {
 
 template <typename T, void(T::*MF)(int) = &T::complete>
 Context *create_context_callback(T *obj) {
+  // detail::C_CallbackAdapter<T, MF>::finish will call (obj->*MF)(r)
   return new detail::C_CallbackAdapter<T, MF>(obj);
 }
 

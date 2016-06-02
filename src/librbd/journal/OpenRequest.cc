@@ -24,6 +24,9 @@ using librbd::util::create_async_context_callback;
 using librbd::util::create_context_callback;
 using util::C_DecodeTags;
 
+// created by
+// Journal<I>::request_resync
+// Journal<I>::create_journaler
 template <typename I>
 OpenRequest<I>::OpenRequest(I *image_ctx, Journaler *journaler, Mutex *lock,
                             journal::ImageClientMeta *client_meta,
@@ -44,6 +47,7 @@ void OpenRequest<I>::send_init() {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 20) << dendl;
 
+  // JournalMetadata::init
   m_journaler->init(create_async_context_callback(
     *m_image_ctx, create_context_callback<
       OpenRequest<I>, &OpenRequest<I>::handle_init>(this)));
@@ -109,10 +113,12 @@ void OpenRequest<I>::send_get_tags() {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 20) << dendl;
 
+  // util::C_DecodeTags::process
   C_DecodeTags *tags_ctx = new C_DecodeTags(
     cct, m_lock, m_tag_tid, m_tag_data, create_async_context_callback(
       *m_image_ctx, create_context_callback<
         OpenRequest<I>, &OpenRequest<I>::handle_get_tags>(this)));
+
   m_journaler->get_tags(m_tag_class, &tags_ctx->tags, tags_ctx);
 }
 

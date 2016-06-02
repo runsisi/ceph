@@ -19,13 +19,17 @@
 #define dout_subsys ceph_subsys_auth
 
 
+// called by
+// AuthMonitor::prep_auth
 AuthServiceHandler *get_auth_service_handler(int type, CephContext *cct, KeyServer *ks)
 {
   switch (type) {
   case CEPH_AUTH_CEPHX:
+    // the ks is &Monitor::key_server
     return new CephxServiceHandler(cct, ks);
   case CEPH_AUTH_NONE:
     return new AuthNoneServiceHandler(cct);
   }
+
   return NULL;
 }

@@ -31,11 +31,14 @@ private:
 
     C_ReadRequest(AioCompletion *aio_completion);
 
+    // aio_completion->complete_request(r);
     void finish(int r) override;
   };
 
 public:
 
+  // created by
+  // ImageReadRequest<I>::send_image_cache_request
   struct C_ImageReadRequest : public C_ReadRequest {
     Extents image_extents;
 
@@ -47,6 +50,7 @@ public:
     void finish(int r) override;
   };
 
+  // never created directly
   struct C_SparseReadRequestBase : public C_ReadRequest {
     bool ignore_enoent;
 

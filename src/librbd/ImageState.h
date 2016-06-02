@@ -44,6 +44,10 @@ public:
 		const std::string &snap_name,
 		Context *on_finish);
 
+  // set ImageState::m_state to STATE_PREPARING_LOCK, this is an transition
+  // state, so effectively disabled anyone else to modify the ImageState
+  // state machine, i.e., locked the ImageState state machine,
+  // see ImageState<I>::execute_action_unlock
   void prepare_lock(Context *on_ready);
   void handle_prepare_lock_complete();
 
@@ -77,7 +81,8 @@ private:
     uint64_t refresh_seq = 0;
     cls::rbd::SnapshotNamespace snap_namespace;
     std::string snap_name;
-    Context *on_ready = nullptr;
+
+    Context *on_ready = nullptr; // used for prepare_lock only
 
     Action(ActionType action_type) : action_type(action_type) {
     }

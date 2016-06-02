@@ -73,8 +73,8 @@ protected:
   void load_all_metadata();
   void init();
 
-  bool initialized;
-  bool initializing;
+  bool initialized; // set by Mgr::init
+  bool initializing; // set by Mgr::background_init
 
 public:
   Mgr(MonClient *monc_, const MgrMap& mgrmap,

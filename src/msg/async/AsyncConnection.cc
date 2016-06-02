@@ -117,6 +117,7 @@ static void alloc_aligned_buffer(bufferlist& data, unsigned len, unsigned off)
   data.push_back(std::move(ptr));
 }
 
+// called by AsyncMessenger::add_accept, AsyncMessenger::create_connect
 AsyncConnection::AsyncConnection(CephContext *cct, AsyncMessenger *m, DispatchQueue *q,
                                  Worker *w)
   : Connection(cct, m), delay_state(NULL), async_msgr(m), conn_id(q->get_id()),

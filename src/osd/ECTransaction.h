@@ -194,6 +194,6 @@ namespace ECTransaction {
     set<hobject_t> *temp_added,
     set<hobject_t> *temp_removed,
     DoutPrefixProvider *dpp);
-};
+}; // namespace ECTransaction
 
 #endif

@@ -188,6 +188,7 @@ public:
     for (Commands::const_iterator i = commands.begin(); i != commands.end();
 	 ++i) {
       (void)admin_socket->unregister_command(i->first);
+
       delete i->second;
     }
   }
@@ -196,11 +197,15 @@ public:
 	    bufferlist& out) override {
     Commands::const_iterator i = commands.find(command);
     assert(i != commands.end());
+
     Formatter *f = Formatter::create(format);
     stringstream ss;
+
     bool r = i->second->call(f, &ss);
+
     delete f;
     out.append(ss);
+
     return r;
   }
 
@@ -213,6 +218,8 @@ private:
 
 } // anonymous namespace
 
+// created by
+// Mirror::update_pool_replayers for each <pool, peer> pair
 PoolReplayer::PoolReplayer(Threads<librbd::ImageCtx> *threads,
                            ServiceDaemon<librbd::ImageCtx>* service_daemon,
 			   int64_t local_pool_id, const peer_t &peer,
@@ -238,6 +245,8 @@ PoolReplayer::~PoolReplayer()
 
 bool PoolReplayer::is_blacklisted() const {
   Mutex::Locker locker(m_lock);
+
+  // was set by Replayer::run
   return m_blacklisted;
 }
 
@@ -250,6 +259,8 @@ bool PoolReplayer::is_running() const {
   return m_pool_replayer_thread.is_started();
 }
 
+// called by
+// Mirror::update_pool_replayers to start a new PoolReplayer instance
 void PoolReplayer::init()
 {
   assert(!m_pool_replayer_thread.is_started());
@@ -259,6 +270,7 @@ void PoolReplayer::init()
   m_blacklisted = false;
 
   dout(20) << "replaying for " << m_peer << dendl;
+  // connect to local cluster
   int r = init_rados(g_ceph_context->_conf->cluster,
                      g_ceph_context->_conf->name.to_str(),
                      "local cluster", &m_local_rados, false);
@@ -269,6 +281,7 @@ void PoolReplayer::init()
     return;
   }
 
+  // connect to peer cluster
   r = init_rados(m_peer.cluster_name, m_peer.client_name,
                  std::string("remote peer ") + stringify(m_peer),
                  &m_remote_rados, true);
@@ -388,6 +401,7 @@ int PoolReplayer::init_rados(const std::string &cluster_name,
   // the librados shared library and the daemon
   // TODO: eliminate intermingling of global singletons within Ceph APIs
   CephInitParameters iparams(CEPH_ENTITY_TYPE_CLIENT);
+
   if (client_name.empty() || !iparams.name.from_str(client_name)) {
     derr << "error initializing cluster handle for " << description << dendl;
     return -EINVAL;
@@ -395,6 +409,7 @@ int PoolReplayer::init_rados(const std::string &cluster_name,
 
   CephContext *cct = common_preinit(iparams, CODE_ENVIRONMENT_LIBRARY,
                                     CINIT_FLAG_UNPRIVILEGED_DAEMON_DEFAULTS);
+
   cct->_conf->cluster = cluster_name;
 
   // librados::Rados::conf_read_file
@@ -422,6 +437,7 @@ int PoolReplayer::init_rados(const std::string &cluster_name,
   // librados::Rados::conf_parse_env
   std::vector<const char*> args;
   env_to_vec(args, nullptr);
+
   r = cct->_conf->parse_argv(args);
   if (r < 0) {
     derr << "could not parse environment for " << description << ":"
@@ -430,6 +446,7 @@ int PoolReplayer::init_rados(const std::string &cluster_name,
     return r;
   }
 
+  // cmd args, see src/tools/rbd_mirror/main.cc/main
   if (!m_args.empty()) {
     // librados::Rados::conf_parse_argv
     args = m_args;
@@ -468,8 +485,10 @@ int PoolReplayer::init_rados(const std::string &cluster_name,
 
   r = (*rados_ref)->init_with_context(cct);
   assert(r == 0);
+
   cct->put();
 
+  // the first statement of RadosClient::connect is common_init_finish
   r = (*rados_ref)->connect();
   if (r < 0) {
     derr << "error connecting to " << description << ": "
@@ -487,10 +506,13 @@ void PoolReplayer::run()
   while (!m_stopping) {
     std::string asok_hook_name = m_local_io_ctx.get_pool_name() + " " +
                                  m_peer.cluster_name;
+
     if (m_asok_hook_name != asok_hook_name || m_asok_hook == nullptr) {
       m_asok_hook_name = asok_hook_name;
+
       delete m_asok_hook;
 
+      // the commands are registered in the ctor
       m_asok_hook = new PoolReplayerAdminSocketHook(g_ceph_context,
 						    m_asok_hook_name, this);
     }
@@ -499,6 +521,8 @@ void PoolReplayer::run()
     if ((m_local_pool_watcher && m_local_pool_watcher->is_blacklisted()) ||
 	(m_remote_pool_watcher && m_remote_pool_watcher->is_blacklisted())) {
       m_blacklisted = true;
+      // stop the running thread, the Replayer instance will be deleted
+      // by Mirror::update_replayers when it finds the replayer was blacklisted
       m_stopping = true;
       break;
     }
@@ -581,11 +605,15 @@ void PoolReplayer::stop(bool manual)
   dout(20) << "enter: manual=" << manual << dendl;
 
   Mutex::Locker l(m_lock);
+
   if (!manual) {
+    // process is to be stopped
     m_stopping = true;
     m_cond.Signal();
+
     return;
   } else if (m_stopping) {
+    // already stopped or in progress of stop
     return;
   }
 
@@ -631,6 +659,8 @@ void PoolReplayer::release_leader()
   m_leader_watcher->release_leader();
 }
 
+// called by
+// PoolWatcherListener::handle_update, which called by PoolWatcher<I>::notify_listener
 void PoolReplayer::handle_update(const std::string &mirror_uuid,
 				 ImageIds &&added_image_ids,
 				 ImageIds &&removed_image_ids) {
@@ -641,6 +671,7 @@ void PoolReplayer::handle_update(const std::string &mirror_uuid,
   dout(10) << "mirror_uuid=" << mirror_uuid << ", "
            << "added_count=" << added_image_ids.size() << ", "
            << "removed_count=" << removed_image_ids.size() << dendl;
+
   Mutex::Locker locker(m_lock);
   if (!m_leader_watcher->is_leader()) {
     return;

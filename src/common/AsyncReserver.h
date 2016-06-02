@@ -191,6 +191,7 @@ public:
     queues[prio].push_back(r);
     queue_pointers.insert(make_pair(item,
 				    make_pair(prio,--(queues[prio]).end())));
+    // queue on finisher to handle the item(s) if allowed
     do_queues();
   }
 
@@ -201,6 +202,7 @@ public:
    * Note, after cancel_reservation, the reservation_callback may or
    * may not still be called. 
    */
+  // either rejected or success reserved, the reservation will be cancelled eventually
   void cancel_reservation(
     T item                   ///< [in] key for reservation to cancel
     ) {
@@ -231,6 +233,8 @@ public:
 	rdout(10) << __func__ << " cancel " << item << " (not found)" << dendl;
       }
     }
+
+    // to queue the next callback(s)
     do_queues();
   }
 

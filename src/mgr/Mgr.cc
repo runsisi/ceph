@@ -41,6 +41,8 @@
 #define dout_prefix *_dout << "mgr " << __func__ << " "
 
 
+// created by
+// MgrStandby::handle_mgr_map
 Mgr::Mgr(MonClient *monc_, const MgrMap& mgrmap,
          PyModuleRegistry *py_module_registry_,
 	 Messenger *clientm_, Objecter *objecter_,
@@ -137,6 +139,8 @@ void MetadataUpdate::finish(int r)
   }
 }
 
+// called by
+// MgrStandby::handle_mgr_map
 void Mgr::background_init(Context *completion)
 {
   Mutex::Locker l(lock);
@@ -152,6 +156,8 @@ void Mgr::background_init(Context *completion)
   }));
 }
 
+// called by
+// Mgr::background_init, which called by MgrStandby::handle_mgr_map to activate us
 void Mgr::init()
 {
   Mutex::Locker l(lock);
@@ -226,6 +232,8 @@ void Mgr::init()
   initialized = true;
 }
 
+// called by
+// Mgr::init
 void Mgr::load_all_metadata()
 {
   assert(lock.is_locked_by_me());
@@ -374,6 +382,8 @@ void Mgr::shutdown()
   finisher.stop();
 }
 
+// called by
+// Mgr::ms_dispatch, which dispatch for MgrStandby::client_messenger
 void Mgr::handle_osd_map()
 {
   assert(lock.is_locked_by_me());
@@ -461,6 +471,8 @@ void Mgr::handle_service_map(MServiceMap *m)
   server.got_service_map();
 }
 
+// called by
+// MgrStandby::ms_dispatch, which dispatch for MgrStandby::client_messenger
 bool Mgr::ms_dispatch(Message *m)
 {
   dout(4) << *m << dendl;
@@ -468,6 +480,7 @@ bool Mgr::ms_dispatch(Message *m)
 
   switch (m->get_type()) {
     case MSG_MGR_DIGEST:
+      // sent by MgrMonitor::send_digests, coz we subscribed "mgrdigest"
       handle_mgr_digest(static_cast<MMgrDigest*>(m));
       break;
     case CEPH_MSG_MON_MAP:
@@ -480,6 +493,8 @@ bool Mgr::ms_dispatch(Message *m)
       return false; // I shall let this pass through for Client
       break;
     case CEPH_MSG_OSD_MAP:
+      // see Objecter::ms_dispatch, we return false for CEPH_MSG_OSD_MAP, so
+      // we have a chance to handle the osdmap
       handle_osd_map();
 
       py_module_registry->notify_all("osd_map", "");
@@ -597,10 +612,15 @@ bool Mgr::got_mgr_map(const MgrMap& m)
   return false;
 }
 
+// called by
+// Mgr::ms_dispatch, for MSG_MGR_DIGEST
 void Mgr::handle_mgr_digest(MMgrDigest* m)
 {
   dout(10) << m->mon_status_json.length() << dendl;
   dout(10) << m->health_json.length() << dendl;
+
+  // NOTE: for MPGStats, it is handled by DaemonServer::ms_dispatch, which
+  // is dispatch of DaemonServer::msgr instead of MgrStandby::client_messenger
   cluster_state.load_digest(m);
   py_module_registry->notify_all("mon_status", "");
   py_module_registry->notify_all("health", "");

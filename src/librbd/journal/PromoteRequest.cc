@@ -23,6 +23,9 @@ namespace journal {
 using librbd::util::create_async_context_callback;
 using librbd::util::create_context_callback;
 
+// created by
+// librbd::mirror::DisableRequest<I>::send_promote_image, with force set to true
+// librbd::Journal<I>::promote, with force set to false
 template <typename I>
 PromoteRequest<I>::PromoteRequest(I *image_ctx, bool force, Context *on_finish)
   : m_image_ctx(image_ctx), m_force(force), m_on_finish(on_finish),

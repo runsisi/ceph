@@ -94,6 +94,7 @@ public:
   void send() override = 0;
 
   bool has_parent() const {
+    // updated by ObjectRequest<I>::compute_parent_extents
     return m_has_parent;
   }
 
@@ -127,6 +128,7 @@ public:
                                    int op_flags, bool cache_initiated,
                                    const ZTracer::Trace &parent_trace,
                                    Context *completion) {
+    // the base class, i.e., ObjectRequest, will calc m_parent_extents
     return new ObjectReadRequest(ictx, oid, objectno, offset, len,
                                  snap_id, op_flags, cache_initiated,
                                  parent_trace, completion);

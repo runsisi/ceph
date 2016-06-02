@@ -27,6 +27,8 @@ PreAcquireRequest<I>* PreAcquireRequest<I>::create(I &image_ctx,
   return new PreAcquireRequest(image_ctx, on_finish);
 }
 
+// created by
+// ExclusiveLock<I>::pre_acquire_lock_handler
 template <typename I>
 PreAcquireRequest<I>::PreAcquireRequest(I &image_ctx, Context *on_finish)
   : m_image_ctx(image_ctx),
@@ -51,6 +53,8 @@ void PreAcquireRequest<I>::send_prepare_lock() {
   // acquire the lock if the image is not busy performing other actions
   Context *ctx = create_context_callback<
     PreAcquireRequest<I>, &PreAcquireRequest<I>::handle_prepare_lock>(this);
+
+  // lock the ImageState state machine
   m_image_ctx.state->prepare_lock(ctx);
 }
 
@@ -58,6 +62,8 @@ template <typename I>
 void PreAcquireRequest<I>::handle_prepare_lock(int r) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << "r=" << r << dendl;
+
+  // now the ImageState state machine is locked
 
   send_flush_notifies();
 }
@@ -84,7 +90,7 @@ void PreAcquireRequest<I>::handle_flush_notifies(int r) {
 
 template <typename I>
 void PreAcquireRequest<I>::finish() {
-  m_on_finish->complete(m_error_result);
+  m_on_finish->complete(m_error_result); // ManagedLock<I>::handle_pre_acquire_lock
   delete this;
 }
 

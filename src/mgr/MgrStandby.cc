@@ -92,6 +92,8 @@ void MgrStandby::handle_conf_change(
   }
 }
 
+// called by
+// ceph_mgr.cc/main
 int MgrStandby::init()
 {
   Mutex::Locker l(lock);
@@ -146,6 +148,8 @@ int MgrStandby::init()
   return 0;
 }
 
+// called by
+// MgrStandby::init
 void MgrStandby::send_beacon()
 {
   assert(lock.is_locked_by_me());
@@ -418,6 +422,8 @@ static void handle_mgr_signal(int signum)
   }
 }
 
+// called by
+// ceph_mgr.cc/main
 int MgrStandby::main(vector<const char *> args)
 {
   // Enable signal handlers

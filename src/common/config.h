@@ -264,6 +264,7 @@ private:
   changed_set_t changed;
 
 public:
+  // will be passed to ceph::logging::Log::m_subs
   ceph::logging::SubsystemMap subsys;
 
   EntityName name;
@@ -343,6 +344,7 @@ enum config_subsys_id {
 #include "common/subsys.h"
 #undef SUBSYS
 #undef DEFAULT_SUBSYS
+
   ceph_subsys_max
 };
 

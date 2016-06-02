@@ -46,12 +46,19 @@ struct C_BlacklistClient : public Context {
 
 } // anonymous namespace
 
+// created by
+// AcquireRequest<I>::send_break_lock, which called by ManagedLock<I>::handle_pre_acquire_lock,
+//      with force_break_lock set to false, i.e., not to blacklist if the other client is alive
+// ManagedLock<I>::break_lock, which called by
+//      librbd::lock_break, with force_break_lock set to true
+//      InstanceWatcher<I>::break_instance_lock, with force_break_lock set to true
+//      LeaderWatcher<I>::break_leader_lock, with force_break_lock set to true
 template <typename I>
 BreakRequest<I>::BreakRequest(librados::IoCtx& ioctx, ContextWQ *work_queue,
                               const std::string& oid, const Locker &locker,
-                              bool exclusive, bool blacklist_locker,
-                              uint32_t blacklist_expire_seconds,
-                              bool force_break_lock, Context *on_finish)
+                              bool exclusive, bool blacklist_locker, // true
+                              uint32_t blacklist_expire_seconds, // 0
+                              bool force_break_lock, Context *on_finish) // true
   : m_ioctx(ioctx), m_cct(reinterpret_cast<CephContext *>(m_ioctx.cct())),
     m_work_queue(work_queue), m_oid(oid), m_locker(locker),
     m_exclusive(exclusive), m_blacklist_locker(blacklist_locker),
@@ -103,7 +110,10 @@ void BreakRequest<I>::handle_get_watchers(int r) {
     if ((strncmp(m_locker.address.c_str(),
                  watcher.addr, sizeof(watcher.addr)) == 0) &&
         (m_locker.handle == watcher.cookie)) {
+      // the current locker has alive watcher
+
       ldout(m_cct, 10) << "lock owner is still alive" << dendl;
+
       found_alive_locker = true;
     }
   }

@@ -182,8 +182,10 @@ public:
 		  bufferlist *value) {       ///< [out] value
     std::set<std::string> ks;
     ks.insert(key);
+
     std::map<std::string,bufferlist> om;
     int r = get(prefix, ks, &om);
+
     if (om.find(key) != om.end()) {
       *value = om[key];
     } else {
@@ -192,6 +194,7 @@ public:
     }
     return r;
   }
+
   virtual int get(const string &prefix,
 		  const char *key, size_t keylen,
 		  bufferlist *value) {
@@ -265,13 +268,15 @@ public:
       return 0;
     }
     virtual ~WholeSpaceIteratorImpl() { }
-  };
+  }; // class WholeSpaceIteratorImpl
+
   typedef ceph::shared_ptr< WholeSpaceIteratorImpl > WholeSpaceIterator;
 
 private:
   // This class filters a WholeSpaceIterator by a prefix.
   class PrefixIteratorImpl : public IteratorImpl {
     const std::string prefix;
+    // LevelDB/RocksDB specific iterator, i.e., the backend implementation
     WholeSpaceIterator generic_iter;
   public:
     PrefixIteratorImpl(const std::string &prefix, WholeSpaceIterator iter) :

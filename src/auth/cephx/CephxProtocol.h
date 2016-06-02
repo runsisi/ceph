@@ -322,17 +322,29 @@ struct CephXTicketManager {
   bool verify_service_ticket_reply(CryptoKey& principal_secret,
 				 bufferlist::iterator& indata);
 
+  // called by
+  // CephxClientHandler::handle_response
+  // CephxClientHandler::prepare_build_request
+  // CephXTicketManager::verify_service_ticket_reply
   CephXTicketHandler& get_handler(uint32_t type) {
+    // map<uint32_t, CephXTicketHandler>
     tickets_map_t::iterator i = tickets_map.find(type);
     if (i != tickets_map.end())
       return i->second;
+
     CephXTicketHandler newTicketHandler(cct, type);
     std::pair < tickets_map_t::iterator, bool > res =
 	tickets_map.insert(std::make_pair(type, newTicketHandler));
+
     assert(res.second);
+
     return res.first->second;
   }
+
+  // called by
+  // CephxClientHandler::build_authorizer
   CephXAuthorizer *build_authorizer(uint32_t service_id) const;
+
   bool have_key(uint32_t service_id);
   bool need_key(uint32_t service_id) const;
   void set_have_need_key(uint32_t service_id, uint32_t& have, uint32_t& need);
@@ -437,6 +449,7 @@ void decode_decrypt_enc_bl(CephContext *cct, T& t, CryptoKey key, bufferlist& bl
   __u8 struct_v;
   ::decode(struct_v, iter2);
   ::decode(magic, iter2);
+
   if (magic != AUTH_ENC_MAGIC) {
     ostringstream oss;
     oss << "bad magic in decode_decrypt, " << magic << " != " << AUTH_ENC_MAGIC;

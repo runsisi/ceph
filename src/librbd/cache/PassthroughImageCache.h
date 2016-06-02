@@ -13,6 +13,7 @@ struct ImageCtx;
 
 namespace cache {
 
+// currently not used
 /**
  * Example passthrough client-side, image extent cache
  */

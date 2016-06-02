@@ -13,6 +13,8 @@
 
 class BlueFS;
 
+// created by
+// BlueStore::_open_db
 class BlueRocksEnv : public rocksdb::EnvWrapper {
   void split(const std::string &fn, std::string *dir, std::string *file) {
     size_t slash = fn.rfind('/');

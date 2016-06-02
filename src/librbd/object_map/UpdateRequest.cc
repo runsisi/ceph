@@ -26,6 +26,8 @@ const uint64_t MAX_OBJECTS_PER_UPDATE = 256 * (1 << 10);
 
 }
 
+// created by
+// ObjectMap.cc/ObjectMap<I>::aio_update(..., Context *on_finish)
 template <typename I>
 void UpdateRequest<I>::send() {
   update_object_map();
@@ -68,6 +70,10 @@ void UpdateRequest<I>::update_object_map() {
   rados_completion->release();
 }
 
+// called by
+// Request::should_complete
+// only ResizeRequest and UpdateRequest override this method, and UpdateRequest only
+// print a debug message
 template <typename I>
 void UpdateRequest<I>::handle_update_object_map(int r) {
   ldout(m_image_ctx.cct, 20) << "r=" << r << dendl;

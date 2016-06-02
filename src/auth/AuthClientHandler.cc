@@ -19,6 +19,8 @@
 #include "cephx/CephxClientHandler.h"
 #include "none/AuthNoneClientHandler.h"
 
+// called by
+// MonClient::handle_auth
 AuthClientHandler *get_auth_client_handler(CephContext *cct, int proto,
 					   RotatingKeyRing *rkeys)
 {

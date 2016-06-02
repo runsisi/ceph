@@ -17,10 +17,12 @@ public:
   StandardPolicy(ImageCtx *image_ctx) : m_image_ctx(image_ctx) {
   }
 
+  // checked by librbd::AioImageRequestWQ::queue and librbd::lock_acquire
   bool may_auto_request_lock() override {
     return false;
   }
 
+  // always return -EROFS, called by ImageWatcher<I>::handle_payload
   int lock_requested(bool force) override;
 
 private:

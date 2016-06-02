@@ -224,6 +224,8 @@ public:
 	} else {
 	  retry = true;
 	}
+
+	// will be signaled by SharedLRU::remove
 	if (retry)
 	  cond.Wait(lock);
       } while (retry);
@@ -281,6 +283,8 @@ public:
 	    retry = true;
 	  }
 	}
+
+	// will be signaled by SharedLRU::remove
 	if (retry)
 	  cond.Wait(lock);
       } while (retry);
@@ -306,6 +310,8 @@ public:
 	    retry = true;
 	  }
 	}
+
+	// will be signaled by SharedLRU::remove
 	if (retry)
 	  cond.Wait(lock);
       } while (retry);

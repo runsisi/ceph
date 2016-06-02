@@ -367,6 +367,7 @@ int main(int argc, const char **argv)
       exit(1);
     }
   }
+
   if (flushjournal) {
     common_init_finish(g_ceph_context);
     int err = store->mount();
@@ -384,6 +385,7 @@ flushjournal_out:
     delete store;
     exit(err < 0 ? 1 : 0);
   }
+
   if (dump_journal) {
     common_init_finish(g_ceph_context);
     int err = store->dump_journal(cout);
@@ -659,7 +661,11 @@ flushjournal_out:
 #endif
 
   // install signal handlers
+
+  // create pipe and signal handle thread
   init_async_signal_handler();
+
+  // only register signal handler for SIGHUP, SIGINT, SIGTERM
   register_async_signal_handler(SIGHUP, sighup_handler);
   register_async_signal_handler_oneshot(SIGINT, handle_osd_signal);
   register_async_signal_handler_oneshot(SIGTERM, handle_osd_signal);
@@ -669,6 +675,7 @@ flushjournal_out:
   if (g_conf->get_val<bool>("inject_early_sigterm"))
     kill(getpid(), SIGTERM);
 
+  // wait msgr->stopped be set to true, i.e., msgr->shutdown() to be called
   ms_public->wait();
   ms_hb_front_client->wait();
   ms_hb_back_client->wait();

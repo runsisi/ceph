@@ -508,6 +508,7 @@ private:
   Header _lookup_map_header(
     const MapHeaderLock &l,
     const ghobject_t &oid);
+
   Header lookup_map_header(
     const MapHeaderLock &l2,
     const ghobject_t &oid) {

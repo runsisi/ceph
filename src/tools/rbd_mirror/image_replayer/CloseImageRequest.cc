@@ -21,6 +21,14 @@ namespace image_replayer {
 
 using librbd::util::create_context_callback;
 
+// created by
+// BootstrapRequest<I>::close_local_image
+// BootstrapRequest<I>::close_remote_image
+// rbd::mirror::image_replayer::CreateImageRequest<I>::close_local_parent_image
+// rbd::mirror::image_replayer::CreateImageRequest<I>::close_remote_parent_image
+// rbd::mirror::image_replayer::OpenImageRequest<I>::send_close_image, upon failure, true
+// rbd::mirror::image_replayer::OpenLocalImageRequest<I>::send_close_image, upon failure, true for OpenLocalImageRequest<I>::handle_open_image
+// ImageReplayer<I>::shut_down
 template <typename I>
 CloseImageRequest<I>::CloseImageRequest(I **image_ctx, Context *on_finish)
   : m_image_ctx(image_ctx), m_on_finish(on_finish) {
@@ -37,6 +45,7 @@ void CloseImageRequest<I>::close_image() {
 
   Context *ctx = create_context_callback<
     CloseImageRequest<I>, &CloseImageRequest<I>::handle_close_image>(this);
+
   (*m_image_ctx)->state->close(ctx);
 }
 

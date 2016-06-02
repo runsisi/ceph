@@ -29,6 +29,11 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "mgrc " << __func__ << " "
 
+// created by
+// as member of:
+// RadosClient
+// MDSDaemon
+// OSD
 MgrClient::MgrClient(CephContext *cct_, Messenger *msgr_)
     : Dispatcher(cct_), cct(cct_), msgr(msgr_),
       timer(cct_, lock)
@@ -36,15 +41,27 @@ MgrClient::MgrClient(CephContext *cct_, Messenger *msgr_)
   assert(cct != nullptr);
 }
 
+// called by
+// librados::RadosClient::connect
+// MDSDaemon::init
+// Monitor::init
+// OSD::init
 void MgrClient::init()
 {
   Mutex::Locker l(lock);
 
   assert(msgr != nullptr);
 
+  // reconnect throttle timer and send report timer
   timer.init();
 }
 
+// called by
+// librados::RadosClient::shutdown
+// MDSDaemon::suicide
+// Monitor::shutdown
+// OSD::shutdown
+// OSD::init, if failed
 void MgrClient::shutdown()
 {
   Mutex::Locker l(lock);
@@ -71,8 +88,13 @@ bool MgrClient::ms_dispatch(Message *m)
 
   switch(m->get_type()) {
   case MSG_MGR_MAP:
+    // sent by MgrMonitor::check_sub, the mgr map was subscribed by:
+    // RadosClient::connect, MDSDaemon::init, MgrStandby::init, OSD::init
+
+    // (re)connect to mgr
     return handle_mgr_map(static_cast<MMgrMap*>(m));
   case MSG_MGR_CONFIGURE:
+    // sent by DaemonServer::handle_open
     return handle_mgr_configure(static_cast<MMgrConfigure*>(m));
   case MSG_COMMAND_REPLY:
     if (m->get_source().type() == CEPH_ENTITY_TYPE_MGR) {
@@ -87,6 +109,9 @@ bool MgrClient::ms_dispatch(Message *m)
   }
 }
 
+// called by
+// MgrClient::handle_mgr_map
+// MgrClient::ms_handle_reset
 void MgrClient::reconnect()
 {
   assert(lock.is_locked_by_me());
@@ -94,8 +119,10 @@ void MgrClient::reconnect()
   if (session) {
     ldout(cct, 4) << "Terminating session with "
 		  << session->con->get_peer_addr() << dendl;
+
     session->con->mark_down();
     session.reset();
+
     stats_period = 0;
     if (report_callback != nullptr) {
       timer.cancel_event(report_callback);
@@ -110,6 +137,7 @@ void MgrClient::reconnect()
 
   if (last_connect_attempt != utime_t()) {
     utime_t now = ceph_clock_now();
+
     utime_t when = last_connect_attempt;
     when += cct->_conf->get_val<double>("mgr_connect_retry_interval");
     if (now < when) {
@@ -121,21 +149,25 @@ void MgrClient::reconnect()
 	      reconnect();
 	    }));
       }
+
       ldout(cct, 4) << "waiting to retry connect until " << when << dendl;
       return;
     }
   }
 
-  if (connect_retry_callback) {
+  if (connect_retry_callback) { // timer has not been fired yet but now >= when, i.e., the next connect attempt
     timer.cancel_event(connect_retry_callback);
+
     connect_retry_callback = nullptr;
   }
 
   ldout(cct, 4) << "Starting new session with " << map.get_active_addr()
 		<< dendl;
+
   entity_inst_t inst;
   inst.addr = map.get_active_addr();
   inst.name = entity_name_t::MGR(map.get_active_gid());
+
   last_connect_attempt = ceph_clock_now();
 
   session.reset(new MgrSessionState());
@@ -154,8 +186,10 @@ void MgrClient::reconnect()
   // resend any pending commands
   for (const auto &p : command_table.get_commands()) {
     MCommand *m = p.second.get_message({});
+
     assert(session);
     assert(session->con);
+
     session->con->send_message(m);
   }
 }
@@ -178,6 +212,8 @@ void MgrClient::_send_open()
   }
 }
 
+// called by
+// MgrClient::ms_dispatch, for MSG_MGR_MAP
 bool MgrClient::handle_mgr_map(MMgrMap *m)
 {
   assert(lock.is_locked_by_me());
@@ -185,7 +221,9 @@ bool MgrClient::handle_mgr_map(MMgrMap *m)
   ldout(cct, 20) << *m << dendl;
 
   map = m->get_map();
+
   ldout(cct, 4) << "Got map version " << map.epoch << dendl;
+
   m->put();
 
   ldout(cct, 4) << "Active mgr is now " << map.get_active_addr() << dendl;
@@ -238,6 +276,7 @@ void MgrClient::send_report()
   auto report = new MMgrReport();
   auto pcc = cct->get_perfcounters_collection();
 
+  // std::map<std::string, PerfCounters::perf_counter_data_any_d *>
   pcc->with_counters([this, report](
         const PerfCountersCollection::CounterMap &by_path)
   {
@@ -332,11 +371,15 @@ void MgrClient::send_report()
 
 void MgrClient::send_pgstats()
 {
+  // set by OSD::init
   if (pgstats_cb && session) {
     session->con->send_message(pgstats_cb());
   }
 }
 
+// called by
+// MgrClient::ms_dispatch, MMgrConfigure sent by DaemonServer::handle_open,
+// which was a reply for our MMgrOpen, see MgrClient::reconnect
 bool MgrClient::handle_mgr_configure(MMgrConfigure *m)
 {
   assert(lock.is_locked_by_me());
@@ -357,7 +400,9 @@ bool MgrClient::handle_mgr_configure(MMgrConfigure *m)
   }
 
   bool starting = (stats_period == 0) && (m->stats_period != 0);
+
   stats_period = m->stats_period;
+
   if (starting) {
     send_stats();
   }
@@ -379,6 +424,7 @@ int MgrClient::start_command(const vector<string>& cmd, const bufferlist& inbl,
     return -EACCES;
   }
 
+  // insert a new command pair, i.e., <tid, MgrCommand>
   auto &op = command_table.start_command();
   op.cmd = cmd;
   op.inbl = inbl;
