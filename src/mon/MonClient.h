@@ -179,9 +179,11 @@ private:
   string _pick_random_mon();
   void _finish_hunting();
   void _reopen_session(int rank, string name);
+
   void _reopen_session() {
     _reopen_session(-1, string());
   }
+
   void _send_mon_message(Message *m, bool force=false);
 
 public:
@@ -218,8 +220,10 @@ private:
 	 sub_new[what].start == start &&
 	 sub_new[what].flags == flags))
       return false;
+
     sub_new[what].start = start;
     sub_new[what].flags = flags;
+
     return true;
   }
   void _sub_got(const string &what, version_t got) {

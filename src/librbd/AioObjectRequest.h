@@ -91,6 +91,7 @@ protected:
   uint64_t m_object_no, m_object_off, m_object_len;
   librados::snap_t m_snap_id;
   Context *m_completion;
+  // std::vector<std::pair<uint64_t, uint64_t> >
   Extents m_parent_extents;
   bool m_hide_enoent;
 };

@@ -169,6 +169,7 @@ static int lock_obj(cls_method_context_t hctx,
   bool fail_if_exists = (flags & LOCK_FLAG_RENEW) == 0;
 
   CLS_LOG(20, "requested lock_type=%s fail_if_exists=%d", cls_lock_type_str(lock_type), fail_if_exists);
+
   if (lock_type != LOCK_EXCLUSIVE &&
       lock_type != LOCK_SHARED)
     return -EINVAL;
@@ -187,6 +188,7 @@ static int lock_obj(cls_method_context_t hctx,
 
   locker_id_t id;
   id.cookie = cookie;
+
   entity_inst_t inst;
   r = cls_get_request_origin(hctx, &inst);
   id.locker = inst.name;
@@ -196,11 +198,14 @@ static int lock_obj(cls_method_context_t hctx,
    * remove the locker entry and not check it later */
   if (lockers.size() && tag != linfo.tag) {
     CLS_LOG(20, "cannot take lock on object, conflicting tag");
+
     return -EBUSY;
   }
 
   ClsLockType existing_lock_type = linfo.lock_type;
+
   CLS_LOG(20, "existing_lock_type=%s", cls_lock_type_str(existing_lock_type));
+
   iter = lockers.find(id);
   if (iter != lockers.end()) {
     if (fail_if_exists) {
@@ -254,6 +259,7 @@ static int lock_op(cls_method_context_t hctx,
                    bufferlist *in, bufferlist *out)
 {
   CLS_LOG(20, "lock_op");
+
   cls_lock_lock_op op;
   try {
     bufferlist::iterator iter = in->begin();

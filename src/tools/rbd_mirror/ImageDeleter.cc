@@ -284,6 +284,7 @@ bool ImageDeleter::process_image_delete() {
     enqueue_failed_delete(r);
     return true;
   }
+
   if (is_primary) {
     dout(10) << "local image is the primary image, aborting deletion..."
              << dendl;

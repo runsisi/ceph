@@ -1236,17 +1236,22 @@ unsigned pg_pool_t::get_pg_num_divisor(pg_t pgid) const
  */
 bool pg_pool_t::is_pool_snaps_mode() const
 {
+  // the second check is to exclude when no snapshot added yet, we are
+  // not be able to determine the snap mode
   return removed_snaps.empty() && get_snap_seq() > 0;
 }
 
 bool pg_pool_t::is_unmanaged_snaps_mode() const
 {
+  // the second check is to exclude when no snapshot added yet, we are
+  // not be able to determine the snap mode
   return removed_snaps.size() && get_snap_seq() > 0;
 }
 
 bool pg_pool_t::is_removed_snap(snapid_t s) const
 {
   if (is_pool_snaps_mode())
+    // we need the first check to exclude the never existed snap
     return s <= get_snap_seq() && snaps.count(s) == 0;
   else
     return removed_snaps.contains(s);
@@ -1256,6 +1261,7 @@ bool pg_pool_t::is_removed_snap(snapid_t s) const
  * build set of known-removed sets from either pool snaps or
  * explicit removed_snaps set.
  */
+// called by PGPool::update
 void pg_pool_t::build_removed_snaps(interval_set<snapid_t>& rs) const
 {
   if (is_pool_snaps_mode()) {
@@ -1281,6 +1287,7 @@ snapid_t pg_pool_t::snap_exists(const char *s) const
 void pg_pool_t::add_snap(const char *n, utime_t stamp)
 {
   assert(!is_unmanaged_snaps_mode());
+
   snapid_t s = get_snap_seq() + 1;
   snap_seq = s;
   snaps[s].snapid = s;
@@ -1291,10 +1298,16 @@ void pg_pool_t::add_snap(const char *n, utime_t stamp)
 void pg_pool_t::add_unmanaged_snap(uint64_t& snapid)
 {
   if (removed_snaps.empty()) {
+
+    // the snap mode has not determined yet, add a dummy removed snap to
+    // flag this is a unmanaged snap mode
+
     assert(!is_pool_snaps_mode());
+
     removed_snaps.insert(snapid_t(1));
     snap_seq = 1;
   }
+
   snapid = snap_seq = snap_seq + 1;
 }
 
@@ -1308,8 +1321,11 @@ void pg_pool_t::remove_snap(snapid_t s)
 void pg_pool_t::remove_unmanaged_snap(snapid_t s)
 {
   assert(is_unmanaged_snaps_mode());
+
   removed_snaps.insert(s);
   snap_seq = snap_seq + 1;
+
+  // TODO: why insert this　???
   removed_snaps.insert(get_snap_seq());
 }
 

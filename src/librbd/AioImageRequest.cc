@@ -187,6 +187,7 @@ private:
 
 } // anonymous namespace
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
                                   Extents &&image_extents, char *buf,
@@ -195,6 +196,7 @@ void AioImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c, uint64_t off,
                                    size_t len, const char *buf, int op_flags) {
@@ -202,6 +204,7 @@ void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c, uint64_t off,
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
                                    Extents &&image_extents, bufferlist &&bl,
@@ -211,6 +214,7 @@ void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_discard(I *ictx, AioCompletion *c,
                                      uint64_t off, uint64_t len) {
@@ -218,6 +222,7 @@ void AioImageRequest<I>::aio_discard(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_flush(I *ictx, AioCompletion *c) {
   AioImageFlush<I> req(*ictx, c);
@@ -311,9 +316,13 @@ void AioImageRead<I>::send_request() {
 
   // pre-calculate the expected number of read requests
   uint32_t request_count = 0;
+  // map<object_t,vector<ObjectExtent> >
   for (auto &object_extent : object_extents) {
     request_count += object_extent.second.size();
   }
+
+  // used by AioCompletion::complete_request to test if the AioImageRequest
+  // has completed
   aio_comp->set_request_count(request_count);
 
   // issue the requests
@@ -328,15 +337,21 @@ void AioImageRead<I>::send_request() {
         &image_ctx, extent.oid.name, extent.objectno, extent.offset,
         extent.length, extent.buffer_extents, snap_id, true, req_comp,
         m_op_flags);
+
+      // associate object request and object request completion
       req_comp->set_req(req);
 
       if (image_ctx.object_cacher) {
+        // object cacher enabled, try to read from cache
         C_ObjectCacheRead<I> *cache_comp = new C_ObjectCacheRead<I>(image_ctx,
                                                                     req);
         image_ctx.aio_read_from_cache(extent.oid, extent.objectno,
                                       &req->data(), extent.length,
                                       extent.offset, cache_comp, m_op_flags);
       } else {
+
+        // read from backend directly
+
         req->send();
       }
     }
@@ -375,6 +390,7 @@ void AbstractAioImageWrite<I>::send_request() {
   uint64_t clip_len = 0;
   ObjectExtents object_extents;
   ::SnapContext snapc;
+
   {
     // prevent image size from changing between computing clip and recording
     // pending async operation
@@ -404,20 +420,44 @@ void AbstractAioImageWrite<I>::send_request() {
 
   if (!object_extents.empty()) {
     uint64_t journal_tid = 0;
+
+    // for AioImageDiscard and if journaling and caching enabled, the total
+    // object requests count will add 1 for cache request
     aio_comp->set_request_count(
       object_extents.size() + get_object_cache_request_count(journaling));
 
     AioObjectRequests requests;
+
+    // considering both 1) journaling and 2) caching
+    // for journaling, only after 1) the object requests associated with
+    // the journal entry have sent and finished, and 2) the journal entry has
+    // been written to the journal object safely
+    // for caching, it determines the behavior of the AioImageWrite
+
+    // 1) for AioImageWrite if object cacher enabled, then do nothing, the
+    // object cacher will create and send object requests for us
+    // 2) for AioImageDiscard we create and send/stash object requests directly
     send_object_requests(object_extents, snapc,
                          (journaling ? &requests : nullptr));
 
     if (journaling) {
       // in-flight ops are flushed prior to closing the journal
       assert(image_ctx.journal != NULL);
+
+      // append journal entry and
+      // 1) for AioImageWrite if object cacher enabled, then the aio
+      // completion will not associate the journal id, becoz no object
+      // requests have been created for AioImageWrite when object cacher
+      // is enabled
+      // 2) for AioImageDiscard the aio completion will associated the journal id
       journal_tid = append_journal_event(requests, m_synchronous);
     }
 
     if (image_ctx.object_cacher != NULL) {
+      // 1) for AioImageWrite, we have only appended the journal entry,
+      // the object cacher will create and send object requests for us
+      // 2) for AioImageDiscard, the object requests have been created and
+      // sent/stashed by send_object_requests
       send_object_cache_requests(object_extents, journal_tid);
     }
   } else {
@@ -442,12 +482,16 @@ void AbstractAioImageWrite<I>::send_object_requests(
     ldout(cct, 20) << " oid " << p->oid << " " << p->offset << "~" << p->length
                    << " from " << p->buffer_extents << dendl;
     C_AioRequest *req_comp = new C_AioRequest(aio_comp);
+
+    // pure virtual function, implemented by AioImageWrite and AioImageDiscard
     AioObjectRequestHandle *request = create_object_request(*p, snapc,
                                                             req_comp);
 
-    // if journaling, stash the request for later; otherwise send
     if (request != NULL) {
       if (aio_object_requests != NULL) {
+
+        // journaling enabled, stash the requests
+
         aio_object_requests->push_back(request);
       } else {
         request->send();
@@ -467,6 +511,7 @@ void AioImageWrite<I>::assemble_extent(const ObjectExtent &object_extent,
   }
 }
 
+// synchronous always be false
 template <typename I>
 uint64_t AioImageWrite<I>::append_journal_event(
     const AioObjectRequests &requests, bool synchronous) {
@@ -484,6 +529,7 @@ uint64_t AioImageWrite<I>::append_journal_event(
                                                 sub_bl, requests, synchronous);
   }
 
+  // if object cacher enabled, then the writeback handler will do this
   if (image_ctx.object_cacher == NULL) {
     AioCompletion *aio_comp = this->m_aio_comp;
     aio_comp->associate_journal_event(tid);
@@ -556,6 +602,7 @@ void AioImageWrite<I>::update_stats(size_t length) {
   image_ctx.perfcounter->inc(l_librbd_wr_bytes, length);
 }
 
+// synchronous always be false
 template <typename I>
 uint64_t AioImageDiscard<I>::append_journal_event(
     const AioObjectRequests &requests, bool synchronous) {

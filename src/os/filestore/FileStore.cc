@@ -2121,6 +2121,7 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
     } else {
       assert(0);
     }
+
     submit_manager.op_submit_finish(op_num);
     utime_t end = ceph_clock_now(g_ceph_context);
     logger->tinc(l_os_queue_lat, end - start);

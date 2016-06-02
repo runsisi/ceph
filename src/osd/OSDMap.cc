@@ -2415,17 +2415,23 @@ void OSDMap::print_pools(ostream& out) const
 {
   for (map<int64_t,pg_pool_t>::const_iterator p = pools.begin(); p != pools.end(); ++p) {
     std::string name("<unknown>");
+
     map<int64_t,string>::const_iterator pni = pool_name.find(p->first);
     if (pni != pool_name.end())
       name = pni->second;
+
     out << "pool " << p->first
 	<< " '" << name
 	<< "' " << p->second << "\n";
+
     for (map<snapid_t,pool_snap_info_t>::const_iterator q = p->second.snaps.begin();
 	 q != p->second.snaps.end();
 	 ++q)
+      // pool snaps mode
       out << "\tsnap " << q->second.snapid << " '" << q->second.name << "' " << q->second.stamp << "\n";
+
     if (!p->second.removed_snaps.empty())
+      // unmanaged snaps mode
       out << "\tremoved_snaps " << p->second.removed_snaps << "\n";
   }
   out << std::endl;

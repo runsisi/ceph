@@ -90,6 +90,7 @@ private:
     FutureImplPtr future;
     C_ConsistentAck(FutureImpl *_future) : future(_future) {}
     virtual void complete(int r) {
+      // set m_consistent = true and m_return_value = r, then m_prev_future.reset()
       future->consistent(r);
       future.reset();
     }

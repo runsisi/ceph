@@ -517,6 +517,7 @@ namespace librbd {
       sizes->resize(ids.size());
       parents->resize(ids.size());
       protection_statuses->resize(ids.size());
+
       try {
 	for (size_t i = 0; i < names->size(); ++i) {
 	  uint8_t order;

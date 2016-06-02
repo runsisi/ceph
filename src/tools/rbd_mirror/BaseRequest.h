@@ -9,6 +9,8 @@
 namespace rbd {
 namespace mirror {
 
+// base class of BootstrapRequest, ImageCopyRequest, SnapshotCopyRequest,
+// ImageSync
 class BaseRequest : public RefCountedObject {
 public:
   BaseRequest(const std::string& name, CephContext *cct, Context *on_finish)

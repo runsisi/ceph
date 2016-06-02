@@ -46,7 +46,11 @@ void AioCompletion::finalize(ssize_t rval)
   ldout(cct, 20) << this << " " << __func__ << ": r=" << rval << ", "
                  << "read_buf=" << reinterpret_cast<void*>(read_buf) << ", "
                  << "real_bl=" <<  reinterpret_cast<void*>(read_bl) << dendl;
+
   if (rval >= 0 && aio_type == AIO_TYPE_READ) {
+
+    // destriper is constructed by C_AioRead::finish
+
     if (read_buf && !read_bl) {
       destriper.assemble_result(cct, read_buf, read_buf_len);
     } else {
@@ -171,6 +175,7 @@ void AioCompletion::set_request_count(uint32_t count) {
   unblock();
 }
 
+// complete one object request
 void AioCompletion::complete_request(ssize_t r)
 {
   lock.Lock();
@@ -188,8 +193,14 @@ void AioCompletion::complete_request(ssize_t r)
 
   ldout(cct, 20) << this << " " << __func__ << ": cb=" << complete_cb << ", "
                  << "pending=" << pending_count << dendl;
+
   if (!count && blockers == 0) {
+
+    // complete all object requests, so complete the image request
+
+    // assemble result buffer for image read request
     finalize(rval);
+
     complete();
   }
   put_unlock();

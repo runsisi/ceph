@@ -52,6 +52,7 @@ namespace librbd {
     std::string client_name;
   } mirror_peer_t;
 
+  // enum { RBD_MIRROR_IMAGE_xxx　}
   typedef rbd_mirror_image_state_t mirror_image_state_t;
 
   typedef struct {
@@ -60,12 +61,13 @@ namespace librbd {
     bool primary;
   } mirror_image_info_t;
 
+  // enum { MIRROR_IMAGE_STATUS_STATE_xxx }
   typedef rbd_mirror_image_status_state_t mirror_image_status_state_t;
 
   typedef struct {
     std::string name;
-    mirror_image_info_t info;
-    mirror_image_status_state_t state;
+    mirror_image_info_t info; // <image global id, enum image mirror state, bool primary>
+    mirror_image_status_state_t state; // enum image mirror status state
     std::string description;
     time_t last_update;
     bool up;

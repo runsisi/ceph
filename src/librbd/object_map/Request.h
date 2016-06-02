@@ -15,6 +15,10 @@ class ImageCtx;
 
 namespace object_map {
 
+// pure virtual function:
+// send
+// virtual function:
+// should_complete, filter_return_code
 class Request : public AsyncRequest<> {
 public:
   Request(ImageCtx &image_ctx, uint64_t snap_id, Context *on_finish)
@@ -33,6 +37,12 @@ protected:
     // never propagate an error back to the caller
     return 0;
   }
+
+  // did not override virtual void finish(int r), so complete() will
+  // call finish() to remove ourself from m_image_ctx.async_requests and
+  // complete the m_on_finish
+
+  // TODO: it can not override AsyncRequest::finish_request ???
   virtual void finish_request() {
   }
 
@@ -50,6 +60,7 @@ private:
 
   State m_state;
 
+  // called by object_map::Request::should_complete
   bool invalidate();
 };
 

@@ -355,6 +355,7 @@ uint64_t AuthMonitor::assign_global_id(MonOpRequestRef op, bool should_increase_
 bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 {
   MAuth *m = static_cast<MAuth*>(op->get_req());
+
   dout(10) << "prep_auth() blob_size=" << m->get_auth_payload().length() << dendl;
 
   MonSession *s = op->get_session();
@@ -400,6 +401,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
                   << " supports cephx but not signatures and"
                   << " 'cephx [cluster] require signatures = true';"
                   << " disallowing cephx" << dendl;
+
 	  supported.erase(CEPH_AUTH_CEPHX);
 	}
       } else {
@@ -409,6 +411,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
                   << " supports cephx but not signatures and"
                   << " 'cephx [service] require signatures = true';"
                   << " disallowing cephx" << dendl;
+
 	  supported.erase(CEPH_AUTH_CEPHX);
 	}
       }
@@ -428,9 +431,11 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       ret = -ENOTSUP;
       goto reply;
     }
+
     start = true;
   } else if (!s->auth_handler) {
       dout(10) << "protocol specified but no s->auth_handler" << dendl;
+
       ret = -EINVAL;
       goto reply;
   }
@@ -447,21 +452,25 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 
       if (mon->is_leader() && paxos_writable) {
         dout(10) << "increasing global id, waitlisting message" << dendl;
+
         wait_for_active(op, new C_RetryMessage(this, op));
         goto done;
       }
 
       if (!mon->is_leader()) {
 	dout(10) << "not the leader, requesting more ids from leader" << dendl;
+
 	int leader = mon->get_leader();
 	MMonGlobalID *req = new MMonGlobalID();
 	req->old_max_id = max_global_id;
 	mon->messenger->send_message(req, mon->monmap->get_inst(leader));
 	wait_for_finished_proposal(op, new C_RetryMessage(this, op));
+
 	return true;
       }
 
       assert(!paxos_writable);
+
       return false;
     }
   }
@@ -476,26 +485,32 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 	mon->send_latest_monmap(m->get_connection().get());
 
       proto = s->auth_handler->start_session(entity_name, indata, response_bl, caps_info);
+
       ret = 0;
+
       if (caps_info.allow_all)
 	s->caps.set_allow_all();
     } else {
       // request
       ret = s->auth_handler->handle_request(indata, response_bl, s->global_id, caps_info, &auid);
     }
+
     if (ret == -EIO) {
       wait_for_active(op, new C_RetryMessage(this,op));
       goto done;
     }
+
     if (caps_info.caps.length()) {
       bufferlist::iterator p = caps_info.caps.begin();
       string str;
+
       try {
 	::decode(str, p);
       } catch (const buffer::error &err) {
 	derr << "corrupt cap data for " << entity_name << " in auth db" << dendl;
 	str.clear();
       }
+
       s->caps.parse(str, NULL);
       s->auid = auid;
     }

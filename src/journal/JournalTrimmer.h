@@ -51,6 +51,7 @@ private:
       : journal_trimmer(_journal_trimmer) {
       journal_trimmer->m_async_op_tracker.start_op();
     }
+
     virtual ~C_CommitPositionSafe() {
       journal_trimmer->m_async_op_tracker.finish_op();
     }
@@ -78,6 +79,7 @@ private:
 
   bool m_shutdown = false;
 
+  // used in JournalTrimmer::committed
   CreateContext m_create_commit_position_safe_context = [this]() {
       return new C_CommitPositionSafe(this);
     };
