@@ -9,6 +9,8 @@
 namespace rbd {
 namespace mirror {
 
+// created by
+// Mirror::Mirror
 template <typename I>
 Threads<I>::Threads(CephContext *cct) : timer_lock("Threads::timer_lock") {
   thread_pool = new ThreadPool(cct, "Journaler::thread_pool", "tp_journal",

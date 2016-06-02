@@ -167,7 +167,11 @@ void ECTransaction::generate_transactions(
 	  entry->is_modify() &&
 	  op.updated_snaps) {
 	bufferlist bl(op.updated_snaps->second.size() * 8 + 8);
+        // updated by PGTransaction::update_snaps, which called by PrimaryLogPG::trim_object,
+        // which called by PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
 	::encode(op.updated_snaps->second, bl);
+
+        // log_entry_t::snaps was set by PrimaryLogPG::make_writeable/PrimaryLogPG::finish_ctx
 	entry->snaps.swap(bl);
 	entry->snaps.reassign_to_mempool(mempool::mempool_osd_pglog);
       }
@@ -186,7 +190,7 @@ void ECTransaction::generate_transactions(
 			   << dendl;
       }
 
-      if (entry && op.updated_snaps) {
+      if (entry && op.updated_snaps) { // updated by PGTransaction::update_snaps
 	entry->mod_desc.update_snaps(op.updated_snaps->first);
       }
 

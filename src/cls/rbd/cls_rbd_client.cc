@@ -17,6 +17,7 @@ namespace librbd {
       bufferlist bl, empty_bl;
       snapid_t snap = CEPH_NOSNAP;
       ::encode(snap, bl);
+
       op->exec("rbd", "get_size", bl);
       op->exec("rbd", "get_object_prefix", empty_bl);
     }
@@ -42,6 +43,7 @@ namespace librbd {
 			       std::string *object_prefix, uint8_t *order)
     {
       librados::ObjectReadOperation op;
+      // size, object_prefix
       get_immutable_metadata_start(&op);
 
       bufferlist out_bl;
@@ -160,6 +162,7 @@ namespace librbd {
       ::encode(object_prefix, bl);
       ::encode(data_pool_id, bl);
 
+      // cls = "rbd", method = "create", indata = bl
       op->exec("rbd", "create", bl);
     }
 
@@ -384,6 +387,10 @@ namespace librbd {
       return get_flags_finish(&it, flags, snap_ids, snap_flags);
     }
 
+    // called by
+    // librbd::image::SetFlagsRequest<I>::send_set_flags
+    // librbd::object_map::InvalidateRequest<I>::send
+    // librbd::operation::RebuildObjectMapRequest<I>::send_update_header
     void set_flags(librados::ObjectWriteOperation *op, snapid_t snap_id,
                    uint64_t flags, uint64_t mask)
     {
@@ -556,6 +563,7 @@ namespace librbd {
       sizes->resize(ids.size());
       parents->resize(ids.size());
       protection_statuses->resize(ids.size());
+
       try {
 	for (size_t i = 0; i < names->size(); ++i) {
 	  uint8_t order;
@@ -1209,6 +1217,8 @@ namespace librbd {
       rados_op->exec("rbd", "object_map_update", in);
     }
 
+    // called by
+    // librbd::object_map::SnapshotCreateRequest::send_add_snapshot
     void object_map_snap_add(librados::ObjectWriteOperation *rados_op)
     {
       bufferlist in;
@@ -1335,6 +1345,8 @@ namespace librbd {
       return 0;
     }
 
+    // called by
+    // Replayer::set_sources
     int mirror_uuid_get(librados::IoCtx *ioctx, std::string *uuid) {
       librados::ObjectReadOperation op;
       mirror_uuid_get_start(&op);
@@ -1353,6 +1365,8 @@ namespace librbd {
       return 0;
     }
 
+    // called by
+    // librbd::mirror_mode_set
     int mirror_uuid_set(librados::IoCtx *ioctx, const std::string &uuid) {
       bufferlist in_bl;
       ::encode(uuid, in_bl);
@@ -1640,6 +1654,7 @@ namespace librbd {
 
     int mirror_image_remove(librados::IoCtx *ioctx, const std::string &image_id) {
       librados::ObjectWriteOperation op;
+
       mirror_image_remove(&op, image_id);
 
       int r = ioctx->operate(RBD_MIRRORING, &op);
@@ -1649,6 +1664,7 @@ namespace librbd {
       return 0;
     }
 
+    // never called
     int mirror_image_status_set(librados::IoCtx *ioctx,
 				const std::string &global_image_id,
 				const cls::rbd::MirrorImageStatus &status) {
@@ -1657,6 +1673,9 @@ namespace librbd {
       return ioctx->operate(RBD_MIRRORING, &op);
     }
 
+    // called by
+    // ImageReplayer<I>::send_mirror_status_update
+    // mirror_image_status_set(librados::IoCtx, ...), i.e., above
     void mirror_image_status_set(librados::ObjectWriteOperation *op,
 				 const std::string &global_image_id,
 				 const cls::rbd::MirrorImageStatus &status) {

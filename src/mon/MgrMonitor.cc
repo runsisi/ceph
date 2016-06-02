@@ -44,6 +44,8 @@ void MgrMonitor::create_initial()
   dout(10) << __func__ << " initial modules " << pending_map.modules << dendl;
 }
 
+// called by
+// PaxosService::refresh
 void MgrMonitor::update_from_paxos(bool *need_bootstrap)
 {
   version_t version = get_last_committed();
@@ -159,6 +161,7 @@ public:
 
 bool MgrMonitor::preprocess_beacon(MonOpRequestRef op)
 {
+  // sent by MgrStandby::send_beacon
   MMgrBeacon *m = static_cast<MMgrBeacon*>(op->get_req());
   dout(4) << "beacon from " << m->get_gid() << dendl;
 
@@ -173,6 +176,7 @@ bool MgrMonitor::preprocess_beacon(MonOpRequestRef op)
 
 bool MgrMonitor::prepare_beacon(MonOpRequestRef op)
 {
+  // sent by MgrStandby::send_beacon
   MMgrBeacon *m = static_cast<MMgrBeacon*>(op->get_req());
   dout(4) << "beacon from " << m->get_gid() << dendl;
 
@@ -264,22 +268,35 @@ bool MgrMonitor::prepare_beacon(MonOpRequestRef op)
   return updated;
 }
 
+// called by
+// MgrMonitor::update_from_paxos
 void MgrMonitor::check_subs()
 {
   const std::string type = "mgrmap";
   if (mon->session_map.subs.count(type) == 0)
     return;
+
   for (auto sub : *(mon->session_map.subs[type])) {
     check_sub(sub);
   }
 }
 
+// called by
+// MgrMonitor::check_subs
+// Monitor::handle_subscribe
 void MgrMonitor::check_sub(Subscription *sub)
 {
   if (sub->type == "mgrmap") {
+    // subscribed by
+    // librados::RadosClient::connect
+    // MDSDaemon::init
+    // MgrStandby::init
+    // OSD::init
     if (sub->next <= map.get_epoch()) {
       dout(20) << "Sending map to subscriber " << sub->session->con << dendl;
+
       sub->session->con->send_message(new MMgrMap(map));
+
       if (sub->onetime) {
         mon->session_map.remove_sub(sub);
       } else {
@@ -287,6 +304,7 @@ void MgrMonitor::check_sub(Subscription *sub)
       }
     }
   } else {
+    // subscribed by Mgr::init
     assert(sub->type == "mgrdigest");
     if (digest_event == nullptr) {
       send_digests();

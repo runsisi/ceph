@@ -61,6 +61,9 @@ using librbd::util::unique_lock_name;
 using managed_lock::util::decode_lock_cookie;
 using managed_lock::util::encode_lock_cookie;
 
+// derived by
+// ExclusiveLock, mode == EXCLUSIVE
+// LeaderLock, mode == EXCLUSIVE
 template <typename I>
 ManagedLock<I>::ManagedLock(librados::IoCtx &ioctx, ContextWQ *work_queue,
                             const string& oid, Watcher *watcher, Mode mode,
@@ -159,6 +162,7 @@ void ManagedLock<I>::try_acquire_lock(Context *on_acquired) {
     if (is_state_shutdown()) {
       r = -ESHUTDOWN;
     } else if (m_state != STATE_LOCKED || !m_actions_contexts.empty()) {
+      // not locked, or locked but has pending contexts
       ldout(m_cct, 10) << dendl;
       execute_action(ACTION_TRY_LOCK, on_acquired);
       return;
@@ -382,7 +386,9 @@ template <typename I>
 void ManagedLock<I>::execute_action(Action action, Context *ctx) {
   assert(m_lock.is_locked());
 
+  // merge or append, the same as ImageState state machine
   append_context(action, ctx);
+
   if (!is_transition_state()) {
     execute_next_action();
   }
@@ -392,7 +398,8 @@ template <typename I>
 void ManagedLock<I>::execute_next_action() {
   assert(m_lock.is_locked());
   assert(!m_actions_contexts.empty());
-  switch (get_active_action()) {
+
+  switch (get_active_action()) { // the first action on the fifo queue
   case ACTION_ACQUIRE_LOCK:
   case ACTION_TRY_LOCK:
     send_acquire_lock();
@@ -424,6 +431,7 @@ void ManagedLock<I>::complete_active_action(State next_state, int r) {
   assert(m_lock.is_locked());
   assert(!m_actions_contexts.empty());
 
+  // std::list<ActionContexts>
   ActionContexts action_contexts(std::move(m_actions_contexts.front()));
   m_actions_contexts.pop_front();
   m_state = next_state;
@@ -451,20 +459,25 @@ bool ManagedLock<I>::is_state_shutdown() const {
 template <typename I>
 void ManagedLock<I>::send_acquire_lock() {
   assert(m_lock.is_locked());
+
   if (m_state == STATE_LOCKED) {
     complete_active_action(STATE_LOCKED, 0);
     return;
   }
 
   ldout(m_cct, 10) << dendl;
+
   m_state = STATE_ACQUIRING;
 
+  // pointer to the linger op, see IoCtxImpl::aio_watch
   uint64_t watch_handle = m_watcher->get_watch_handle();
   if (watch_handle == 0) {
     lderr(m_cct) << "watcher not registered - delaying request" << dendl;
     m_state = STATE_WAITING_FOR_REGISTER;
     return;
   }
+
+  // "auto " + watch_handle
   m_cookie = encode_lock_cookie(watch_handle);
 
   m_work_queue->queue(new FunctionContext([this](int r) {
@@ -488,6 +501,7 @@ void ManagedLock<I>::handle_pre_acquire_lock(int r) {
     m_blacklist_on_break_lock, m_blacklist_expire_seconds,
     create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_acquire_lock>(this));
+
   m_work_queue->queue(new C_SendLockRequest<AcquireRequest<I>>(req), 0);
 }
 
@@ -539,6 +553,7 @@ void ManagedLock<I>::revert_to_unlock_state(int r) {
         assert(ret == 0);
         complete_active_action(STATE_UNLOCKED, r);
       }));
+
   m_work_queue->queue(new C_SendLockRequest<ReleaseRequest<I>>(req));
 }
 
@@ -667,6 +682,8 @@ void ManagedLock<I>::handle_pre_release_lock(int r) {
       m_work_queue, m_oid, m_cookie,
       create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_release_lock>(this));
+
+  // ReleaseRequest::send
   m_work_queue->queue(new C_SendLockRequest<ReleaseRequest<I>>(req), 0);
 }
 
@@ -684,7 +701,7 @@ void ManagedLock<I>::handle_release_lock(int r) {
   m_post_next_state = r < 0 ? STATE_LOCKED : STATE_UNLOCKED;
 
   m_work_queue->queue(new FunctionContext([this, r](int ret) {
-    post_release_lock_handler(false, r, create_context_callback<
+    post_release_lock_handler(false, r, create_context_callback< // not shutting down
         ManagedLock<I>, &ManagedLock<I>::handle_post_release_lock>(this));
   }));
 }
@@ -754,7 +771,7 @@ void ManagedLock<I>::handle_shutdown_pre_release(int r) {
   ReleaseRequest<I>* req = ReleaseRequest<I>::create(m_ioctx, m_watcher,
       m_work_queue, m_oid, cookie,
       new FunctionContext([this](int r) {
-        post_release_lock_handler(true, r, create_context_callback<
+        post_release_lock_handler(true, r, create_context_callback< // shutting down
             ManagedLock<I>, &ManagedLock<I>::handle_shutdown_post_release>(this));
       }));
   req->send();

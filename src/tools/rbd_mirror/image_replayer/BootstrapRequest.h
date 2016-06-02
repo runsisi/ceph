@@ -160,7 +160,7 @@ private:
   std::string m_remote_mirror_uuid;
   Journaler *m_journaler;
   MirrorPeerClientMeta *m_client_meta;
-  ProgressContext *m_progress_ctx;
+  ProgressContext *m_progress_ctx; // member or ImageReplayer
   bool *m_do_resync;
 
   Mutex m_lock;

@@ -152,6 +152,9 @@ OpTracker::~OpTracker() {
   }
 }
 
+// called by
+// MDSRankDispatcher::handle_asok_command, for "dump_historic_ops"
+// OSD::asok_command, for "dump_historic_ops"
 bool OpTracker::dump_historic_ops(Formatter *f, bool by_duration)
 {
   RWLock::RLocker l(lock);
@@ -200,57 +203,82 @@ bool OpTracker::dump_historic_slow_ops(Formatter *f)
   return true;
 }
 
+// called by
+// MDSRankDispatcher::handle_asok_command, for "dump_ops_in_flight"/"ops"
+// MDSRankDispatcher::handle_asok_command, for "dump_blocked_ops"
+// Monitor::do_admin_command, for "ops"
+// OSD::asok_command, for "dump_ops_in_flight"/"ops"
+// OSD::asok_command, for "dump_blocked_ops"
 bool OpTracker::dump_ops_in_flight(Formatter *f, bool print_only_blocked)
 {
   RWLock::RLocker l(lock);
+
   if (!tracking_enabled)
     return false;
 
   f->open_object_section("ops_in_flight"); // overall dump
+
   uint64_t total_ops_in_flight = 0;
+
   f->open_array_section("ops"); // list of TrackedOps
   utime_t now = ceph_clock_now();
   for (uint32_t i = 0; i < num_optracker_shards; i++) {
     ShardedTrackingData* sdata = sharded_in_flight_list[i];
     assert(NULL != sdata); 
+
     Mutex::Locker locker(sdata->ops_in_flight_lock_sharded);
     for (auto& op : sdata->ops_in_flight_sharded) {
       if (print_only_blocked && (now - op.get_initiated() <= complaint_time))
 	break;
+
       f->open_object_section("op");
       op.dump(now, f);
       f->close_section(); // this TrackedOp
+
       total_ops_in_flight++;
     }
   }
+
   f->close_section(); // list of TrackedOps
+
   if (print_only_blocked) {
     f->dump_float("complaint_time", complaint_time);
     f->dump_int("num_blocked_ops", total_ops_in_flight);
   } else
     f->dump_int("num_ops", total_ops_in_flight);
+
   f->close_section(); // overall dump
+
   return true;
 }
 
+// called by
+// TrackedOp::tracking_start
 bool OpTracker::register_inflight_op(TrackedOp *i)
 {
   RWLock::RLocker l(lock);
+
   if (!tracking_enabled)
     return false;
 
   uint64_t current_seq = ++seq;
   uint32_t shard_index = current_seq % num_optracker_shards;
+
   ShardedTrackingData* sdata = sharded_in_flight_list[shard_index];
+
   assert(NULL != sdata);
+
   {
     Mutex::Locker locker(sdata->ops_in_flight_lock_sharded);
     sdata->ops_in_flight_sharded.push_back(*i);
     i->seq = current_seq;
   }
+
   return true;
 }
 
+// called by
+// OpTracker::RemoveOnDelete::operator()
 void OpTracker::unregister_inflight_op(TrackedOp *i)
 {
   // caller checks;
@@ -276,9 +304,13 @@ void OpTracker::unregister_inflight_op(TrackedOp *i)
   }
 }
 
+// called by
+// MDSRank::check_ops_in_flight
+// OSD::check_ops_in_flight
 bool OpTracker::check_ops_in_flight(std::vector<string> &warning_vector, int *slow)
 {
   RWLock::RLocker l(lock);
+
   if (!tracking_enabled)
     return false;
 
@@ -291,7 +323,9 @@ bool OpTracker::check_ops_in_flight(std::vector<string> &warning_vector, int *sl
   for (uint32_t i = 0; i < num_optracker_shards; i++) {
     ShardedTrackingData* sdata = sharded_in_flight_list[i];
     assert(NULL != sdata);
+
     Mutex::Locker locker(sdata->ops_in_flight_lock_sharded);
+
     if (!sdata->ops_in_flight_sharded.empty()) {
       utime_t oldest_op_tmp =
 	sdata->ops_in_flight_sharded.front().get_initiated();
@@ -323,11 +357,14 @@ bool OpTracker::check_ops_in_flight(std::vector<string> &warning_vector, int *sl
     slow = &_slow; 
   else
     *slow = _slow;  // start from 0 anyway
+
   int warned = 0;   // total logged
   for (uint32_t iter = 0; iter < num_optracker_shards; iter++) {
     ShardedTrackingData* sdata = sharded_in_flight_list[iter];
     assert(NULL != sdata);
+
     Mutex::Locker locker(sdata->ops_in_flight_lock_sharded);
+
     if (sdata->ops_in_flight_sharded.empty())
       continue;
     auto i = sdata->ops_in_flight_sharded.begin();
@@ -436,6 +473,7 @@ void TrackedOp::dump(utime_t now, Formatter *f) const
   f->dump_stream("initiated_at") << get_initiated();
   f->dump_float("age", now - get_initiated());
   f->dump_float("duration", get_duration());
+
   {
     f->open_array_section("type_data");
     _dump(f);

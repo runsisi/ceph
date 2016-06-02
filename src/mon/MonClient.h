@@ -255,6 +255,7 @@ private:
 
     sub_new[what].start = start;
     sub_new[what].flags = flags;
+
     return true;
   }
   void _sub_got(const string &what, version_t got) {
@@ -420,6 +421,13 @@ public:
   entity_addr_t get_myaddr() const { return messenger->get_myaddr(); }
   AuthAuthorizer* build_authorizer(int service_id) const;
 
+  // called by
+  // Client::init
+  // librados::RadosClient::connect
+  // MDSDaemon::init
+  // MgrStandby::init
+  // OSD::init
+  // MDSUtility::init
   void set_want_keys(uint32_t want) {
     want_keys = want;
   }

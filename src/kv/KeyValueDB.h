@@ -158,13 +158,16 @@ public:
     const std::set<std::string> &key,      ///< [in] Key to retrieve
     std::map<std::string, bufferlist> *out ///< [out] Key value retrieved
     ) = 0;
+
   virtual int get(const std::string &prefix, ///< [in] prefix
 		  const std::string &key,    ///< [in] key
 		  bufferlist *value) {  ///< [out] value
     std::set<std::string> ks;
     ks.insert(key);
+
     std::map<std::string,bufferlist> om;
     int r = get(prefix, ks, &om);
+
     if (om.find(key) != om.end()) {
       *value = om[key];
     } else {
@@ -173,12 +176,14 @@ public:
     }
     return r;
   }
+
   virtual int get(const string &prefix,
 		  const char *key, size_t keylen,
 		  bufferlist *value) {
     return get(prefix, string(key, keylen), value);
   }
 
+  // KeyValueDB/ObjectMap will override this interface
   class GenericIteratorImpl {
   public:
     virtual int seek_to_first() = 0;
@@ -192,6 +197,7 @@ public:
     virtual ~GenericIteratorImpl() {}
   };
 
+  // LevelDB/RocksDB will override this interface
   class WholeSpaceIteratorImpl {
   public:
     virtual int seek_to_first() = 0;
@@ -223,11 +229,13 @@ public:
       return 0;
     }
     virtual ~WholeSpaceIteratorImpl() { }
-  };
+  }; // class WholeSpaceIteratorImpl
+
   typedef ceph::shared_ptr< WholeSpaceIteratorImpl > WholeSpaceIterator;
 
   class IteratorImpl : public GenericIteratorImpl {
     const std::string prefix;
+    // LevelDB/RocksDB specific iterator, i.e., the backend implementation
     WholeSpaceIterator generic_iter;
   public:
     IteratorImpl(const std::string &prefix, WholeSpaceIterator iter) :
@@ -287,11 +295,12 @@ public:
     int status() override {
       return generic_iter->status();
     }
-  };
+  }; // class IteratorImpl
 
   typedef ceph::shared_ptr< IteratorImpl > Iterator;
 
   WholeSpaceIterator get_iterator() {
+    // pure virtual, see RocksDBStore::_get_iterator, LevelDBStore::_get_iterator
     return _get_iterator();
   }
 

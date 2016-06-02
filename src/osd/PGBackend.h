@@ -37,6 +37,8 @@ class OSDMap;
 class PGLog;
 typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
 
+ // created by
+ // PGBackend::build_pg_backend, which called by PrimaryLogPG::PrimaryLogPG
  /**
   * PGBackend
   *
@@ -56,6 +58,7 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
    ObjectStore *store;
    const coll_t coll;
    ObjectStore::CollectionHandle &ch;
+
  public:	
    /**
     * Provides interfaces for PGBackend callbacks
@@ -64,6 +67,8 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
     * implementation holding a lock and that the callbacks are
     * called under the same locks.
     */
+   // derived by
+   // class PrimaryLogPG
    class Listener {
    public:
      /// Debugging
@@ -133,10 +138,14 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
        GenContext<ThreadPool::TPHandle&> *c) = 0;
 
      virtual void send_message(int to_osd, Message *m) = 0;
+
+     // overrode by
+     // PrimaryLogPG::queue_transaction
      virtual void queue_transaction(
        ObjectStore::Transaction&& t,
        OpRequestRef op = OpRequestRef()
        ) = 0;
+
      virtual void queue_transactions(
        vector<ObjectStore::Transaction>& tls,
        OpRequestRef op = OpRequestRef()
@@ -157,6 +166,7 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
      virtual const pg_missing_tracker_t &get_local_missing() const = 0;
      virtual const map<pg_shard_t, pg_missing_t> &get_shard_missing()
        const = 0;
+
      virtual boost::optional<const pg_missing_const_i &> maybe_get_shard_missing(
        pg_shard_t peer) const {
        if (peer == primary_shard()) {
@@ -171,6 +181,7 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
 	 }
        }
      }
+
      virtual const pg_missing_const_i &get_shard_missing(pg_shard_t peer) const {
        auto m = maybe_get_shard_missing(peer);
        assert(m);
@@ -278,9 +289,13 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
      virtual bool check_osdmap_full(const set<pg_shard_t> &missing_on) = 0;
 
      virtual ~Listener() {}
-   };
+   }; // class Listener
+
    Listener *parent;
    Listener *get_parent() const { return parent; }
+
+   // called by
+   // PGBackend::build_pg_backend, which called by PrimaryLogPG::PrimaryLogPG
    PGBackend(CephContext* cct, Listener *l, ObjectStore *store, coll_t coll,
 	     ObjectStore::CollectionHandle &ch) :
      cct(cct),
@@ -288,6 +303,7 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
      coll(coll),
      ch(ch),
      parent(l) {}
+
    bool is_primary() const { return get_parent()->pgb_is_primary(); }
    OSDMapRef get_osdmap() const { return get_parent()->pgb_get_osdmap(); }
    const pg_info_t &get_info() { return get_parent()->get_info(); }
@@ -383,6 +399,7 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
    virtual void dump_recovery_info(Formatter *f) const = 0;
 
  private:
+   // used by PGBackend::on_change_cleanup to cleanup temp objects
    set<hobject_t> temp_contents;
  public:
    // Track contents of temp collection, clear on reset

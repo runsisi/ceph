@@ -168,6 +168,7 @@ inline void finish_contexts(CephContext *cct, std::vector<Context*>& finished,
 
   if (cct)
     mydout(cct,10) << ls.size() << " contexts to finish with " << result << dendl;
+
   for (std::vector<Context*>::iterator it = ls.begin(); 
        it != ls.end(); 
        it++) {
@@ -284,6 +285,7 @@ private:
     waitfor.erase(sub);
 #endif
     --sub_existing_count;
+
     mydout(cct,10) << "C_GatherBase " << this << ".sub_finish(r=" << r << ") " << sub
 #ifdef DEBUG_GATHER
 		    << " (remaining " << waitfor << ")"
@@ -361,6 +363,8 @@ public:
     assert(activated == false);
     sub_created_count++;
     sub_existing_count++;
+
+    // C_GatherBase::sub_finish
     ContextType *s = new C_GatherSub(this);
 #ifdef DEBUG_GATHER
     waitfor.insert(s);

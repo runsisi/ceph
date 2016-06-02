@@ -25,12 +25,16 @@ static const uint64_t NOTIFY_TIMEOUT_MS = 5000;
 
 } // anonymous namespace
 
+// never be instanced, others always call its static methods
 template <typename I>
 MirroringWatcher<I>::MirroringWatcher(librados::IoCtx &io_ctx,
                                       ContextWQ *work_queue)
   : Watcher(io_ctx, work_queue, RBD_MIRRORING) {
 }
 
+// static
+// called by
+// librbd::mirror_mode_set
 template <typename I>
 int MirroringWatcher<I>::notify_mode_updated(librados::IoCtx &io_ctx,
                                               cls::rbd::MirrorMode mirror_mode) {
@@ -39,6 +43,9 @@ int MirroringWatcher<I>::notify_mode_updated(librados::IoCtx &io_ctx,
   return ctx.wait();
 }
 
+// static
+// called by
+// MirroringWatcher<I>::notify_mode_updated, i.e., above
 template <typename I>
 void MirroringWatcher<I>::notify_mode_updated(librados::IoCtx &io_ctx,
                                               cls::rbd::MirrorMode mirror_mode,
@@ -56,6 +63,8 @@ void MirroringWatcher<I>::notify_mode_updated(librados::IoCtx &io_ctx,
   comp->release();
 }
 
+// static
+// never called
 template <typename I>
 int MirroringWatcher<I>::notify_image_updated(
     librados::IoCtx &io_ctx, cls::rbd::MirrorImageState mirror_image_state,
@@ -66,6 +75,11 @@ int MirroringWatcher<I>::notify_image_updated(
   return ctx.wait();
 }
 
+// static
+// called by
+// DisableRequest<I>::send_notify_mirroring_watcher
+// DisableRequest<I>::send_notify_mirroring_watcher_removed
+// EnableRequest<I>::send_notify_mirroring_watcher
 template <typename I>
 void MirroringWatcher<I>::notify_image_updated(
     librados::IoCtx &io_ctx, cls::rbd::MirrorImageState mirror_image_state,
@@ -96,6 +110,7 @@ void MirroringWatcher<I>::handle_notify(uint64_t notify_id, uint64_t handle,
 
 
   NotifyMessage notify_message;
+
   try {
     bufferlist::iterator iter = bl.begin();
     ::decode(notify_message, iter);
@@ -125,6 +140,8 @@ bool MirroringWatcher<I>::handle_payload(const ImageUpdatedPayload &payload,
                                          Context *on_notify_ack) {
   CephContext *cct = this->m_cct;
   ldout(cct, 20) << ": image state updated" << dendl;
+
+  // pure virtual
   handle_image_updated(payload.mirror_image_state, payload.image_id,
                        payload.global_image_id);
   return true;

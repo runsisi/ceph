@@ -114,6 +114,14 @@ public:
   }
   ~OpTracker();
 
+  // called by
+  // MDCache::request_start
+  // MDCache::request_start_slave
+  // MDCache::request_start_internal
+  // Monitor::_ms_dispatch
+  // PGMonitor::prepare_pg_stats
+  // OSD::ms_fast_dispatch
+  // OSD::_dispatch
   template <typename T, typename U>
   typename T::Ref create_request(U params)
   {
@@ -293,6 +301,8 @@ public:
 
   void dump(utime_t now, Formatter *f) const;
 
+  // called by
+  // OpTracker::create_request
   void tracking_start() {
     if (tracker->register_inflight_op(this)) {
       events.push_back(Event(initiated_at, "initiated"));

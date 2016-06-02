@@ -27,6 +27,8 @@
 
 #define SPDK_PREFIX "spdk:"
 
+// created by
+// BlueFS::add_block_device
 /// track in-flight io
 struct IOContext {
 private:
@@ -59,6 +61,7 @@ public:
     return num_pending.load();
   }
 
+  // wait until num_running && num_reading reach both 0
   void aio_wait();
 
   void try_aio_wake() {

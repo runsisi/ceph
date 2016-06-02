@@ -344,6 +344,8 @@ class MonitorDBStore
     }
   };
 
+  // called by
+  // Paxos::commit_start
   /**
    * queue transaction
    *

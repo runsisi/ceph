@@ -771,12 +771,14 @@ def daemonperf(childargs, sockpath):
 
 def main():
     ceph_args = os.environ.get('CEPH_ARGS')
+    
     if ceph_args:
         if "injectargs" in sys.argv:
             i = sys.argv.index("injectargs")
             sys.argv = sys.argv[:i] + ceph_args.split() + sys.argv[i:]
         else:
             sys.argv.extend(ceph_args.split())
+    
     parser, parsed_args, childargs = parse_cmdargs()
 
     if parsed_args.version:
@@ -896,6 +898,7 @@ def main():
     if parsed_args.completion:
         # for completion let timeout be really small
         timeout = 3
+    
     try:
         if childargs and childargs[0] == 'ping':
             return ping_monitor(cluster_handle, childargs[1], timeout)
@@ -930,6 +933,7 @@ def main():
                 level = 'info'
             else:
                 level = k.replace('watch_', '')
+    
     if level:
 
         # an awfully simple callback

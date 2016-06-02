@@ -306,8 +306,10 @@ void AsyncMessenger::ready()
   }
 
   Mutex::Locker l(lock);
+
   for (auto &&p : processors)
     p->start();
+
   dispatch_queue.start();
 }
 
@@ -318,15 +320,22 @@ int AsyncMessenger::shutdown()
   // done!  clean up.
   for (auto &&p : processors)
     p->stop();
+
   mark_down_all();
+
   // break ref cycles on the loopback connection
   local_connection->set_priv(NULL);
   did_bind = false;
+
   lock.Lock();
+
   stop_cond.Signal();
   stopped = true;
+
   lock.Unlock();
+
   stack->drain();
+
   return 0;
 }
 

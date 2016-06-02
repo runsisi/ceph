@@ -37,6 +37,8 @@ PostAcquireRequest<I>* PostAcquireRequest<I>::create(I &image_ctx,
   return new PostAcquireRequest(image_ctx, on_acquire, on_finish);
 }
 
+// created by
+// ExclusiveLock<I>::post_acquire_lock_handler
 template <typename I>
 PostAcquireRequest<I>::PostAcquireRequest(I &image_ctx, Context *on_acquire,
                                           Context *on_finish)
@@ -125,6 +127,8 @@ void PostAcquireRequest<I>::send_open_journal() {
   using klass = PostAcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_open_journal>(
     this);
+
+  // new Journal<ImageCtx>
   m_journal = m_image_ctx.create_journal();
 
   // journal playback requires object map (if enabled) and itself

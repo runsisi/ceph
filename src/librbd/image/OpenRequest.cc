@@ -29,6 +29,9 @@ static uint64_t MAX_METADATA_ITEMS = 128;
 using util::create_context_callback;
 using util::create_rados_callback;
 
+// created by
+// RefreshParentRequest<I>::send_open_parent
+// ImageState<I>::send_open_unlock
 template <typename I>
 OpenRequest<I>::OpenRequest(I *image_ctx, bool skip_open_parent,
                             Context *on_finish)
@@ -80,9 +83,14 @@ Context *OpenRequest<I>::handle_v1_detect_header(int *result) {
   return nullptr;
 }
 
+// called by
+// OpenRequest<I>::send
 template <typename I>
 void OpenRequest<I>::send_v2_detect_header() {
   if (m_image_ctx->id.empty()) {
+    // image id is not given, only the image name is given, so
+    // need to detect the image format first
+
     CephContext *cct = m_image_ctx->cct;
     ldout(cct, 10) << this << " " << __func__ << dendl;
 
@@ -93,10 +101,12 @@ void OpenRequest<I>::send_v2_detect_header() {
     librados::AioCompletion *comp =
       create_rados_callback<klass, &klass::handle_v2_detect_header>(this);
     m_out_bl.clear();
+    // RBD_ID_PREFIX + name
     m_image_ctx->md_ctx.aio_operate(util::id_obj_name(m_image_ctx->name),
                                    comp, &op, &m_out_bl);
     comp->release();
   } else {
+    // get image name by given id
     send_v2_get_name();
   }
 }
@@ -114,6 +124,8 @@ Context *OpenRequest<I>::handle_v2_detect_header(int *result) {
     send_close_image(*result);
   } else {
     m_image_ctx->old_format = false;
+
+    // detected this image is format 2, get its id by given name
     send_v2_get_id();
   }
   return nullptr;
@@ -180,6 +192,7 @@ Context *OpenRequest<I>::handle_v2_get_name(int *result) {
     bufferlist::iterator it = m_out_bl.begin();
     *result = cls_client::dir_get_name_finish(&it, &m_image_ctx->name);
   }
+
   if (*result < 0 && *result != -ENOENT) {
     lderr(cct) << "failed to retreive name: "
                << cpp_strerror(*result) << dendl;
@@ -224,6 +237,7 @@ Context *OpenRequest<I>::handle_v2_get_name_from_trash(int *result) {
     m_image_ctx->name = trash_spec.name;
   }
   if (*result < 0) {
+    // we did not find the name by id in RBD_DIRECTORY, and now we failed in RBD_TRASH too
     if (*result == -EOPNOTSUPP) {
       *result = -ENOENT;
     } else if (*result == -ENOENT) {
@@ -425,6 +439,11 @@ void OpenRequest<I>::send_v2_apply_metadata() {
                  << "start_key=" << m_last_metadata_key << dendl;
 
   librados::ObjectReadOperation op;
+  // list omap key with prefix "metadata_"
+  // note: we start with the first <key, value> pair whose omap key is
+  // "metadata_conf_", in cls_rbd.cc we use "metadata_" + m_last_metadata_key
+  // as the first key to list, but we do not use it as the prefix to filter,
+  // so we may get metadata pairs with key as "metadata_xxx" during the last try
   cls_client::metadata_list_start(&op, m_last_metadata_key, MAX_METADATA_ITEMS);
 
   using klass = OpenRequest<I>;
@@ -444,6 +463,7 @@ Context *OpenRequest<I>::handle_v2_apply_metadata(int *result) {
   std::map<std::string, bufferlist> metadata;
   if (*result == 0) {
     bufferlist::iterator it = m_out_bl.begin();
+    // decode returned <key, value> pairs which has key with prefix of "conf_"
     *result = cls_client::metadata_list_finish(&it, &metadata);
   }
 
@@ -458,14 +478,20 @@ Context *OpenRequest<I>::handle_v2_apply_metadata(int *result) {
 
   if (!metadata.empty()) {
     m_metadata.insert(metadata.begin(), metadata.end());
+
+    // the returned key is stripped with the prefix "metadata_"
     m_last_metadata_key = metadata.rbegin()->first;
+    // "conf_"
     if (boost::starts_with(m_last_metadata_key,
                            ImageCtx::METADATA_CONF_PREFIX)) {
+      // continue, still has metadata pairs with key starts with "metadata_conf_"
       send_v2_apply_metadata();
+
       return nullptr;
     }
   }
 
+  // apply the image specific config parameters from metadata
   m_image_ctx->apply_metadata(m_metadata);
 
   send_register_watch();
@@ -474,12 +500,19 @@ Context *OpenRequest<I>::handle_v2_apply_metadata(int *result) {
 
 template <typename I>
 void OpenRequest<I>::send_register_watch() {
+  // setup admin socket and rbd cache
   m_image_ctx->init();
 
   if (m_image_ctx->read_only) {
+
+    // read_only is set in ctor of ImageCtx and will never be changed,
+    // see rbd_open_read_only
+
     send_refresh();
     return;
   }
+
+  // we did not open this image with read-only, so register a watch
 
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
@@ -487,6 +520,9 @@ void OpenRequest<I>::send_register_watch() {
   using klass = OpenRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_register_watch>(this);
+
+  // create ImageCtx::image_watcher and register the watch to handle
+  // requests under librbd/operation
   m_image_ctx->register_watch(ctx);
 }
 
@@ -508,7 +544,10 @@ Context *OpenRequest<I>::handle_register_watch(int *result) {
 template <typename I>
 void OpenRequest<I>::send_refresh() {
   CephContext *cct = m_image_ctx->cct;
+
   ldout(cct, 10) << this << " " << __func__ << dendl;
+
+  // update snapc, snaps, exclusive_lock, object_map, journal
 
   using klass = OpenRequest<I>;
   RefreshRequest<I> *req = RefreshRequest<I>::create(
@@ -538,6 +577,9 @@ Context *OpenRequest<I>::send_set_snap(int *result) {
     *result = 0;
     return m_on_finish;
   }
+
+  // if we are to open a snapshot, then create a SetSnapRequest and
+  // execute it
 
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;

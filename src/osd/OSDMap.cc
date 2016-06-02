@@ -1274,6 +1274,7 @@ int OSDMap::identify_osd_on_all_channels(const entity_addr_t& addr) const
     if (exists(i) && (get_addr(i) == addr || get_cluster_addr(i) == addr ||
 	get_hb_back_addr(i) == addr || get_hb_front_addr(i) == addr))
       return i;
+
   return -1;
 }
 
@@ -1409,16 +1410,23 @@ uint8_t OSDMap::get_min_compat_client() const
   return CEPH_RELEASE_ARGONAUT;    // v0.48argonaut-206-g6f381af
 }
 
+// called by
+// OSDMap::apply_incremental
+// OSDMap::post_decode
 void OSDMap::_calc_up_osd_features()
 {
   bool first = true;
+
   cached_up_osd_features = 0;
+
   for (int osd = 0; osd < max_osd; ++osd) {
     if (!is_up(osd))
       continue;
+
     const osd_xinfo_t &xi = get_xinfo(osd);
     if (first) {
       cached_up_osd_features = xi.features;
+
       first = false;
     } else {
       cached_up_osd_features &= xi.features;
@@ -1428,6 +1436,7 @@ void OSDMap::_calc_up_osd_features()
 
 uint64_t OSDMap::get_up_osd_features() const
 {
+  // was set by OSDMap::_calc_up_osd_features
   return cached_up_osd_features;
 }
 
@@ -1492,10 +1501,14 @@ void OSDMap::dedup(const OSDMap *o, OSDMap *n)
     n->osd_uuid = o->osd_uuid;
 }
 
+// static
+// called by
+// OSDMonitor::create_pending
 void OSDMap::clean_temps(CephContext *cct,
 			 const OSDMap& osdmap, Incremental *pending_inc)
 {
   ldout(cct, 10) << __func__ << dendl;
+
   OSDMap tmpmap;
   tmpmap.deepish_copy_from(osdmap);
   tmpmap.apply_incremental(*pending_inc);
@@ -1564,9 +1577,21 @@ void OSDMap::clean_temps(CephContext *cct,
   }
 }
 
+// called by
+// OSDMonitor::update_from_paxos
+// OSDMonitor::reweight_by_utilization
+// OSDMonitor::maybe_prime_pg_temp
+// OSDMonitor::encode_pending
+// OSDMonitor::validate_crush_against_features
+// OSD::handle_osd_map
+// OSDMap::clean_temps
+// Objecter::handle_osd_map
+// osdmaptool.cc/main
+// rebuild_mondb.cc/update_osdmap
 int OSDMap::apply_incremental(const Incremental &inc)
 {
   new_blacklist_entries = false;
+
   if (inc.epoch == 1)
     fsid = inc.fsid;
   else if (inc.fsid != fsid)
@@ -1819,6 +1844,7 @@ int OSDMap::map_to_pg(
   const pg_pool_t *pool = get_pg_pool(poolid);
   if (!pool)
     return -ENOENT;
+
   ps_t ps;
   if (!key.empty())
     ps = pool->hash_key(key, nspace);
@@ -1838,6 +1864,7 @@ int OSDMap::object_locator_to_pg(
     pg = pg_t(loc.hash, loc.get_pool());
     return 0;
   }
+
   return map_to_pg(loc.get_pool(), oid.name, loc.key, loc.nspace, &pg);
 }
 
@@ -2737,6 +2764,9 @@ void OSDMap::decode(bufferlist::iterator& bl)
   post_decode();
 }
 
+// called by
+// OSDMap::decode_classic
+// OSDMap::decode
 void OSDMap::post_decode()
 {
   // index pool names
@@ -2817,6 +2847,7 @@ void OSDMap::dump(Formatter *f) const
 
       set<string> st;
       get_state(i, st);
+
       f->open_array_section("state");
       for (const auto &state : st)
 	f->dump_string("state", state);

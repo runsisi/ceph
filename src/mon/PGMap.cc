@@ -3312,6 +3312,9 @@ stats_out:
   return -EOPNOTSUPP;
 }
 
+// static
+// called by
+// PGMonitor::check_osd_map
 void PGMapUpdater::check_osd_map(const OSDMap::Incremental &osd_inc,
                                  std::set<int> *need_check_down_pg_osds,
                                  std::map<int,utime_t> *last_osd_report,
@@ -3351,6 +3354,7 @@ void PGMapUpdater::check_osd_map(const OSDMap::Incremental &osd_inc,
       // it's osd_stat_t record.
       dout(10) << __func__ << "  osd." << p.first
                << " created or destroyed" << dendl;
+
       pending_inc->rm_stat(p.first);
 
       // and adjust full, nearfull set
@@ -3441,6 +3445,9 @@ void PGMapUpdater::check_osd_map(
   }
 }
 
+// static
+// called by
+// PGMapUpdater::register_new_pgs
 void PGMapUpdater::register_pg(
     const OSDMap &osd_map,
     pg_t pgid, epoch_t epoch,
@@ -3453,13 +3460,16 @@ void PGMapUpdater::register_pg(
   auto parent_stat = pg_map.pg_stat.end();
   if (!new_pool) {
     parent = pgid;
+
     while (1) {
       // remove most significant bit
       int msb = cbits(parent.ps());
       if (!msb)
 	break;
+
       parent.set_ps(parent.ps() & ~(1<<(msb-1)));
       split_bits++;
+
       dout(30) << " is " << pgid << " parent " << parent << " ?" << dendl;
       parent_stat = pg_map.pg_stat.find(parent);
       if (parent_stat != pg_map.pg_stat.end() &&
@@ -3527,12 +3537,17 @@ void PGMapUpdater::register_pg(
   }
 }
 
+// static
+// called by
+// PGMonitor::check_osd_map
+// ClusterState::notify_osdmap
 void PGMapUpdater::register_new_pgs(
     const OSDMap &osd_map,
     const PGMap &pg_map,
     PGMap::Incremental *pending_inc)
 {
   epoch_t epoch = osd_map.get_epoch();
+
   dout(10) << __func__ << " checking pg pools for osdmap epoch " << epoch
            << ", last_pg_scan " << pg_map.last_pg_scan << dendl;
 
@@ -3607,7 +3622,10 @@ void PGMapUpdater::register_new_pgs(
            << removed << " uncreated pgs" << dendl;
 }
 
-
+// static
+// called by
+// PGMonitor::check_osd_map
+// ClusterState::notify_osdmap
 void PGMapUpdater::update_creating_pgs(
     const OSDMap &osd_map,
     const PGMap &pg_map,
@@ -3644,6 +3662,7 @@ void PGMapUpdater::update_creating_pgs(
         acting !=  s->acting ||
         acting_primary != s->acting_primary) {
       pg_stat_t *ns = &pending_inc->pg_stat_updates[pgid];
+
       if (osd_map.get_epoch() > ns->reported_epoch) {
 	dout(20) << __func__ << "  " << pgid << " "
 		 << " acting_primary: " << s->acting_primary
@@ -3674,6 +3693,7 @@ void PGMapUpdater::update_creating_pgs(
       }
     }
   }
+
   if (changed) {
     dout(10) << __func__ << " " << changed << " pgs changed primary" << dendl;
   }

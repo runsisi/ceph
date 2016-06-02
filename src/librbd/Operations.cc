@@ -43,6 +43,8 @@ namespace librbd {
 
 namespace {
 
+// used by the 10 operations, notify the update then after the notification
+// acked by the peers then call the user callback
 template <typename I>
 struct C_NotifyUpdate : public Context {
   I &image_ctx;
@@ -55,7 +57,11 @@ struct C_NotifyUpdate : public Context {
 
   void complete(int r) override {
     CephContext *cct = image_ctx.cct;
+
     if (notified) {
+
+      // has notified the header update
+
       if (r == -ETIMEDOUT) {
         // don't fail the op if a peer fails to get the update notification
         lderr(cct) << "update notification timed-out" << dendl;
@@ -68,6 +74,8 @@ struct C_NotifyUpdate : public Context {
         lderr(cct) << "update notification failed: " << cpp_strerror(r)
                    << dendl;
       }
+
+      // complete the user callback
       Context::complete(r);
       return;
     }
@@ -78,7 +86,10 @@ struct C_NotifyUpdate : public Context {
       return;
     }
 
+    // notify first, then to complete the ctx
+
     notified = true;
+
     image_ctx.notify_update(this);
   }
   void finish(int r) override {
@@ -122,7 +133,7 @@ struct C_InvokeAsyncRequest : public Context {
   boost::function<void(Context*)> local;
   boost::function<void(Context*)> remote;
   std::set<int> filter_error_codes;
-  Context *on_finish;
+  Context *on_finish; // C_SaferCond, for all types of op
   bool request_lock = false;
 
   C_InvokeAsyncRequest(I &image_ctx, const std::string& request_type,
@@ -137,14 +148,23 @@ struct C_InvokeAsyncRequest : public Context {
   }
 
   void send() {
+
+    // start the whole process, i.e., refresh -> acquire lock -> call local/remote
+
     send_refresh_image();
   }
 
+  // called by
+  // send, i.e., above
+  // handle_remote_request
+  // handle_local_request
   void send_refresh_image() {
     if (!image_ctx.state->is_refresh_required()) {
       send_acquire_exclusive_lock();
       return;
     }
+
+    // need to refresh
 
     CephContext *cct = image_ctx.cct;
     ldout(cct, 20) << __func__ << dendl;
@@ -152,6 +172,7 @@ struct C_InvokeAsyncRequest : public Context {
     Context *ctx = util::create_context_callback<
       C_InvokeAsyncRequest<I>,
       &C_InvokeAsyncRequest<I>::handle_refresh_image>(this);
+
     image_ctx.state->refresh(ctx);
   }
 
@@ -171,22 +192,43 @@ struct C_InvokeAsyncRequest : public Context {
   void send_acquire_exclusive_lock() {
     // context can complete before owner_lock is unlocked
     RWLock &owner_lock(image_ctx.owner_lock);
+
     owner_lock.get_read();
+
     image_ctx.snap_lock.get_read();
+
     if (image_ctx.read_only ||
         (!permit_snapshot && image_ctx.snap_id != CEPH_NOSNAP)) {
+      // release lock in case the complete(-EROFS) called below finished
+      // too quick
       image_ctx.snap_lock.put_read();
+
       owner_lock.put_read();
+
       complete(-EROFS);
       return;
     }
+
     image_ctx.snap_lock.put_read();
 
     if (image_ctx.exclusive_lock == nullptr) {
+
+      // exclusive lock not enabled
+
       send_local_request();
+
       owner_lock.put_read();
       return;
     } else if (image_ctx.image_watcher == nullptr) {
+
+      // ImageCtx::image_watcher is set in ImageCtx::register_watch and
+      // deleted in ImageCtx::shutdown
+      // we always registered the image watcher if we have opened
+      // the image without read-only, see OpenRequest<I>::send_register_watch
+
+      // TODO: ImageCtx::image_watcher can be nullptr only after shutdown
+      // or the image is opened with read-only, so we do not need this check ???
+
       owner_lock.put_read();
       complete(-EROFS);
       return;
@@ -195,9 +237,13 @@ struct C_InvokeAsyncRequest : public Context {
     if (image_ctx.exclusive_lock->is_lock_owner() &&
         image_ctx.exclusive_lock->accept_requests()) {
       send_local_request();
+
       owner_lock.put_read();
       return;
     }
+
+    // currently we are not the lock owner, so lock it before we can do
+    // some modification
 
     CephContext *cct = image_ctx.cct;
     ldout(cct, 20) << __func__ << dendl;
@@ -207,14 +253,16 @@ struct C_InvokeAsyncRequest : public Context {
         C_InvokeAsyncRequest<I>,
         &C_InvokeAsyncRequest<I>::handle_acquire_exclusive_lock>(this));
 
-    if (request_lock) {
+    if (request_lock) { // was set by C_InvokeAsyncRequest::handle_remote_request
       // current lock owner doesn't support op -- try to perform
       // the action locally
       request_lock = false;
+
       image_ctx.exclusive_lock->acquire_lock(ctx);
     } else {
       image_ctx.exclusive_lock->try_acquire_lock(ctx);
     }
+
     owner_lock.put_read();
   }
 
@@ -230,13 +278,27 @@ struct C_InvokeAsyncRequest : public Context {
     // context can complete before owner_lock is unlocked
     RWLock &owner_lock(image_ctx.owner_lock);
     owner_lock.get_read();
+
     if (image_ctx.exclusive_lock->is_lock_owner()) {
+
+      // call local function object with user callback set to
+      // C_InvokeAsyncRequest<I>::handle_local_request
       send_local_request();
+
       owner_lock.put_read();
       return;
     }
 
+    // try to lock exclusive lock failed, the remote locker is still alive,
+    // see AcquireRequest<I>::handle_get_watchers, we do not persist on get the
+    // lock, we are good if we are not the owner of the exclusive lock,
+    // we will notify the remote lock owner to do the request for us
+
+    // let the remote lock owner to do the request instead of locally,
+    // call remote function object with user callback set to
+    // C_InvokeAsyncRequest<I>::handle_remote_request
     send_remote_request();
+
     owner_lock.put_read();
   }
 
@@ -249,6 +311,7 @@ struct C_InvokeAsyncRequest : public Context {
     Context *ctx = util::create_context_callback<
       C_InvokeAsyncRequest<I>, &C_InvokeAsyncRequest<I>::handle_remote_request>(
         this);
+
     remote(ctx);
   }
 
@@ -259,18 +322,27 @@ struct C_InvokeAsyncRequest : public Context {
     if (r == -EOPNOTSUPP) {
       ldout(cct, 5) << request_type << " not supported by current lock owner"
                     << dendl;
+
       request_lock = true;
+
       send_refresh_image();
       return;
     } else if (r != -ETIMEDOUT && r != -ERESTART) {
       image_ctx.state->handle_update_notification();
 
       complete(r);
+
       return;
     }
 
+    // r == -ETIMEDOUT || r == -ERESTART, i.e. non-fatal error,
+    // restart the whole process
+
     ldout(cct, 5) << request_type << " timed out notifying lock owner"
                   << dendl;
+
+    // start over again, i.e., refresh -> acquire lock -> call local/remote
+
     send_refresh_image();
   }
 
@@ -284,6 +356,7 @@ struct C_InvokeAsyncRequest : public Context {
       image_ctx, util::create_context_callback<
         C_InvokeAsyncRequest<I>,
         &C_InvokeAsyncRequest<I>::handle_local_request>(this));
+
     local(ctx);
   }
 
@@ -292,9 +365,13 @@ struct C_InvokeAsyncRequest : public Context {
     ldout(cct, 20) << __func__ << ": r=" << r << dendl;
 
     if (r == -ERESTART) {
+
+      // start over again, i.e., refresh -> acquire lock -> call local/remote
+
       send_refresh_image();
       return;
     }
+
     complete(r);
   }
 
@@ -302,10 +379,14 @@ struct C_InvokeAsyncRequest : public Context {
     if (filter_error_codes.count(r) != 0) {
       r = 0;
     }
+
+    // the user callback
     on_finish->complete(r);
   }
 };
 
+// called by
+// librbd/operation/ObjectMapIterate.cc:object_map_action
 template <typename I>
 bool needs_invalidate(I& image_ctx, uint64_t object_no,
 		     uint8_t current_state, uint8_t new_state) {
@@ -313,8 +394,12 @@ bool needs_invalidate(I& image_ctx, uint64_t object_no,
 	current_state == OBJECT_EXISTS_CLEAN) &&
        (new_state == OBJECT_NONEXISTENT ||
 	new_state == OBJECT_PENDING)) {
+
+    // return false means no need to invalidate the object map
+
     return false;
   }
+
   return true;
 }
 
@@ -341,6 +426,7 @@ int Operations<I>::flatten(ProgressContext &prog_ctx) {
 
   {
     RWLock::RLocker parent_locker(m_image_ctx.parent_lock);
+
     if (m_image_ctx.parent_md.spec.pool_id == -1) {
       lderr(cct) << "image has no parent" << dendl;
       return -EINVAL;
@@ -348,6 +434,7 @@ int Operations<I>::flatten(ProgressContext &prog_ctx) {
   }
 
   uint64_t request_id = ++m_async_request_seq;
+
   r = invoke_async_request("flatten", false,
                            boost::bind(&Operations<I>::execute_flatten, this,
                                        boost::ref(prog_ctx), _1),
@@ -358,10 +445,16 @@ int Operations<I>::flatten(ProgressContext &prog_ctx) {
   if (r < 0 && r != -EINVAL) {
     return r;
   }
+
   ldout(cct, 20) << "flatten finished" << dendl;
+
   return 0;
 }
 
+// called by
+// librbd::Operations<I>::flatten
+// ImageWatcher<I>::handle_payload(const FlattenPayload)
+// librbd/journal/Replay.cc:ExecuteOp::execute(const journal::FlattenEvent)
 template <typename I>
 void Operations<I>::execute_flatten(ProgressContext &prog_ctx,
                                     Context *on_finish) {
@@ -388,6 +481,7 @@ void Operations<I>::execute_flatten(ProgressContext &prog_ctx,
     on_finish->complete(-EINVAL);
     return;
   }
+
   if (m_image_ctx.snap_id != CEPH_NOSNAP) {
     lderr(cct) << "snapshots cannot be flattened" << dendl;
     m_image_ctx.parent_lock.put_read();
@@ -397,11 +491,13 @@ void Operations<I>::execute_flatten(ProgressContext &prog_ctx,
   }
 
   ::SnapContext snapc = m_image_ctx.snapc;
+
   assert(m_image_ctx.parent != NULL);
 
   uint64_t overlap;
   int r = m_image_ctx.get_parent_overlap(CEPH_NOSNAP, &overlap);
   assert(r == 0);
+
   assert(overlap <= m_image_ctx.size);
 
   uint64_t object_size = m_image_ctx.get_object_size();
@@ -414,9 +510,13 @@ void Operations<I>::execute_flatten(ProgressContext &prog_ctx,
   operation::FlattenRequest<I> *req = new operation::FlattenRequest<I>(
     m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), object_size,
     overlap_objects, snapc, prog_ctx);
+
   req->send();
 }
 
+// called by
+// librbd::Image::rebuild_object_map
+// librbd::rbd_rebuild_object_map
 template <typename I>
 int Operations<I>::rebuild_object_map(ProgressContext &prog_ctx) {
   CephContext *cct = m_image_ctx.cct;
@@ -428,6 +528,7 @@ int Operations<I>::rebuild_object_map(ProgressContext &prog_ctx) {
   }
 
   uint64_t request_id = ++m_async_request_seq;
+
   r = invoke_async_request("rebuild object map", true,
                            boost::bind(&Operations<I>::execute_rebuild_object_map,
                                        this, boost::ref(prog_ctx), _1),
@@ -436,12 +537,17 @@ int Operations<I>::rebuild_object_map(ProgressContext &prog_ctx) {
                                        boost::ref(prog_ctx), _1));
 
   ldout(cct, 10) << "rebuild object map finished" << dendl;
+
   if (r < 0) {
     return r;
   }
+
   return 0;
 }
 
+// called by
+// librbd::Operations<I>::rebuild_object_map
+// ImageWatcher<I>::handle_payload(const RebuildObjectMapPayload)
 template <typename I>
 void Operations<I>::execute_rebuild_object_map(ProgressContext &prog_ctx,
                                                Context *on_finish) {
@@ -456,6 +562,7 @@ void Operations<I>::execute_rebuild_object_map(ProgressContext &prog_ctx,
     on_finish->complete(-EROFS);
     return;
   }
+
   if (!m_image_ctx.test_features(RBD_FEATURE_OBJECT_MAP)) {
     lderr(cct) << "image must support object-map feature" << dendl;
     on_finish->complete(-EINVAL);
@@ -465,13 +572,17 @@ void Operations<I>::execute_rebuild_object_map(ProgressContext &prog_ctx,
   operation::RebuildObjectMapRequest<I> *req =
     new operation::RebuildObjectMapRequest<I>(
       m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), prog_ctx);
+
   req->send();
 }
 
+// called by
+// librbd::Image::check_object_map
 template <typename I>
 int Operations<I>::check_object_map(ProgressContext &prog_ctx) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
+
   int r = m_image_ctx.state->refresh_if_required();
   if (r < 0) {
     return r;
@@ -485,6 +596,8 @@ int Operations<I>::check_object_map(ProgressContext &prog_ctx) {
   return r;
 }
 
+// called by
+// librbd::Operations<I>::check_object_map(ProgressContext &prog_ctx, Context *on_finish)
 template <typename I>
 void Operations<I>::object_map_iterate(ProgressContext &prog_ctx,
 				       operation::ObjectIterateWork<I> handle_mismatch,
@@ -501,9 +614,12 @@ void Operations<I>::object_map_iterate(ProgressContext &prog_ctx,
   operation::ObjectMapIterateRequest<I> *req =
     new operation::ObjectMapIterateRequest<I>(m_image_ctx, on_finish,
 					      prog_ctx, handle_mismatch);
+
   req->send();
 }
 
+// called by
+// librbd::Operations<I>::check_object_map(ProgressContext &prog_ctx)
 template <typename I>
 void Operations<I>::check_object_map(ProgressContext &prog_ctx,
 				     Context *on_finish) {
@@ -522,6 +638,7 @@ int Operations<I>::rename(const char *dstname) {
                << dstname << ":" << cpp_strerror(r) << dendl;
     return r;
   }
+
   if (r == 0) {
     lderr(cct) << "rbd image " << dstname << " already exists" << dendl;
     return -EEXIST;
@@ -539,7 +656,9 @@ int Operations<I>::rename(const char *dstname) {
     }
   } else {
     RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
+
     C_SaferCond cond_ctx;
+
     execute_rename(dstname, &cond_ctx);
 
     r = cond_ctx.wait();
@@ -549,6 +668,7 @@ int Operations<I>::rename(const char *dstname) {
   }
 
   m_image_ctx.set_image_name(dstname);
+
   return 0;
 }
 
@@ -556,17 +676,20 @@ template <typename I>
 void Operations<I>::execute_rename(const std::string &dest_name,
                                    Context *on_finish) {
   assert(m_image_ctx.owner_lock.is_locked());
+
   if (m_image_ctx.test_features(RBD_FEATURE_JOURNALING)) {
     assert(m_image_ctx.exclusive_lock == nullptr ||
            m_image_ctx.exclusive_lock->is_lock_owner());
   }
 
   m_image_ctx.snap_lock.get_read();
+
   if (m_image_ctx.name == dest_name) {
     m_image_ctx.snap_lock.put_read();
     on_finish->complete(-EEXIST);
     return;
   }
+
   m_image_ctx.snap_lock.put_read();
 
   CephContext *cct = m_image_ctx.cct;
@@ -587,14 +710,21 @@ void Operations<I>::execute_rename(const std::string &dest_name,
 	  m_image_ctx, on_finish, dest_name);
 	req->send();
       });
+
     m_image_ctx.image_watcher->unregister_watch(on_finish);
+
     return;
   }
+
   operation::RenameRequest<I> *req = new operation::RenameRequest<I>(
     m_image_ctx, on_finish, dest_name);
+
   req->send();
 }
 
+// rbd_resize2 allow user to determine if the image can be shrinked
+// rbd_resize and rbd_resize_with_progress always allow the image to be
+// shrinked
 template <typename I>
 int Operations<I>::resize(uint64_t size, bool allow_shrink, ProgressContext& prog_ctx) {
   CephContext *cct = m_image_ctx.cct;
@@ -617,6 +747,7 @@ int Operations<I>::resize(uint64_t size, bool allow_shrink, ProgressContext& pro
   }
 
   uint64_t request_id = ++m_async_request_seq;
+
   r = invoke_async_request("resize", false,
                            boost::bind(&Operations<I>::execute_resize, this,
                                        size, allow_shrink, boost::ref(prog_ctx), _1, 0),
@@ -625,10 +756,15 @@ int Operations<I>::resize(uint64_t size, bool allow_shrink, ProgressContext& pro
                                        size, allow_shrink, boost::ref(prog_ctx), _1));
 
   m_image_ctx.perfcounter->inc(l_librbd_resize);
+
   ldout(cct, 2) << "resize finished" << dendl;
+
   return r;
 }
 
+// called by
+// librbd::Operations<I>::resize, always has journal_op_tid set to zero
+// librbd::journal::ExecuteOp::execute(journal::ResizeEvent), which has journal_op_tid set to non-zero
 template <typename I>
 void Operations<I>::execute_resize(uint64_t size, bool allow_shrink, ProgressContext &prog_ctx,
                                    Context *on_finish,
@@ -638,7 +774,9 @@ void Operations<I>::execute_resize(uint64_t size, bool allow_shrink, ProgressCon
          m_image_ctx.exclusive_lock->is_lock_owner());
 
   CephContext *cct = m_image_ctx.cct;
+
   m_image_ctx.snap_lock.get_read();
+
   ldout(cct, 5) << this << " " << __func__ << ": "
                 << "size=" << m_image_ctx.size << ", "
                 << "new_size=" << size << dendl;
@@ -650,18 +788,23 @@ void Operations<I>::execute_resize(uint64_t size, bool allow_shrink, ProgressCon
   } else if (m_image_ctx.test_features(RBD_FEATURE_OBJECT_MAP,
                                        m_image_ctx.snap_lock) &&
              !ObjectMap<>::is_compatible(m_image_ctx.layout, size)) {
+    // image size too big
     m_image_ctx.snap_lock.put_read();
     on_finish->complete(-EINVAL);
     return;
   }
+
   m_image_ctx.snap_lock.put_read();
 
   operation::ResizeRequest<I> *req = new operation::ResizeRequest<I>(
     m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), size, allow_shrink,
     prog_ctx, journal_op_tid, false);
+
   req->send();
 }
 
+// called by
+// Image::snap_create or rbd_snap_create
 template <typename I>
 int Operations<I>::snap_create(const cls::rbd::SnapshotNamespace &snap_namespace,
 			       const char *snap_name) {
@@ -700,11 +843,14 @@ void Operations<I>::snap_create(const cls::rbd::SnapshotNamespace &snap_namespac
   }
 
   m_image_ctx.snap_lock.get_read();
+  // iterate ImageCtx::snap_ids
   if (m_image_ctx.get_snap_id(snap_namespace, snap_name) != CEPH_NOSNAP) {
     m_image_ctx.snap_lock.put_read();
+
     on_finish->complete(-EEXIST);
     return;
   }
+
   m_image_ctx.snap_lock.put_read();
 
   C_InvokeAsyncRequest<I> *req = new C_InvokeAsyncRequest<I>(
@@ -714,9 +860,15 @@ void Operations<I>::snap_create(const cls::rbd::SnapshotNamespace &snap_namespac
     boost::bind(&ImageWatcher<I>::notify_snap_create, m_image_ctx.image_watcher,
                 snap_namespace, snap_name, _1),
     {-EEXIST}, on_finish);
+
   req->send();
 }
 
+// called by
+// librbd/journal/Replay.cc:ExecuteOp::execute(const journal::SnapCreateEvent), with journal_op_tid set to non-zero
+// ImageWatcher<I>::handle_payload(const SnapCreatePayload)
+// librbd::Operations<I>::snap_create
+// rbd::mirror::image_sync::SnapshotCreateRequest<I>::send_snap_create, with skip_object_map set to true
 template <typename I>
 void Operations<I>::execute_snap_create(const cls::rbd::SnapshotNamespace &snap_namespace,
 					const std::string &snap_name,
@@ -737,8 +889,11 @@ void Operations<I>::execute_snap_create(const cls::rbd::SnapshotNamespace &snap_
     on_finish->complete(-EEXIST);
     return;
   }
+
   m_image_ctx.snap_lock.put_read();
 
+  // after the snapshot creation, will notify first then to call the
+  // caller's callback
   operation::SnapshotCreateRequest<I> *req =
     new operation::SnapshotCreateRequest<I>(
       m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish),
@@ -759,17 +914,26 @@ int Operations<I>::snap_rollback(const cls::rbd::SnapshotNamespace& snap_namespa
     return r;
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   {
     // need to drop snap_lock before invalidating cache
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     if (!m_image_ctx.snap_exists) {
+
+      // ImageCtx::snap_exists was initialized to true by ImageCtx::ImageCtx, and can
+      // only be set to false by librbd::image::RefreshRequest<I>::apply, which means
+      // the snapshot has been removed when we are still using it
+
       return -ENOENT;
     }
 
+    // we have opened the HEAD image
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
       return -EROFS;
     }
 
+    // we are to rollback to snap_name
     uint64_t snap_id = m_image_ctx.get_snap_id(snap_namespace, snap_name);
     if (snap_id == CEPH_NOSNAP) {
       lderr(cct) << "No such snapshot found." << dendl;
@@ -777,10 +941,15 @@ int Operations<I>::snap_rollback(const cls::rbd::SnapshotNamespace& snap_namespa
     }
   }
 
+  // other operations will use C_InvokeAsyncRequest or invoke_async_request,
+  // so no need to call this interface
+  // try to grab exclusive lock and wait synchronously, if the lock
+  // has been held by others, then we will fail
   r = prepare_image_update();
   if (r < 0) {
     return -EROFS;
   }
+
   if (m_image_ctx.exclusive_lock != nullptr &&
       !m_image_ctx.exclusive_lock->is_lock_owner()) {
     return -EROFS;
@@ -794,6 +963,7 @@ int Operations<I>::snap_rollback(const cls::rbd::SnapshotNamespace& snap_namespa
   }
 
   m_image_ctx.perfcounter->inc(l_librbd_snap_rollback);
+
   return r;
 }
 
@@ -803,6 +973,7 @@ void Operations<I>::execute_snap_rollback(const cls::rbd::SnapshotNamespace& sna
                                           ProgressContext& prog_ctx,
                                           Context *on_finish) {
   assert(m_image_ctx.owner_lock.is_locked());
+
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": snap_name=" << snap_name
                 << dendl;
@@ -811,12 +982,14 @@ void Operations<I>::execute_snap_rollback(const cls::rbd::SnapshotNamespace& sna
   uint64_t snap_id = m_image_ctx.get_snap_id(snap_namespace, snap_name);
   if (snap_id == CEPH_NOSNAP) {
     lderr(cct) << "No such snapshot found." << dendl;
+
     m_image_ctx.snap_lock.put_read();
     on_finish->complete(-ENOENT);
     return;
   }
 
   uint64_t new_size = m_image_ctx.get_image_size(snap_id);
+
   m_image_ctx.snap_lock.put_read();
 
   // async mode used for journal replay
@@ -824,9 +997,13 @@ void Operations<I>::execute_snap_rollback(const cls::rbd::SnapshotNamespace& sna
     new operation::SnapshotRollbackRequest<I>(
       m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), snap_namespace, snap_name,
       snap_id, new_size, prog_ctx);
+
   request->send();
 }
 
+// called by
+// librbd::snap_remove
+// rbd::mirror::ImageDeleter::process_image_delete
 template <typename I>
 int Operations<I>::snap_remove(const cls::rbd::SnapshotNamespace& snap_namespace,
 			       const char *snap_name) {
@@ -851,6 +1028,10 @@ int Operations<I>::snap_remove(const cls::rbd::SnapshotNamespace& snap_namespace
   return 0;
 }
 
+// called by
+// librbd::snap_remove
+// librbd::Operations<I>::snap_remove(const char *snap_name)
+// rbd::mirror::mirror_sync::SyncPointPruneRequest<I>::send_remove_snap
 template <typename I>
 void Operations<I>::snap_remove(const cls::rbd::SnapshotNamespace& snap_namespace,
 				const char *snap_name,
@@ -874,6 +1055,7 @@ void Operations<I>::snap_remove(const cls::rbd::SnapshotNamespace& snap_namespac
 
   bool proxy_op = ((m_image_ctx.features & RBD_FEATURE_FAST_DIFF) != 0 ||
                    (m_image_ctx.features & RBD_FEATURE_JOURNALING) != 0);
+
   m_image_ctx.snap_lock.put_read();
 
   if (proxy_op) {
@@ -883,6 +1065,7 @@ void Operations<I>::snap_remove(const cls::rbd::SnapshotNamespace& snap_namespac
       boost::bind(&ImageWatcher<I>::notify_snap_remove, m_image_ctx.image_watcher,
                   snap_namespace, snap_name, _1),
       {-ENOENT}, on_finish);
+
     req->send();
   } else {
     RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
@@ -890,13 +1073,21 @@ void Operations<I>::snap_remove(const cls::rbd::SnapshotNamespace& snap_namespac
   }
 }
 
+// called by
+// src/librd/journal/Replay.cc/librbd::journal::anon::ExecuteOp::execute(const journal::SnapRemoveEvent)
+// librbd::mirror::DisableRequest<I>::send_remove_snap
+// ImageWatcher<I>::handle_payload(const SnapRemovePayload)
+// Operations<I>::snap_remove, i.e., above
+// rbd::mirror::image_sync::SnapshotCopyRequest<I>::send_snap_remove
 template <typename I>
 void Operations<I>::execute_snap_remove(const cls::rbd::SnapshotNamespace& snap_namespace,
 					const std::string &snap_name,
                                         Context *on_finish) {
   assert(m_image_ctx.owner_lock.is_locked());
+
   {
     if ((m_image_ctx.features & RBD_FEATURE_FAST_DIFF) != 0) {
+      // see 883169f7, librbd: snap_remove proxy requests require fast diff feature
       assert(m_image_ctx.exclusive_lock == nullptr ||
              m_image_ctx.exclusive_lock->is_lock_owner());
     }
@@ -1017,6 +1208,7 @@ void Operations<I>::execute_snap_rename(const uint64_t src_snap_id,
     new operation::SnapshotRenameRequest<I>(
       m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), src_snap_id,
       dest_snap_name);
+
   req->send();
 }
 
@@ -1201,6 +1393,9 @@ void Operations<I>::execute_snap_unprotect(const cls::rbd::SnapshotNamespace& sn
   request->send();
 }
 
+// called by
+// librbd::snap_set_limit
+// librbd::Image::snap_set_limit
 template <typename I>
 int Operations<I>::snap_set_limit(uint64_t limit) {
   CephContext *cct = m_image_ctx.cct;
@@ -1217,6 +1412,7 @@ int Operations<I>::snap_set_limit(uint64_t limit) {
 
   {
     RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
+
     C_SaferCond limit_ctx;
 
     if (m_image_ctx.exclusive_lock != nullptr &&
@@ -1248,9 +1444,13 @@ void Operations<I>::execute_snap_set_limit(const uint64_t limit,
 
   operation::SnapshotLimitRequest<I> *request =
     new operation::SnapshotLimitRequest<I>(m_image_ctx, on_finish, limit);
+
   request->send();
 }
 
+// called by
+// Image::update_features
+// rbd_update_features
 template <typename I>
 int Operations<I>::update_features(uint64_t features, bool enabled) {
   CephContext *cct = m_image_ctx.cct;
@@ -1276,10 +1476,12 @@ int Operations<I>::update_features(uint64_t features, bool enabled) {
     lderr(cct) << "cannot update immutable features" << dendl;
     return -EINVAL;
   }
+
   if (features == 0) {
     lderr(cct) << "update requires at least one feature" << dendl;
     return -EINVAL;
   }
+
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     if (enabled && (features & m_image_ctx.features) != 0) {
@@ -1287,6 +1489,7 @@ int Operations<I>::update_features(uint64_t features, bool enabled) {
 		 << dendl;
       return -EINVAL;
     }
+
     if (!enabled && (features & ~m_image_ctx.features) != 0) {
       lderr(cct) << "one or more requested features are already disabled"
 		 << dendl;
@@ -1320,6 +1523,9 @@ int Operations<I>::update_features(uint64_t features, bool enabled) {
   return r;
 }
 
+// called by
+// librbd::Operations<I>::update_features, always has journal_op_tid set to zero
+// librbd::journal::ExecuteOp::execute(journal::UpdateFeaturesEvent), which has journal_op_tid set to non-zero
 template <typename I>
 void Operations<I>::execute_update_features(uint64_t features, bool enabled,
                                             Context *on_finish,
@@ -1336,6 +1542,7 @@ void Operations<I>::execute_update_features(uint64_t features, bool enabled,
     operation::EnableFeaturesRequest<I> *req =
       new operation::EnableFeaturesRequest<I>(
         m_image_ctx, on_finish, journal_op_tid, features);
+
     req->send();
   } else {
     operation::DisableFeaturesRequest<I> *req =
@@ -1463,10 +1670,14 @@ void Operations<I>::execute_metadata_remove(const std::string &key,
   request->send();
 }
 
+// called by
+// librbd::trash_move
+// Operations<I>::snap_rollback
 template <typename I>
 int Operations<I>::prepare_image_update() {
   assert(m_image_ctx.owner_lock.is_locked() &&
          !m_image_ctx.owner_lock.is_wlocked());
+
   if (m_image_ctx.image_watcher == NULL) {
     return -EROFS;
   }
@@ -1474,12 +1685,20 @@ int Operations<I>::prepare_image_update() {
   // need to upgrade to a write lock
   bool trying_lock = false;
   C_SaferCond ctx;
+
   m_image_ctx.owner_lock.put_read();
+
   {
     RWLock::WLocker owner_locker(m_image_ctx.owner_lock);
+
     if (m_image_ctx.exclusive_lock != nullptr &&
         (!m_image_ctx.exclusive_lock->is_lock_owner() ||
          !m_image_ctx.exclusive_lock->accept_requests())) {
+      // the ImageCtx::exclusive_lock could be set to nullptr and try
+      // to shutdown the lock if another refresh is running at parallel,
+      // and at the same time ImageWather could try to release
+      // the ImageCtx::exclusive_lock, but as the ExclusiveLock is a
+      // fifo state machine, so there is no race between them
       m_image_ctx.exclusive_lock->try_acquire_lock(&ctx);
       trying_lock = true;
     }
@@ -1489,17 +1708,25 @@ int Operations<I>::prepare_image_update() {
   if (trying_lock) {
     r = ctx.wait();
   }
+
+  // so no one could destroy or release ImageCtx::exclusive_lock afterward,
+  // though the ImageCtx::exclusive_lock could have been destroyed or
+  // released by RefreshRequest or ImageWatcher as described above, so
+  // we need to check the nullness and lock owner before using it
   m_image_ctx.owner_lock.get_read();
 
   return r;
 }
 
+// snap_create and snap_remove create C_InvokeAsyncRequest instance directly
+// because their filter_error_codes are not empty
 template <typename I>
 int Operations<I>::invoke_async_request(const std::string& request_type,
                                         bool permit_snapshot,
                                         const boost::function<void(Context*)>& local_request,
                                         const boost::function<void(Context*)>& remote_request) {
   C_SaferCond ctx;
+
   C_InvokeAsyncRequest<I> *req = new C_InvokeAsyncRequest<I>(m_image_ctx,
                                                              request_type,
                                                              permit_snapshot,
@@ -1507,6 +1734,7 @@ int Operations<I>::invoke_async_request(const std::string& request_type,
                                                              remote_request,
                                                              {}, &ctx);
   req->send();
+
   return ctx.wait();
 }
 

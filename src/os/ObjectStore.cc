@@ -25,6 +25,9 @@
 #endif
 #include "kstore/KStore.h"
 
+// called by
+// ObjectStore::Transaction::Iterator::decode_attrset_bl
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_OMAPSETVALS
 void decode_str_str_map_to_bl(bufferlist::iterator& p,
 			      bufferlist *out)
 {
@@ -44,6 +47,9 @@ void decode_str_str_map_to_bl(bufferlist::iterator& p,
   start.copy(len, *out);
 }
 
+// called by
+// ObjectStore::Transaction::Iterator::decode_keyset_bl
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_OMAPRMKEYS
 void decode_str_set_to_bl(bufferlist::iterator& p,
 			  bufferlist *out)
 {
@@ -60,6 +66,9 @@ void decode_str_set_to_bl(bufferlist::iterator& p,
   start.copy(len, *out);
 }
 
+// called by
+// ceph_osd.cc/main
+// ceph_objectstore_tool.cc/main
 ObjectStore *ObjectStore::create(CephContext *cct,
 				 const string& type,
 				 const string& data,
@@ -95,6 +104,9 @@ ObjectStore *ObjectStore::create(CephContext *cct,
   return NULL;
 }
 
+// static
+// called by
+// ceph_osd.cc/main, for "--get-device-fsid"
 int ObjectStore::probe_block_device_fsid(
   CephContext *cct,
   const string& path,
@@ -165,6 +177,8 @@ ostream& operator<<(ostream& out, const ObjectStore::Transaction& tx) {
   return out << "Transaction(" << &tx << ")"; 
 }
 
+// called by
+// ObjectStore::apply_transaction
 unsigned ObjectStore::apply_transactions(Sequencer *osr,
 					 vector<Transaction>& tls,
 					 Context *ondisk)
@@ -185,6 +199,9 @@ unsigned ObjectStore::apply_transactions(Sequencer *osr,
   return r;
 }
 
+// called by
+// ObjectStore::queue_transaction(..., oncomplete, ...), which called
+// by OSD::RemoveWQ::_process
 int ObjectStore::queue_transactions(
   Sequencer *osr,
   vector<Transaction>& tls,
@@ -194,11 +211,19 @@ int ObjectStore::queue_transactions(
   Context *oncomplete,
   TrackedOpRef op = TrackedOpRef())
 {
+  // oncomplete will be called when _complete deleted
   RunOnDeleteRef _complete (std::make_shared<RunOnDelete>(oncomplete));
+
+  // inc ref of _complete
   Context *_onreadable = new Wrapper<RunOnDeleteRef>(
     onreadable, _complete);
+
+  // inc ref of _complete
   Context *_oncommit = new Wrapper<RunOnDeleteRef>(
     oncommit, _complete);
+
+  // _complete will be deleted when both _onreadable and _oncommit completed
+  // which will result oncomplete be called
   return queue_transactions(osr, tls, _onreadable, _oncommit,
 			    onreadable_sync, op);
 }

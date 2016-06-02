@@ -22,6 +22,9 @@ namespace image {
 using util::create_async_context_callback;
 using util::create_context_callback;
 
+// created by
+// librbd::image::RefreshRequest<I>::send_v2_refresh_parent
+// librbd::image::SetSnapRequest<I>::send_refresh_parent
 template <typename I>
 RefreshParentRequest<I>::RefreshParentRequest(I &child_image_ctx,
                                               const ParentInfo &parent_md,
@@ -31,11 +34,16 @@ RefreshParentRequest<I>::RefreshParentRequest(I &child_image_ctx,
     m_parent_snap_id(CEPH_NOSNAP), m_error_result(0) {
 }
 
+// static
+// called by
+// RefreshRequest<I>::send_v2_refresh_parent
+// SetSnapRequest<I>::send_refresh_parent
 template <typename I>
 bool RefreshParentRequest<I>::is_refresh_required(I &child_image_ctx,
                                                   const ParentInfo &parent_md) {
   assert(child_image_ctx.snap_lock.is_locked());
   assert(child_image_ctx.parent_lock.is_locked());
+
   return (is_open_required(child_image_ctx, parent_md) ||
           is_close_required(child_image_ctx, parent_md));
 }
@@ -60,33 +68,54 @@ bool RefreshParentRequest<I>::is_open_required(I &child_image_ctx,
 template <typename I>
 void RefreshParentRequest<I>::send() {
   if (is_open_required(m_child_image_ctx, m_parent_md)) {
+    // parent exists and has overlap, but parent has not opened yet, open it
+
     send_open_parent();
   } else {
+    // parent opened, but parent has gone or overlap is 0, close it
+
     // parent will be closed (if necessary) during finalize
-    send_complete(0);
+    send_complete(0); // m_on_finish->complete(r); i.e., delete m_on_finish
   }
 }
 
+// called by
+// RefreshRequest<I>::apply
+// SetSnapRequest<I>::apply
 template <typename I>
 void RefreshParentRequest<I>::apply() {
   if (m_child_image_ctx.parent != nullptr) {
     // closing parent image
     m_child_image_ctx.clear_nonexistence_cache();
   }
+
   assert(m_child_image_ctx.snap_lock.is_wlocked());
   assert(m_child_image_ctx.parent_lock.is_wlocked());
+
+  // set parent ictx, close the old parent ictx if needed later
   std::swap(m_child_image_ctx.parent, m_parent_image_ctx);
 }
 
+// called by
+// RefreshRequest<I>::send_v2_finalize_refresh_parent
+// SetSnapRequest<I>::send_finalize_refresh_parent
 template <typename I>
 void RefreshParentRequest<I>::finalize(Context *on_finish) {
   CephContext *cct = m_child_image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
+  // m_on_finish has been deleted, but this instance was not destroyed,
+  // becoz the third template parameter for create_context_callback was set to false
   m_on_finish = on_finish;
+
   if (m_parent_image_ctx != nullptr) {
+    // three possible reasons:
+    // 1. child parent relationship explicit flatten
+    // 2. child shrink to 0 then resize results 0 overlap
+    // 3. failed parent open
     send_close_parent();
   } else {
+    // m_on_finish->complete(r);
     send_complete(0);
   }
 }
@@ -107,7 +136,8 @@ void RefreshParentRequest<I>::send_open_parent() {
   // since we don't know the image and snapshot name, set their ids and
   // reset the snap_name and snap_exists fields after we read the header
   m_parent_image_ctx = new I("", m_parent_md.spec.image_id, NULL, parent_io_ctx,
-                             true);
+                             true); // open parent with read only,
+                                    // we do not know snapname yet, so snap str is set to nullptr
 
   // set rados flags for reading the parent image
   if (m_child_image_ctx.balance_parent_reads) {
@@ -119,7 +149,7 @@ void RefreshParentRequest<I>::send_open_parent() {
   using klass = RefreshParentRequest<I>;
   Context *ctx = create_async_context_callback(
     m_child_image_ctx, create_context_callback<
-      klass, &klass::handle_open_parent, false>(this));
+      klass, &klass::handle_open_parent, false>(this)); // do not destroy this instance
   OpenRequest<I> *req = OpenRequest<I>::create(m_parent_image_ctx, false, ctx);
   req->send();
 }
@@ -141,7 +171,9 @@ Context *RefreshParentRequest<I>::handle_open_parent(int *result) {
     return m_on_finish;
   }
 
+  // HEAD parent opened, now set the snap for it
   send_set_parent_snap();
+
   return nullptr;
 }
 
@@ -154,21 +186,31 @@ void RefreshParentRequest<I>::send_set_parent_snap() {
 
   cls::rbd::SnapshotNamespace snap_namespace;
   std::string snap_name;
+
   {
     RWLock::RLocker snap_locker(m_parent_image_ctx->snap_lock);
+
+    // m_parent_md is parent info for child, which was got by
+    // RefreshRequest<I>::send_v2_refresh_parent
     const SnapInfo *info = m_parent_image_ctx->get_snap_info(m_parent_md.spec.snap_id);
     if (!info) {
       lderr(cct) << "failed to locate snapshot: Snapshot with this id not found" << dendl;
       send_complete(-ENOENT);
       return;
     }
+
     snap_namespace = info->snap_namespace;
     snap_name = info->name;
   }
 
+  // RefreshParentRequest is almost the same as OpenRequest, except
+  // the snap set is mandatory becoz the ImageCtx is created with
+  // empty ImageCtx::snap_name set
+  // for OpenRequest snap set is optional becoz the ImageCtx instance may
+  // be created with empty/non-empty ImageCtx::snap_name set
   using klass = RefreshParentRequest<I>;
   Context *ctx = create_context_callback<
-    klass, &klass::handle_set_parent_snap, false>(this);
+    klass, &klass::handle_set_parent_snap, false>(this); // do not destroy this instance
   SetSnapRequest<I> *req = SetSnapRequest<I>::create(
     *m_parent_image_ctx, snap_namespace, snap_name, ctx);
   req->send();
@@ -200,7 +242,7 @@ void RefreshParentRequest<I>::send_close_parent() {
   using klass = RefreshParentRequest<I>;
   Context *ctx = create_async_context_callback(
     m_child_image_ctx, create_context_callback<
-      klass, &klass::handle_close_parent, false>(this));
+      klass, &klass::handle_close_parent, false>(this)); // do not destroy this instance
   CloseRequest<I> *req = CloseRequest<I>::create(m_parent_image_ctx, ctx);
   req->send();
 }

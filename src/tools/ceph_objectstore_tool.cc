@@ -471,11 +471,13 @@ int write_pg(ObjectStore::Transaction &t, epoch_t epoch, pg_info_t &info,
   int ret = write_info(t, epoch, info, past_intervals);
   if (ret)
     return ret;
+
   coll_t coll(info.pgid);
   map<string,bufferlist> km;
 
   if (!divergent.empty()) {
     assert(missing.get_items().empty());
+
     PGLog::write_log_and_missing_wo_missing(
       t, &km, log, coll, info.pgid.make_pgmeta_oid(), divergent, true);
   } else {
@@ -483,6 +485,7 @@ int write_pg(ObjectStore::Transaction &t, epoch_t epoch, pg_info_t &info,
     PGLog::write_log_and_missing(
       t, &km, log, coll, info.pgid.make_pgmeta_oid(), tmissing, true);
   }
+
   t.omap_setkeys(coll, info.pgid.make_pgmeta_oid(), km);
   return 0;
 }
@@ -817,6 +820,8 @@ int get_data(ObjectStore *store, coll_t coll, ghobject_t hoid,
   return 0;
 }
 
+// called by
+// ObjectStoreTool::get_object
 int get_attrs(
   ObjectStore *store, coll_t coll, ghobject_t hoid,
   ObjectStore::Transaction *t, bufferlist &bl,
@@ -828,6 +833,7 @@ int get_attrs(
 
   if (debug)
     cerr << "\tattrs: len " << as.data.size() << std::endl;
+
   t->setattrs(coll, hoid, as.data);
 
   // This could have been handled in the caller if we didn't need to
@@ -916,6 +922,8 @@ int get_omap(ObjectStore *store, coll_t coll, ghobject_t hoid,
   return 0;
 }
 
+// called by
+// ObjectStoreTool::do_import
 int ObjectStoreTool::get_object(ObjectStore *store, coll_t coll,
 				bufferlist &bl, OSDMap &curmap,
 				bool *skipped_objects,
@@ -1012,6 +1020,7 @@ int ObjectStoreTool::get_object(ObjectStore *store, coll_t coll,
       return -EFAULT;
     }
   }
+
   if (!dry_run)
     store->apply_transaction(&osr, std::move(*t));
   return 0;
@@ -1918,6 +1927,8 @@ int get_snapset(ObjectStore *store, coll_t coll, ghobject_t &ghobj, SnapSet &ss,
   return 0;
 }
 
+// called by
+// main, for "dump"
 int print_obj_info(ObjectStore *store, coll_t coll, ghobject_t &ghobj, Formatter* formatter)
 {
   int r = 0;
@@ -2184,6 +2195,7 @@ int remove_clone(ObjectStore *store, coll_t coll, ghobject_t &ghobj, snapid_t cl
     cerr << "Clone " << cloneid << " not present";
     return -ENOENT;
   }
+
   if (p != snapset.clones.begin()) {
     // not the oldest... merge overlap into next older clone
     vector<snapid_t>::iterator n = p - 1;
@@ -2194,8 +2206,7 @@ int remove_clone(ObjectStore *store, coll_t coll, ghobject_t &ghobj, snapid_t cl
     //if (adjust_prev_bytes)
     //  ctx->delta_stats.num_bytes -= snapset.get_clone_bytes(*n);
 
-    snapset.clone_overlap[*n].intersection_of(
-	snapset.clone_overlap[*p]);
+    snapset.clone_overlap[*n].intersection_of(snapset.clone_overlap[*p]);
 
     //if (adjust_prev_bytes)
     //  ctx->delta_stats.num_bytes += snapset.get_clone_bytes(*n);
@@ -2915,6 +2926,7 @@ int main(int argc, char **argv)
         // Special: Need head/snapdir so set even if user didn't specify
         if (vm.count("objcmd") && (objcmd == "remove-clone-metadata"))
 	  head = true;
+
 	lookup_ghobject lookup(object, nspace, head);
 	if (action_on_all_objects(fs, lookup, debug)) {
 	  throw std::runtime_error("Internal error");
@@ -2926,8 +2938,10 @@ int main(int argc, char **argv)
 	    else
 	      ss << "Found " << lookup.size() << " objects with id '" << object
 		 << "', please use a JSON spec from --op list instead";
+
 	    throw std::runtime_error(ss.str());
 	  }
+
 	  pair<coll_t, ghobject_t> found = lookup.pop();
 	  pgidstr = found.first.to_str();
 	  pgid.parse(pgidstr.c_str());

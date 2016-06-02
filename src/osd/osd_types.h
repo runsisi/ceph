@@ -291,6 +291,7 @@ public:
 
   void combine_with_locator(object_locator_t& orig, string& obj) const {
     orig = redirect_locator;
+
     if (!redirect_object.empty())
       obj = redirect_object;
   }
@@ -547,6 +548,8 @@ struct spg_t {
     DECODE_FINISH(bl);
   }
 
+  // called by
+  // ScrubStore.cc/make_scrub_object
   ghobject_t make_temp_ghobject(const string& name) const {
     return ghobject_t(
       hobject_t(object_t(name), "", CEPH_NOSNAP,
@@ -586,6 +589,7 @@ class coll_t {
     TYPE_PG = 2,
     TYPE_PG_TEMP = 3,
   };
+
   type_t type;
   spg_t pgid;
   uint64_t removal_seq;  // note: deprecated, not encoded
@@ -1272,12 +1276,14 @@ public:
    * context.
    */
   map<snapid_t, pool_snap_info_t> snaps;
+
   /*
    * Alternatively, if we are defining non-pool snaps (e.g. via the
    * Ceph MDS), we must track @removed_snaps (since @snaps is not
    * used).  Snaps and removed_snaps are to be used exclusive of each
    * other!
    */
+  // used both for mds and rbd
   interval_set<snapid_t> removed_snaps;
 
   unsigned pg_num_mask, pgp_num_mask;
@@ -1440,6 +1446,7 @@ public:
   void set_snap_seq(snapid_t s) { snap_seq = s; }
   void set_snap_epoch(epoch_t e) { snap_epoch = e; }
 
+  // never called
   void set_stripe_width(uint32_t s) { stripe_width = s; }
   uint32_t get_stripe_width() const { return stripe_width; }
 
@@ -1450,9 +1457,18 @@ public:
     return !(get_type() == TYPE_ERASURE);
   }
 
+  // called by
+  // librados::RadosClient::pool_requires_alignment2
+  // PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_WRITE, CEPH_OSD_OP_ZERO,
+  // CEPH_OSD_OP_TRUNCATE,
+  // PrimaryLogPG::_write_copy_chunk
+  // PrimaryLogPG::get_copy_chunk_size
   bool requires_aligned_append() const {
     return is_erasure() && !has_flag(FLAG_EC_OVERWRITES);
   }
+
+  // set by
+  // OSDMonitor::prepare_pool_stripe_width
   uint64_t required_alignment() const { return stripe_width; }
 
   bool allows_ecoverwrites() const {
@@ -2307,6 +2323,14 @@ struct pg_info_t {
       last_backfill_bitwise(false)
   { }
   
+  // called by
+  // OSD::handle_pg_query, when no PG instance on this osd
+  // PG::activate
+  // PG::split_into
+  // PG::init
+  // PrimaryLogPG::do_backfill
+  // PrimaryLogPG::on_removal
+  // PrimaryLogPG::recover_backfill
   void set_last_backfill(hobject_t pos) {
     last_backfill = pos;
     last_backfill_bitwise = true;
@@ -3091,7 +3115,12 @@ class ObjectModDesc {
 
   // version required to decode, reflected in encode/decode version
   __u8 max_required_version = 1;
+
 public:
+
+  // derived by
+  // PGBackend.cc/struct RollbackVisitor
+  // PGBackend.cc/struct Trimmer
   class Visitor {
   public:
     virtual void append(uint64_t old_offset) {}
@@ -3112,9 +3141,12 @@ public:
       version_t gen,
       const vector<pair<uint64_t, uint64_t> > &extents) {}
     virtual ~Visitor() {}
-  };
+  }; // class Visitor
+
   void visit(Visitor *visitor) const;
+
   mutable bufferlist bl;
+
   enum ModID {
     APPEND = 1,
     SETATTRS = 2,
@@ -3151,6 +3183,7 @@ public:
     swap(other.rollback_info_completed, rollback_info_completed);
     swap(other.max_required_version, max_required_version);
   }
+
   void append_id(ModID id) {
     uint8_t _id(id);
     ::encode(_id, bl);
@@ -3199,6 +3232,9 @@ public:
     append_id(CREATE);
     ENCODE_FINISH(bl);
   }
+
+  // called by
+  // ECTransaction::generate_transactions
   void update_snaps(const set<snapid_t> &old_snaps) {
     if (!can_local_rollback || rollback_info_completed)
       return;
@@ -3262,14 +3298,24 @@ struct pg_log_entry_t {
     MODIFY = 1,   // some unspecified modification (but not *all* modifications)
     CLONE = 2,    // cloned object from head
     DELETE = 3,   // deleted object
+
     BACKLOG = 4,  // event invented by generate_backlog [deprecated]
+    // PrimaryLogPG::do_command, for "mark_unfound_lost" "revert"
+    // PrimaryLogPG::mark_all_unfound_lost, which called by PrimaryLogPG::do_command
     LOST_REVERT = 5, // lost new version, revert to an older version.
+    // PrimaryLogPG::do_command, for "mark_unfound_lost" "delete"
+    // PrimaryLogPG::mark_all_unfound_lost, which called by PrimaryLogPG::do_command
     LOST_DELETE = 6, // lost new version, revert to no object (deleted).
+    // has not been implemented, will assert, see PrimaryLogPG::mark_all_unfound_lost
     LOST_MARK = 7,   // lost new version, now EIO
+    // for cache tier only, see PrimaryLogPG::finish_promote
     PROMOTE = 8,     // promoted object from another tier
+    // for cache tier only, see PrimaryLogPG::try_flush_mark_clean
     CLEAN = 9,       // mark an object clean
+    // see pg_log_entry_t::reqid_is_indexed, PrimaryLogPG::record_write_error
     ERROR = 10,      // write that returned an error
   };
+
   static const char *get_op_name(int op) {
     switch (op) {
     case MODIFY:
@@ -3302,6 +3348,7 @@ struct pg_log_entry_t {
 
   // describes state for a locally-rollbackable entry
   ObjectModDesc mod_desc;
+
   bufferlist snaps;   // only for clone entries
   hobject_t  soid;
   osd_reqid_t reqid;  // caller+tid to uniquely identify request
@@ -3354,6 +3401,9 @@ struct pg_log_entry_t {
     return mod_desc.can_rollback();
   }
 
+  // called by
+  // PrimaryLogPG::mark_all_unfound_lost
+  // ReplicatedBackend.cc/generate_transaction
   void mark_unrollbackable() {
     mod_desc.mark_unrollbackable();
   }
@@ -3417,7 +3467,13 @@ protected:
 public:
   mempool::osd_pglog::list<pg_log_entry_t> log;  // the actual log.
   
+  // Giving a user-defined constructor, even though it does nothing, makes the type not
+  // an aggregate and also not trivial. If you want your class to be an aggregate or a
+  // trivial type (or by transitivity, a POD type), then you need to use = default
+  // http://stackoverflow.com/questions/20828907/the-new-keyword-default-in-c11
+  // http://stackoverflow.com/questions/4178175/what-are-aggregates-and-pods-and-how-why-are-they-special
   pg_log_t() = default;
+
   pg_log_t(const eversion_t &last_update,
 	   const eversion_t &log_tail,
 	   const eversion_t &can_rollback_to,
@@ -3426,6 +3482,7 @@ public:
     : head(last_update), tail(log_tail), can_rollback_to(can_rollback_to),
       rollback_info_trimmed_to(rollback_info_trimmed_to),
       log(std::move(entries)) {}
+
   pg_log_t(const eversion_t &last_update,
 	   const eversion_t &log_tail,
 	   const eversion_t &can_rollback_to,
@@ -3582,6 +3639,7 @@ inline ostream& operator<<(ostream& out, const pg_log_t& log)
  */
 struct pg_missing_item {
   eversion_t need, have;
+
   pg_missing_item() {}
   explicit pg_missing_item(eversion_t n) : need(n) {}  // have no old version
   pg_missing_item(eversion_t n, eversion_t h) : need(n), have(h) {}
@@ -3614,6 +3672,8 @@ struct pg_missing_item {
 WRITE_CLASS_ENCODER(pg_missing_item)
 ostream& operator<<(ostream& out, const pg_missing_item &item);
 
+// derived by
+// class pg_missing_set
 class pg_missing_const_i {
 public:
   virtual const map<hobject_t, pg_missing_item> &
@@ -3639,6 +3699,7 @@ public:
     return true;
   }
 };
+
 template <>
 class ChangeTracker<true> {
   set<hobject_t> _changed;
@@ -3662,18 +3723,22 @@ public:
 
 template <bool TrackChanges>
 class pg_missing_set : public pg_missing_const_i {
-  using item = pg_missing_item;
+  using item = pg_missing_item; // eversion_t need, have
+
   map<hobject_t, item> missing;  // oid -> (need v, have v)
   map<version_t, hobject_t> rmissing;  // v -> oid
+
   ChangeTracker<TrackChanges> tracker;
 
 public:
   pg_missing_set() = default;
 
   template <typename missing_type>
-  pg_missing_set(const missing_type &m) {
+  pg_missing_set(const missing_type &m) { // construct from pg_missing_set<false>, i.e., pg_missing_t, see
+                                          // ceph_objectstore_tool/write_pg
     missing = m.get_items();
     rmissing = m.get_rmissing();
+
     for (auto &&i: missing)
       tracker.changed(i.first);
   }
@@ -3681,44 +3746,69 @@ public:
   const map<hobject_t, item> &get_items() const override {
     return missing;
   }
+
   const map<version_t, hobject_t> &get_rmissing() const override {
+    // map<version_t, hobject_t>
     return rmissing;
   }
+
   unsigned int num_missing() const override {
+    // map<hobject_t, item, hobject_t::ComparatorWithDefault>
     return missing.size();
   }
+
   bool have_missing() const override {
     return !missing.empty();
   }
+
+  // only PrimaryLogPG::pick_newest_available and PGLog::_write_log_and_missing
+  // call with parameter out set to not nullptr
   bool is_missing(const hobject_t& oid, pg_missing_item *out = nullptr) const override {
     auto iter = missing.find(oid);
+
     if (iter == missing.end())
       return false;
+
     if (out)
       *out = iter->second;
+
     return true;
   }
+
+  // called by
+  // PGLog::recover_got
+  // PrimaryLogPG::recover_primary, for pg_log_entry_t::LOST_REVERT
+  // PrimaryLogPG::prep_object_replica_pushes
   bool is_missing(const hobject_t& oid, eversion_t v) const override {
     map<hobject_t, item>::const_iterator m =
       missing.find(oid);
+
     if (m == missing.end())
       return false;
+
     const item &item(m->second);
     if (item.need > v)
       return false;
+
+    // v >= item.need, the v version object is missing definitely becoz
+    // the currently lower version is missing
     return true;
   }
+
   eversion_t have_old(const hobject_t& oid) const override {
     map<hobject_t, item>::const_iterator m =
       missing.find(oid);
     if (m == missing.end())
       return eversion_t();
+
     const item &item(m->second);
+
     return item.have;
   }
 
   void claim(pg_missing_set& o) {
     static_assert(!TrackChanges, "Can't use claim with TrackChanges");
+
     missing.swap(o.missing);
     rmissing.swap(o.rmissing);
   }
@@ -3727,21 +3817,29 @@ public:
    * this needs to be called in log order as we extend the log.  it
    * assumes missing is accurate up through the previous log entry.
    */
+  // called by
+  // PG::activate
+  // PGLog::missing_add_event, which never called
+  // append_log_entries_update_missing
   void add_next_event(const pg_log_entry_t& e) {
     if (e.is_update()) {
       map<hobject_t, item>::iterator missing_it;
       missing_it = missing.find(e.soid);
+
       bool is_missing_divergent_item = missing_it != missing.end();
+
       if (e.prior_version == eversion_t() || e.is_clone()) {
 	// new object.
 	if (is_missing_divergent_item) {  // use iterator
 	  rmissing.erase((missing_it->second).need.version);
+
 	  missing_it->second = item(e.version, eversion_t());  // .have = nil
 	} else  // create new element in missing map
 	  missing[e.soid] = item(e.version, eversion_t());     // .have = nil
       } else if (is_missing_divergent_item) {
 	// already missing (prior).
 	rmissing.erase((missing_it->second).need.version);
+
 	(missing_it->second).need = e.version;  // leave .have unchanged.
       } else if (e.is_backlog()) {
 	// May not have prior version
@@ -3749,8 +3847,10 @@ public:
       } else {
 	// not missing, we must have prior_version (if any)
 	assert(!is_missing_divergent_item);
+
 	missing[e.soid] = item(e.version, e.prior_version);
       }
+
       rmissing[e.version.version] = e.soid;
     } else if (e.is_delete()) {
       rm(e.soid, e.version);
@@ -3766,6 +3866,7 @@ public:
     } else {
       missing[oid] = item(need, eversion_t());
     }
+
     rmissing[need.version] = oid;
 
     tracker.changed(oid);
@@ -3809,6 +3910,8 @@ public:
     missing.erase(m);
   }
 
+  // called by
+  // PGLog::split_into
   void split_into(
     pg_t child_pgid,
     unsigned split_bits,
@@ -3900,6 +4003,7 @@ public:
       hobject_t(object_t("foo"), "foo", 123, 456, 0, ""),
       eversion_t(5, 6), eversion_t(5, 1));
   }
+
   template <typename F>
   void get_changed(F &&f) const {
     tracker.get_changed(f);
@@ -3910,6 +4014,7 @@ public:
   bool is_clean() const {
     return tracker.is_clean();
   }
+
   template <typename missing_t>
   bool debug_verify_from_init(
     const missing_t &init_missing,
@@ -3953,6 +4058,7 @@ public:
     return ok;
   }
 };
+
 template <bool TrackChanges>
 void encode(
   const pg_missing_set<TrackChanges> &c, bufferlist &bl, uint64_t features=0) {
@@ -3973,8 +4079,8 @@ ostream& operator<<(ostream& out, const pg_missing_set<TrackChanges> &missing)
   return out;
 }
 
-using pg_missing_t = pg_missing_set<false>;
-using pg_missing_tracker_t = pg_missing_set<true>;
+using pg_missing_t = pg_missing_set<false>; // for replica missing
+using pg_missing_tracker_t = pg_missing_set<true>; // for primary missing
 
 
 /**
@@ -4318,6 +4424,10 @@ inline ostream& operator<<(ostream& out, const OSDSuperblock& sb)
 struct SnapSet {
   snapid_t seq;
   bool head_exists;
+
+  // snaps     -> all snapshots have been taken so far, descending order
+  // clones    -> all clone objects have been created by COW, ascending order
+
   vector<snapid_t> snaps;    // descending
   vector<snapid_t> clones;   // ascending
   map<snapid_t, interval_set<uint64_t> > clone_overlap;  // overlap w/ next newest
@@ -4626,8 +4736,6 @@ struct object_info_t {
 WRITE_CLASS_ENCODER_FEATURES(object_info_t)
 
 ostream& operator<<(ostream& out, const object_info_t& oi);
-
-
 
 // Object recovery
 struct ObjectRecoveryInfo {

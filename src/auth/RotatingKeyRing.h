@@ -25,6 +25,8 @@
 class KeyRing;
 class CephContext;
 
+// used as member of
+// MonClient
 class RotatingKeyRing : public KeyStore {
   CephContext *cct;
   uint32_t service_id;

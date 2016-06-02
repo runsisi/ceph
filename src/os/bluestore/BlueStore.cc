@@ -3923,9 +3923,15 @@ int BlueStore::get_block_device_fsid(CephContext* cct, const string& path,
   return 0;
 }
 
+// called by
+// BlueStore::test_mount_in_use
+// BlueStore::mkfs
+// BlueStore::mount
+// BlueStore::fsck
 int BlueStore::_open_path()
 {
   assert(path_fd < 0);
+
   path_fd = ::open(path.c_str(), O_DIRECTORY);
   if (path_fd < 0) {
     int r = -errno;
@@ -3945,11 +3951,14 @@ void BlueStore::_close_path()
 int BlueStore::_write_bdev_label(string path, bluestore_bdev_label_t label)
 {
   dout(10) << __func__ << " path " << path << " label " << label << dendl;
+
   bufferlist bl;
   ::encode(label, bl);
   uint32_t crc = bl.crc32c(-1);
   ::encode(crc, bl);
+
   assert(bl.length() <= BDEV_LABEL_BLOCK_SIZE);
+
   bufferptr z(BDEV_LABEL_BLOCK_SIZE - bl.length());
   z.zero();
   bl.append(std::move(z));
@@ -3961,6 +3970,7 @@ int BlueStore::_write_bdev_label(string path, bluestore_bdev_label_t label)
 	 << dendl;
     return fd;
   }
+
   int r = bl.write_fd(fd);
   if (r < 0) {
     derr << __func__ << " failed to write to " << path
@@ -4018,6 +4028,7 @@ int BlueStore::_check_or_set_bdev_label(
   string path, uint64_t size, string desc, bool create)
 {
   bluestore_bdev_label_t label;
+
   if (create) {
     label.osd_uuid = fsid;
     label.size = size;
@@ -4040,6 +4051,7 @@ int BlueStore::_check_or_set_bdev_label(
       return -EIO;
     }
   }
+
   return 0;
 }
 
@@ -4078,16 +4090,23 @@ void BlueStore::_set_alloc_sizes(void)
 	   << dendl;
 }
 
+// called by
+// BlueStore::mkfs
+// BlueStore::mount
+// BlueStore::fsck
 int BlueStore::_open_bdev(bool create)
 {
   assert(bdev == NULL);
+
   string p = path + "/block";
+
   bdev = BlockDevice::create(cct, p, aio_cb, static_cast<void*>(this));
   int r = bdev->open(p);
   if (r < 0)
     goto fail;
 
   if (bdev->supported_bdev_label()) {
+    // false for nvme, true for kernel dev
     r = _check_or_set_bdev_label(p, bdev->get_size(), "main", create);
     if (r < 0)
       goto fail_close;
@@ -4097,6 +4116,7 @@ int BlueStore::_open_bdev(bool create)
   block_size = bdev->get_block_size();
   block_mask = ~(block_size - 1);
   block_size_order = ctz(block_size);
+
   assert(block_size == 1u << block_size_order);
   // and set cache_size based on device type
   r = _set_cache_sizes();
@@ -4113,6 +4133,10 @@ int BlueStore::_open_bdev(bool create)
   return r;
 }
 
+// called by
+// BlueStore::mkfs
+// BlueStore::umount
+// BlueStore::fsck
 void BlueStore::_close_bdev()
 {
   assert(bdev);
@@ -4121,20 +4145,28 @@ void BlueStore::_close_bdev()
   bdev = NULL;
 }
 
+// called by
+// BlueStore::mkfs
+// BlueStore::mount
+// BlueStore::fsck
 int BlueStore::_open_fm(bool create)
 {
   assert(fm == NULL);
+
   fm = FreelistManager::create(cct, freelist_type, db, PREFIX_ALLOC);
 
   if (create) {
     // initialize freespace
     dout(20) << __func__ << " initializing freespace" << dendl;
+
     KeyValueDB::Transaction t = db->get_transaction();
+
     {
       bufferlist bl;
       bl.append(freelist_type);
       t->set(PREFIX_SUPER, "freelist_type", bl);
     }
+
     fm->create(bdev->get_size(), t);
 
     // allocate superblock reserved space.  note that we do not mark
@@ -4199,8 +4231,9 @@ int BlueStore::_open_fm(bool create)
 	start += l + u;
       }
     }
+
     db->submit_transaction_sync(t);
-  }
+  } // create
 
   int r = fm->init();
   if (r < 0) {
@@ -4209,9 +4242,14 @@ int BlueStore::_open_fm(bool create)
     fm = NULL;
     return r;
   }
+
   return 0;
 }
 
+// called by
+// BlueStore::mkfs
+// BlueStore::mount
+// BlueStore::fsck
 void BlueStore::_close_fm()
 {
   dout(10) << __func__ << dendl;
@@ -4221,10 +4259,15 @@ void BlueStore::_close_fm()
   fm = NULL;
 }
 
+// called by
+// BlueStore::mkfs
+// BlueStore::mount
+// BlueStore::fsck
 int BlueStore::_open_alloc()
 {
   assert(alloc == NULL);
   assert(bdev->get_size());
+
   alloc = Allocator::create(cct, cct->_conf->bluestore_allocator,
                             bdev->get_size(),
                             min_alloc_size);
@@ -4260,6 +4303,10 @@ int BlueStore::_open_alloc()
   return 0;
 }
 
+// called by
+// BlueStore::mkfs
+// BlueStore::umount
+// BlueStore::fsck
 void BlueStore::_close_alloc()
 {
   assert(alloc);
@@ -4271,15 +4318,19 @@ void BlueStore::_close_alloc()
 int BlueStore::_open_fsid(bool create)
 {
   assert(fsid_fd < 0);
+
   int flags = O_RDWR;
+
   if (create)
     flags |= O_CREAT;
+
   fsid_fd = ::openat(path_fd, "fsid", flags, 0644);
   if (fsid_fd < 0) {
     int err = -errno;
     derr << __func__ << " " << cpp_strerror(err) << dendl;
     return err;
   }
+
   return 0;
 }
 
@@ -4332,6 +4383,11 @@ void BlueStore::_close_fsid()
   fsid_fd = -1;
 }
 
+// called by
+// BlueStore::test_mount_in_use
+// BlueStore::mkfs
+// BlueStore::mount
+// BlueStore::fsck
 int BlueStore::_lock_fsid()
 {
   struct flock l;
@@ -4393,19 +4449,27 @@ bool BlueStore::test_mount_in_use()
   r = _open_fsid(false);
   if (r < 0)
     goto out_path;
+
   r = _lock_fsid();
   if (r < 0)
     ret = true; // if we can't lock, it is in use
+
   _close_fsid();
  out_path:
   _close_path();
   return ret;
 }
 
+// called by
+// BlueStore::mkfs
+// BlueStore::mount
+// BlueStore::fsck
 int BlueStore::_open_db(bool create)
 {
   int r;
+
   assert(!db);
+
   string fn = path + "/db";
   string options;
   stringstream err;
@@ -4413,6 +4477,7 @@ int BlueStore::_open_db(bool create)
 
   string kv_backend;
   if (create) {
+    // default "rocksdb"
     kv_backend = cct->_conf->bluestore_kvbackend;
   } else {
     r = read_meta("kv_backend", &kv_backend);
@@ -4421,10 +4486,13 @@ int BlueStore::_open_db(bool create)
       return -EIO;
     }
   }
+
   dout(10) << __func__ << " kv_backend = " << kv_backend << dendl;
 
   bool do_bluefs;
+
   if (create) {
+    // default true
     do_bluefs = cct->_conf->bluestore_bluefs;
   } else {
     string s;
@@ -4433,6 +4501,7 @@ int BlueStore::_open_db(bool create)
       derr << __func__ << " unable to read 'bluefs' meta" << dendl;
       return -EIO;
     }
+
     if (s == "1") {
       do_bluefs = true;
     } else if (s == "0") {
@@ -4443,15 +4512,22 @@ int BlueStore::_open_db(bool create)
       return -EIO;
     }
   }
+
   dout(10) << __func__ << " do_bluefs = " << do_bluefs << dendl;
 
   rocksdb::Env *env = NULL;
+
   if (do_bluefs) {
+
+    // create or open
+
     dout(10) << __func__ << " initializing bluefs" << dendl;
+
     if (kv_backend != "rocksdb") {
       derr << " backend must be rocksdb to use bluefs" << dendl;
       return -EINVAL;
     }
+
     bluefs = new BlueFS(cct);
 
     string bfn;
@@ -4478,12 +4554,15 @@ int BlueStore::_open_db(bool create)
           goto free_bluefs;
         }
       }
+
       if (create) {
 	bluefs->add_block_extent(
 	  BlueFS::BDEV_DB,
 	  SUPER_RESERVED,
 	  bluefs->get_block_device_size(BlueFS::BDEV_DB) - SUPER_RESERVED);
       }
+
+      // "/block.db" exists
       bluefs_shared_bdev = BlueFS::BDEV_SLOW;
       bluefs_single_shared_device = false;
     } else if (::lstat(bfn.c_str(), &st) == -1) {
@@ -4503,12 +4582,13 @@ int BlueStore::_open_db(bool create)
 	   << cpp_strerror(r) << dendl;
       goto free_bluefs;
     }
+
     if (create) {
       // note: we always leave the first SUPER_RESERVED (8k) of the device unused
       uint64_t initial =
-	bdev->get_size() * (cct->_conf->bluestore_bluefs_min_ratio +
-			    cct->_conf->bluestore_bluefs_gift_ratio);
-      initial = MAX(initial, cct->_conf->bluestore_bluefs_min);
+	bdev->get_size() * (cct->_conf->bluestore_bluefs_min_ratio +    // default 0.02
+			    cct->_conf->bluestore_bluefs_gift_ratio);   // default 0.02
+      initial = MAX(initial, cct->_conf->bluestore_bluefs_min); // default 1*1024*1024*1024
       // align to bluefs's alloc_size
       initial = P2ROUNDUP(initial, cct->_conf->bluefs_alloc_size);
       // put bluefs in the middle of the device in case it is an HDD
@@ -4520,6 +4600,9 @@ int BlueStore::_open_db(bool create)
 
     bfn = path + "/block.wal";
     if (::stat(bfn.c_str(), &st) == 0) {
+
+      // "/block.wal" exists
+
       r = bluefs->add_block_device(BlueFS::BDEV_WAL, bfn);
       if (r < 0) {
         derr << __func__ << " add block device(" << bfn << ") returned: " 
@@ -4545,6 +4628,8 @@ int BlueStore::_open_db(bool create)
 	  bluefs->get_block_device_size(BlueFS::BDEV_WAL) -
 	   BDEV_LABEL_BLOCK_SIZE);
       }
+
+      // "/block.wal" exists
       cct->_conf->set_val("rocksdb_separate_wal_dir", "true");
       bluefs_single_shared_device = false;
     } else if (::lstat(bfn.c_str(), &st) == -1) {
@@ -4559,14 +4644,18 @@ int BlueStore::_open_db(bool create)
     if (create) {
       bluefs->mkfs(fsid);
     }
+
     r = bluefs->mount();
     if (r < 0) {
       derr << __func__ << " failed bluefs mount: " << cpp_strerror(r) << dendl;
       goto free_bluefs;
     }
+
+    // default false
     if (cct->_conf->bluestore_bluefs_env_mirror) {
       rocksdb::Env *a = new BlueRocksEnv(bluefs);
       rocksdb::Env *b = rocksdb::Env::Default();
+
       if (create) {
 	string cmd = "rm -rf " + path + "/db " +
 	  path + "/db.slow " +
@@ -4574,6 +4663,7 @@ int BlueStore::_open_db(bool create)
 	int r = system(cmd.c_str());
 	(void)r;
       }
+
       env = new rocksdb::EnvMirror(b, a, false, true);
     } else {
       env = new BlueRocksEnv(bluefs);
@@ -4583,11 +4673,15 @@ int BlueStore::_open_db(bool create)
     }
 
     if (bluefs_shared_bdev == BlueFS::BDEV_SLOW) {
+
+      // "/block.db" exists
+
       // we have both block.db and block; tell rocksdb!
       // note: the second (last) size value doesn't really matter
       ostringstream db_paths;
       uint64_t db_size = bluefs->get_block_device_size(BlueFS::BDEV_DB);
       uint64_t slow_size = bluefs->get_block_device_size(BlueFS::BDEV_SLOW);
+
       db_paths << fn << ","
                << (uint64_t)(db_size * 95 / 100) << " "
                << fn + ".slow" << ","
@@ -4599,12 +4693,17 @@ int BlueStore::_open_db(bool create)
 
     if (create) {
       env->CreateDir(fn);
+
       if (cct->_conf->rocksdb_separate_wal_dir)
 	env->CreateDir(fn + ".wal");
       if (cct->_conf->get_val<std::string>("rocksdb_db_paths").length())
 	env->CreateDir(fn + ".slow");
     }
   } else if (create) {
+
+    // create but not use bluefs
+
+    // "/db"
     int r = ::mkdir(fn.c_str(), 0755);
     if (r < 0)
       r = -errno;
@@ -4614,7 +4713,7 @@ int BlueStore::_open_db(bool create)
       return r;
     }
 
-    // wal_dir, too!
+    // wal_dir, too! default false
     if (cct->_conf->rocksdb_separate_wal_dir) {
       string walfn = path + "/db.wal";
       r = ::mkdir(walfn.c_str(), 0755);
@@ -4640,6 +4739,7 @@ int BlueStore::_open_db(bool create)
       delete bluefs;
       bluefs = NULL;
     }
+
     // delete env manually here since we can't depend on db to do this
     // under this case
     delete env;
@@ -4648,19 +4748,23 @@ int BlueStore::_open_db(bool create)
   }
 
   FreelistManager::setup_merge_operators(db);
+
   db->set_merge_operator(PREFIX_STAT, merge_op);
 
   db->set_cache_size(cache_size * cache_kv_ratio);
 
   if (kv_backend == "rocksdb")
     options = cct->_conf->bluestore_rocksdb_options;
+
   db->init(options);
   if (create)
     r = db->create_and_open(err);
   else
     r = db->open(err);
+
   if (r) {
     derr << __func__ << " erroring opening db: " << err.str() << dendl;
+
     if (bluefs) {
       bluefs->umount();
       delete bluefs;
@@ -4670,6 +4774,7 @@ int BlueStore::_open_db(bool create)
     db = NULL;
     return -EIO;
   }
+
   dout(1) << __func__ << " opened " << kv_backend
 	  << " path " << fn << " options " << options << dendl;
   return 0;
@@ -4681,6 +4786,10 @@ free_bluefs:
   return r;
 }
 
+// called by
+// BlueStore::mkfs
+// BlueStore::umount
+// BlueStore::fsck
 void BlueStore::_close_db()
 {
   assert(db);
@@ -4693,17 +4802,22 @@ void BlueStore::_close_db()
   }
 }
 
+// called by
+// BlueStore::mount
 int BlueStore::_reconcile_bluefs_freespace()
 {
   dout(10) << __func__ << dendl;
+
   interval_set<uint64_t> bset;
   int r = bluefs->get_block_extents(bluefs_shared_bdev, &bset);
   assert(r == 0);
+
   if (bset == bluefs_extents) {
     dout(10) << __func__ << " we agree bluefs has 0x" << std::hex << bset
 	     << std::dec << dendl;
     return 0;
   }
+
   dout(10) << __func__ << " bluefs says 0x" << std::hex << bset << std::dec
 	   << dendl;
   dout(10) << __func__ << " super says  0x" << std::hex << bluefs_extents
@@ -4722,10 +4836,12 @@ int BlueStore::_reconcile_bluefs_freespace()
   interval_set<uint64_t> super_extra;
   super_extra = bluefs_extents;
   super_extra.subtract(overlap);
+
   if (!super_extra.empty()) {
     // This is normal: it can happen if we commit to give extents to
     // bluefs and we crash before bluefs commits that it owns them.
     dout(10) << __func__ << " super extra " << super_extra << dendl;
+
     for (interval_set<uint64_t>::iterator p = super_extra.begin();
 	 p != super_extra.end();
 	 ++p) {
@@ -4736,6 +4852,8 @@ int BlueStore::_reconcile_bluefs_freespace()
   return 0;
 }
 
+// called by
+// BlueStore::_kv_sync_thread
 int BlueStore::_balance_bluefs_freespace(PExtentVector *extents)
 {
   int ret = 0;
@@ -4768,15 +4886,19 @@ int BlueStore::_balance_bluefs_freespace(PExtentVector *extents)
 
   uint64_t gift = 0;
   uint64_t reclaim = 0;
-  if (bluefs_ratio < cct->_conf->bluestore_bluefs_min_ratio) {
-    gift = cct->_conf->bluestore_bluefs_gift_ratio * total_free;
+
+  if (bluefs_ratio < cct->_conf->bluestore_bluefs_min_ratio) {          // default 0.02
+    gift = cct->_conf->bluestore_bluefs_gift_ratio * total_free;        // default 0.02
+
     dout(10) << __func__ << " bluefs_ratio " << bluefs_ratio
 	     << " < min_ratio " << cct->_conf->bluestore_bluefs_min_ratio
 	     << ", should gift " << pretty_si_t(gift) << dendl;
   } else if (bluefs_ratio > cct->_conf->bluestore_bluefs_max_ratio) {
     reclaim = cct->_conf->bluestore_bluefs_reclaim_ratio * total_free;
+
     if (bluefs_total - reclaim < cct->_conf->bluestore_bluefs_min)
       reclaim = bluefs_total - cct->_conf->bluestore_bluefs_min;
+
     dout(10) << __func__ << " bluefs_ratio " << bluefs_ratio
 	     << " > max_ratio " << cct->_conf->bluestore_bluefs_max_ratio
 	     << ", should reclaim " << pretty_si_t(reclaim) << dendl;
@@ -4785,11 +4907,14 @@ int BlueStore::_balance_bluefs_freespace(PExtentVector *extents)
     cct->_conf->bluestore_bluefs_min <
       (uint64_t)(cct->_conf->bluestore_bluefs_max_ratio * total_free)) {
     uint64_t g = cct->_conf->bluestore_bluefs_min - bluefs_total;
+
     dout(10) << __func__ << " bluefs_total " << bluefs_total
 	     << " < min " << cct->_conf->bluestore_bluefs_min
 	     << ", should gift " << pretty_si_t(g) << dendl;
+
     if (g > gift)
       gift = g;
+
     reclaim = 0;
   }
 
@@ -4860,6 +4985,8 @@ int BlueStore::_balance_bluefs_freespace(PExtentVector *extents)
   return ret;
 }
 
+// called by
+// BlueStore::_kv_sync_thread
 void BlueStore::_commit_bluefs_freespace(
   const PExtentVector& bluefs_gift_extents)
 {
@@ -4869,9 +4996,13 @@ void BlueStore::_commit_bluefs_freespace(
   }
 }
 
+// called by
+// BlueStore::mount
+// BlueStore::fsck
 int BlueStore::_open_collections(int *errors)
 {
   assert(coll_map.empty());
+
   KeyValueDB::Iterator it = db->get_iterator(PREFIX_COLL);
   for (it->upper_bound(string());
        it->valid();
@@ -4883,6 +5014,7 @@ int BlueStore::_open_collections(int *errors)
 	  this,
 	  cache_shards[cid.hash_to_shard(cache_shards.size())],
 	  cid));
+
       bufferlist bl = it->value();
       bufferlist::iterator p = bl.begin();
       try {
@@ -4896,10 +5028,12 @@ int BlueStore::_open_collections(int *errors)
       coll_map[cid] = c;
     } else {
       derr << __func__ << " unrecognized collection " << it->key() << dendl;
+
       if (errors)
 	(*errors)++;
     }
   }
+
   return 0;
 }
 
@@ -4920,6 +5054,8 @@ void BlueStore::_open_statfs()
   }
 }
 
+// called by
+// BlueStore::mkfs
 int BlueStore::_setup_block_symlink_or_file(
   string name,
   string epath,
@@ -4932,6 +5068,7 @@ int BlueStore::_setup_block_symlink_or_file(
   int flags = O_RDWR;
   if (create)
     flags |= O_CREAT;
+
   if (epath.length()) {
     r = ::symlinkat(epath.c_str(), path_fd, name.c_str());
     if (r < 0) {
@@ -4957,6 +5094,7 @@ int BlueStore::_setup_block_symlink_or_file(
       VOID_TEMP_FAILURE_RETRY(::close(fd));
     }
   }
+
   if (size) {
     int fd = ::openat(path_fd, name.c_str(), flags, 0644);
     if (fd >= 0) {
@@ -4975,6 +5113,7 @@ int BlueStore::_setup_block_symlink_or_file(
 	  return r;
 	}
 
+	// default false
 	if (cct->_conf->bluestore_block_preallocate_file) {
 #ifdef HAVE_POSIX_FALLOCATE
 	  r = ::posix_fallocate(fd, 0, size);
@@ -5001,9 +5140,11 @@ int BlueStore::_setup_block_symlink_or_file(
 	  }
 #endif
 	}
+
 	dout(1) << __func__ << " resized " << name << " file to "
 		<< pretty_si_t(size) << "B" << dendl;
       }
+
       VOID_TEMP_FAILURE_RETRY(::close(fd));
     } else {
       int r = -errno;
@@ -5014,12 +5155,14 @@ int BlueStore::_setup_block_symlink_or_file(
       }
     }
   }
+
   return 0;
 }
 
 int BlueStore::mkfs()
 {
   dout(1) << __func__ << " path " << path << dendl;
+
   int r;
   uuid_d old_fsid;
 
@@ -5046,6 +5189,7 @@ int BlueStore::mkfs()
 
   {
     string type;
+    // call ObjectStore::read_meta
     r = read_meta("type", &type);
     if (r == 0) {
       if (type != "bluestore") {
@@ -5053,6 +5197,7 @@ int BlueStore::mkfs()
 	return -EIO;
       }
     } else {
+      // call ObjectStore::write_meta
       r = write_meta("type", "bluestore");
       if (r < 0)
         return r;
@@ -5097,6 +5242,7 @@ int BlueStore::mkfs()
 				   cct->_conf->bluestore_block_create);
   if (r < 0)
     goto out_close_fsid;
+
   if (cct->_conf->bluestore_bluefs) {
     r = _setup_block_symlink_or_file("block.wal", cct->_conf->bluestore_block_wal_path,
 	cct->_conf->bluestore_block_wal_size,
@@ -5110,6 +5256,7 @@ int BlueStore::mkfs()
       goto out_close_fsid;
   }
 
+  // open "block"
   r = _open_bdev(true);
   if (r < 0)
     goto out_close_fsid;
@@ -5216,6 +5363,10 @@ int BlueStore::mkfs()
   return r;
 }
 
+// called by
+// BlueStore::BlueStore
+// OSD::mkfs
+// OSD::init
 void BlueStore::set_cache_shards(unsigned num)
 {
   dout(10) << __func__ << " " << num << dendl;
@@ -5260,6 +5411,7 @@ int BlueStore::_mount(bool kv_only)
   int r = _open_path();
   if (r < 0)
     return r;
+
   r = _open_fsid(false);
   if (r < 0)
     goto out_path;
@@ -5391,6 +5543,8 @@ static void apply(uint64_t off,
   }
 }
 
+// called by
+// BlueStore::fsck
 int BlueStore::_fsck_check_extents(
   const ghobject_t& oid,
   const PExtentVector& extents,
@@ -5430,9 +5584,15 @@ int BlueStore::_fsck_check_extents(
   return errors;
 }
 
+// called by
+// BlueStore::mkfs
+// BlueStore::mount
+// BlueStore::umount
+// ceph_objectstore_tool.c/main, for "fsck", "fsck-deep"
 int BlueStore::fsck(bool deep)
 {
   dout(1) << __func__ << (deep ? " (deep)" : " (shallow)") << " start" << dendl;
+
   int errors = 0;
 
   typedef btree::btree_set<
@@ -6066,6 +6226,8 @@ BlueStore::CollectionRef BlueStore::_get_collection(const coll_t& cid)
   return cp->second;
 }
 
+// called by
+// BlueStore::_txc_finish
 void BlueStore::_queue_reap_collection(CollectionRef& c)
 {
   dout(10) << __func__ << " " << c << " " << c->cid << dendl;
@@ -6073,11 +6235,16 @@ void BlueStore::_queue_reap_collection(CollectionRef& c)
   removed_collections.push_back(c);
 }
 
+// called by
+// BlueStore::umount
+// BlueStore::_kv_sync_thread
 void BlueStore::_reap_collections()
 {
   list<CollectionRef> removed_colls;
+
   {
     std::lock_guard<std::mutex> l(reap_lock);
+
     removed_colls.swap(removed_collections);
   }
 
@@ -6095,11 +6262,15 @@ void BlueStore::_reap_collections()
 		     << " flush_txns " << o->flushing_count << dendl;
 	    return false;
 	  }
+
 	  return true;
 	})) {
+
       all_reaped = false;
+
       continue;
     }
+
     c->onode_map.clear();
     dout(10) << __func__ << " " << c << " " << c->cid << " done" << dendl;
   }
@@ -6130,6 +6301,9 @@ void BlueStore::_update_cache_logger()
 // ---------------
 // read operations
 
+// called by
+// OSD::load_pgs
+// OSD.cc/C_OpenPGs::finish
 ObjectStore::CollectionHandle BlueStore::open_collection(const coll_t& cid)
 {
   return _get_collection(cid);
@@ -6244,14 +6418,17 @@ int BlueStore::read(
   utime_t start = ceph_clock_now();
   Collection *c = static_cast<Collection *>(c_.get());
   const coll_t &cid = c->get_cid();
+
   dout(15) << __func__ << " " << cid << " " << oid
 	   << " 0x" << std::hex << offset << "~" << length << std::dec
 	   << dendl;
+
   if (!c->exists)
     return -ENOENT;
 
   bl.clear();
   int r;
+
   {
     RWLock::RLocker l(c->lock);
     utime_t start1 = ceph_clock_now();
@@ -6277,6 +6454,7 @@ int BlueStore::read(
     dout(0) << __func__ << ": inject random EIO" << dendl;
     r = -EIO;
   }
+
   dout(10) << __func__ << " " << cid << " " << oid
 	   << " 0x" << std::hex << offset << "~" << length << std::dec
 	   << " = " << r << dendl;
@@ -6314,6 +6492,12 @@ struct region_t {
 typedef list<region_t> regions2read_t;
 typedef map<BlueStore::BlobRef, regions2read_t> blobs2read_t;
 
+// called by
+// BlueStore::fsck
+// BlueStore::read
+// BlueStore::_do_write_small
+// BlueStore::_clone
+// BlueStore::_clone_range
 int BlueStore::_do_read(
   Collection *c,
   OnodeRef o,
@@ -6328,6 +6512,7 @@ int BlueStore::_do_read(
   dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
            << " size 0x" << o->onode.size << " (" << std::dec
            << o->onode.size << ")" << dendl;
+
   bl.clear();
 
   if (offset >= o->onode.size) {
@@ -6339,11 +6524,13 @@ int BlueStore::_do_read(
   bool buffered = false;
   if (op_flags & CEPH_OSD_OP_FLAG_FADVISE_WILLNEED) {
     dout(20) << __func__ << " will do buffered read" << dendl;
+
     buffered = true;
-  } else if (cct->_conf->bluestore_default_buffered_read &&
+  } else if (cct->_conf->bluestore_default_buffered_read && // default true
 	     (op_flags & (CEPH_OSD_OP_FLAG_FADVISE_DONTNEED |
 			  CEPH_OSD_OP_FLAG_FADVISE_NOCACHE)) == 0) {
     dout(20) << __func__ << " defaulting to buffered read" << dendl;
+
     buffered = true;
   }
 
@@ -6370,11 +6557,14 @@ int BlueStore::_do_read(
       if (hole >= left) {
 	break;
       }
+
       dout(30) << __func__ << "  hole 0x" << std::hex << pos << "~" << hole
 	       << std::dec << dendl;
+
       pos += hole;
       left -= hole;
     }
+
     BlobRef bptr = lp->blob;
     unsigned l_off = pos - lp->logical_offset;
     unsigned b_off = l_off + lp->blob_offset;
@@ -6396,25 +6586,32 @@ int BlueStore::_do_read(
 	  pc->first == b_off) {
 	l = pc->second.length();
 	ready_regions[pos].claim(pc->second);
+
 	dout(30) << __func__ << "    use cache 0x" << std::hex << pos << ": 0x"
 		 << b_off << "~" << l << std::dec << dendl;
+
 	++pc;
       } else {
 	l = b_len;
 	if (pc != cache_res.end()) {
 	  assert(pc->first > b_off);
+
 	  l = pc->first - b_off;
 	}
+
 	dout(30) << __func__ << "    will read 0x" << std::hex << pos << ": 0x"
 		 << b_off << "~" << l << std::dec << dendl;
+
 	blobs2read[bptr].emplace_back(region_t(pos, b_off, l));
 	++num_regions;
       }
+
       pos += l;
       b_off += l;
       left -= l;
       b_len -= l;
     }
+
     ++lp;
   }
 
@@ -6463,10 +6660,12 @@ int BlueStore::_do_read(
 	  reg.r_off -= reg.front;
 	  r_len += reg.front;
 	}
+
 	unsigned tail = r_len % chunk_size;
 	if (tail) {
 	  r_len += chunk_size - tail;
 	}
+
 	dout(20) << __func__ << "    region 0x" << std::hex
 		 << reg.logical_offset
 		 << ": 0x" << reg.blob_xoffset << "~" << reg.length
@@ -6532,6 +6731,7 @@ int BlueStore::_do_read(
 			 reg.logical_offset) < 0) {
 	  return -EIO;
 	}
+
 	if (buffered) {
 	  bptr->shared_blob->bc.did_read(bptr->shared_blob->get_cache(),
 					 reg.r_off, reg.bl);
@@ -6542,6 +6742,7 @@ int BlueStore::_do_read(
 	  reg.bl, reg.front, reg.length);
       }
     }
+
     ++b2r_it;
   }
 
@@ -6554,6 +6755,7 @@ int BlueStore::_do_read(
       dout(30) << __func__ << " assemble 0x" << std::hex << pos
 	       << ": data from 0x" << pr->first << "~" << pr->second.length()
 	       << std::dec << dendl;
+
       pos += pr->second.length();
       bl.claim_append(pr->second);
       ++pr;
@@ -6563,20 +6765,26 @@ int BlueStore::_do_read(
         assert(pr->first > pos + offset);
 	l = pr->first - (pos + offset);
       }
+
       dout(30) << __func__ << " assemble 0x" << std::hex << pos
 	       << ": zeros for 0x" << (pos + offset) << "~" << l
 	       << std::dec << dendl;
+
       bl.append_zero(l);
       pos += l;
     }
   }
+
   assert(bl.length() == length);
   assert(pos == length);
   assert(pr == pr_end);
+
   r = bl.length();
   return r;
 }
 
+// called by
+// BlueStore::_do_read
 int BlueStore::_verify_csum(OnodeRef& o,
 			    const bluestore_blob_t* blob, uint64_t blob_xoffset,
 			    const bufferlist& bl,
@@ -6616,6 +6824,8 @@ int BlueStore::_verify_csum(OnodeRef& o,
   return r;
 }
 
+// called by
+// BlueStore::_do_read
 int BlueStore::_decompress(bufferlist& source, bufferlist* result)
 {
   int r = 0;
@@ -6664,6 +6874,7 @@ int BlueStore::_fiemap(
     if (!o || !o->exists) {
       return -ENOENT;
     }
+
     _dump_onode(o);
 
     dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
@@ -6682,6 +6893,7 @@ int BlueStore::_fiemap(
     ep = o->extent_map.seek_lextent(offset);
     while (length > 0) {
       dout(20) << __func__ << " offset " << offset << dendl;
+
       if (ep != eend && ep->logical_offset + ep->length <= offset) {
         ++ep;
         continue;
@@ -6691,6 +6903,7 @@ int BlueStore::_fiemap(
       if (ep != eend && ep->logical_offset <= offset) {
         uint64_t x_off = offset - ep->logical_offset;
         x_len = MIN(x_len, ep->length - x_off);
+
         dout(30) << __func__ << " lextent 0x" << std::hex << offset << "~"
 	         << x_len << std::dec << " blob " << ep->blob << dendl;
         destset.insert(offset, x_len);
@@ -6698,13 +6911,16 @@ int BlueStore::_fiemap(
         offset += x_len;
         if (x_off + x_len == ep->length)
 	  ++ep;
+
         continue;
       }
+
       if (ep != eend &&
 	  ep->logical_offset > offset &&
 	  ep->logical_offset - offset < x_len) {
         x_len = ep->logical_offset - offset;
       }
+
       offset += x_len;
       length -= x_len;
     }
@@ -6870,6 +7086,16 @@ int BlueStore::getattrs(
   return r;
 }
 
+// called by
+// FuseStore.cc/os_readdir
+// OSD::clear_temp_objects
+// OSD::load_pgs
+// ceph_objectstore_tool.cc/action_on_all_objects_in_pg
+// _action_on_all_objects
+// finish_remove_pgs
+// apply_layout_settings
+// main
+// rebuild_mondb.cc/update_pgmap_pg
 int BlueStore::list_collections(vector<coll_t>& ls)
 {
   RWLock::RLocker l(coll_lock);
@@ -6880,12 +7106,18 @@ int BlueStore::list_collections(vector<coll_t>& ls)
   return 0;
 }
 
+// called by
+// os/FuseStore.cc/os_getattr
+// ceph_objectstore_tool.cc/initiate_new_remove_pg
+// ceph_objectstore_tool.cc/ObjectStoreTool::do_import
 bool BlueStore::collection_exists(const coll_t& c)
 {
   RWLock::RLocker l(coll_lock);
   return coll_map.count(c);
 }
 
+// called by
+// os/FuseStore.cc/os_unlink, for FN_COLLECTION
 int BlueStore::collection_empty(const coll_t& cid, bool *empty)
 {
   dout(15) << __func__ << " " << cid << dendl;
@@ -6903,6 +7135,11 @@ int BlueStore::collection_empty(const coll_t& cid, bool *empty)
   return 0;
 }
 
+// called by
+// os/FuseStore.cc/os_getattr
+// os/FuseStore.cc/os_readdir
+// os/FuseStore.cc/os_open
+// os/FuseStore.cc/os_mkdir
 int BlueStore::collection_bits(const coll_t& cid)
 {
   dout(15) << __func__ << " " << cid << dendl;
@@ -6914,6 +7151,13 @@ int BlueStore::collection_bits(const coll_t& cid)
   return c->cnode.bits;
 }
 
+// called by
+// os/FuseStore.cc/os_readdir, for FN_HASH_VAL, FN_ALL
+// OSD::clear_temp_objects
+// OSD::recursive_remove_collection
+// OSD.cc/remove_dir
+// tools/ceph_objectstore_tool.cc/_action_on_all_objects_in_pg
+// tools/ceph_objectstore_tool.cc/ObjectStoreTool::export_files
 int BlueStore::collection_list(
   const coll_t& cid, const ghobject_t& start, const ghobject_t& end, int max,
   vector<ghobject_t> *ls, ghobject_t *pnext)
@@ -6924,6 +7168,10 @@ int BlueStore::collection_list(
   return collection_list(c, start, end, max, ls, pnext);
 }
 
+// called by
+// BlueStore::collection_list(cid, ...), above
+// PGBackend::objects_list_partial
+// PGBackend::objects_list_range
 int BlueStore::collection_list(
   CollectionHandle &c_, const ghobject_t& start, const ghobject_t& end, int max,
   vector<ghobject_t> *ls, ghobject_t *pnext)
@@ -6944,6 +7192,9 @@ int BlueStore::collection_list(
   return r;
 }
 
+// called by
+// BlueStore::collection_list(CollectionHandle, ...), above
+// BlueStore::_remove_collection
 int BlueStore::_collection_list(
   Collection *c, const ghobject_t& start, const ghobject_t& end, int max,
   vector<ghobject_t> *ls, ghobject_t *pnext)
@@ -7056,6 +7307,8 @@ out:
   return r;
 }
 
+// called by
+// TestOpsSocketHook::test_ops, for "getomap"
 int BlueStore::omap_get(
   const coll_t& cid,                ///< [in] Collection containing oid
   const ghobject_t &oid,   ///< [in] Object containing omap
@@ -7119,6 +7372,13 @@ int BlueStore::omap_get(
   return r;
 }
 
+// called by
+// os/FuseStore.cc/os_getattr, for FN_OBJECT_OMAP_HEADER
+// os/FuseStore.cc/os_open, for FN_OBJECT_OMAP_HEADER
+// ReplicatedBackend::be_deep_scrub
+// ReplicatedBackend::build_push_op
+// tools/ceph_objectstore_tool.cc/ObjectStoreTool::export_file
+// tools/ceph_objectstore_tool.cc/do_get_omaphdr
 int BlueStore::omap_get_header(
   const coll_t& cid,                ///< [in] Collection containing oid
   const ghobject_t &oid,   ///< [in] Object containing omap
@@ -7132,6 +7392,9 @@ int BlueStore::omap_get_header(
   return omap_get_header(c, oid, header, allow_eio);
 }
 
+// called by
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_OMAPGETHEADER
+// PrimaryLogPG::fill_in_copy_get
 int BlueStore::omap_get_header(
   CollectionHandle &c_,                ///< [in] Collection containing oid
   const ghobject_t &oid,   ///< [in] Object containing omap
@@ -7168,6 +7431,8 @@ int BlueStore::omap_get_header(
   return r;
 }
 
+// called by
+// os/FuseStore.cc/os_readdir
 int BlueStore::omap_get_keys(
   const coll_t& cid,              ///< [in] Collection containing oid
   const ghobject_t &oid, ///< [in] Object containing omap
@@ -7180,6 +7445,7 @@ int BlueStore::omap_get_keys(
   return omap_get_keys(c, oid, keys);
 }
 
+// not used
 int BlueStore::omap_get_keys(
   CollectionHandle &c_,              ///< [in] Collection containing oid
   const ghobject_t &oid, ///< [in] Object containing omap
@@ -7225,6 +7491,15 @@ int BlueStore::omap_get_keys(
   return r;
 }
 
+// called by
+// FuseStore.cc/os_getattr, for FN_OBJECT_OMAP_VAL
+// FuseStore.cc/os_open, for FN_OBJECT_OMAP_VAL
+// FuseStore.cc/os_create, for FN_OBJECT_OMAP_VAL
+// PG::_has_removal_flag
+// PG::peek_map_epoch
+// PG::read_info
+// osd/SnapMapper.cc/OSDriver::get_keys
+// ceph_objectstore_tool.cc/do_get_omap
 int BlueStore::omap_get_values(
   const coll_t& cid,                    ///< [in] Collection containing oid
   const ghobject_t &oid,       ///< [in] Object containing omap
@@ -7238,6 +7513,8 @@ int BlueStore::omap_get_values(
   return omap_get_values(c, oid, keys, out);
 }
 
+// called by
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_OMAPGETVALSBYKEYS, CEPH_OSD_OP_OMAP_CMP
 int BlueStore::omap_get_values(
   CollectionHandle &c_,        ///< [in] Collection containing oid
   const ghobject_t &oid,       ///< [in] Object containing omap
@@ -7278,6 +7555,7 @@ int BlueStore::omap_get_values(
   return r;
 }
 
+// not used
 int BlueStore::omap_check_keys(
   const coll_t& cid,                ///< [in] Collection containing oid
   const ghobject_t &oid,   ///< [in] Object containing omap
@@ -7291,6 +7569,7 @@ int BlueStore::omap_check_keys(
   return omap_check_keys(c, oid, keys, out);
 }
 
+// not used
 int BlueStore::omap_check_keys(
   CollectionHandle &c_,    ///< [in] Collection containing oid
   const ghobject_t &oid,   ///< [in] Object containing omap
@@ -7334,6 +7613,15 @@ int BlueStore::omap_check_keys(
   return r;
 }
 
+// called by
+// PGLog::read_log_and_missing
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_OMAPGETKEYS, CEPH_OSD_OP_OMAPGETVALS
+// PrimaryLogPG::fill_in_copy_get
+// ReplicatedBackend::be_deep_scrub
+// ReplicatedBackend::build_push_op
+// OSDriver::get_next
+// ceph_objectstore_tool.cc/ObjectStoreTool::export_file
+// ceph_objectstore_tool.cc/do_list_omap
 ObjectMap::ObjectMapIterator BlueStore::get_omap_iterator(
   const coll_t& cid,              ///< [in] collection
   const ghobject_t &oid  ///< [in] object
@@ -7347,6 +7635,8 @@ ObjectMap::ObjectMapIterator BlueStore::get_omap_iterator(
   return get_omap_iterator(c, oid);
 }
 
+// called by
+// BlueStore::get_omap_iterator(cid, oid), above
 ObjectMap::ObjectMapIterator BlueStore::get_omap_iterator(
   CollectionHandle &c_,              ///< [in] collection
   const ghobject_t &oid  ///< [in] object
@@ -7390,6 +7680,9 @@ void BlueStore::_prepare_ondisk_format_super(KeyValueDB::Transaction& t)
   }
 }
 
+// called by
+// BlueStore::mount
+// BlueStore::fsck
 int BlueStore::_open_super_meta()
 {
   // nid
@@ -7597,15 +7890,20 @@ uint64_t BlueStore::_assign_blobid(TransContext *txc)
   return bid;
 }
 
+// called by
+// OSD::asok_command, for "dump_objectstore_kv_stats"
 void BlueStore::get_db_statistics(Formatter *f)
 {
   db->get_statistics(f);
 }
 
+// called by
+// BlueStore::_wal_replay
+// BlueStore::queue_transactions
 BlueStore::TransContext *BlueStore::_txc_create(OpSequencer *osr)
 {
   TransContext *txc = new TransContext(cct, osr);
-  txc->t = db->get_transaction();
+  txc->t = db->get_transaction(); // BlueStore::db was created by BlueStore::_open_db
   osr->queue_new(txc);
   dout(20) << __func__ << " osr " << osr << " = " << txc
 	   << " seq " << txc->seq << dendl;
@@ -7630,6 +7928,8 @@ void BlueStore::_txc_calc_cost(TransContext *txc)
 	   << " bytes)" << dendl;
 }
 
+// called by
+// BlueStore::_txc_finalize_kv
 void BlueStore::_txc_update_store_statfs(TransContext *txc)
 {
   if (txc->statfs_delta.is_empty())
@@ -7653,6 +7953,13 @@ void BlueStore::_txc_update_store_statfs(TransContext *txc)
   txc->statfs_delta.reset();
 }
 
+// called by
+// BlueStore::_txc_finish_io
+// BlueStore::_kv_sync_thread
+// BlueStore::_wal_apply
+// BlueStore::_wal_replay
+// BlueStore::queue_transactions
+// BlueStore::_txc_aio_finish
 void BlueStore::_txc_state_proc(TransContext *txc)
 {
   while (true) {
@@ -7757,6 +8064,8 @@ void BlueStore::_txc_state_proc(TransContext *txc)
   }
 }
 
+// called by
+// BlueStore::_txc_state_proc
 void BlueStore::_txc_finish_io(TransContext *txc)
 {
   dout(20) << __func__ << " " << txc << dendl;
@@ -7797,6 +8106,8 @@ void BlueStore::_txc_finish_io(TransContext *txc)
   }
 }
 
+// called by
+// BlueStore::queue_transactions
 void BlueStore::_txc_write_nodes(TransContext *txc, KeyValueDB::Transaction t)
 {
   dout(20) << __func__ << " txc " << txc
@@ -7955,6 +8266,8 @@ void BlueStore::_txc_applied_kv(TransContext *txc)
   }
 }
 
+// called by
+// BlueStore::_txc_state_proc
 void BlueStore::_txc_committed_kv(TransContext *txc)
 {
   dout(20) << __func__ << " txc " << txc << dendl;
@@ -7980,6 +8293,8 @@ void BlueStore::_txc_committed_kv(TransContext *txc)
   }
 }
 
+// called by
+// BlueStore::_txc_state_proc
 void BlueStore::_txc_finish(TransContext *txc)
 {
   dout(20) << __func__ << " " << txc << " onodes " << txc->onodes << dendl;
@@ -8229,6 +8544,8 @@ void BlueStore::_kv_stop()
   dout(10) << __func__ << " stopped" << dendl;
 }
 
+// called by
+// BlueStore::KVSyncThread::entry
 void BlueStore::_kv_sync_thread()
 {
   dout(10) << __func__ << " start" << dendl;
@@ -8740,6 +9057,7 @@ int BlueStore::queue_transactions(
   Context *onreadable;
   Context *ondisk;
   Context *onreadable_sync;
+
   ObjectStore::Transaction::collect_contexts(
     tls, &onreadable, &ondisk, &onreadable_sync);
 
@@ -8757,16 +9075,19 @@ int BlueStore::queue_transactions(
   assert(posr);
   if (posr->p) {
     osr = static_cast<OpSequencer *>(posr->p.get());
+
     dout(10) << __func__ << " existing " << osr << " " << *osr << dendl;
   } else {
     osr = new OpSequencer(cct, this);
     osr->parent = posr;
     posr->p = osr;
+
     dout(10) << __func__ << " new " << osr << " " << *osr << dendl;
   }
 
   // prepare
   TransContext *txc = _txc_create(osr);
+
   txc->onreadable = onreadable;
   txc->onreadable_sync = onreadable_sync;
   txc->oncommit = ondisk;
@@ -8774,6 +9095,7 @@ int BlueStore::queue_transactions(
   for (vector<Transaction>::iterator p = tls.begin(); p != tls.end(); ++p) {
     (*p).set_osr(osr);
     txc->bytes += (*p).get_num_bytes();
+
     _txc_add_transaction(txc, &(*p));
   }
   _txc_calc_cost(txc);
@@ -8824,6 +9146,8 @@ void BlueStore::_txc_aio_submit(TransContext *txc)
   bdev->aio_submit(&txc->ioc);
 }
 
+// called by
+// BlueStore::queue_transactions
 void BlueStore::_txc_add_transaction(TransContext *txc, Transaction *t)
 {
   Transaction::iterator i = t->begin();
@@ -9180,6 +9504,8 @@ void BlueStore::_txc_add_transaction(TransContext *txc, Transaction *t)
 // -----------------
 // write operations
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_TOUCH
 int BlueStore::_touch(TransContext *txc,
 		      CollectionRef& c,
 		      OnodeRef &o)
@@ -9257,6 +9583,8 @@ void BlueStore::_dump_transaction(Transaction *t, int log_level)
   *_dout << dendl;
 }
 
+// called by
+// BlueStore::_do_write_small
 void BlueStore::_pad_zeros(
   bufferlist *bl, uint64_t *offset,
   uint64_t chunk_size)
@@ -9320,6 +9648,8 @@ void BlueStore::_pad_zeros(
   assert(bl->length() == length);
 }
 
+// called by
+// BlueStore::_do_write_data
 void BlueStore::_do_write_small(
     TransContext *txc,
     CollectionRef &c,
@@ -9635,6 +9965,8 @@ void BlueStore::_do_write_small(
   return;
 }
 
+// called by
+// BlueStore::_do_write_data
 void BlueStore::_do_write_big(
     TransContext *txc,
     CollectionRef &c,
@@ -9724,6 +10056,8 @@ void BlueStore::_do_write_big(
   }
 }
 
+// called by
+// BlueStore::_do_write
 int BlueStore::_do_alloc_write(
   TransContext *txc,
   CollectionRef coll,
@@ -9961,6 +10295,10 @@ int BlueStore::_do_alloc_write(
   return 0;
 }
 
+// called by
+// BlueStore::_do_write
+// BlueStore::_do_zero
+// BlueStore::_do_truncate
 void BlueStore::_wctx_finish(
   TransContext *txc,
   CollectionRef& c,
@@ -10024,6 +10362,8 @@ void BlueStore::_wctx_finish(
   }
 }
 
+// called by
+// BlueStore::_do_write
 void BlueStore::_do_write_data(
   TransContext *txc,
   CollectionRef& c,
@@ -10297,6 +10637,8 @@ int BlueStore::_do_write(
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_WRITE
 int BlueStore::_write(TransContext *txc,
 		      CollectionRef& c,
 		      OnodeRef& o,
@@ -10317,6 +10659,8 @@ int BlueStore::_write(TransContext *txc,
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_ZERO
 int BlueStore::_zero(TransContext *txc,
 		     CollectionRef& c,
 		     OnodeRef& o,
@@ -10401,6 +10745,8 @@ void BlueStore::_do_truncate(
   txc->write_onode(o);
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_TRUNCATE
 void BlueStore::_truncate(TransContext *txc,
 			 CollectionRef& c,
 			 OnodeRef& o,
@@ -10519,6 +10865,8 @@ int BlueStore::_do_remove(
   return 0;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_REMOVE
 int BlueStore::_remove(TransContext *txc,
 		       CollectionRef& c,
 		       OnodeRef &o)
@@ -10529,6 +10877,8 @@ int BlueStore::_remove(TransContext *txc,
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_SETATTR
 int BlueStore::_setattr(TransContext *txc,
 			CollectionRef& c,
 			OnodeRef& o,
@@ -10550,6 +10900,8 @@ int BlueStore::_setattr(TransContext *txc,
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_SETATTRS
 int BlueStore::_setattrs(TransContext *txc,
 			 CollectionRef& c,
 			 OnodeRef& o,
@@ -10574,7 +10926,8 @@ int BlueStore::_setattrs(TransContext *txc,
   return r;
 }
 
-
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_RMATTR
 int BlueStore::_rmattr(TransContext *txc,
 		       CollectionRef& c,
 		       OnodeRef& o,
@@ -10596,6 +10949,8 @@ int BlueStore::_rmattr(TransContext *txc,
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_RMATTRS
 int BlueStore::_rmattrs(TransContext *txc,
 			CollectionRef& c,
 			OnodeRef& o)
@@ -10633,6 +10988,8 @@ void BlueStore::_do_omap_clear(TransContext *txc, uint64_t id)
   }
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_OMAP_CLEAR
 int BlueStore::_omap_clear(TransContext *txc,
 			   CollectionRef& c,
 			   OnodeRef& o)
@@ -10649,6 +11006,8 @@ int BlueStore::_omap_clear(TransContext *txc,
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_OMAP_SETKEYS
 int BlueStore::_omap_setkeys(TransContext *txc,
 			     CollectionRef& c,
 			     OnodeRef& o,
@@ -10684,6 +11043,8 @@ int BlueStore::_omap_setkeys(TransContext *txc,
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_OMAP_SETHEADER
 int BlueStore::_omap_setheader(TransContext *txc,
 			       CollectionRef& c,
 			       OnodeRef &o,
@@ -10705,6 +11066,8 @@ int BlueStore::_omap_setheader(TransContext *txc,
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_OMAP_RMKEYS
 int BlueStore::_omap_rmkeys(TransContext *txc,
 			    CollectionRef& c,
 			    OnodeRef& o,
@@ -10738,6 +11101,8 @@ int BlueStore::_omap_rmkeys(TransContext *txc,
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_OMAP_RMKEYRANGE
 int BlueStore::_omap_rmkey_range(TransContext *txc,
 				 CollectionRef& c,
 				 OnodeRef& o,
@@ -10772,6 +11137,8 @@ int BlueStore::_omap_rmkey_range(TransContext *txc,
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_SETALLOCHINT
 int BlueStore::_set_alloc_hint(
   TransContext *txc,
   CollectionRef& c,
@@ -10798,6 +11165,8 @@ int BlueStore::_set_alloc_hint(
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for
 int BlueStore::_clone(TransContext *txc,
 		      CollectionRef& c,
 		      OnodeRef& oldo,
@@ -10989,6 +11358,8 @@ int BlueStore::_do_clone_range(
   return 0;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for
 int BlueStore::_clone_range(TransContext *txc,
 			    CollectionRef& c,
 			    OnodeRef& oldo,
@@ -11033,6 +11404,8 @@ int BlueStore::_clone_range(TransContext *txc,
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_COLL_MOVE_RENAME, Transaction::OP_TRY_RENAME
 int BlueStore::_rename(TransContext *txc,
 		       CollectionRef& c,
 		       OnodeRef& oldo,
@@ -11086,6 +11459,8 @@ int BlueStore::_rename(TransContext *txc,
 
 // collections
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_MKCOLL
 int BlueStore::_create_collection(
   TransContext *txc,
   const coll_t &cid,
@@ -11119,6 +11494,8 @@ int BlueStore::_create_collection(
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_RMCOLL
 int BlueStore::_remove_collection(TransContext *txc, const coll_t &cid,
 				  CollectionRef *c)
 {
@@ -11184,6 +11561,8 @@ int BlueStore::_remove_collection(TransContext *txc, const coll_t &cid,
   return r;
 }
 
+// called by
+// BlueStore::_txc_add_transaction, for Transaction::OP_SPLIT_COLLECTION2
 int BlueStore::_split_collection(TransContext *txc,
 				CollectionRef& c,
 				CollectionRef& d,

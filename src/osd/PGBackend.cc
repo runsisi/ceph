@@ -37,6 +37,8 @@ static ostream& _prefix(std::ostream *_dout, PGBackend *pgb) {
   return *_dout << pgb->get_parent()->gen_dbg_prefix();
 }
 
+// called by
+// PG::PGLogEntryHandler::rollback
 void PGBackend::rollback(
   const pg_log_entry_t &entry,
   ObjectStore::Transaction *t)
@@ -49,42 +51,51 @@ void PGBackend::rollback(
     RollbackVisitor(
       const hobject_t &hoid,
       PGBackend *pg) : hoid(hoid), pg(pg) {}
+
     void append(uint64_t old_size) override {
       ObjectStore::Transaction temp;
       pg->rollback_append(hoid, old_size, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
     void setattrs(map<string, boost::optional<bufferlist> > &attrs) override {
       ObjectStore::Transaction temp;
       pg->rollback_setattrs(hoid, attrs, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
     void rmobject(version_t old_version) override {
       ObjectStore::Transaction temp;
       pg->rollback_stash(hoid, old_version, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
     void try_rmobject(version_t old_version) override {
       ObjectStore::Transaction temp;
       pg->rollback_try_stash(hoid, old_version, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
     void create() override {
       ObjectStore::Transaction temp;
       pg->rollback_create(hoid, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
+    // called by
+    // ObjectModDesc::visit
     void update_snaps(const set<snapid_t> &snaps) override {
       ObjectStore::Transaction temp;
       pg->get_parent()->pgb_set_object_snap_mapping(hoid, snaps, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
     void rollback_extents(
       version_t gen,
       const vector<pair<uint64_t, uint64_t> > &extents) override {
@@ -93,15 +104,17 @@ void PGBackend::rollback(
       temp.append(t);
       temp.swap(t);
     }
-  };
+  }; // struct RollbackVisitor : public ObjectModDesc::Visitor
 
+  // TODO: lrb: use entry.can_rollback() should be better
   assert(entry.mod_desc.can_rollback());
+
   RollbackVisitor vis(entry.soid, this);
   entry.mod_desc.visit(&vis);
   t->append(vis.t);
 }
 
-struct Trimmer : public ObjectModDesc::Visitor {
+struct Trimmer : public ObjectModDesc::Visitor { // class ObjectModDesc was defined in osd_types.h
   const hobject_t &soid;
   PGBackend *pg;
   ObjectStore::Transaction *t;
@@ -110,6 +123,7 @@ struct Trimmer : public ObjectModDesc::Visitor {
     PGBackend *pg,
     ObjectStore::Transaction *t)
     : soid(soid), pg(pg), t(t) {}
+
   void rmobject(version_t old_version) override {
     pg->trim_rollback_object(
       soid,
@@ -127,28 +141,37 @@ struct Trimmer : public ObjectModDesc::Visitor {
   }
 };
 
+// called by
+// PG::PGLogEntryHandler::rollforward
 void PGBackend::rollforward(
   const pg_log_entry_t &entry,
   ObjectStore::Transaction *t)
 {
   auto dpp = get_parent()->get_dpp();
   ldpp_dout(dpp, 20) << __func__ << ": entry=" << entry << dendl;
+
   if (!entry.can_rollback())
     return;
+
   Trimmer trimmer(entry.soid, this, t);
   entry.mod_desc.visit(&trimmer);
 }
 
+// called by
+// PG::PGLogEntryHandler::trim
 void PGBackend::trim(
   const pg_log_entry_t &entry,
   ObjectStore::Transaction *t)
 {
   if (!entry.can_rollback())
     return;
+
   Trimmer trimmer(entry.soid, this, t);
   entry.mod_desc.visit(&trimmer);
 }
 
+// called by
+// PG::PGLogEntryHandler::try_stash
 void PGBackend::try_stash(
   const hobject_t &hoid,
   version_t v,
@@ -160,6 +183,8 @@ void PGBackend::try_stash(
     ghobject_t(hoid, v, get_parent()->whoami_shard().shard));
 }
 
+// called by
+// PG::PGLogEntryHandler::remove
 void PGBackend::remove(
   const hobject_t &hoid,
   ObjectStore::Transaction *t) {
@@ -167,9 +192,12 @@ void PGBackend::remove(
   t->remove(
     coll,
     ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
+
   get_parent()->pgb_clear_object_snap_mapping(hoid, t);
 }
 
+// called by
+// PrimaryLogPG::on_change
 void PGBackend::on_change_cleanup(ObjectStore::Transaction *t)
 {
   dout(10) << __func__ << dendl;
@@ -183,9 +211,15 @@ void PGBackend::on_change_cleanup(ObjectStore::Transaction *t)
       coll,
       ghobject_t(*i, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
   }
+
   temp_contents.clear();
 }
 
+// called by
+// PG::chunky_scrub
+// PrimaryLogPG::do_pg_op, for CEPH_OSD_OP_PGNLS, CEPH_OSD_OP_PGLS
+// PrimaryLogPG::scan_range
+// PrimaryLogPG::agent_work
 int PGBackend::objects_list_partial(
   const hobject_t &begin,
   int min,
@@ -235,6 +269,8 @@ int PGBackend::objects_list_partial(
   return r;
 }
 
+// called by
+// PG::build_scrub_map_chunk
 int PGBackend::objects_list_range(
   const hobject_t &start,
   const hobject_t &end,
@@ -267,6 +303,13 @@ int PGBackend::objects_list_range(
   return r;
 }
 
+// called by
+// PrimaryLogPG::pgls_filter
+// PrimaryLogPG::do_pg_op, for CEPH_OSD_OP_PGNLS, CEPH_OSD_OP_PGLS
+// PrimaryLogPG::get_object_context
+// PrimaryLogPG::get_snapset_context
+// PrimaryLogPG::scan_range
+// PrimaryLogPG::getattr_maybe_cache
 int PGBackend::objects_get_attr(
   const hobject_t &hoid,
   const string &attr,
@@ -285,6 +328,10 @@ int PGBackend::objects_get_attr(
   return r;
 }
 
+// called by
+// PrimaryLogPG::get_object_context
+// PrimaryLogPG::getattrs_maybe_cache
+// NOTE: only overrided by ECBackend
 int PGBackend::objects_get_attrs(
   const hobject_t &hoid,
   map<string, bufferlist> *out)
@@ -295,6 +342,8 @@ int PGBackend::objects_get_attrs(
     *out);
 }
 
+// called by
+// PGBackend::RollbackVisitor::setattrs
 void PGBackend::rollback_setattrs(
   const hobject_t &hoid,
   map<string, boost::optional<bufferlist> > &old_attrs,
@@ -319,6 +368,8 @@ void PGBackend::rollback_setattrs(
     to_set);
 }
 
+// called by
+// PGBackend::RollbackVisitor::append
 void PGBackend::rollback_append(
   const hobject_t &hoid,
   uint64_t old_size,
@@ -330,6 +381,8 @@ void PGBackend::rollback_append(
     old_size);
 }
 
+// called by
+// PGBackend::RollbackVisitor::rmobject
 void PGBackend::rollback_stash(
   const hobject_t &hoid,
   version_t old_version,
@@ -345,6 +398,8 @@ void PGBackend::rollback_stash(
     ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
 }
 
+// called by
+// PGBackend::RollbackVisitor::try_rmobject
 void PGBackend::rollback_try_stash(
   const hobject_t &hoid,
   version_t old_version,
@@ -359,6 +414,8 @@ void PGBackend::rollback_try_stash(
     ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
 }
 
+// called by
+// PGBackend::RollbackVisitor::rollback_extents
 void PGBackend::rollback_extents(
   version_t gen,
   const vector<pair<uint64_t, uint64_t> > &extents,
@@ -379,6 +436,9 @@ void PGBackend::rollback_extents(
     ghobject_t(hoid, gen, shard));
 }
 
+// called by
+// Trimmer::rmobject
+// Trimmer::rollback_extents
 void PGBackend::trim_rollback_object(
   const hobject_t &hoid,
   version_t old_version,
@@ -388,6 +448,9 @@ void PGBackend::trim_rollback_object(
     coll, ghobject_t(hoid, old_version, get_parent()->whoami_shard().shard));
 }
 
+// static
+// called by
+// PrimaryLogPG::PrimaryLogPG
 PGBackend *PGBackend::build_pg_backend(
   const pg_pool_t &pool,
   const OSDMapRef curmap,
@@ -399,8 +462,10 @@ PGBackend *PGBackend::build_pg_backend(
 {
   switch (pool.type) {
   case pg_pool_t::TYPE_REPLICATED: {
+    // merely to call base class's ctor, i.e., PGBackend(...)
     return new ReplicatedBackend(l, coll, ch, store, cct);
   }
+
   case pg_pool_t::TYPE_ERASURE: {
     ErasureCodeInterfaceRef ec_impl;
     ErasureCodeProfile profile = curmap->get_erasure_code_profile(pool.erasure_code_profile);
@@ -428,6 +493,8 @@ PGBackend *PGBackend::build_pg_backend(
   }
 }
 
+// called by
+// PG::build_scrub_map_chunk
 /*
  * pg lock may or may not be held
  */
@@ -482,6 +549,8 @@ void PGBackend::be_scan_list(
   }
 }
 
+// called by
+// PGBackend::be_compare_scrubmaps
 bool PGBackend::be_compare_scrub_objects(
   pg_shard_t auth_shard,
   const ScrubMap::object &auth,
@@ -492,110 +561,152 @@ bool PGBackend::be_compare_scrub_objects(
   ostream &errorstream)
 {
   enum { CLEAN, FOUND_ERROR } error = CLEAN;
+
   if (candidate.stat_error) {
     assert(shard_result.has_stat_error());
+
     error = FOUND_ERROR;
+
     errorstream << "candidate had a stat error";
   }
+
   if (candidate.read_error || candidate.ec_hash_mismatch || candidate.ec_size_mismatch) {
     error = FOUND_ERROR;
+
     errorstream << "candidate had a read error";
   }
+
   if (auth.digest_present && candidate.digest_present) {
     if (auth.digest != candidate.digest) {
       if (error != CLEAN)
         errorstream << ", ";
+
       error = FOUND_ERROR;
+
       errorstream << "data_digest 0x" << std::hex << candidate.digest
 		  << " != data_digest 0x" << auth.digest << std::dec
 		  << " from shard " << auth_shard;
+
       obj_result.set_data_digest_mismatch();
     }
   }
+
   if (auth.omap_digest_present && candidate.omap_digest_present) {
     if (auth.omap_digest != candidate.omap_digest) {
       if (error != CLEAN)
         errorstream << ", ";
+
       error = FOUND_ERROR;
+
       errorstream << "omap_digest 0x" << std::hex << candidate.omap_digest
 		  << " != omap_digest 0x" << auth.omap_digest << std::dec
 		  << " from shard " << auth_shard;
+
       obj_result.set_omap_digest_mismatch();
     }
   }
+
   if (parent->get_pool().is_replicated()) {
     if (auth_oi.is_data_digest() && candidate.digest_present) {
       if (auth_oi.data_digest != candidate.digest) {
         if (error != CLEAN)
           errorstream << ", ";
+
         error = FOUND_ERROR;
+
         errorstream << "data_digest 0x" << std::hex << candidate.digest
 		    << " != data_digest 0x" << auth_oi.data_digest << std::dec
 		    << " from auth oi " << auth_oi;
+
         shard_result.set_data_digest_mismatch_oi();
       }
     }
+
     if (auth_oi.is_omap_digest() && candidate.omap_digest_present) {
       if (auth_oi.omap_digest != candidate.omap_digest) {
         if (error != CLEAN)
           errorstream << ", ";
+
         error = FOUND_ERROR;
+
         errorstream << "omap_digest 0x" << std::hex << candidate.omap_digest
 		    << " != omap_digest 0x" << auth_oi.omap_digest << std::dec
 		    << " from auth oi " << auth_oi;
+
         shard_result.set_omap_digest_mismatch_oi();
       }
     }
   }
+
   if (candidate.stat_error)
     return error == FOUND_ERROR;
+
   uint64_t oi_size = be_get_ondisk_size(auth_oi.size);
+
   if (oi_size != candidate.size) {
     if (error != CLEAN)
       errorstream << ", ";
+
     error = FOUND_ERROR;
+
     errorstream << "size " << candidate.size
 		<< " != size " << oi_size
 		<< " from auth oi " << auth_oi;
     shard_result.set_size_mismatch_oi();
   }
+
   if (auth.size != candidate.size) {
     if (error != CLEAN)
       errorstream << ", ";
+
     error = FOUND_ERROR;
+
     errorstream << "size " << candidate.size
 		<< " != size " << auth.size
 		<< " from shard " << auth_shard;
+
     obj_result.set_size_mismatch();
   }
+
   for (map<string,bufferptr>::const_iterator i = auth.attrs.begin();
        i != auth.attrs.end();
        ++i) {
     if (!candidate.attrs.count(i->first)) {
       if (error != CLEAN)
         errorstream << ", ";
+
       error = FOUND_ERROR;
+
       errorstream << "attr name mismatch '" << i->first << "'";
+
       obj_result.set_attr_name_mismatch();
     } else if (candidate.attrs.find(i->first)->second.cmp(i->second)) {
       if (error != CLEAN)
         errorstream << ", ";
+
       error = FOUND_ERROR;
+
       errorstream << "attr value mismatch '" << i->first << "'";
+
       obj_result.set_attr_value_mismatch();
     }
   }
+
   for (map<string,bufferptr>::const_iterator i = candidate.attrs.begin();
        i != candidate.attrs.end();
        ++i) {
     if (!auth.attrs.count(i->first)) {
       if (error != CLEAN)
         errorstream << ", ";
+
       error = FOUND_ERROR;
+
       errorstream << "attr name mismatch '" << i->first << "'";
+
       obj_result.set_attr_name_mismatch();
     }
   }
+
   return error == FOUND_ERROR;
 }
 
@@ -609,6 +720,8 @@ static int dcount(const object_info_t &oi)
   return count;
 }
 
+// called by
+// PGBackend::be_compare_scrubmaps, which called by PG::scrub_compare_maps
 map<pg_shard_t, ScrubMap *>::const_iterator
   PGBackend::be_select_auth_object(
   const hobject_t &obj,
@@ -748,6 +861,8 @@ out:
   return auth;
 }
 
+// called by
+// PG::scrub_compare_maps
 void PGBackend::be_compare_scrubmaps(
   const map<pg_shard_t,ScrubMap*> &maps,
   bool repair,
@@ -790,16 +905,22 @@ void PGBackend::be_compare_scrubmaps(
     if (auth == maps.end()) {
       object_error.set_version(0);
       object_error.set_auth_missing(*k, maps, shard_map, shallow_errors, deep_errors);
+
       if (object_error.has_deep_errors())
 	++deep_errors;
       else if (object_error.has_shallow_errors())
 	++shallow_errors;
+
       store->add_object_error(k->pool, object_error);
+
       errorstream << pgid.pgid << " soid " << *k
 		  << ": failed to pick suitable object info\n";
+
       continue;
     }
+
     object_error.set_version(auth_oi.user_version);
+
     ScrubMap::object& auth_object = auth->second->objects[*k];
     set<pg_shard_t> cur_missing;
     set<pg_shard_t> cur_inconsistent;
@@ -807,8 +928,10 @@ void PGBackend::be_compare_scrubmaps(
     for (j = maps.begin(); j != maps.end(); ++j) {
       if (j == auth)
 	shard_map[auth->first].selected_oi = true;
+
       if (j->second->objects.count(*k)) {
 	shard_map[j->first].set_object(j->second->objects[*k]);
+
 	// Compare
 	stringstream ss;
 	bool found = be_compare_scrub_objects(auth->first,
@@ -818,13 +941,16 @@ void PGBackend::be_compare_scrubmaps(
 				   shard_map[j->first],
 				   object_error,
 				   ss);
+
 	// Some errors might have already been set in be_select_auth_object()
 	if (shard_map[j->first].errors != 0) {
 	  cur_inconsistent.insert(j->first);
+
           if (shard_map[j->first].has_deep_errors())
 	    ++deep_errors;
 	  else
 	    ++shallow_errors;
+
 	  // Only true if be_compare_scrub_objects() found errors and put something
 	  // in ss.
 	  if (found)
@@ -842,11 +968,14 @@ void PGBackend::be_compare_scrubmaps(
       } else {
 	cur_missing.insert(j->first);
 	shard_map[j->first].set_missing();
+
 	// Can't have any other errors if there is no information available
 	++shallow_errors;
+
 	errorstream << pgid << " shard " << j->first << " missing " << *k
 		    << "\n";
       }
+
       object_error.add_shard(j->first, shard_map[j->first]);
     }
 
@@ -873,9 +1002,11 @@ void PGBackend::be_compare_scrubmaps(
     if (!cur_missing.empty()) {
       missing[*k] = cur_missing;
     }
+
     if (!cur_inconsistent.empty()) {
       inconsistent[*k] = cur_inconsistent;
     }
+
     if (!cur_inconsistent.empty() || !cur_missing.empty()) {
       authoritative[*k] = auth_list;
     } else if (parent->get_pool().is_replicated()) {
@@ -888,8 +1019,10 @@ void PGBackend::be_compare_scrubmaps(
       if (auth_object.digest_present && auth_object.omap_digest_present &&
 	  (!auth_oi.is_data_digest() || !auth_oi.is_omap_digest())) {
 	dout(20) << __func__ << " missing digest on " << *k << dendl;
+
 	update = MAYBE;
       }
+
       if (auth_object.digest_present && auth_object.omap_digest_present &&
 	  cct->_conf->osd_debug_scrub_chance_rewrite_digest &&
 	  (((unsigned)rand() % 100) >
@@ -902,29 +1035,37 @@ void PGBackend::be_compare_scrubmaps(
       if (auth_oi.is_data_digest() && auth_object.digest_present &&
 	  auth_oi.data_digest != auth_object.digest) {
         assert(shard_map[auth->first].has_data_digest_mismatch_oi());
+
 	errorstream << pgid << " recorded data digest 0x"
 		    << std::hex << auth_oi.data_digest << " != on disk 0x"
 		    << auth_object.digest << std::dec << " on " << auth_oi.soid
 		    << "\n";
+
 	if (repair)
 	  update = FORCE;
       }
+
       if (auth_oi.is_omap_digest() && auth_object.omap_digest_present &&
 	  auth_oi.omap_digest != auth_object.omap_digest) {
         assert(shard_map[auth->first].has_omap_digest_mismatch_oi());
+
 	errorstream << pgid << " recorded omap digest 0x"
 		    << std::hex << auth_oi.omap_digest << " != on disk 0x"
 		    << auth_object.omap_digest << std::dec
 		    << " on " << auth_oi.soid << "\n";
+
 	if (repair)
 	  update = FORCE;
       }
 
       if (update != NO) {
 	utime_t age = now - auth_oi.local_mtime;
+
+	// default 2*60*60
 	if (update == FORCE ||
 	    age > cct->_conf->osd_deep_scrub_update_digest_min_age) {
 	  dout(20) << __func__ << " will update digest on " << *k << dendl;
+
 	  missing_digest[*k] = make_pair(auth_object.digest,
 					 auth_object.omap_digest);
 	} else {
@@ -934,11 +1075,13 @@ void PGBackend::be_compare_scrubmaps(
 	}
       }
     }
+
 out:
     if (object_error.has_deep_errors())
       ++deep_errors;
     else if (object_error.has_shallow_errors())
       ++shallow_errors;
+
     if (object_error.errors || object_error.union_shards.errors) {
       store->add_object_error(k->pool, object_error);
     }

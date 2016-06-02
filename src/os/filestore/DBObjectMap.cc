@@ -142,6 +142,10 @@ int DBObjectMap::check(std::ostream &out, bool repair)
   return errors;
 }
 
+// static
+// called by
+// DBObjectMap::map_header_key
+// DBObjectMap::upgrade_to_v2
 string DBObjectMap::ghobject_key(const ghobject_t &oid)
 {
   string out;
@@ -166,6 +170,7 @@ string DBObjectMap::ghobject_key(const ghobject_t &oid)
     t += snprintf(t, end - t, ".none");
   else
     t += snprintf(t, end - t, ".%llx", (long long unsigned)oid.hobj.pool);
+
   t += snprintf(t, end - t, ".%.*X", (int)(sizeof(uint32_t)*2), oid.hobj.get_hash());
 
   if (oid.generation != ghobject_t::NO_GEN ||
@@ -220,7 +225,10 @@ int DBObjectMap::is_buggy_ghobject_key_v1(CephContext* cct,
   return 1;
 }
 
-
+// called by
+// DBObjectMap::_lookup_map_header
+// DBObjectMap::remove_map_header
+// DBObjectMap::set_map_header
 string DBObjectMap::map_header_key(const ghobject_t &oid)
 {
   return ghobject_key(oid);
@@ -235,27 +243,29 @@ string DBObjectMap::header_key(uint64_t seq)
 
 string DBObjectMap::complete_prefix(Header header)
 {
-  return USER_PREFIX + header_key(header->seq) + COMPLETE_PREFIX;
+  return USER_PREFIX + header_key(header->seq) + COMPLETE_PREFIX; // "_COMPLETE_"
 }
 
 string DBObjectMap::user_prefix(Header header)
 {
-  return USER_PREFIX + header_key(header->seq) + USER_PREFIX;
+  // e.g., "_USER_0000000000000083_USER_"
+  return USER_PREFIX + header_key(header->seq) + USER_PREFIX; // "_USER_"
 }
 
 string DBObjectMap::sys_prefix(Header header)
 {
-  return USER_PREFIX + header_key(header->seq) + SYS_PREFIX;
+  return USER_PREFIX + header_key(header->seq) + SYS_PREFIX; // "_SYS_"
 }
 
 string DBObjectMap::xattr_prefix(Header header)
 {
-  return USER_PREFIX + header_key(header->seq) + XATTR_PREFIX;
+  // "_USER_" + header_key(header->seq) + "_AXATTR_"
+  return USER_PREFIX + header_key(header->seq) + XATTR_PREFIX; // "_AXATTR_"
 }
 
 string DBObjectMap::sys_parent_prefix(_Header header)
 {
-  return USER_PREFIX + header_key(header.parent) + SYS_PREFIX;
+  return USER_PREFIX + header_key(header.parent) + SYS_PREFIX; // "_SYS_"
 }
 
 int DBObjectMap::DBObjectMapIteratorImpl::init()
@@ -264,6 +274,7 @@ int DBObjectMap::DBObjectMapIteratorImpl::init()
   if (ready) {
     return 0;
   }
+
   assert(!parent_iter);
   if (header->parent) {
     Header parent = map->lookup_parent(header);
@@ -271,14 +282,19 @@ int DBObjectMap::DBObjectMapIteratorImpl::init()
       ceph_abort();
       return -EINVAL;
     }
+
     parent_iter = std::make_shared<DBObjectMapIteratorImpl>(map, parent);
   }
+
   key_iter = map->db->get_iterator(map->user_prefix(header));
   assert(key_iter);
+
   complete_iter = map->db->get_iterator(map->complete_prefix(header));
   assert(complete_iter);
+
   cur_iter = key_iter;
   assert(cur_iter);
+
   ready = true;
   return 0;
 }
@@ -290,6 +306,7 @@ ObjectMap::ObjectMapIterator DBObjectMap::get_iterator(
   Header header = lookup_map_header(hl, oid);
   if (!header)
     return ObjectMapIterator(new EmptyIteratorImpl());
+
   DBObjectMapIterator iter = _get_iterator(header);
   iter->hlock.swap(hl);
   return iter;
@@ -510,6 +527,7 @@ int DBObjectMap::set_keys(const ghobject_t &oid,
   Header header = lookup_create_map_header(hl, oid, t);
   if (!header)
     return -EINVAL;
+
   if (check_spos(oid, header, spos))
     return 0;
 
@@ -537,6 +555,7 @@ void DBObjectMap::_set_header(Header header, const bufferlist &bl,
 			      KeyValueDB::Transaction t)
 {
   map<string, bufferlist> to_set;
+  // "USER_HEADER"
   to_set[USER_HEADER_KEY] = bl;
   t->set(sys_prefix(header), to_set);
 }
@@ -737,6 +756,7 @@ int DBObjectMap::get_keys(const ghobject_t &oid,
   Header header = lookup_map_header(hl, oid);
   if (!header)
     return -ENOENT;
+
   ObjectMapIterator iter = _get_iterator(header);
   for (iter->seek_to_first(); iter->valid(); iter->next()) {
     if (iter->status())
@@ -790,6 +810,9 @@ int DBObjectMap::check_keys(const ghobject_t &oid,
   return scan(header, keys, out, 0);
 }
 
+// called by
+// FileStore::getattr
+// FileStore::getattrs
 int DBObjectMap::get_xattrs(const ghobject_t &oid,
 			    const set<string> &to_get,
 			    map<string, bufferlist> *out)
@@ -816,6 +839,8 @@ int DBObjectMap::get_all_xattrs(const ghobject_t &oid,
   return iter->status();
 }
 
+// called by
+// FileStore::_setattrs
 int DBObjectMap::set_xattrs(const ghobject_t &oid,
 			    const map<string, bufferlist> &to_set,
 			    const SequencerPosition *spos)
@@ -826,7 +851,9 @@ int DBObjectMap::set_xattrs(const ghobject_t &oid,
   if (!header)
     return -EINVAL;
   if (check_spos(oid, header, spos))
+    // duplicate or stale, skip
     return 0;
+
   t->set(xattr_prefix(header), to_set);
   return db->submit_transaction(t);
 }
@@ -1116,7 +1143,9 @@ int DBObjectMap::write_state(KeyValueDB::Transaction _t) {
   return _t ? 0 : db->submit_transaction(t);
 }
 
-
+// called by
+// DBObjectMap::lookup_create_map_header
+// DBObjectMap::lookup_map_header
 DBObjectMap::Header DBObjectMap::_lookup_map_header(
   const MapHeaderLock &l,
   const ghobject_t &oid)
@@ -1134,6 +1163,7 @@ DBObjectMap::Header DBObjectMap::_lookup_map_header(
   }
 
   bufferlist out;
+  // e.g., "_HOBJTOSEQ_\x00snapmapper...0.none.A468EC03"
   int r = db->get(HOBJECT_TO_SEQ, map_header_key(oid), &out);
   if (r < 0 || out.length()==0) {
     delete header;
@@ -1144,6 +1174,7 @@ DBObjectMap::Header DBObjectMap::_lookup_map_header(
   bufferlist::iterator iter = out.begin();
 
   ret->decode(iter);
+
   {
     Mutex::Locker l(cache_lock);
     caches.add(oid, *ret);
@@ -1203,6 +1234,10 @@ DBObjectMap::Header DBObjectMap::lookup_parent(Header input)
   return header;
 }
 
+// called by
+// DBObjectMap::set_keys
+// DBObjectMap::set_header
+// DBObjectMap::set_xattrs
 DBObjectMap::Header DBObjectMap::lookup_create_map_header(
   const MapHeaderLock &hl,
   const ghobject_t &oid,
@@ -1274,6 +1309,15 @@ void DBObjectMap::set_map_header(
   }
 }
 
+// called by
+// DBObjectMap::set_keys
+// DBObjectMap::set_header
+// DBObjectMap::clear
+// DBObjectMap::rm_keys
+// DBObjectMap::clear_keys_header
+// DBObjectMap::set_xattrs
+// DBObjectMap::remove_xattrs
+// DBObjectMap::clone
 bool DBObjectMap::check_spos(const ghobject_t &oid,
 			     Header header,
 			     const SequencerPosition *spos)

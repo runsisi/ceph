@@ -43,9 +43,12 @@ void PGLog::IndexedLog::split_out_child(
   reset_rollback_info_trimmed_to_riter();
 }
 
+// called by
+// PGLog::trim
+// PG::append_log
 void PGLog::IndexedLog::trim(
   CephContext* cct,
-  eversion_t s,
+  eversion_t s,         // trim_to, i.e., trim entries in [:trim_to]
   set<eversion_t> *trimmed)
 {
   if (complete_to != log.end() &&
@@ -61,7 +64,9 @@ void PGLog::IndexedLog::trim(
     pg_log_entry_t &e = *log.begin();
     if (e.version > s)
       break;
+
     generic_dout(20) << "trim " << e << dendl;
+
     if (trimmed)
       trimmed->insert(e.version);
 
@@ -71,7 +76,7 @@ void PGLog::IndexedLog::trim(
 	e.version == rollback_info_trimmed_to_riter->version) {
       log.pop_front();
       rollback_info_trimmed_to_riter = log.rend();
-    } else {
+    } else { // no need to update rollback_info_trimmed_to_riter
       log.pop_front();
     }
   }
@@ -95,6 +100,9 @@ ostream& PGLog::IndexedLog::print(ostream& out) const
 
 //////////////////// PGLog ////////////////////
 
+// called by
+// Stray::react(const MLogRec)
+// PrimaryLogPG::on_removal
 void PGLog::reset_backfill()
 {
   missing.clear();
@@ -107,6 +115,9 @@ void PGLog::clear() {
   undirty();
 }
 
+// static
+// called by
+// OSD::RemoveWQ::_process
 void PGLog::clear_info_log(
   spg_t pgid,
   ObjectStore::Transaction *t) {
@@ -114,6 +125,9 @@ void PGLog::clear_info_log(
   t->remove(coll, pgid.make_pgmeta_oid());
 }
 
+// called by
+// PG::append_log
+// OSD::handle_pg_trim
 void PGLog::trim(
   eversion_t trim_to,
   pg_info_t &info)
@@ -124,11 +138,15 @@ void PGLog::trim(
     assert(trim_to <= info.last_complete);
 
     dout(10) << "trim " << log << " to " << trim_to << dendl;
+
     log.trim(cct, trim_to, &trimmed);
+
     info.log_tail = log.tail;
   }
 }
 
+// called by
+// PG::proc_replica_log
 void PGLog::proc_replica_log(
   pg_info_t &oinfo,
   const pg_log_t &olog,
@@ -148,6 +166,7 @@ void PGLog::proc_replica_log(
 	     << "for divergent objects" << dendl;
     return;
   }
+
   assert(olog.head >= log.tail);
 
   /*
@@ -206,7 +225,7 @@ void PGLog::proc_replica_log(
     oinfo,
     olog.get_can_rollback_to(),
     omissing,
-    0,
+    0, // optional, LogEntryHandler *rollbacker
     this);
 
   if (lu < oinfo.last_update) {
@@ -232,6 +251,9 @@ void PGLog::proc_replica_log(
   }
 }
 
+// called by
+// PG::rewind_divergent_log
+// PGLog::merge_log
 /**
  * rewind divergent entries at the head of the log
  *
@@ -272,6 +294,8 @@ void PGLog::rewind_divergent_log(eversion_t newhead,
   dirty_big_info = true;
 }
 
+// called by
+// PG::merge_log
 void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
                       pg_info_t &info, LogEntryHandler *rollbacker,
                       bool &dirty_info, bool &dirty_big_info)
@@ -434,6 +458,8 @@ void PGLog::check() {
   }
 }
 
+// called by
+// PG::write_if_dirty
 void PGLog::write_log_and_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist> *km,
@@ -448,6 +474,7 @@ void PGLog::write_log_and_missing(
 	     << ", trimmed: " << trimmed
 	     << ", clear_divergent_priors: " << clear_divergent_priors
 	     << dendl;
+
     _write_log_and_missing(
       t, km, log, coll, log_oid,
       dirty_to,
@@ -457,14 +484,18 @@ void PGLog::write_log_and_missing(
       missing,
       !touched_log,
       require_rollback,
-      clear_divergent_priors,
+      clear_divergent_priors, // was set by read_log_and_missing
       (pg_log_debug ? &log_keys_debug : 0));
+
     undirty();
   } else {
     dout(10) << "log is not dirty" << dendl;
   }
 }
 
+// static
+// called by
+// ceph_objectstore_tool.cc/write_pg
 void PGLog::write_log_and_missing_wo_missing(
     ObjectStore::Transaction& t,
     map<string,bufferlist> *km,
@@ -480,10 +511,13 @@ void PGLog::write_log_and_missing_wo_missing(
     true, true, require_rollback, 0);
 }
 
+// static
+// called by
+// ceph_objectstore_tool.cc/write_pg
 void PGLog::write_log_and_missing(
     ObjectStore::Transaction& t,
     map<string,bufferlist> *km,
-    pg_log_t &log,
+    pg_log_t &log,      // for member method, this is PGLog::log member variable of type IndexedLog
     const coll_t& coll,
     const ghobject_t &log_oid,
     const pg_missing_tracker_t &missing,
@@ -499,6 +533,9 @@ void PGLog::write_log_and_missing(
     true, require_rollback, false, 0);
 }
 
+// static
+// called by
+// PGLog::write_log_and_missing_wo_missing
 void PGLog::_write_log_and_missing_wo_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist> *km,
@@ -576,6 +613,7 @@ void PGLog::_write_log_and_missing_wo_missing(
     //dout(10) << "write_log_and_missing: writing divergent_priors" << dendl;
     ::encode(divergent_priors, (*km)["divergent_priors"]);
   }
+
   if (require_rollback) {
     ::encode(
       log.get_can_rollback_to(),
@@ -589,6 +627,10 @@ void PGLog::_write_log_and_missing_wo_missing(
     t.omap_rmkeys(coll, log_oid, to_remove);
 }
 
+// static
+// called by
+// PGLog::write_log_and_missing
+// PGLog::write_log_and_missing(..., log, ...)
 void PGLog::_write_log_and_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist>* km,
@@ -609,6 +651,7 @@ void PGLog::_write_log_and_missing(
        i != trimmed.end();
        ++i) {
     to_remove.insert(i->get_key_name());
+
     if (log_keys_debug) {
       assert(log_keys_debug->count(i->get_key_name()));
       log_keys_debug->erase(i->get_key_name());
@@ -623,6 +666,7 @@ void PGLog::_write_log_and_missing(
       eversion_t().get_key_name(), dirty_to.get_key_name());
     clear_up_to(log_keys_debug, dirty_to.get_key_name());
   }
+
   if (dirty_to != eversion_t::max() && dirty_from != eversion_t::max()) {
     //   dout(10) << "write_log_and_missing, clearing from " << dirty_from << dendl;
     t.omap_rmkeyrange(
@@ -664,6 +708,8 @@ void PGLog::_write_log_and_missing(
     //dout(10) << "write_log_and_missing: writing divergent_priors" << dendl;
     to_remove.insert("divergent_priors");
   }
+
+  // pg_missing_tracker_t
   missing.get_changed(
     [&](const hobject_t &obj) {
       string key = string("missing/") + obj.to_str();
@@ -674,6 +720,7 @@ void PGLog::_write_log_and_missing(
 	::encode(make_pair(obj, item), (*km)[key]);
       }
     });
+
   if (require_rollback) {
     ::encode(
       log.get_can_rollback_to(),

@@ -143,7 +143,9 @@ public:
     void update_from_perfcounters(PerfCounters &logger);
   } perf_tracker;
   objectstore_perf_stat_t get_cur_stats() override {
+    // update os_commit_latency, os_commit_latency from <count, time in ms>
     perf_tracker.update_from_perfcounters(*logger);
+
     return perf_tracker.get_cur_stats();
   }
   const PerfCounters* get_perf_counters() const override {
@@ -223,6 +225,7 @@ private:
     TrackedOpRef osd_op;
     ZTracer::Trace trace;
   };
+
   class OpSequencer : public Sequencer_impl {
     Mutex qlock; // to protect q, for benefit of flush (peek/dequeue also protected by lock)
     list<Op*> q;
@@ -230,7 +233,9 @@ private:
     list<pair<uint64_t, Context*> > flush_commit_waiters;
     Cond cond;
   public:
+    // will be set by FileStore::queue_transactions
     Sequencer *parent;
+
     Mutex apply_lock;  // for apply mutual exclusion
     int id;
 
@@ -287,17 +292,20 @@ private:
       Mutex::Locker l(qlock);
       jq.push_back(s);
     }
+
     void dequeue_journal(list<Context*> *to_queue) {
       Mutex::Locker l(qlock);
       jq.pop_front();
       cond.Signal();
       _wake_flush_waiters(to_queue);
     }
+
     void queue(Op *o) {
       Mutex::Locker l(qlock);
       q.push_back(o);
       o->trace.keyval("queue depth", q.size());
     }
+
     Op *peek_queue() {
       Mutex::Locker l(qlock);
       assert(apply_lock.is_locked());
@@ -366,11 +374,13 @@ private:
   friend ostream& operator<<(ostream& out, const OpSequencer& s);
 
   FDCache fdcache;
+  // used by FileStore::_do_op
   WBThrottle wbthrottle;
 
   std::atomic<int64_t> next_osr_id = { 0 };
   bool m_disable_wbthrottle;
   deque<OpSequencer*> op_queue;
+  // used by FileStore::queue_transactions
   BackoffThrottle throttle_ops, throttle_bytes;
   const int m_ondisk_finisher_num;
   const int m_apply_finisher_num;
@@ -400,6 +410,7 @@ private:
       store->op_queue.pop_front();
       return osr;
     }
+
     void _process(OpSequencer *osr, ThreadPool::TPHandle &handle) override {
       store->_do_op(osr, handle);
     }
@@ -507,6 +518,9 @@ public:
   int _do_transactions(
     vector<Transaction> &tls, uint64_t op_seq,
     ThreadPool::TPHandle *handle);
+  // called by
+  // FileStore::queue_transactions, for trailing log mode
+  // JournalingObjectStore::journal_replay
   int do_transactions(vector<Transaction> &tls, uint64_t op_seq) override {
     return _do_transactions(tls, op_seq, 0);
   }

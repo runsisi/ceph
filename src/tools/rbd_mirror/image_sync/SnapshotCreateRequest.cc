@@ -46,11 +46,14 @@ void SnapshotCreateRequest<I>::send() {
 template <typename I>
 void SnapshotCreateRequest<I>::send_set_size() {
   m_local_image_ctx->snap_lock.get_read();
+
   if (m_local_image_ctx->size == m_size) {
     m_local_image_ctx->snap_lock.put_read();
+
     send_remove_parent();
     return;
   }
+
   m_local_image_ctx->snap_lock.put_read();
 
   dout(20) << dendl;
@@ -95,6 +98,7 @@ void SnapshotCreateRequest<I>::handle_set_size(int r) {
   {
     // adjust in-memory image size now that it's updated on disk
     RWLock::WLocker snap_locker(m_local_image_ctx->snap_lock);
+
     m_local_image_ctx->size = m_size;
   }
 
@@ -104,12 +108,15 @@ void SnapshotCreateRequest<I>::handle_set_size(int r) {
 template <typename I>
 void SnapshotCreateRequest<I>::send_remove_parent() {
   m_local_image_ctx->parent_lock.get_read();
+
   if (m_local_image_ctx->parent_md.spec.pool_id == -1 ||
       m_local_image_ctx->parent_md.spec == m_parent_spec) {
     m_local_image_ctx->parent_lock.put_read();
+
     send_set_parent();
     return;
   }
+
   m_local_image_ctx->parent_lock.put_read();
 
   dout(20) << dendl;
@@ -149,6 +156,7 @@ void SnapshotCreateRequest<I>::handle_remove_parent(int r) {
   {
     // adjust in-memory parent now that it's updated on disk
     RWLock::WLocker parent_locker(m_local_image_ctx->parent_lock);
+
     m_local_image_ctx->parent_md.spec = {};
     m_local_image_ctx->parent_md.overlap = 0;
   }
@@ -159,12 +167,15 @@ void SnapshotCreateRequest<I>::handle_remove_parent(int r) {
 template <typename I>
 void SnapshotCreateRequest<I>::send_set_parent() {
   m_local_image_ctx->parent_lock.get_read();
+
   if (m_local_image_ctx->parent_md.spec == m_parent_spec &&
       m_local_image_ctx->parent_md.overlap == m_parent_overlap) {
     m_local_image_ctx->parent_lock.put_read();
+
     send_snap_create();
     return;
   }
+
   m_local_image_ctx->parent_lock.put_read();
 
   dout(20) << dendl;
@@ -204,6 +215,7 @@ void SnapshotCreateRequest<I>::handle_set_parent(int r) {
   {
     // adjust in-memory parent now that it's updated on disk
     RWLock::WLocker parent_locker(m_local_image_ctx->parent_lock);
+
     m_local_image_ctx->parent_md.spec = m_parent_spec;
     m_local_image_ctx->parent_md.overlap = m_parent_overlap;
   }
@@ -227,6 +239,9 @@ void SnapshotCreateRequest<I>::send_snap_create() {
       finish_op_ctx->complete(0);
     });
   RWLock::RLocker owner_locker(m_local_image_ctx->owner_lock);
+  // the last parameter skip_object_map is true, so
+  // librbd::operation::SnapshotCreateRequest<I>::send_create_object_map will
+  // not to add a snapshot for the object_map
   m_local_image_ctx->operations->execute_snap_create(m_snap_namespace,
 						     m_snap_name.c_str(),
 						     ctx,
@@ -263,11 +278,14 @@ void SnapshotCreateRequest<I>::send_create_object_map() {
     finish(-ENOENT);
     return;
   }
+
   librados::snap_t local_snap_id = snap_it->second;
+
   m_local_image_ctx->snap_lock.put_read();
 
   std::string object_map_oid(librbd::ObjectMap<>::object_map_name(
     m_local_image_ctx->id, local_snap_id));
+
   uint64_t object_count = Striper::get_num_objects(m_local_image_ctx->layout,
                                                    m_size);
   dout(20) << ": "

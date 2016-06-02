@@ -94,19 +94,23 @@ public:
 	recovery_read_marker(false),
 	snaptrimmer_write_marker(false)
     {}
+
     bool get_read(OpRequestRef op) {
       if (get_read_lock()) {
 	return true;
       } // else
+
       waiters.push_back(op);
       return false;
     }
+
     /// this function adjusts the counts if necessary
     bool get_read_lock() {
       // don't starve anybody!
       if (!waiters.empty()) {
 	return false;
       }
+
       switch (state) {
       case RWNONE:
 	assert(count == 0);
@@ -129,10 +133,12 @@ public:
       if (get_write_lock(greedy)) {
 	return true;
       } // else
+
       if (op)
 	waiters.push_back(op);
       return false;
     }
+
     bool get_write_lock(bool greedy=false) {
       if (!greedy) {
 	// don't starve anybody!
@@ -141,6 +147,7 @@ public:
 	  return false;
 	}
       }
+
       switch (state) {
       case RWNONE:
 	assert(count == 0);
@@ -158,6 +165,7 @@ public:
 	return false;
       }
     }
+
     bool get_excl_lock() {
       switch (state) {
       case RWNONE:
@@ -176,10 +184,12 @@ public:
 	return false;
       }
     }
+
     bool get_excl(OpRequestRef op) {
       if (get_excl_lock()) {
 	return true;
       } // else
+
       if (op)
 	waiters.push_back(op);
       return false;
@@ -192,6 +202,7 @@ public:
       }
       return get_write_lock();
     }
+
     void dec(list<OpRequestRef> *requeue) {
       assert(count > 0);
       assert(requeue);
@@ -201,6 +212,7 @@ public:
 	requeue->splice(requeue->end(), waiters);
       }
     }
+
     void put_read(list<OpRequestRef> *requeue) {
       assert(state == RWREAD);
       dec(requeue);
@@ -213,6 +225,7 @@ public:
       assert(state == RWEXCL);
       dec(requeue);
     }
+
     bool empty() const { return state == RWNONE; }
   } rwstate;
 
@@ -225,6 +238,9 @@ public:
   bool get_excl(OpRequestRef op) {
     return rwstate.get_excl(op);
   }
+
+  // called by
+  // ObcLockManager::get_lock_type
   bool get_lock_type(OpRequestRef op, RWState::State type) {
     switch (type) {
     case RWState::RWWRITE:
@@ -238,6 +254,7 @@ public:
       return true;
     }
   }
+
   bool get_write_greedy(OpRequestRef op) {
     return rwstate.get_write(op, true);
   }
@@ -265,6 +282,7 @@ public:
     rwstate.put_read(ls);
     rwstate.recovery_read_marker = false;
   }
+
   void put_lock_type(
     ObjectContext::RWState::State type,
     list<OpRequestRef> *to_wake,
@@ -283,6 +301,7 @@ public:
     default:
       assert(0 == "invalid lock type");
     }
+
     if (rwstate.empty() && rwstate.recovery_read_marker) {
       rwstate.recovery_read_marker = false;
       *requeue_recovery = true;
@@ -361,7 +380,7 @@ public:
   bool blocked:1;
   bool requeue_scrub_on_unblock:1;    // true if we need to requeue scrub on unblock
 
-};
+}; // struct ObjectContext
 
 inline ostream& operator<<(ostream& out, const ObjectState& obs)
 {
@@ -388,26 +407,37 @@ class ObcLockManager {
   struct ObjectLockState {
     ObjectContextRef obc;
     ObjectContext::RWState::State type;
+
     ObjectLockState(
       ObjectContextRef obc,
       ObjectContext::RWState::State type)
       : obc(obc), type(type) {}
   };
+
   map<hobject_t, ObjectLockState> locks;
 public:
   ObcLockManager() = default;
   ObcLockManager(ObcLockManager &&) = default;
   ObcLockManager(const ObcLockManager &) = delete;
   ObcLockManager &operator=(ObcLockManager &&) = default;
+
   bool empty() const {
     return locks.empty();
   }
+
+  // called by
+  // PrimaryLogPG::finish_ctx
+  // PrimaryLogPG::get_rw_locks
+  // PrimaryLogPG::try_flush_mark_clean
+  // PrimaryLogPG::agent_maybe_evict
   bool get_lock_type(
     ObjectContext::RWState::State type,
     const hobject_t &hoid,
     ObjectContextRef obc,
     OpRequestRef op) {
     assert(locks.find(hoid) == locks.end());
+
+    // ObjectContext::rwstate
     if (obc->get_lock_type(op, type)) {
       locks.insert(make_pair(hoid, ObjectLockState(obc, type)));
       return true;
@@ -415,6 +445,9 @@ public:
       return false;
     }
   }
+
+  // called by
+  // PrimaryLogPG::finish_promote
   /// Get write lock, ignore starvation
   bool take_write_lock(
     const hobject_t &hoid,
@@ -429,6 +462,9 @@ public:
       return false;
     }
   }
+
+  // called by
+  // PrimaryLogPG::trim_object
   /// Get write lock for snap trim
   bool get_snaptrimmer_write(
     const hobject_t &hoid,
@@ -444,6 +480,7 @@ public:
       return false;
     }
   }
+
   /// Get write lock greedy
   bool get_write_greedy(
     const hobject_t &hoid,
@@ -496,6 +533,7 @@ public:
     }
     locks.clear();
   }
+
   ~ObcLockManager() {
     assert(locks.empty());
   }

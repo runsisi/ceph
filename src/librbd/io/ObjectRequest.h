@@ -101,6 +101,7 @@ public:
   void send() override = 0;
 
   bool has_parent() const {
+    // updated by ObjectRequest<I>::compute_parent_extents
     return m_has_parent;
   }
 
@@ -119,6 +120,7 @@ protected:
   uint64_t m_object_no, m_object_off, m_object_len;
   librados::snap_t m_snap_id;
   Context *m_completion;
+  // std::vector<std::pair<uint64_t, uint64_t> >
   Extents m_parent_extents;
   bool m_hide_enoent;
   ZTracer::Trace m_trace;
@@ -140,6 +142,7 @@ public:
 				   int op_flags,
 				   const ZTracer::Trace &parent_trace,
                                    Context *completion) {
+    // the base class, i.e., ObjectRequest, will calc m_parent_extents
     return new ObjectReadRequest(ictx, oid, objectno, offset, len,
                                  buffer_extents, snap_id, sparse, op_flags,
 				 parent_trace, completion);
@@ -216,6 +219,12 @@ private:
   void read_from_parent(Extents&& image_extents);
 };
 
+// derived by
+// AioObjectWrite
+// AioObjectRemove
+// AioObjectTrim
+// AioObjectTruncate
+// AioObjectZero
 class AbstractObjectWriteRequest : public ObjectRequest<> {
 public:
   AbstractObjectWriteRequest(ImageCtx *ictx, const std::string &oid,
@@ -363,6 +372,7 @@ public:
     } else {
       m_object_state = OBJECT_PENDING;
     }
+
     *new_state = m_object_state;
     return true;
   }

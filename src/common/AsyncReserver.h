@@ -38,6 +38,7 @@ class AsyncReserver {
 
   void do_queues() {
     typename map<unsigned, list<pair<T, Context*> > >::reverse_iterator it;
+
     for (it = queues.rbegin();
          it != queues.rend() &&
 	   in_progress.size() < max_allowed &&
@@ -46,9 +47,13 @@ class AsyncReserver {
       while (in_progress.size() < max_allowed &&
              !it->second.empty()) {
         pair<T, Context*> p = it->second.front();
+
         queue_pointers.erase(p.first);
         it->second.pop_front();
+
+        // let Finisher to call the callback
         f->queue(p.second);
+
         in_progress.insert(p.first);
       }
     }
@@ -116,10 +121,15 @@ public:
     unsigned prio
     ) {
     Mutex::Locker l(lock);
+
     assert(!queue_pointers.count(item) &&
 	   !in_progress.count(item));
+
     queues[prio].push_back(make_pair(item, on_reserved));
+
     queue_pointers.insert(make_pair(item, make_pair(prio,--(queues[prio]).end())));
+
+    // queue on finisher to handle the item(s) if allowed
     do_queues();
   }
 
@@ -130,20 +140,30 @@ public:
    * Note, after cancel_reservation, the reservation_callback may or
    * may not still be called. 
    */
+  // either rejected or success reserved, the reservation will be cancelled eventually
   void cancel_reservation(
     T item                   ///< [in] key for reservation to cancel
     ) {
     Mutex::Locker l(lock);
+
     if (queue_pointers.count(item)) {
       unsigned prio = queue_pointers[item].first;
+
+      // delete callback
       delete queue_pointers[item].second->second;
+
+      // remove <item, on_reserved> from list queues[prio]
       queues[prio].erase(queue_pointers[item].second);
+
       queue_pointers.erase(item);
     } else {
       in_progress.erase(item);
     }
+
+    // to queue the next callback(s)
     do_queues();
   }
+
   static const unsigned MAX_PRIORITY = (unsigned)-1;
 };
 

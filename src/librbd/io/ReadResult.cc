@@ -85,6 +85,7 @@ ReadResult::C_ReadRequest::C_ReadRequest(AioCompletion *aio_completion)
 }
 
 void ReadResult::C_ReadRequest::finish(int r) {
+  // dec ref
   aio_completion->complete_request(r);
 }
 
@@ -114,6 +115,7 @@ void ReadResult::C_SparseReadRequestBase::finish(ExtentMap &extent_map,
                                                  uint64_t offset, size_t length,
                                                  bufferlist &bl, int r) {
   aio_completion->lock.Lock();
+
   CephContext *cct = aio_completion->ictx->cct;
   ldout(cct, 10) << "C_SparseReadRequestBase: r = " << r
                  << dendl;
@@ -122,6 +124,7 @@ void ReadResult::C_SparseReadRequestBase::finish(ExtentMap &extent_map,
     ldout(cct, 10) << " got " << extent_map
                    << " for " << buffer_extents
                    << " bl " << bl.length() << dendl;
+
     // reads from the parent don't populate the m_ext_map and the overlap
     // may not be the full buffer.  compensate here by filling in m_ext_map
     // with the read extent when it is empty.
@@ -133,6 +136,7 @@ void ReadResult::C_SparseReadRequestBase::finish(ExtentMap &extent_map,
       cct, bl, extent_map, offset, buffer_extents);
     r = length;
   }
+
   aio_completion->lock.Unlock();
 
   C_ReadRequest::finish(r);
@@ -157,6 +161,8 @@ void ReadResult::set_clip_length(size_t length) {
   boost::apply_visitor(SetClipLengthVisitor(length), m_buffer);
 }
 
+// called by
+// librbd::io::AioCompletion::finalize
 void ReadResult::assemble_result(CephContext *cct) {
   boost::apply_visitor(AssembleResultVisitor(cct, m_destriper), m_buffer);
 }

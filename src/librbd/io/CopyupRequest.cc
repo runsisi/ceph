@@ -43,11 +43,13 @@ public:
 
   int send() override {
     uint64_t snap_id = m_snap_ids[m_snap_id_idx];
+
     if (snap_id == CEPH_NOSNAP) {
       RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
       RWLock::WLocker object_map_locker(m_image_ctx.object_map_lock);
       assert(m_image_ctx.exclusive_lock->is_lock_owner());
       assert(m_image_ctx.object_map != nullptr);
+
       bool sent = m_image_ctx.object_map->aio_update<Context>(
         CEPH_NOSNAP, m_object_no, OBJECT_EXISTS, {}, m_trace, this);
       return (sent ? 0 : 1);
@@ -80,7 +82,9 @@ private:
 
 } // anonymous namespace
 
-
+// created by
+// ObjectReadRequest<I>::send_copyup
+// AbstractObjectWriteRequest::send_copyup
 CopyupRequest::CopyupRequest(ImageCtx *ictx, const std::string &oid,
                              uint64_t objectno, Extents &&image_extents,
 			     const ZTracer::Trace &parent_trace)
@@ -97,25 +101,42 @@ CopyupRequest::~CopyupRequest() {
   m_async_op.finish_op();
 }
 
+// called by
+// AbstractObjectWriteRequest::send_copyup
 void CopyupRequest::append_request(ObjectRequest<> *req) {
   ldout(m_ictx->cct, 20) << req << dendl;
+  // pending object requests that are waiting for the copyup request
   m_pending_requests.push_back(req);
 }
 
 void CopyupRequest::complete_requests(int r) {
   while (!m_pending_requests.empty()) {
+    // only CoW has m_pending_requests associates all waiting object write
+    // requests, for CoW the write op has been submitted with the copyup
+    // request, so we can finish those object write requests at here
+
     vector<ObjectRequest<> *>::iterator it = m_pending_requests.begin();
     ObjectRequest<> *req = *it;
     ldout(m_ictx->cct, 20) << "completing request " << req << dendl;
     req->complete(r);
+
     m_pending_requests.erase(it);
   }
 }
 
+// called by
+// CopyupRequest::should_complete
+// CopyupRequest::send_object_map
 bool CopyupRequest::send_copyup() {
+
+  // has read data from the parent object, need to send the copyup request
   bool add_copyup_op = !m_copyup_data.is_zero();
+
+  // CoR for object read request will not append the original object
+  // read request, see AioObjectRead<I>::send_copyup
   bool copy_on_read = m_pending_requests.empty();
-  if (!add_copyup_op && copy_on_read) {
+
+  if (!add_copyup_op && copy_on_read) { // parent has no data
     // copyup empty object to prevent future CoR attempts
     m_copyup_data.clear();
     add_copyup_op = true;
@@ -136,11 +157,15 @@ bool CopyupRequest::send_copyup() {
 
   int r;
   if (copy_on_read || (!snapc.snaps.empty() && add_copyup_op)) {
+    // copy the parent snap object and write into child HEAD object
+
     assert(add_copyup_op);
     add_copyup_op = false;
 
     librados::ObjectWriteOperation copyup_op;
-    copyup_op.exec("rbd", "copyup", m_copyup_data);
+    // if the child object does not exist, then write the data to the
+    // child object blindly
+    copyup_op.exec("rbd", "copyup", m_copyup_data); // copyup has CLS_METHOD_RD | CLS_METHOD_WR set
 
     // send only the copyup request with a blank snapshot context so that
     // all snapshots are detected from the parent for this object.  If
@@ -151,10 +176,12 @@ bool CopyupRequest::send_copyup() {
     ldout(m_ictx->cct, 20) << "copyup with empty snapshot context" << dendl;
     librados::AioCompletion *comp = util::create_rados_callback(this);
 
-    librados::Rados rados(m_ictx->data_ctx);
+    // create a new ioctx, with snap_seq = CEPH_NOSNAP and snapc is default constructed
+    librados::Rados rados(m_ictx->data_ctx); // Rados::client = ioctx.io_ctx_impl->client; client->get();
     r = rados.ioctx_create2(m_ictx->data_ctx.get_id(), m_data_ctx);
     assert(r == 0);
 
+    // use the newly created ioctx, with empty snap_seq set set to CEPH_NOSNAP and empty snapc
     r = m_data_ctx.aio_operate(
       m_oid, comp, &copyup_op, 0, snaps,
       (m_trace.valid() ? m_trace.get_info() : nullptr));
@@ -163,22 +190,32 @@ bool CopyupRequest::send_copyup() {
   }
 
   if (!copy_on_read) {
+    // CoW
+
     librados::ObjectWriteOperation write_op;
     if (add_copyup_op) {
+
+      // if we have done the copyup above, then add_copyup_op will be false,
+      // so we will not do the copyup twice
+
       // CoW did not need to handle existing snapshots
       write_op.exec("rbd", "copyup", m_copyup_data);
     }
 
-    // merge all pending write ops into this single RADOS op
+    // merge all child object write requests with the copyup(if no snaps) into a single RADOS op
     for (size_t i=0; i<m_pending_requests.size(); ++i) {
       ObjectRequest<> *req = m_pending_requests[i];
       ldout(m_ictx->cct, 20) << "add_copyup_ops " << req << dendl;
       bool set_hints = (i == 0);
-      req->add_copyup_ops(&write_op, set_hints);
+      // merge original child write requests to write_op
+      req->add_copyup_ops(&write_op, set_hints); // overrided by AbstractObjectWriteRequest::add_copyup_ops only,
+                                                 // which call add_write_ops directly
     }
+
     assert(write_op.size() != 0);
 
     snaps.insert(snaps.end(), snapc.snaps.begin(), snapc.snaps.end());
+
     librados::AioCompletion *comp = util::create_rados_callback(this);
     r = m_ictx->data_ctx.aio_operate(
       m_oid, comp, &write_op, snapc.seq, snaps,
@@ -186,24 +223,35 @@ bool CopyupRequest::send_copyup() {
     assert(r == 0);
     comp->release();
   }
+
   return false;
 }
 
 bool CopyupRequest::is_copyup_required() {
   bool noop = true;
-  for (const ObjectRequest<> *req : m_pending_requests) {
-    if (!req->is_op_payload_empty()) {
+
+  // was pushed back by CopyupRequest::append_request which called
+  // by AbstractObjectWriteRequest::send_copyup
+  for (const ObjectRequest<> *req : m_pending_requests) { // CoW only, CoR has no pending requests
+    if (!req->is_op_payload_empty()) { // default false, only ObjectWriteRequest may return true if
+                                       // ObjectWriteRequest::m_write_data.length() == 0
       noop = false;
       break;
     }
   }
 
+  // the parent has full zero filled data and the pending writes have no data to write
   return (m_copyup_data.is_zero() && noop);
 }
 
+// called by
+// ObjectReadRequest<I>::send_copyup
+// AbstractObjectWriteRequest::send_copyup
 void CopyupRequest::send()
 {
   m_state = STATE_READ_FROM_PARENT;
+
+  // CopyupRequest::complete
   AioCompletion *comp = AioCompletion::create_and_start(
     this, m_ictx, AIO_TYPE_READ);
 
@@ -211,14 +259,15 @@ void CopyupRequest::send()
                          << ", oid " << m_oid
                          << ", extents " << m_image_extents
                          << dendl;
-  ImageRequest<>::aio_read(m_ictx->parent, comp, std::move(m_image_extents),
+  // read from parent, send directly, i.e., skip the ImageRequestWQ
+  ImageRequest<>::aio_read(m_ictx->parent, comp, std::move(m_image_extents), // full sized object read
                            ReadResult{&m_copyup_data}, 0, m_trace);
 }
 
 void CopyupRequest::complete(int r)
 {
   if (should_complete(r)) {
-    complete_requests(r);
+    complete_requests(r); // continue the state machine for original child object write requests
     delete this;
   }
 }
@@ -230,12 +279,22 @@ bool CopyupRequest::should_complete(int r)
                  << ", r " << r << dendl;
 
   uint64_t pending_copyups;
+
   switch (m_state) {
   case STATE_READ_FROM_PARENT:
     ldout(cct, 20) << "READ_FROM_PARENT" << dendl;
+
+    // remove this copyup request from m_ictx->copyup_list which inserted
+    // by ObjectReadRequest<I>::send_copyup or AbstractObjectWriteRequest::send_copyup
+    // copyup request is removed, so CopyupRequest::append_request which
+    // called by AbstractObjectWriteRequest::send_copyup will not race
+    // with us
     remove_from_list();
+
     if (r >= 0 || r == -ENOENT) {
       if (is_copyup_required()) {
+        // the parent has full zero filled data and the pending writes have no data to write
+
         ldout(cct, 20) << "nop, skipping" << dendl;
         return true;
       }
@@ -252,21 +311,32 @@ bool CopyupRequest::should_complete(int r)
   case STATE_OBJECT_MAP:
     ldout(cct, 20) << "OBJECT_MAP" << dendl;
     assert(r == 0);
-    return send_copyup();
+
+    // for CoW, the original child object write requests should be merged
+    // and sent out
+    return send_copyup(); // state change to STATE_COPYUP
 
   case STATE_COPYUP:
     // invoked via a finisher in librados, so thread safe
+    // counter increased in CopyupRequest::send_copyup
     pending_copyups = --m_pending_copyups;
     ldout(cct, 20) << "COPYUP (" << pending_copyups << " pending)"
                    << dendl;
+
     if (r == -ENOENT) {
       // hide the -ENOENT error if this is the last op
       if (pending_copyups == 0) {
         complete_requests(0);
       }
     } else if (r < 0) {
+
+      // notify all waiting object requests the failure, but we still
+      // can not finish this copyup reeuest, becoz we still have inflight
+      // copyups
+
       complete_requests(r);
     }
+
     return (pending_copyups == 0);
 
   default:
@@ -274,9 +344,15 @@ bool CopyupRequest::should_complete(int r)
     assert(false);
     break;
   }
+
+  // never reaches here
   return (r < 0);
 }
 
+// called by
+// CopyupRequest::should_complete, for STATE_READ_FROM_PARENT
+// so CopyupRequest::append_request which called by AbstractObjectWriteRequest::send_copyup
+// will not race with us
 void CopyupRequest::remove_from_list()
 {
   Mutex::Locker l(m_ictx->copyup_list_lock);
@@ -296,21 +372,27 @@ bool CopyupRequest::send_object_map_head() {
   {
     RWLock::RLocker owner_locker(m_ictx->owner_lock);
     RWLock::RLocker snap_locker(m_ictx->snap_lock);
+
     if (m_ictx->object_map != nullptr) {
       bool copy_on_read = m_pending_requests.empty();
+
       assert(m_ictx->exclusive_lock->is_lock_owner());
 
       RWLock::WLocker object_map_locker(m_ictx->object_map_lock);
+
       if (!m_ictx->snaps.empty()) {
         m_snap_ids.insert(m_snap_ids.end(), m_ictx->snaps.begin(),
                           m_ictx->snaps.end());
       }
+
       if (copy_on_read &&
           (*m_ictx->object_map)[m_object_no] != OBJECT_EXISTS) {
         m_snap_ids.insert(m_snap_ids.begin(), CEPH_NOSNAP);
+
         object_map_locker.unlock();
         snap_locker.unlock();
         owner_locker.unlock();
+
         return send_object_map();
       }
 
@@ -330,6 +412,7 @@ bool CopyupRequest::send_object_map_head() {
                        << stringify(static_cast<uint32_t>(current_state))
                        << " new state " << stringify(static_cast<uint32_t>(new_state))
                        << dendl;
+
         may_update = true;
         break;
       }
@@ -357,13 +440,16 @@ bool CopyupRequest::send_object_map() {
     m_state = STATE_OBJECT_MAP;
 
     RWLock::RLocker owner_locker(m_ictx->owner_lock);
+
     AsyncObjectThrottle<>::ContextFactory context_factory(
       boost::lambda::bind(boost::lambda::new_ptr<UpdateObjectMap>(),
       boost::lambda::_1, m_ictx, m_object_no, &m_snap_ids, m_trace,
       boost::lambda::_2));
+
     AsyncObjectThrottle<> *throttle = new AsyncObjectThrottle<>(
       NULL, *m_ictx, context_factory, util::create_context_callback(this),
       NULL, 0, m_snap_ids.size());
+
     throttle->start_ops(m_ictx->concurrent_management_ops);
   }
   return false;

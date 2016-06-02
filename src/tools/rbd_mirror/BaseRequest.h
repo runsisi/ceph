@@ -9,6 +9,8 @@
 namespace rbd {
 namespace mirror {
 
+// base class of BootstrapRequest, ImageCopyRequest, SnapshotCopyRequest,
+// ImageSync
 class BaseRequest : public RefCountedObject {
 public:
   BaseRequest(const std::string& name, CephContext *cct, Context *on_finish)
@@ -24,9 +26,11 @@ protected:
     if (m_cct) {
       lsubdout(m_cct, rbd_mirror, 20) << m_name << "::finish: r=" << r << dendl;
     }
+
     if (m_on_finish) {
       m_on_finish->complete(r);
     }
+
     put();
   }
 

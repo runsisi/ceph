@@ -7,12 +7,18 @@
 
 namespace journal {
 
+// called by
+// Journal<I>::append_op_event
+// ObjectRecorder::flush
 void Future::flush(Context *on_safe) {
   m_future_impl->flush(on_safe);
 }
 
+// called by
+// Journal<I>::append_io_events
 void Future::wait(Context *on_safe) {
   assert(on_safe != NULL);
+
   m_future_impl->wait(on_safe);
 }
 

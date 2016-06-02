@@ -24,6 +24,7 @@ namespace exclusive_lock {
 using util::create_async_context_callback;
 using util::create_context_callback;
 
+
 template <typename I>
 PreReleaseRequest<I>* PreReleaseRequest<I>::create(
     I &image_ctx, bool shutting_down, AsyncOpTracker &async_op_tracker,
@@ -32,6 +33,8 @@ PreReleaseRequest<I>* PreReleaseRequest<I>::create(
                                on_finish);
 }
 
+// created by
+// ExclusiveLock<I>::pre_release_lock_handler
 template <typename I>
 PreReleaseRequest<I>::PreReleaseRequest(I &image_ctx, bool shutting_down,
                                         AsyncOpTracker &async_op_tracker,
@@ -60,6 +63,8 @@ void PreReleaseRequest<I>::send_prepare_lock() {
     return;
   }
 
+  // release exclusive lock not for shutdown the exclusive lock
+
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << dendl;
 
@@ -85,6 +90,9 @@ void PreReleaseRequest<I>::send_cancel_op_requests() {
   using klass = PreReleaseRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_cancel_op_requests>(this);
+
+  // cancel and wait all requests on ImageCtx::async_requests, note
+  // these are async op requests while not aio requests
   m_image_ctx.cancel_async_requests(ctx);
 }
 
@@ -226,6 +234,7 @@ template <typename I>
 void PreReleaseRequest<I>::send_close_journal() {
   {
     RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
+
     std::swap(m_journal, m_image_ctx.journal);
   }
 
@@ -240,6 +249,7 @@ void PreReleaseRequest<I>::send_close_journal() {
   using klass = PreReleaseRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_close_journal>(
     this);
+
   m_journal->close(ctx);
 }
 
@@ -276,6 +286,7 @@ void PreReleaseRequest<I>::send_close_object_map() {
   using klass = PreReleaseRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_close_object_map>(this);
+
   m_object_map->close(ctx);
 }
 

@@ -1285,6 +1285,8 @@ public:
 
     epoch_t last_force_resend = 0;
 
+    // created by
+    // Objecter::Op::Op
     op_target_t(object_t oid, object_locator_t oloc, int flags)
       : flags(flags),
 	base_oid(oid),
@@ -1394,6 +1396,7 @@ public:
       out_bl.resize(ops.size());
       out_rval.resize(ops.size());
       out_handler.resize(ops.size());
+
       for (unsigned i = 0; i < ops.size(); i++) {
 	out_bl[i] = NULL;
 	out_handler[i] = NULL;
@@ -2003,7 +2006,9 @@ private:
     last_seen_osdmap_version(0), last_seen_pgmap_version(0),
     logger(NULL), tick_event(0), m_request_state_hook(NULL),
     homeless_session(new OSDSession(cct, -1)),
+    // for pool stats and pool op
     mon_timeout(ceph::make_timespan(mon_timeout)),
+    // for Objecter::_op_submit_with_budget and Objecter::submit_command
     osd_timeout(ceph::make_timespan(osd_timeout)),
     op_throttle_bytes(cct, "objecter_bytes",
 		      cct->_conf->objecter_inflight_op_bytes),
@@ -2082,6 +2087,8 @@ private:
       return false;
     }
   }
+  // called by
+  // Messenger::ms_fast_dispatch
   void ms_fast_dispatch(Message *m) override {
     if (!ms_dispatch(m)) {
       m->put();
@@ -2280,6 +2287,13 @@ public:
     op_submit(o, &tid);
     return tid;
   }
+
+  // called by
+  // librados::IoCtxImpl::hit_set_list
+  // librados::IoCtxImpl::hit_set_get
+  // librados::IoCtxImpl::get_inconsistent_objects
+  // librados::IoCtxImpl::get_inconsistent_snapsets
+  // Objecter::pg_read
   Op *prepare_pg_read_op(
     uint32_t hash, object_locator_t oloc,
     ObjectOperation& op, bufferlist *pbl, int flags,
@@ -2305,6 +2319,11 @@ public:
     }
     return o;
   }
+
+  // called by
+  // Objecter::list_nobjects
+  // Objecter::list_objects
+  // Objecter::enumerate_objects
   ceph_tid_t pg_read(
     uint32_t hash, object_locator_t oloc,
     ObjectOperation& op, bufferlist *pbl, int flags,
@@ -2558,6 +2577,7 @@ public:
     op_submit(o, &tid);
     return tid;
   }
+
   Op *prepare_write_op(
     const object_t& oid, const object_locator_t& oloc,
     uint64_t off, uint64_t len, const SnapContext& snapc,
@@ -2566,7 +2586,9 @@ public:
     ObjectOperation *extra_ops = NULL, int op_flags = 0,
     ZTracer::Trace *parent_trace = nullptr) {
     vector<OSDOp> ops;
+
     int i = init_ops(ops, 1, extra_ops);
+
     ops[i].op.op = CEPH_OSD_OP_WRITE;
     ops[i].op.extent.offset = off;
     ops[i].op.extent.length = len;
@@ -2579,8 +2601,10 @@ public:
                    nullptr, parent_trace);
     o->mtime = mtime;
     o->snapc = snapc;
+
     return o;
   }
+
   ceph_tid_t write(
     const object_t& oid, const object_locator_t& oloc,
     uint64_t off, uint64_t len, const SnapContext& snapc,

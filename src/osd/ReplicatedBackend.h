@@ -352,6 +352,8 @@ public:
   friend class C_OSD_OnOpCommit;
   friend class C_OSD_OnOpApplied;
 
+  // called by
+  // PrimaryLogPG::submit_log_entries
   void call_write_ordered(std::function<void(void)> &&cb) override {
     // ReplicatedBackend submits writes inline in submit_transaction, so
     // we can just call the callback.

@@ -15,6 +15,8 @@ class ImageCtx;
 
 namespace object_map {
 
+// created by
+// librbd::ObjectMap::rollback
 class SnapshotRollbackRequest : public Request {
 public:
   /**

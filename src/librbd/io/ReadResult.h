@@ -28,11 +28,14 @@ private:
 
     C_ReadRequest(AioCompletion *aio_completion);
 
+    // aio_completion->complete_request(r);
     void finish(int r) override;
   };
 
 public:
 
+  // created by
+  // ImageReadRequest<I>::send_image_cache_request
   struct C_ImageReadRequest : public C_ReadRequest {
     Extents image_extents;
 
@@ -44,6 +47,7 @@ public:
     void finish(int r) override;
   };
 
+  // never created directly
   struct C_SparseReadRequestBase : public C_ReadRequest {
     C_SparseReadRequestBase(AioCompletion *aio_completion)
       : C_ReadRequest(aio_completion) {
@@ -54,15 +58,20 @@ public:
                 uint64_t offset, size_t length, bufferlist &bl, int r);
   };
 
+  // created by
+  // ImageReadRequest<I>::send_request, will be called when all object
+  // requests completed
   template <typename ImageCtxT>
   struct C_SparseReadRequest : public C_SparseReadRequestBase {
-    ObjectReadRequest<ImageCtxT> *request;
+    ObjectReadRequest<ImageCtxT> *request; // set explicitly, see ImageReadRequest<I>::send_request
 
     C_SparseReadRequest(AioCompletion *aio_completion)
       : C_SparseReadRequestBase(aio_completion) {
     }
 
     void finish(int r) override {
+      // reassemble result for each object request then call
+      // AioCompletion::complete to dec ref by one
       C_SparseReadRequestBase::finish(request->get_extent_map(),
                                       request->get_buffer_extents(),
                                       request->get_offset(),

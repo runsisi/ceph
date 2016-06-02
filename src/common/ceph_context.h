@@ -57,10 +57,20 @@ private:
   ~CephContext();
   std::atomic<unsigned> nref;
 public:
+  // called by
+  // CephLevelDBLogger::CephLevelDBLogger
+  // CephRocksdbLogger::CephRocksdbLogger
+  // RadosClient::RadosClient
+  // XioInit::package_init
+  // librgw_create
+  // rgw_main.c:intrusive_ptr_add_ref
+  // ceph_mount_info::ceph_mount_info
+  // ceph_create_from_rados
   CephContext *get() {
     ++nref;
     return this;
   }
+
   void put();
 
   md_config_t *_conf;
@@ -123,15 +133,20 @@ public:
   template<typename T>
   void lookup_or_create_singleton_object(T*& p, const std::string &name) {
     ceph_spin_lock(&_associated_objs_lock);
+
+    // std::map<std::string, SingletonWrapper*>
     if (!_associated_objs.count(name)) {
       p = new T(this);
       _associated_objs[name] = new TypedSingletonWrapper<T>(p);
     } else {
       TypedSingletonWrapper<T> *wrapper =
         dynamic_cast<TypedSingletonWrapper<T> *>(_associated_objs[name]);
+
       assert(wrapper != NULL);
+
       p = wrapper->singleton;
     }
+
     ceph_spin_unlock(&_associated_objs_lock);
   }
   /**

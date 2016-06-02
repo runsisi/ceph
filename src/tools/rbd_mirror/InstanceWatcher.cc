@@ -79,6 +79,9 @@ struct C_RemoveInstanceRequest : public Context {
 
 } // anonymous namespace
 
+// static
+// called by
+// Instances<I>::get_instances
 template <typename I>
 struct InstanceWatcher<I>::C_NotifyInstanceRequest : public Context {
   InstanceWatcher<I> *instance_watcher;
@@ -298,6 +301,9 @@ void InstanceWatcher<I>::get_instances(librados::IoCtx &io_ctx,
   aio_comp->release();
 }
 
+// static
+// called by
+// Instances<I>::remove_instance
 template <typename I>
 void InstanceWatcher<I>::remove_instance(librados::IoCtx &io_ctx,
                                          ContextWQ *work_queue,
@@ -308,6 +314,8 @@ void InstanceWatcher<I>::remove_instance(librados::IoCtx &io_ctx,
   req->send();
 }
 
+// created by
+// Replayer::init
 template <typename I>
 InstanceWatcher<I> *InstanceWatcher<I>::create(
     librados::IoCtx &io_ctx, ContextWQ *work_queue,
@@ -420,6 +428,8 @@ void InstanceWatcher<I>::notify_image_acquire(
   }
 }
 
+// called by
+// InstanceWatcher<I>::init
 template <typename I>
 void InstanceWatcher<I>::notify_image_release(
   const std::string &instance_id, const std::string &global_image_id,
@@ -927,6 +937,8 @@ void InstanceWatcher<I>::handle_wait_for_notify_ops(int r) {
   on_finish->complete(r);
 }
 
+// called by
+// InstanceWatcher<I>::remove
 template <typename I>
 void InstanceWatcher<I>::get_instance_locker() {
   dout(20) << dendl;

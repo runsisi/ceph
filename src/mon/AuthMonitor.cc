@@ -45,14 +45,23 @@ ostream& operator<<(ostream &out, const AuthMonitor &pm)
   return out << "auth";
 }
 
+// called by
+// AuthMonitor::tick
+// AuthMonitor::create_initial
 bool AuthMonitor::check_rotate()
 {
   KeyServerData::Incremental rot_inc;
+
   rot_inc.op = KeyServerData::AUTH_INC_SET_ROTATING;
+
   if (!mon->key_server.updated_rotating(rot_inc.rotating_bl, last_rotating_ver))
     return false;
+
   dout(10) << __func__ << " updated rotating" << dendl;
+
+  // prepare pending_auth
   push_cephx_inc(rot_inc);
+
   return true;
 }
 
@@ -78,6 +87,8 @@ void AuthMonitor::on_active()
 
   if (!mon->is_leader())
     return;
+
+  // initialize the rotating keys
   mon->key_server.start_server();
 }
 
@@ -87,12 +98,15 @@ void AuthMonitor::create_initial()
 
   // initialize rotating keys
   last_rotating_ver = 0;
+
   check_rotate();
+
   assert(pending_auth.size() == 1);
 
   if (mon->is_keyring_required()) {
     KeyRing keyring;
     bufferlist bl;
+
     int ret = mon->store->get("mkfs", "keyring", bl);
     // fail hard only if there's an error we're not expecting to see
     assert((ret == 0) || (ret == -ENOENT));
@@ -103,6 +117,8 @@ void AuthMonitor::create_initial()
       bufferlist::iterator p = bl.begin();
 
       ::decode(keyring, p);
+
+      // once applied to set KeyServerData::secrets[name] = auth
       import_keyring(keyring);
     }
   }
@@ -112,18 +128,23 @@ void AuthMonitor::create_initial()
   Incremental inc;
   inc.inc_type = GLOBAL_ID;
   inc.max_global_id = max_global_id;
+
   pending_auth.push_back(inc);
 
   format_version = 2;
 }
 
+// called by
+// PaxosService::refresh
 void AuthMonitor::update_from_paxos(bool *need_bootstrap)
 {
   dout(10) << __func__ << dendl;
+
   version_t version = get_last_committed();
   version_t keys_ver = mon->key_server.get_ver();
   if (version == keys_ver)
     return;
+
   assert(version > keys_ver);
 
   version_t latest_full = get_version_latest_full();
@@ -133,17 +154,22 @@ void AuthMonitor::update_from_paxos(bool *need_bootstrap)
 
   if ((latest_full > 0) && (latest_full > keys_ver)) {
     bufferlist latest_bl;
+
     int err = get_version_full(latest_full, latest_bl);
     assert(err == 0);
     assert(latest_bl.length() != 0);
+
     dout(7) << __func__ << " loading summary e " << latest_full << dendl;
     dout(7) << __func__ << " latest length " << latest_bl.length() << dendl;
+
     bufferlist::iterator p = latest_bl.begin();
     __u8 struct_v;
     ::decode(struct_v, p);
     ::decode(max_global_id, p);
     ::decode(mon->key_server, p);
+
     mon->key_server.set_ver(latest_full);
+
     keys_ver = latest_full;
   }
 
@@ -171,6 +197,7 @@ void AuthMonitor::update_from_paxos(bool *need_bootstrap)
     while (!p.end()) {
       Incremental inc;
       ::decode(inc, p);
+
       switch (inc.inc_type) {
       case GLOBAL_ID:
 	max_global_id = inc.max_global_id;
@@ -181,6 +208,7 @@ void AuthMonitor::update_from_paxos(bool *need_bootstrap)
           KeyServerData::Incremental auth_inc;
           bufferlist::iterator iter = inc.auth_data.begin();
           ::decode(auth_inc, iter);
+
           mon->key_server.apply_data_incremental(auth_inc);
           break;
         }
@@ -210,11 +238,15 @@ void AuthMonitor::increase_max_global_id()
 {
   assert(mon->is_leader());
 
+  // default 10000
   max_global_id += g_conf->mon_globalid_prealloc;
+
   dout(10) << "increasing max_global_id to " << max_global_id << dendl;
+
   Incremental inc;
   inc.inc_type = GLOBAL_ID;
   inc.max_global_id = max_global_id;
+
   pending_auth.push_back(inc);
 }
 
@@ -316,10 +348,14 @@ bool AuthMonitor::prepare_update(MonOpRequestRef op)
   }
 }
 
+// called by
+// AuthMonitor::prep_auth
 uint64_t AuthMonitor::assign_global_id(MonOpRequestRef op, bool should_increase_max)
 {
   MAuth *m = static_cast<MAuth*>(op->get_req());
+
   int total_mon = mon->monmap->size();
+
   dout(10) << "AuthMonitor::assign_global_id m=" << *m << " mon=" << mon->rank << "/" << total_mon
 	   << " last_allocated=" << last_allocated_id << " max_global_id=" <<  max_global_id << dendl;
 
@@ -327,7 +363,9 @@ uint64_t AuthMonitor::assign_global_id(MonOpRequestRef op, bool should_increase_
   int remainder = next_global_id % total_mon;
   if (remainder)
     remainder = total_mon - remainder;
+
   next_global_id += remainder + mon->rank;
+
   dout(10) << "next_global_id should be " << next_global_id << dendl;
 
   // if we can't bump the max, bail out now on an out-of-bounds gid
@@ -341,7 +379,7 @@ uint64_t AuthMonitor::assign_global_id(MonOpRequestRef op, bool should_increase_
 
   // bump the max?
   while (mon->is_leader() &&
-	 (max_global_id < g_conf->mon_globalid_prealloc ||
+	 (max_global_id < g_conf->mon_globalid_prealloc || // default 10000
 	  next_global_id >= max_global_id - g_conf->mon_globalid_prealloc / 2)) {
     increase_max_global_id();
   }
@@ -358,6 +396,7 @@ uint64_t AuthMonitor::assign_global_id(MonOpRequestRef op, bool should_increase_
 bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 {
   MAuth *m = static_cast<MAuth*>(op->get_req());
+
   dout(10) << "prep_auth() blob_size=" << m->get_auth_payload().length() << dendl;
 
   MonSession *s = op->get_session();
@@ -398,27 +437,33 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 	  entity_name.get_type() == CEPH_ENTITY_TYPE_OSD ||
 	  entity_name.get_type() == CEPH_ENTITY_TYPE_MDS ||
 	  entity_name.get_type() == CEPH_ENTITY_TYPE_MGR) {
+        // both default false
 	if (g_conf->cephx_cluster_require_signatures ||
 	    g_conf->cephx_require_signatures) {
 	  dout(1) << m->get_source_inst()
                   << " supports cephx but not signatures and"
                   << " 'cephx [cluster] require signatures = true';"
                   << " disallowing cephx" << dendl;
+
 	  supported.erase(CEPH_AUTH_CEPHX);
 	}
       } else {
+        // both default false
 	if (g_conf->cephx_service_require_signatures ||
 	    g_conf->cephx_require_signatures) {
 	  dout(1) << m->get_source_inst()
                   << " supports cephx but not signatures and"
                   << " 'cephx [service] require signatures = true';"
                   << " disallowing cephx" << dendl;
+
 	  supported.erase(CEPH_AUTH_CEPHX);
 	}
       }
     }
 
     int type;
+    // mon->auth_cluster_required and mon->auth_service_required were
+    // initialized by Monitor::Monitor
     if (entity_name.get_type() == CEPH_ENTITY_TYPE_MON ||
 	entity_name.get_type() == CEPH_ENTITY_TYPE_OSD ||
 	entity_name.get_type() == CEPH_ENTITY_TYPE_MDS ||
@@ -433,9 +478,12 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       ret = -ENOTSUP;
       goto reply;
     }
+
+    // this is a new session
     start = true;
   } else if (!s->auth_handler) {
       dout(10) << "protocol specified but no s->auth_handler" << dendl;
+
       ret = -EINVAL;
       goto reply;
   }
@@ -452,21 +500,28 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 
       if (mon->is_leader() && paxos_writable) {
         dout(10) << "increasing global id, waitlisting message" << dendl;
+
         wait_for_active(op, new C_RetryMessage(this, op));
         goto done;
       }
 
       if (!mon->is_leader()) {
 	dout(10) << "not the leader, requesting more ids from leader" << dendl;
+
 	int leader = mon->get_leader();
+
 	MMonGlobalID *req = new MMonGlobalID();
 	req->old_max_id = max_global_id;
+
 	mon->messenger->send_message(req, mon->monmap->get_inst(leader));
+
 	wait_for_finished_proposal(op, new C_RetryMessage(this, op));
+
 	return true;
       }
 
       assert(!paxos_writable);
+
       return false;
     }
   }
@@ -480,28 +535,36 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       if (m->monmap_epoch < mon->monmap->get_epoch())
 	mon->send_latest_monmap(m->get_connection().get());
 
+      // encode server challenge
       proto = s->auth_handler->start_session(entity_name, indata, response_bl, caps_info);
+
       ret = 0;
+
       if (caps_info.allow_all)
 	s->caps.set_allow_all();
     } else {
       // request
       ret = s->auth_handler->handle_request(indata, response_bl, s->global_id, caps_info, &auid);
     }
+
     if (ret == -EIO) {
       wait_for_active(op, new C_RetryMessage(this,op));
       goto done;
     }
+
     if (caps_info.caps.length()) {
       bufferlist::iterator p = caps_info.caps.begin();
       string str;
+
       try {
 	::decode(str, p);
       } catch (const buffer::error &err) {
 	derr << "corrupt cap data for " << entity_name << " in auth db" << dendl;
 	str.clear();
       }
+
       s->caps.parse(str, NULL);
+
       s->auid = auid;
     }
   } catch (const buffer::error &err) {
@@ -1323,9 +1386,12 @@ done:
   return false;
 }
 
+// called by
+// AuthMonitor::prepare_update, for MSG_MON_GLOBAL_ID
 bool AuthMonitor::prepare_global_id(MonOpRequestRef op)
 {
   dout(10) << "AuthMonitor::prepare_global_id" << dendl;
+
   increase_max_global_id();
 
   return true;

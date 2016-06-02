@@ -689,12 +689,15 @@ public:
     assert(o < max_osd);
     return osd_state[o];
   }
+
   int get_state(int o, set<string>& st) const {
     assert(o < max_osd);
+
     unsigned t = osd_state[o];
     calc_state_set(t, st);
     return osd_state[o];
   }
+
   void set_state(int o, unsigned s) {
     assert(o < max_osd);
     osd_state[o] = s;
@@ -908,16 +911,21 @@ public:
 
   const epoch_t& get_up_from(int osd) const {
     assert(exists(osd));
+    // up_from was set by OSDMap::apply_incremental
     return osd_info[osd].up_from;
   }
+
   const epoch_t& get_up_thru(int osd) const {
     assert(exists(osd));
     return osd_info[osd].up_thru;
   }
+
   const epoch_t& get_down_at(int osd) const {
     assert(exists(osd));
+    // down_at was set by OSDMap::apply_incremental
     return osd_info[osd].down_at;
   }
+
   const osd_info_t& get_info(int osd) const {
     assert(osd < max_osd);
     return osd_info[osd];
@@ -1142,6 +1150,7 @@ public:
       *out = spg_t(pgid);
       return true;
     }
+
     int primary;
     vector<int> acting;
     pg_to_acting_osds(pgid, &acting, &primary);
@@ -1199,6 +1208,7 @@ public:
   pg_t raw_pg_to_pg(pg_t pg) const {
     auto p = pools.find(pg.pool());
     assert(p != pools.end());
+
     return p->second.raw_pg_to_pg(pg);
   }
 

@@ -16,6 +16,8 @@
 namespace librbd {
 namespace cache {
 
+// created by
+// member of librbd::cache::PassthroughImageCache
 template <typename I>
 ImageWriteback<I>::ImageWriteback(I &image_ctx) : m_image_ctx(image_ctx) {
 }

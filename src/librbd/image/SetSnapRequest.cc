@@ -20,6 +20,10 @@ namespace image {
 
 using util::create_context_callback;
 
+// created by
+// librbd::image::OpenRequest<I>::send_set_snap
+// librbd::image::RefreshParentRequest<I>::send_set_parent_snap
+// librbd::ImageState<I>::send_set_snap_unlock
 template <typename I>
 SetSnapRequest<I>::SetSnapRequest(I &image_ctx, const cls::rbd::SnapshotNamespace& snap_namespace,
 				  const std::string &snap_name,
@@ -41,8 +45,15 @@ SetSnapRequest<I>::~SetSnapRequest() {
 template <typename I>
 void SetSnapRequest<I>::send() {
   if (m_snap_name.empty()) {
+
+    // HEAD, maybe come from snapshot to HEAD, so we may need to initialize
+    // exclusive lock
+
     send_init_exclusive_lock();
   } else {
+
+    // snapshot, we can not write to snapshot, so block writes
+
     send_block_writes();
   }
 }
@@ -51,8 +62,10 @@ template <typename I>
 void SetSnapRequest<I>::send_init_exclusive_lock() {
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     if (m_image_ctx.exclusive_lock != nullptr) {
       assert(m_image_ctx.snap_id == CEPH_NOSNAP);
+
       send_complete();
       return;
     }
@@ -62,8 +75,13 @@ void SetSnapRequest<I>::send_init_exclusive_lock() {
       !m_image_ctx.test_features(RBD_FEATURE_EXCLUSIVE_LOCK)) {
     int r = 0;
     if (send_refresh_parent(&r) != nullptr) {
+
+      // no need to refresh parent, and no callback to drive us to
+      // finish this request, so do it on myself
+
       send_complete();
     }
+
     return;
   }
 
@@ -77,6 +95,7 @@ void SetSnapRequest<I>::send_init_exclusive_lock() {
     klass, &klass::handle_init_exclusive_lock>(this);
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   m_exclusive_lock->init(m_image_ctx.features, ctx);
 }
 
@@ -91,6 +110,7 @@ Context *SetSnapRequest<I>::handle_init_exclusive_lock(int *result) {
     finalize();
     return m_on_finish;
   }
+
   return send_refresh_parent(result);
 }
 
@@ -123,6 +143,7 @@ Context *SetSnapRequest<I>::handle_block_writes(int *result) {
 
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     m_snap_id = m_image_ctx.get_snap_id(m_snap_namespace, m_snap_name);
     if (m_snap_id == CEPH_NOSNAP) {
       ldout(cct, 5) << "failed to locate snapshot '" << m_snap_name << "'"
@@ -134,6 +155,9 @@ Context *SetSnapRequest<I>::handle_block_writes(int *result) {
     }
   }
 
+  // we are a snapshot, so no exclusive needed, see also
+  // RefreshRequest<I>::send_v2_init_exclusive_lock
+
   return send_shut_down_exclusive_lock(result);
 }
 
@@ -141,12 +165,18 @@ template <typename I>
 Context *SetSnapRequest<I>::send_shut_down_exclusive_lock(int *result) {
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     m_exclusive_lock = m_image_ctx.exclusive_lock;
   }
 
+  // if SetSnapRequest was called by RefreshParentRequest, the parent image
+  // should be opened with read only, so ImageCtx::exclusive_lock should
+  // be nullptr
   if (m_exclusive_lock == nullptr) {
     return send_refresh_parent(result);
   }
+
+  // snapshot do not need a exclusive lock, shutdown it
 
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << __func__ << dendl;
@@ -154,7 +184,11 @@ Context *SetSnapRequest<I>::send_shut_down_exclusive_lock(int *result) {
   using klass = SetSnapRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_shut_down_exclusive_lock>(this);
+
+  // release exclusive lock: including cancel op requests, close journal,
+  // close object_map
   m_exclusive_lock->shut_down(ctx);
+
   return nullptr;
 }
 
@@ -166,6 +200,7 @@ Context *SetSnapRequest<I>::handle_shut_down_exclusive_lock(int *result) {
   if (*result < 0) {
     lderr(cct) << "failed to shut down exclusive lock: "
                << cpp_strerror(*result) << dendl;
+
     finalize();
     return m_on_finish;
   }
@@ -179,30 +214,47 @@ Context *SetSnapRequest<I>::send_refresh_parent(int *result) {
 
   ParentInfo parent_md;
   bool refresh_parent;
+
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     RWLock::RLocker parent_locker(m_image_ctx.parent_lock);
 
+    // m_snap_id was got by SetSnapRequest<I>::handle_block_writes
     const ParentInfo *parent_info = m_image_ctx.get_parent_info(m_snap_id);
-    if (parent_info == nullptr) {
+    if (parent_info == nullptr) { // even if we have no parent, the default parent spec should be returned
       *result = -ENOENT;
+
       lderr(cct) << "failed to retrieve snapshot parent info" << dendl;
       finalize();
       return m_on_finish;
     }
 
     parent_md = *parent_info;
+
+    // HEAD may have zero overlap with the parent, while snapshot may
+    // have non-zero overlap, in this case we need to open the parent
     refresh_parent = RefreshParentRequest<I>::is_refresh_required(m_image_ctx,
                                                                   parent_md);
   }
 
+  // if HEAD image's parent spec is different from the snapshot image's
+  // parent spec, then we need to open the snapshot image's parent as
+  // the ictx's parent and close the previously opened HEAD image's parent
+
   if (!refresh_parent) {
     if (m_snap_id == CEPH_NOSNAP) {
+
+      // HEAD, the object_map and journal are created and opened on
+      // exclusive lock acquired
+
       // object map is loaded when exclusive lock is acquired
       *result = apply();
       finalize();
       return m_on_finish;
     } else {
+
+      // snapshot, no journal needed, try to load object_map for this snapshot here
+
       // load snapshot object map
       return send_open_object_map(result);
     }
@@ -213,9 +265,11 @@ Context *SetSnapRequest<I>::send_refresh_parent(int *result) {
   using klass = SetSnapRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_refresh_parent>(this);
+
   m_refresh_parent = RefreshParentRequest<I>::create(m_image_ctx, parent_md,
                                                      ctx);
   m_refresh_parent->send();
+
   return nullptr;
 }
 
@@ -234,6 +288,7 @@ Context *SetSnapRequest<I>::handle_refresh_parent(int *result) {
   if (m_snap_id == CEPH_NOSNAP) {
     // object map is loaded when exclusive lock is acquired
     *result = apply();
+
     if (*result < 0) {
       finalize();
       return m_on_finish;
@@ -241,6 +296,8 @@ Context *SetSnapRequest<I>::handle_refresh_parent(int *result) {
 
     return send_finalize_refresh_parent(result);
   } else {
+    // snapshot
+
     // load snapshot object map
     return send_open_object_map(result);
   }
@@ -249,7 +306,11 @@ Context *SetSnapRequest<I>::handle_refresh_parent(int *result) {
 template <typename I>
 Context *SetSnapRequest<I>::send_open_object_map(int *result) {
   if (!m_image_ctx.test_features(RBD_FEATURE_OBJECT_MAP)) {
+
+    // object map disabled
+
     *result = apply();
+
     if (*result < 0) {
       finalize();
       return m_on_finish;
@@ -258,14 +319,19 @@ Context *SetSnapRequest<I>::send_open_object_map(int *result) {
     return send_finalize_refresh_parent(result);
   }
 
+  // object map enabled, try to load object map for this snapshot
+
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << __func__ << dendl;
 
   using klass = SetSnapRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_open_object_map>(this);
+
   m_object_map = ObjectMap<I>::create(m_image_ctx, m_snap_id);
+
   m_object_map->open(ctx);
+
   return nullptr;
 }
 
@@ -293,7 +359,13 @@ Context *SetSnapRequest<I>::handle_open_object_map(int *result) {
 template <typename I>
 Context *SetSnapRequest<I>::send_finalize_refresh_parent(int *result) {
   if (m_refresh_parent == nullptr) {
+
+    // SetSnapRequest<I>::send_open_object_map is called by
+    // SetSnapRequest<I>::send_refresh_parent with no need to refresh
+    // parent
+
     finalize();
+
     return m_on_finish;
   }
 
@@ -303,7 +375,10 @@ Context *SetSnapRequest<I>::send_finalize_refresh_parent(int *result) {
   using klass = SetSnapRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_finalize_refresh_parent>(this);
+
+  // close parent image if needed
   m_refresh_parent->finalize(ctx);
+
   return nullptr;
 }
 
@@ -316,7 +391,9 @@ Context *SetSnapRequest<I>::handle_finalize_refresh_parent(int *result) {
     lderr(cct) << "failed to close parent image: " << cpp_strerror(*result)
                << dendl;
   }
+
   finalize();
+
   return m_on_finish;
 }
 
@@ -328,22 +405,33 @@ int SetSnapRequest<I>::apply() {
   RWLock::WLocker owner_locker(m_image_ctx.owner_lock);
   RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
   RWLock::WLocker parent_locker(m_image_ctx.parent_lock);
+
   if (m_snap_id != CEPH_NOSNAP) {
+
+    // snapshot
+
     assert(m_image_ctx.exclusive_lock == nullptr);
     int r = m_image_ctx.snap_set(m_snap_namespace, m_snap_name);
     if (r < 0) {
       return r;
     }
   } else {
+
+    // HEAD
+
     std::swap(m_image_ctx.exclusive_lock, m_exclusive_lock);
+
+    // update ImageCtx::snap_id, snap_name and snap_seq of data_ctx
     m_image_ctx.snap_unset();
   }
 
   if (m_refresh_parent != nullptr) {
+    // std::swap(m_child_image_ctx.parent, m_parent_image_ctx);
     m_refresh_parent->apply();
   }
 
   std::swap(m_object_map, m_image_ctx.object_map);
+
   return 0;
 }
 
@@ -355,6 +443,8 @@ void SetSnapRequest<I>::finalize() {
   }
 }
 
+// called by
+// SetSnapRequest<I>::send_init_exclusive_lock
 template <typename I>
 void SetSnapRequest<I>::send_complete() {
   finalize();

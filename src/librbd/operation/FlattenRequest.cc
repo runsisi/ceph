@@ -18,6 +18,8 @@
 namespace librbd {
 namespace operation {
 
+// created by
+// FlattenRequest<I>::send_op
 template <typename I>
 class C_FlattenObject : public C_AsyncObjectThrottle<I> {
 public:
@@ -30,7 +32,9 @@ public:
 
   int send() override {
     I &image_ctx = this->m_image_ctx;
+
     assert(image_ctx.owner_lock.is_locked());
+
     CephContext *cct = image_ctx.cct;
 
     if (image_ctx.exclusive_lock != nullptr &&
@@ -51,6 +55,7 @@ public:
     }
 
     req->send();
+
     return 0;
   }
 
@@ -63,8 +68,10 @@ private:
 template <typename I>
 bool FlattenRequest<I>::should_complete(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " should_complete: " << " r=" << r << dendl;
+
   if (r == -ERESTART) {
     ldout(cct, 5) << "flatten operation interrupted" << dendl;
     return true;
@@ -74,6 +81,7 @@ bool FlattenRequest<I>::should_complete(int r) {
   }
 
   RWLock::RLocker owner_locker(image_ctx.owner_lock);
+
   switch (m_state) {
   case STATE_FLATTEN_OBJECTS:
     ldout(cct, 5) << "FLATTEN_OBJECTS" << dendl;
@@ -92,34 +100,43 @@ bool FlattenRequest<I>::should_complete(int r) {
     assert(false);
     break;
   }
+
   return false;
 }
 
 template <typename I>
 void FlattenRequest<I>::send_op() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " send" << dendl;
 
   m_state = STATE_FLATTEN_OBJECTS;
+
   typename AsyncObjectThrottle<I>::ContextFactory context_factory(
     boost::lambda::bind(boost::lambda::new_ptr<C_FlattenObject<I> >(),
       boost::lambda::_1, &image_ctx, m_object_size, m_snapc,
       boost::lambda::_2));
+
   AsyncObjectThrottle<I> *throttle = new AsyncObjectThrottle<I>(
     this, image_ctx, context_factory, this->create_callback_context(), &m_prog_ctx,
     0, m_overlap_objects);
+
   throttle->start_ops(image_ctx.concurrent_management_ops);
 }
 
 template <typename I>
 bool FlattenRequest<I>::send_update_header() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
+
   CephContext *cct = image_ctx.cct;
 
   ldout(cct, 5) << this << " send_update_header" << dendl;
+
   m_state = STATE_UPDATE_HEADER;
 
   // should have been canceled prior to releasing lock
@@ -128,14 +145,17 @@ bool FlattenRequest<I>::send_update_header() {
 
   {
     RWLock::RLocker parent_locker(image_ctx.parent_lock);
+
     // stop early if the parent went away - it just means
     // another flatten finished first, so this one is useless.
     if (!image_ctx.parent) {
       ldout(cct, 5) << "image already flattened" << dendl;
       return true;
     }
+
     m_parent_spec = image_ctx.parent_md.spec;
   }
+
   m_ignore_enoent = true;
 
   // remove parent from this (base) image
@@ -153,7 +173,9 @@ bool FlattenRequest<I>::send_update_header() {
 template <typename I>
 bool FlattenRequest<I>::send_update_children() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
+
   CephContext *cct = image_ctx.cct;
 
   // should have been canceled prior to releasing lock
@@ -164,12 +186,18 @@ bool FlattenRequest<I>::send_update_children() {
   // (if snapshots remain, they have their own parent info, and the child
   // will be removed when the last snap goes away)
   RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
   if ((image_ctx.features & RBD_FEATURE_DEEP_FLATTEN) == 0 &&
       !image_ctx.snaps.empty()) {
     return true;
   }
 
+  // deep-flatten enabled or no snaps, remove this child from the
+  // parent's children list, so we can execute 'rbd snap unprotect i1@s1'
+  // on the parent without return 'rbd: unprotecting snap failed: (16) Device or resource busy'
+
   ldout(cct, 2) << "removing child from children list..." << dendl;
+
   m_state = STATE_UPDATE_CHILDREN;
 
   librados::ObjectWriteOperation op;

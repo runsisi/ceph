@@ -50,6 +50,10 @@ void UpdateRequest<I>::send() {
   rados_completion->release();
 }
 
+// called by
+// Request::should_complete
+// only ResizeRequest and UpdateRequest override this method, and UpdateRequest only
+// print a debug message
 template <typename I>
 void UpdateRequest<I>::finish_request() {
   RWLock::RLocker snap_locker(m_image_ctx.snap_lock);

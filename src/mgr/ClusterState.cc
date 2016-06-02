@@ -22,6 +22,8 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "mgr " << __func__ << " "
 
+// created by
+// as member of Mgr
 ClusterState::ClusterState(
   MonClient *monc_,
   Objecter *objecter_,
@@ -53,12 +55,16 @@ void ClusterState::set_mgr_map(MgrMap const &new_mgrmap)
   mgr_map = new_mgrmap;
 }
 
+// called by
+// Mgr::handle_mgr_digest, dispatch for MgrStandby::client_messenger
 void ClusterState::load_digest(MMgrDigest *m)
 {
   health_json = std::move(m->health_json);
   mon_status_json = std::move(m->mon_status_json);
 }
 
+// called by
+// DaemonServer::ms_dispatch, dispatch for DaemonServer::msgr
 void ClusterState::ingest_pgstats(MPGStats *stats)
 {
   Mutex::Locker l(lock);
@@ -124,6 +130,9 @@ void ClusterState::update_delta_stats()
   pending_inc = PGMap::Incremental();
 }
 
+// called by
+// Mgr::init
+// Mgr::handle_osd_map
 void ClusterState::notify_osdmap(const OSDMap &osd_map)
 {
   Mutex::Locker l(lock);

@@ -88,6 +88,8 @@ public:
       }
     }
 
+    // called by
+    // ParallelPGMapper::queue
     void start_one() {
       Mutex::Locker l(lock);
       ++shards;
@@ -164,13 +166,16 @@ public:
   }
 };
 
-
+// created by
+// as a member of OSDMonitor
 /// a precalculated mapping of every PG for a given OSDMap
 class OSDMapMapping {
 public:
   MEMPOOL_CLASS_HELPERS();
 private:
 
+  // created by
+  // OSDMapMapping::_init_mappings
   struct PoolMapping {
     MEMPOOL_CLASS_HELPERS();
 
@@ -200,6 +205,7 @@ private:
 	     std::vector<int> *acting,
 	     int *acting_primary) const {
       const int32_t *row = &table[row_size() * ps];
+
       if (acting_primary) {
 	*acting_primary = row[0];
       }
@@ -226,13 +232,16 @@ private:
 	     const std::vector<int>& acting,
 	     int acting_primary) {
       int32_t *row = &table[row_size() * ps];
+
       row[0] = acting_primary;
       row[1] = up_primary;
       row[2] = acting.size();
       row[3] = up.size();
+
       for (int i = 0; i < row[2]; ++i) {
 	row[4 + i] = acting[i];
       }
+
       for (int i = 0; i < row[3]; ++i) {
 	row[4 + size + i] = up[i];
       }
@@ -254,6 +263,9 @@ private:
 
   void _build_rmap(const OSDMap& osdmap);
 
+  // called by
+  // OSDMapMapping::update, never used
+  // MappingJob::MappingJob, which created by OSDMapMapping::start_update
   void _start(const OSDMap& osdmap) {
     _init_mappings(osdmap);
   }
@@ -263,16 +275,27 @@ private:
 
   friend class ParallelPGMapper;
 
+  // created by
+  // OSDMapMapping::start_update
   struct MappingJob : public ParallelPGMapper::Job {
     OSDMapMapping *mapping;
+
     MappingJob(const OSDMap *osdmap, OSDMapMapping *m)
       : Job(osdmap), mapping(m) {
+      // _init_mappings(osdmap);
       mapping->_start(*osdmap);
     }
+
+    // called by
+    // ParallelPGMapper::WQ::_process
     void process(int64_t pool, unsigned ps_begin, unsigned ps_end) override {
       mapping->_update_range(*osdmap, pool, ps_begin, ps_end);
     }
+
+    // called by
+    // ParallelPGMapper::Job::finish_one, when all shards finished
     void complete() override {
+      // _build_rmap; epoch = osdmap.get_epoch();
       mapping->_finish(*osdmap);
     }
   };
@@ -300,14 +323,18 @@ public:
   }
   */
 
+  // both never used
   void update(const OSDMap& map);
   void update(const OSDMap& map, pg_t pgid);
 
+  // called by
+  // OSDMonitor::start_mapping, which called by OSDMonitor::update_from_paxos, OSDMonitor::on_active
   std::unique_ptr<MappingJob> start_update(
     const OSDMap& map,
     ParallelPGMapper& mapper,
     unsigned pgs_per_item) {
-    std::unique_ptr<MappingJob> job(new MappingJob(&map, this));
+    std::unique_ptr<MappingJob> job(new MappingJob(&map, this)); // mapping->_start(*osdmap);
+
     mapper.queue(job.get(), pgs_per_item);
     return job;
   }
