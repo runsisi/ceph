@@ -154,6 +154,9 @@ class ObjectCacher {
     loff_t last() const { return end() - 1; }
 
     // states
+    // called by
+    // ObjectCacher::Object::split
+    // ObjectCacher::bh_set_state
     void set_state(int s) {
       if (s == STATE_RX || s == STATE_TX) get();
       if (state == STATE_RX || state == STATE_TX) put();
@@ -225,6 +228,8 @@ class ObjectCacher {
   };
 
   // ******* Object *********
+  // created by
+  // ObjectCacher::get_object
   class Object : public LRUObject {
   private:
     // ObjectCacher::Object fields
@@ -322,12 +327,18 @@ class ObjectCacher {
 
     // bh
     // add to my map
+    // called by
+    // ObjectCacher::bh_add
     void add_bh(BufferHead *bh) {
       if (data.empty())
 	get();
+
       assert(data.count(bh->start()) == 0);
       data[bh->start()] = bh;
     }
+
+    // called by
+    // ObjectCacher::bh_remove
     void remove_bh(BufferHead *bh) {
       assert(data.count(bh->start()));
       data.erase(bh->start());
@@ -369,7 +380,9 @@ class ObjectCacher {
     }
   };
 
-
+  // created by
+  // ImageCtx::init, with only poolid initialized
+  // as member of client/Inode
   struct ObjectSet {
     void *parent;
 
@@ -380,7 +393,7 @@ class ObjectCacher {
     xlist<Object*> objects;
 
     int dirty_or_tx;
-    bool return_enoent;
+    bool return_enoent; // true for librbd, false otherwise
 
     ObjectSet(void *p, int64_t _poolid, inodeno_t i)
       : parent(p), ino(i), truncate_seq(0),
@@ -504,6 +517,8 @@ class ObjectCacher {
   void mark_rx(BufferHead *bh) {
     bh_set_state(bh, BufferHead::STATE_RX);
   }
+  // called by
+  // ObjectCacher::bh_write
   void mark_tx(BufferHead *bh) {
     bh_set_state(bh, BufferHead::STATE_TX); }
   void mark_error(BufferHead *bh) {
@@ -657,6 +672,7 @@ public:
   // file functions
 
   /*** async+caching (non-blocking) file interface ***/
+  // never used
   int file_is_cached(ObjectSet *oset, file_layout_t *layout,
 		     snapid_t snapid, loff_t offset, uint64_t len) {
     vector<ObjectExtent> extents;
@@ -674,6 +690,7 @@ public:
     return readx(rd, oset, onfinish);
   }
 
+  // called by Client::_write
   int file_write(ObjectSet *oset, file_layout_t *layout,
 		 const SnapContext& snapc, loff_t offset, uint64_t len,
 		 bufferlist& bl, ceph::real_time mtime, int flags) {

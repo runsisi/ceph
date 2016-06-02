@@ -4,6 +4,8 @@
 #include "FreelistManager.h"
 #include "BitmapFreelistManager.h"
 
+// called by
+// BlueStore::_open_fm
 FreelistManager *FreelistManager::create(
   CephContext* cct,
   string type,

@@ -96,6 +96,8 @@ private:
    * @endverbatim
    */
 
+  // created by
+  // LeaderWatcher<I>::init
   class LeaderLock : public librbd::ManagedLock<ImageCtxT> {
   public:
     typedef librbd::ManagedLock<ImageCtxT> Parent;

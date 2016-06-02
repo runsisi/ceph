@@ -31,20 +31,27 @@ Mutex::Mutex(const std::string &n, bool r, bool ld,
   ANNOTATE_BENIGN_RACE_SIZED(&id, sizeof(id), "Mutex lockdep id");
   ANNOTATE_BENIGN_RACE_SIZED(&nlock, sizeof(nlock), "Mutex nlock");
   ANNOTATE_BENIGN_RACE_SIZED(&locked_by, sizeof(locked_by), "Mutex locked_by");
+
   if (cct) {
     PerfCountersBuilder b(cct, string("mutex-") + name,
 			  l_mutex_first, l_mutex_last);
+
     b.add_time_avg(l_mutex_wait, "wait", "Average time of mutex in locked state");
+
     logger = b.create_perf_counters();
+
     cct->get_perfcounters_collection()->add(logger);
+
     logger->set(l_mutex_wait, 0);
   }
+
   if (recursive) {
     // Mutexes of type PTHREAD_MUTEX_RECURSIVE do all the same checks as
     // mutexes of type PTHREAD_MUTEX_ERRORCHECK.
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+
     pthread_mutex_init(&_m,&attr);
     pthread_mutexattr_destroy(&attr);
     if (lockdep && g_lockdep)
@@ -59,8 +66,10 @@ Mutex::Mutex(const std::string &n, bool r, bool ld,
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
+
     pthread_mutex_init(&_m, &attr);
     pthread_mutexattr_destroy(&attr);
+
     if (g_lockdep)
       _register();
   }
@@ -78,12 +87,14 @@ Mutex::~Mutex() {
 
   // helgrind gets confused by condition wakeups leading to mutex destruction
   ANNOTATE_BENIGN_RACE_SIZED(&_m, sizeof(_m), "Mutex primitive");
+
   pthread_mutex_destroy(&_m);
 
   if (cct && logger) {
     cct->get_perfcounters_collection()->remove(logger);
     delete logger;
   }
+
   if (lockdep && g_lockdep) {
     lockdep_unregister(id);
   }

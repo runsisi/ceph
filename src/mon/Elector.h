@@ -386,6 +386,9 @@ class Elector {
    */
   void dispatch(MonOpRequestRef op);
 
+  // called by
+  // Elector::start_participating
+  // Monitor::start_election
   /**
    * Call an election.
    *
@@ -395,6 +398,9 @@ class Elector {
     start();
   }
 
+  // called by
+  // Monitor::do_admin_command, with "quorum exit"
+  // Monitor::handle_command
   /**
    * Stop participating in subsequent Elections.
    *

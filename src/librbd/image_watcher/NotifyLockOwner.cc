@@ -61,6 +61,7 @@ void NotifyLockOwner::handle_notify(int r) {
         finish(-EINVAL);
         return;
       }
+
       lock_owner_responded = true;
       response.claim(it.second);
     }
@@ -82,6 +83,7 @@ void NotifyLockOwner::handle_notify(int r) {
   } catch (const buffer::error &err) {
     r = -EINVAL;
   }
+
   finish(r);
 }
 

@@ -37,6 +37,8 @@ class OSDMap;
 class PGLog;
 typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
 
+ // created by
+ // PGBackend::build_pg_backend, which called by PrimaryLogPG::PrimaryLogPG
  /**
   * PGBackend
   *
@@ -123,10 +125,14 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
        GenContext<ThreadPool::TPHandle&> *c) = 0;
 
      virtual void send_message(int to_osd, Message *m) = 0;
+
+     // overrode by
+     // PrimaryLogPG::queue_transaction
      virtual void queue_transaction(
        ObjectStore::Transaction&& t,
        OpRequestRef op = OpRequestRef()
        ) = 0;
+
      virtual void queue_transactions(
        vector<ObjectStore::Transaction>& tls,
        OpRequestRef op = OpRequestRef()
@@ -269,8 +275,12 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
 
      virtual ~Listener() {}
    };
+
    Listener *parent;
    Listener *get_parent() const { return parent; }
+
+   // called by
+   // PGBackend::build_pg_backend, which called by PrimaryLogPG::PrimaryLogPG
    PGBackend(CephContext* cct, Listener *l, ObjectStore *store, coll_t coll,
 	     ObjectStore::CollectionHandle &ch) :
      cct(cct),

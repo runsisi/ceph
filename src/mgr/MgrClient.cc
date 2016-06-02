@@ -29,6 +29,11 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "mgrc " << __func__ << " "
 
+// created by
+// as member of:
+// RadosClient
+// MDSDaemon
+// OSD
 MgrClient::MgrClient(CephContext *cct_, Messenger *msgr_)
     : Dispatcher(cct_), cct(cct_), msgr(msgr_),
       timer(cct_, lock)
@@ -68,8 +73,13 @@ bool MgrClient::ms_dispatch(Message *m)
 
   switch(m->get_type()) {
   case MSG_MGR_MAP:
+    // sent by MgrMonitor::check_sub, the mgr map was subscribed by:
+    // RadosClient::connect, MDSDaemon::init, MgrStandby::init, OSD::init
+
+    // (re)connect to mgr
     return handle_mgr_map(static_cast<MMgrMap*>(m));
   case MSG_MGR_CONFIGURE:
+    // sent by DaemonServer::handle_open
     return handle_mgr_configure(static_cast<MMgrConfigure*>(m));
   case MSG_COMMAND_REPLY:
     if (m->get_source().type() == CEPH_ENTITY_TYPE_MGR) {
@@ -84,6 +94,9 @@ bool MgrClient::ms_dispatch(Message *m)
   }
 }
 
+// called by
+// MgrClient::handle_mgr_map
+// MgrClient::ms_handle_reset
 void MgrClient::reconnect()
 {
   assert(lock.is_locked_by_me());
@@ -142,6 +155,8 @@ void MgrClient::reconnect()
   if (g_conf && !g_conf->name.is_client()) {
     auto open = new MMgrOpen();
     open->daemon_name = g_conf->name.get_id();
+
+    // the DaemonServer will reply with MMgrConfigure, see DaemonServer::handle_open
     session->con->send_message(open);
   }
 
@@ -154,6 +169,8 @@ void MgrClient::reconnect()
   }
 }
 
+// called by
+// MgrClient::ms_dispatch, for MSG_MGR_MAP
 bool MgrClient::handle_mgr_map(MMgrMap *m)
 {
   assert(lock.is_locked_by_me());
@@ -192,6 +209,8 @@ bool MgrClient::ms_handle_refused(Connection *con)
   return false;
 }
 
+// called by
+// MgrClient::handle_mgr_configure
 void MgrClient::send_report()
 {
   assert(lock.is_locked_by_me());
@@ -201,6 +220,7 @@ void MgrClient::send_report()
   auto report = new MMgrReport();
   auto pcc = cct->get_perfcounters_collection();
 
+  // std::map<std::string, PerfCounters::perf_counter_data_any_d *>
   pcc->with_counters([this, report](
         const PerfCountersCollection::CounterMap &by_path)
   {
@@ -252,16 +272,23 @@ void MgrClient::send_report()
   session->con->send_message(report);
 
   if (stats_period != 0) {
+
+    // was set by MgrClient::handle_mgr_configure, for OSD/MDS only
+
     report_callback = new FunctionContext([this](int r){send_report();});
     timer.add_event_after(stats_period, report_callback);
   }
 
+  // set by OSD::init
   if (pgstats_cb) {
     MPGStats *m_stats = pgstats_cb();
     session->con->send_message(m_stats);
   }
 }
 
+// called by
+// MgrClient::ms_dispatch, MMgrConfigure sent by DaemonServer::handle_open,
+// which was a reply for our MMgrOpen, see MgrClient::reconnect
 bool MgrClient::handle_mgr_configure(MMgrConfigure *m)
 {
   assert(lock.is_locked_by_me());
@@ -277,6 +304,7 @@ bool MgrClient::handle_mgr_configure(MMgrConfigure *m)
   ldout(cct, 4) << "stats_period=" << m->stats_period << dendl;
 
   bool starting = (stats_period == 0) && (m->stats_period != 0);
+
   stats_period = m->stats_period;
   if (starting) {
     send_report();

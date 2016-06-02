@@ -278,14 +278,28 @@ public:
   void send_message(int to_osd, Message *m) override {
     osd->send_message_osd_cluster(to_osd, m, get_osdmap()->get_epoch());
   }
+
+  // called by
+  // ECBackend::dispatch_recovery_messages
+  // ReplicatedBackend::_do_push
+  // ReplicatedBackend::_do_pull_response
+  // ReplicatedBackend::sub_op_push
   void queue_transaction(ObjectStore::Transaction&& t,
 			 OpRequestRef op) override {
+    // construct a vector of Transaction and call ObjectStore::queue_transactions
     osd->store->queue_transaction(osr.get(), std::move(t), 0, 0, 0, op);
   }
+
+  // called by
+  // ECBackend::handle_sub_write
+  // ReplicatedBackend::submit_transaction
+  // ReplicatedBackend::sub_op_modify
   void queue_transactions(vector<ObjectStore::Transaction>& tls,
 			  OpRequestRef op) override {
+    // do not add additional onreadable, ondisk, onreadable_sync callback
     osd->store->queue_transactions(osr.get(), tls, 0, 0, 0, op, NULL);
   }
+
   epoch_t get_epoch() const override {
     return get_osdmap()->get_epoch();
   }
@@ -365,6 +379,7 @@ public:
     ObjectStore::Transaction *t) override {
     return update_object_snap_mapping(t, soid, snaps);
   }
+
   void pgb_clear_object_snap_mapping(
     const hobject_t &soid,
     ObjectStore::Transaction *t) override {
@@ -602,6 +617,7 @@ public:
 	snapset = &obc->ssc->snapset;
       }
     }
+
     OpContext(OpRequestRef _op, osd_reqid_t _reqid,
               vector<OSDOp>& _ops, PrimaryLogPG *_pg) :
       op(_op), reqid(_reqid), ops(_ops), obs(NULL), snapset(0),
@@ -616,13 +632,17 @@ public:
       async_read_result(0),
       inflightreads(0),
       lock_type(ObjectContext::RWState::RWNONE) {}
+
     void reset_obs(ObjectContextRef obc) {
       new_obs = ObjectState(obc->obs.oi, obc->obs.exists);
+
+      // TODO: obc->ssc always be non-null, see get_object_context ???
       if (obc->ssc) {
 	new_snapset = obc->ssc->snapset;
 	snapset = &obc->ssc->snapset;
       }
     }
+
     ~OpContext() {
       assert(!op_t);
       if (reply)
@@ -635,6 +655,7 @@ public:
 	delete i->second.second;
       }
     }
+
     uint64_t get_features() {
       if (op && op->get_req()) {
         return op->get_req()->get_connection()->get_features();
@@ -642,6 +663,7 @@ public:
       return -1ull;
     }
   };
+
   using OpContextUPtr = std::unique_ptr<OpContext>;
   friend struct OpContext;
 
@@ -749,16 +771,30 @@ protected:
      * to get the second.
      */
     if (write_ordered && ctx->op->may_read()) {
+
+      // write-ordered read
+
       ctx->lock_type = ObjectContext::RWState::RWEXCL;
     } else if (write_ordered) {
+
+      // write
+
       ctx->lock_type = ObjectContext::RWState::RWWRITE;
     } else {
+
+      // read
+
       assert(ctx->op->may_read());
       ctx->lock_type = ObjectContext::RWState::RWREAD;
     }
 
     if (ctx->snapset_obc) {
+
+      // we only get snapdir obc when the obc of the target object does not exist
+
       assert(!ctx->obc->obs.exists);
+
+      // get obc lock by lock type
       if (!ctx->lock_manager.get_lock_type(
 	    ctx->lock_type,
 	    ctx->snapset_obc->obs.oi.soid,
@@ -768,6 +804,8 @@ protected:
 	return false;
       }
     }
+
+    // get obc lock by lock type
     if (ctx->lock_manager.get_lock_type(
 	  ctx->lock_type,
 	  ctx->obc->obs.oi.soid,
@@ -776,6 +814,7 @@ protected:
       return true;
     } else {
       assert(!ctx->snapset_obc);
+
       ctx->lock_type = ObjectContext::RWState::RWNONE;
       return false;
     }
@@ -786,14 +825,27 @@ protected:
    *
    * @param ctx [in] ctx to clean up
    */
+  // called by
+  // CopyFromCallback::finish
+  // ReplicatedPG::do_op
+  // ReplicatedPG::execute_ctx
+  // ReplicatedPG::reply_ctx
+  // ReplicatedPG::trim_object
+  // ReplicatedPG::complete_read_ctx
+  // ReplicatedPG::try_flush_mark_clean
+  // ReplicatedPG::on_change
+  // ReplicatedPG::agent_maybe_evict
   void close_op_ctx(OpContext *ctx) {
     release_object_locks(ctx->lock_manager);
+
     ctx->op_t.reset();
+
     for (auto p = ctx->on_finish.begin();
 	 p != ctx->on_finish.end();
 	 ctx->on_finish.erase(p++)) {
       (*p)();
     }
+
     delete ctx;
   }
 
@@ -802,17 +854,25 @@ protected:
    *
    * @param manager [in] manager with locks to release
    */
+  // called by
+  // ReplicatedPG::remove_repop, called by ReplicatedPG::eval_repop or ReplicatedPG::apply_and_flush_repops
+  // ReplicatedPG::close_op_ctx
   void release_object_locks(
     ObcLockManager &lock_manager) {
     list<pair<hobject_t, list<OpRequestRef> > > to_req;
+
     bool requeue_recovery = false;
     bool requeue_snaptrim = false;
+
     lock_manager.put_locks(
       &to_req,
       &requeue_recovery,
       &requeue_snaptrim);
+
     if (requeue_recovery)
+      // call PG::queue_recovery
       queue_recovery();
+
     if (requeue_snaptrim)
       snap_trimmer_machine.process_event(TrimWriteUnblocked());
 
@@ -869,10 +929,12 @@ protected:
     boost::optional<std::function<void(void)> > &&on_complete,
     OpRequestRef op = OpRequestRef(),
     int r = 0);
+
   struct LogUpdateCtx {
     boost::intrusive_ptr<RepGather> repop;
     set<pg_shard_t> waiting_on;
   };
+
   void cancel_log_updates();
   map<ceph_tid_t, LogUpdateCtx> log_entry_update_waiting_on;
 
@@ -1254,6 +1316,7 @@ protected:
 		  unsigned dest_obj_fadvise_flags);
   void process_copy_chunk(hobject_t oid, ceph_tid_t tid, int r);
   void _write_copy_chunk(CopyOpRef cop, PGTransaction *t);
+
   uint64_t get_copy_chunk_size() const {
     uint64_t size = cct->_conf->osd_copyfrom_max_chunk;
     if (pool.info.requires_aligned_append()) {
@@ -1264,6 +1327,7 @@ protected:
     }
     return size;
   }
+
   void _copy_some(ObjectContextRef obc, CopyOpRef cop);
   void finish_copyfrom(OpContext *ctx);
   void finish_promote(int r, CopyResults *results, ObjectContextRef obc);
@@ -1707,10 +1771,18 @@ private:
   int _rollback_to(OpContext *ctx, ceph_osd_op& op);
 public:
   bool is_missing_object(const hobject_t& oid) const;
+
+  // called by
+  // ReplicatedPG::on_local_recover
+  // ReplicatedPG::wait_for_unreadable_object
+  // ReplicatedPG::do_op
+  // ReplicatedPG::agent_load_hit_sets
+  // ReplicatedPG::do_pg_op, for CEPH_OSD_OP_PG_HITSET_GET
   bool is_unreadable_object(const hobject_t &oid) const {
     return is_missing_object(oid) ||
       !missing_loc.readable_with_acting(oid, actingset);
   }
+
   void maybe_kick_recovery(const hobject_t &soid);
   void wait_for_unreadable_object(const hobject_t& oid, OpRequestRef op);
   void wait_for_all_missing(OpRequestRef op);

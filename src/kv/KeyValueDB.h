@@ -179,6 +179,7 @@ public:
     return get(prefix, string(key, keylen), value);
   }
 
+  // KeyValueDB/ObjectMap will override this interface
   class GenericIteratorImpl {
   public:
     virtual int seek_to_first() = 0;
@@ -192,6 +193,7 @@ public:
     virtual ~GenericIteratorImpl() {}
   };
 
+  // LevelDB/RocksDB will override this interface
   class WholeSpaceIteratorImpl {
   public:
     virtual int seek_to_first() = 0;
@@ -223,11 +225,13 @@ public:
       return 0;
     }
     virtual ~WholeSpaceIteratorImpl() { }
-  };
+  }; // class WholeSpaceIteratorImpl
+
   typedef ceph::shared_ptr< WholeSpaceIteratorImpl > WholeSpaceIterator;
 
   class IteratorImpl : public GenericIteratorImpl {
     const std::string prefix;
+    // LevelDB/RocksDB specific iterator, i.e., the backend implementation
     WholeSpaceIterator generic_iter;
   public:
     IteratorImpl(const std::string &prefix, WholeSpaceIterator iter) :
@@ -287,11 +291,12 @@ public:
     int status() override {
       return generic_iter->status();
     }
-  };
+  }; // class IteratorImpl
 
   typedef ceph::shared_ptr< IteratorImpl > Iterator;
 
   WholeSpaceIterator get_iterator() {
+    // pure virtual, see RocksDBStore::_get_iterator, LevelDBStore::_get_iterator
     return _get_iterator();
   }
 

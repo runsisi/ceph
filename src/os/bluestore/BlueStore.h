@@ -1290,6 +1290,8 @@ public:
     bool map_any(std::function<bool(OnodeRef)> f);
   };
 
+  // CollectionImpl only defines a pure virtual interface
+  // get_cid
   struct Collection : public CollectionImpl {
     BlueStore *store;
     Cache *cache;       ///< our cache shard
@@ -1590,6 +1592,9 @@ public:
     }
   };
 
+  // Sequencer_impl only defines two pure virtual interfaces:
+  // flush
+  // flush_commit
   class OpSequencer : public Sequencer_impl {
   public:
     std::mutex qlock;
@@ -1756,16 +1761,16 @@ public:
   // --------------------------------------------------------
   // members
 private:
-  BlueFS *bluefs = nullptr;
+  BlueFS *bluefs = nullptr;         // created by BlueStore::_open_db
   unsigned bluefs_shared_bdev = 0;  ///< which bluefs bdev we are sharing
   bool bluefs_single_shared_device = true;
   utime_t bluefs_last_balance;
 
-  KeyValueDB *db = nullptr;
-  BlockDevice *bdev = nullptr;
+  KeyValueDB *db = nullptr;	// created by BlueStore::_open_db
+  BlockDevice *bdev = nullptr;  // created by BlueStore::_open_bdev
   std::string freelist_type;
-  FreelistManager *fm = nullptr;
-  Allocator *alloc = nullptr;
+  FreelistManager *fm = nullptr;    // created by BlueStore::_open_fm
+  Allocator *alloc = nullptr;       // created by BlueStore::_open_alloc
   uuid_d fsid;
   int path_fd = -1;  ///< open handle to $path
   int fsid_fd = -1;  ///< open handle (locked) to $path/fsid

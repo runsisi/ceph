@@ -140,6 +140,8 @@ int MgrStandby::init()
   return 0;
 }
 
+// called by
+// MgrStandby::init
 void MgrStandby::send_beacon()
 {
   assert(lock.is_locked_by_me());
@@ -147,6 +149,7 @@ void MgrStandby::send_beacon()
   dout(10) << "sending beacon as gid " << monc.get_global_id() << dendl;
 
   bool available = active_mgr != nullptr && active_mgr->is_initialized();
+
   auto addr = available ? active_mgr->get_server_addr() : entity_addr_t();
   MMgrBeacon *m = new MMgrBeacon(monc.get_fsid(),
 				 monc.get_global_id(),
@@ -155,6 +158,7 @@ void MgrStandby::send_beacon()
                                  available);
                                  
   monc.send_mon_message(m);
+  // default 5
   timer.add_event_after(g_conf->mgr_beacon_period, new FunctionContext(
         [this](int r){
           send_beacon();
@@ -225,6 +229,7 @@ void MgrStandby::handle_mgr_map(MMgrMap* mmap)
   const bool active_in_map = map.active_gid == monc.get_global_id();
   dout(4) << "active in map: " << active_in_map
           << " active is " << map.active_gid << dendl;
+
   if (active_in_map) {
     if (!active_mgr) {
       dout(1) << "Activating!" << dendl;

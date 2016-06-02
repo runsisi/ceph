@@ -18,6 +18,10 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "mgr " << __func__ << " "
 
+// called by
+// DaemonServer::handle_report
+// MetadataUpdate::finish
+// Mgr::load_all_metadata
 void DaemonStateIndex::insert(DaemonStatePtr dm)
 {
   Mutex::Locker l(lock);
@@ -107,6 +111,8 @@ void DaemonStateIndex::cull(entity_type_t daemon_type,
   }
 }
 
+// called by
+// DaemonServer::handle_report
 void DaemonPerfCounters::update(MMgrReport *report)
 {
   dout(20) << "loading " << report->declare_types.size() << " new types, "
@@ -116,7 +122,9 @@ void DaemonPerfCounters::update(MMgrReport *report)
 
   // Load any newly declared types
   for (const auto &t : report->declare_types) {
+    // i.e., reference of DaemonStateIndex::types
     types.insert(std::make_pair(t.path, t));
+
     declared_types.insert(t.path);
   }
   // Remove any old types
@@ -131,6 +139,7 @@ void DaemonPerfCounters::update(MMgrReport *report)
   DECODE_START(1, p);
   for (const auto &t_path : declared_types) {
     const auto &t = types.at(t_path);
+
     uint64_t val = 0;
     uint64_t avgcount = 0;
     uint64_t avgcount2 = 0;
@@ -140,6 +149,7 @@ void DaemonPerfCounters::update(MMgrReport *report)
       ::decode(avgcount, p);
       ::decode(avgcount2, p);
     }
+
     // TODO: interface for insertion of avgs
     instances[t_path].push(now, val);
   }

@@ -20,6 +20,9 @@
 namespace librbd {
 namespace io {
 
+// created by
+// ImageCtx::ImageCtx
+// inherited from ThreadPool::PointerWQ<AioImageRequest<ImageCtx> >
 ImageRequestWQ::ImageRequestWQ(ImageCtx *image_ctx, const string &name,
                                time_t ti, ThreadPool *tp)
   : ThreadPool::PointerWQ<ImageRequest<> >(name, ti, 0, tp),
@@ -146,8 +149,11 @@ void ImageRequestWQ::aio_read(AioCompletion *c, uint64_t off, uint64_t len,
     lock_required = m_require_lock_on_read;
   }
 
+  // <off, len> -> std::vector<std::pair<uint64_t,uint64_t> >
   if (m_image_ctx.non_blocking_aio || writes_blocked() || !writes_empty() ||
       lock_required) {
+    // the allocated request will be deleted when the request is dequeued
+    // and processed by the thread pool worker, see AioImageRequestWQ::process
     queue(new ImageReadRequest<>(m_image_ctx, c, {{off, len}},
                                  std::move(read_result), op_flags));
   } else {
@@ -176,6 +182,7 @@ void ImageRequestWQ::aio_write(AioCompletion *c, uint64_t off, uint64_t len,
   }
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   if (m_image_ctx.non_blocking_aio || writes_blocked()) {
     queue(new ImageWriteRequest<>(m_image_ctx, c, {{off, len}},
                                   std::move(bl), op_flags));
@@ -205,6 +212,7 @@ void ImageRequestWQ::aio_discard(AioCompletion *c, uint64_t off,
   }
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   if (m_image_ctx.non_blocking_aio || writes_blocked()) {
     queue(new ImageDiscardRequest<>(m_image_ctx, c, off, len, skip_partial_discard));
   } else {
@@ -232,6 +240,7 @@ void ImageRequestWQ::aio_flush(AioCompletion *c, bool native_async) {
   if (m_image_ctx.non_blocking_aio || writes_blocked() || !writes_empty()) {
     queue(new ImageFlushRequest<>(m_image_ctx, c));
   } else {
+    // for flush, the
     ImageRequest<>::aio_flush(&m_image_ctx, c);
     finish_in_flight_op();
   }
@@ -296,20 +305,37 @@ bool ImageRequestWQ::is_lock_request_needed() const {
 
 int ImageRequestWQ::block_writes() {
   C_SaferCond cond_ctx;
+
   block_writes(&cond_ctx);
+
   return cond_ctx.wait();
 }
 
+// called by:
+// ReleaseRequest<I>::send_block_writes
+// RefreshRequest<I>::send_v2_block_writes, only when we are to disable journaling
+// SetSnapRequest<I>::send_block_writes
+// ResizeRequest<I>::send_pre_block_writes, ResizeRequest<I>::send_post_block_writes
+// SnapshotCreateRequest<I>::send_suspend_aio
+// SnapshotRollbackRequest<I>::send_block_writes
+// EnableFeaturesRequest<I>::handle_prepare_lock,
+// DisableFeaturesRequest<I>::handle_prepare_lock
+// ExclusiveLock<I>::init
+// ImageRequestWQ::block_writes()
 void ImageRequestWQ::block_writes(Context *on_blocked) {
   assert(m_image_ctx.owner_lock.is_locked());
+
   CephContext *cct = m_image_ctx.cct;
 
   {
     RWLock::WLocker locker(m_lock);
+
     ++m_write_blockers;
     ldout(cct, 5) << &m_image_ctx << ", " << "num="
                   << m_write_blockers << dendl;
     if (!m_write_blocker_contexts.empty() || m_in_progress_writes > 0) {
+      // will be called by AioImageRequestWQ::handle_blocked_writes, see
+      // AioImageRequestWQ::finish_in_progress_write
       m_write_blocker_contexts.push_back(on_blocked);
       return;
     }
@@ -323,8 +349,10 @@ void ImageRequestWQ::unblock_writes() {
   CephContext *cct = m_image_ctx.cct;
 
   bool wake_up = false;
+
   {
     RWLock::WLocker locker(m_lock);
+
     assert(m_write_blockers > 0);
     --m_write_blockers;
 
@@ -340,11 +368,16 @@ void ImageRequestWQ::unblock_writes() {
   }
 }
 
+// called by:
+// librbd::ExclusiveLock<I>::handle_init_complete
+// librbd::exclusive_lock::PreReleaseRequest<I>::send_block_writes
+// librbd::image::RefreshRequest<I>::send_v2_open_journal
 void ImageRequestWQ::set_require_lock_on_read() {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
   RWLock::WLocker locker(m_lock);
+
   m_require_lock_on_read = true;
 }
 
@@ -360,6 +393,7 @@ void ImageRequestWQ::clear_require_lock_on_read() {
 
     m_require_lock_on_read = false;
   }
+
   signal();
 }
 
@@ -372,10 +406,25 @@ void *ImageRequestWQ::_void_dequeue() {
   }
 
   bool refresh_required = m_image_ctx.state->is_refresh_required();
+
   {
     RWLock::RLocker locker(m_lock);
+
     if (peek_item->is_write_op()) {
+
+      // AioImageWrite, AioImageDiscard, AioImageFlush
+
       if (m_write_blockers > 0) {
+
+        // does not own the exclusive lock or other maint op is in progress,
+        // e.g., Refresh, SnapSet, Resize, SnapshotCreate, SnapshotRollback
+
+        // TODO: only another AioImageRequestWQ::queue will drive us to request
+        // the exclusive lock again, the read op has the same situation, so
+        // if the image to r/w is not the tag owner, then the request of
+        // exclusive lock should never be succeeded, our r/w will never
+        // return, see AcquireRequest<I>::send_allocate_journal_tag ???
+
         return nullptr;
       }
 
@@ -384,6 +433,9 @@ void *ImageRequestWQ::_void_dequeue() {
         m_in_progress_writes++;
       }
     } else if (m_require_lock_on_read) {
+
+      // AioImageRead
+
       return nullptr;
     }
   }
@@ -393,6 +445,11 @@ void *ImageRequestWQ::_void_dequeue() {
   assert(peek_item == item);
 
   if (refresh_required) {
+
+    // our refresh may fail, so we need an item, i.e., aio request, to
+    // pass out the error result, i.e., by completint the AioCompletion
+    // to notify the user
+
     ldout(m_image_ctx.cct, 15) << "image refresh required: delaying IO " << item
                                << dendl;
 
@@ -400,15 +457,25 @@ void *ImageRequestWQ::_void_dequeue() {
     m_refresh_in_progress = true;
 
     get_pool_lock().Unlock();
+
+    // aio_work_queue->handle_refreshed, requeue the item, and request
+    // exclusive lock if needed
     m_image_ctx.state->refresh(new C_RefreshFinish(this, item));
+
     get_pool_lock().Lock();
+
     return nullptr;
   }
 
+  // push the the aiocompletion associated with the request back of
+  // m_image_ctx->async_ops, when the aiocompletion completes, it will
+  // remove itself from m_image_ctx->async_ops, see AioCompletion::complete
   item->start_op();
+
   return item;
 }
 
+// ThreadPool::PointerWQ::_void_process calls this directly and do nothing else
 void ImageRequestWQ::process(ImageRequest<> *req) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "ictx=" << &m_image_ctx << ", "
@@ -416,10 +483,14 @@ void ImageRequestWQ::process(ImageRequest<> *req) {
 
   req->send();
 
+  // update counter
   finish_queued_op(req);
+
   if (req->is_write_op()) {
     finish_in_progress_write();
   }
+
+  // AioImageRead, AioImageWrite, AioImageDiscard, AioImageFlush
   delete req;
 
   finish_in_flight_op();
@@ -438,6 +509,7 @@ void ImageRequestWQ::finish_queued_op(ImageRequest<> *req) {
 
 void ImageRequestWQ::finish_in_progress_write() {
   bool writes_blocked = false;
+
   {
     RWLock::RLocker locker(m_lock);
     assert(m_in_progress_writes > 0);
@@ -448,10 +520,18 @@ void ImageRequestWQ::finish_in_progress_write() {
   }
 
   if (writes_blocked) {
+    // flush ImageCtx::async_ops
+
+    // C_BlockedWrites::finish will call aio_work_queue->handle_blocked_writes
     m_image_ctx.flush(new C_BlockedWrites(this));
   }
 }
 
+// called by
+// ImageRequestWQ::aio_read
+// ImageRequestWQ::aio_write
+// ImageRequestWQ::aio_discard
+// ImageRequestWQ::aio_flush
 int ImageRequestWQ::start_in_flight_op(AioCompletion *c) {
   RWLock::RLocker locker(m_lock);
 
@@ -467,6 +547,14 @@ int ImageRequestWQ::start_in_flight_op(AioCompletion *c) {
   return true;
 }
 
+// called by
+// ImageRequestWQ::aio_read
+// ImageRequestWQ::aio_write
+// ImageRequestWQ::aio_discard
+// ImageRequestWQ::aio_flush
+// ImageRequestWQ::process, for queued IO
+// ImageRequestWQ::queue, requires lock but lock disabled
+// ImageRequestWQ::handle_refreshed, upon failure
 void ImageRequestWQ::finish_in_flight_op() {
   Context *on_shutdown;
   {
@@ -486,6 +574,7 @@ void ImageRequestWQ::finish_in_flight_op() {
 
 bool ImageRequestWQ::is_lock_required() const {
   assert(m_image_ctx.owner_lock.is_locked());
+
   if (m_image_ctx.exclusive_lock == NULL) {
     return false;
   }
@@ -499,6 +588,7 @@ void ImageRequestWQ::queue(ImageRequest<> *req) {
                  << "req=" << req << dendl;
 
   assert(m_image_ctx.owner_lock.is_locked());
+
   bool write_op = req->is_write_op();
   bool lock_required = (m_image_ctx.exclusive_lock != nullptr &&
                         ((write_op && is_lock_required()) ||
@@ -525,15 +615,22 @@ void ImageRequestWQ::queue(ImageRequest<> *req) {
   }
 }
 
+// called by 
+// C_RefreshFinish::finish, which created by ImageRequestWQ::_void_dequeue
 void ImageRequestWQ::handle_refreshed(int r, ImageRequest<> *req) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 15) << "resuming IO after image refresh: r=" << r << ", "
                  << "req=" << req << dendl;
+
   if (r < 0) {
+    // complete user provided callback
     process_finish();
     req->fail(r);
+
+    // dec m_queued_writes/m_queued_reads
     finish_queued_op(req);
     delete req;
+
     finish_in_flight_op();
   } else {
     // since IO was stalled for refresh -- original IO order is preserved
@@ -542,20 +639,27 @@ void ImageRequestWQ::handle_refreshed(int r, ImageRequest<> *req) {
   }
 
   m_refresh_in_progress = false;
+
+  // notify the worker pool to continue to handle aio
   signal();
 
   // refresh might have enabled exclusive lock -- IO stalled until
   // we acquire the lock
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   if (is_lock_required() && is_lock_request_needed()) {
     m_image_ctx.exclusive_lock->acquire_lock(nullptr);
   }
 }
 
+// called by 
+// ImageRequestWQ::C_BlockedWrites::finish, see ImageRequestWQ::finish_in_progress_write
 void ImageRequestWQ::handle_blocked_writes(int r) {
   Contexts contexts;
+
   {
     RWLock::WLocker locker(m_lock);
+
     contexts.swap(m_write_blocker_contexts);
   }
 

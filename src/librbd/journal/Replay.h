@@ -62,6 +62,7 @@ private:
   typedef std::unordered_set<Context *> ContextSet;
   typedef std::unordered_map<uint64_t, OpEvent> OpEvents;
 
+  // used by Replay<I>::create_op_context_callback
   struct C_OpOnComplete : public Context {
     Replay *replay;
     uint64_t op_tid;
@@ -73,6 +74,7 @@ private:
     }
   };
 
+  // used by Replay<I>::create_aio_modify_completion
   struct C_AioModifyComplete : public Context {
     Replay *replay;
     Context *on_ready;
@@ -85,6 +87,7 @@ private:
     }
   };
 
+  // used by Replay<I>::create_aio_flush_completion
   struct C_AioFlushComplete : public Context {
     Replay *replay;
     Context *on_flush_safe;
@@ -99,6 +102,7 @@ private:
     }
   };
 
+  // used by Replay<I>::process
   struct EventVisitor : public boost::static_visitor<void> {
     Replay *replay;
     Context *on_ready;
@@ -123,6 +127,7 @@ private:
   Contexts m_aio_modify_unsafe_contexts;
   ContextSet m_aio_modify_safe_contexts;
 
+  // std::unordered_map<uint64_t, OpEvent>
   OpEvents m_op_events;
   uint64_t m_in_flight_op_events = 0;
 

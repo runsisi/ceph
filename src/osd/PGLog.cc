@@ -129,6 +129,8 @@ void PGLog::trim(
   }
 }
 
+// called by
+// PG::proc_replica_log
 void PGLog::proc_replica_log(
   pg_info_t &oinfo,
   const pg_log_t &olog,
@@ -148,6 +150,7 @@ void PGLog::proc_replica_log(
 	     << "for divergent objects" << dendl;
     return;
   }
+
   assert(olog.head >= log.tail);
 
   /*
@@ -206,7 +209,7 @@ void PGLog::proc_replica_log(
     oinfo,
     olog.get_can_rollback_to(),
     omissing,
-    0,
+    0, // optional, LogEntryHandler *rollbacker
     this);
 
   if (lu < oinfo.last_update) {
@@ -232,6 +235,9 @@ void PGLog::proc_replica_log(
   }
 }
 
+// called by
+// PG::rewind_divergent_log
+// PGLog::merge_log
 /**
  * rewind divergent entries at the head of the log
  *
@@ -272,6 +278,8 @@ void PGLog::rewind_divergent_log(eversion_t newhead,
   dirty_big_info = true;
 }
 
+// called by
+// PG::merge_log
 void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
                       pg_info_t &info, LogEntryHandler *rollbacker,
                       bool &dirty_info, bool &dirty_big_info)

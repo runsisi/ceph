@@ -72,6 +72,7 @@ PyModules::PyModules(DaemonStateIndex &ds, ClusterState &cs, MonClient &mc,
 // still an "incomplete" type. so we need to define the destructor here.
 PyModules::~PyModules() = default;
 
+// std::map<DaemonKey, DaemonStatePtr>
 void PyModules::dump_server(const std::string &hostname,
                       const DaemonStateCollection &dmc,
                       Formatter *f)
@@ -112,6 +113,7 @@ PyObject *PyModules::get_server_python(const std::string &hostname)
   PyEval_RestoreThread(tstate);
   dout(10) << " (" << hostname << ")" << dendl;
 
+  // daemon_state was initialized by Mgr::load_all_metadata
   auto dmc = daemon_state.get_by_server(hostname);
 
   PyFormatter f;
@@ -128,6 +130,7 @@ PyObject *PyModules::list_servers_python()
   dout(10) << " >" << dendl;
 
   PyFormatter f(false, true);
+  // daemon_state was initialized by Mgr::load_all_metadata
   const auto &all = daemon_state.get_all_servers();
   for (const auto &i : all) {
     const auto &hostname = i.first;
@@ -143,6 +146,7 @@ PyObject *PyModules::list_servers_python()
 PyObject *PyModules::get_metadata_python(std::string const &handle,
     entity_type_t svc_type, const std::string &svc_id)
 {
+  // daemon_state was initialized by Mgr::load_all_metadata
   auto metadata = daemon_state.get(DaemonKey(svc_type, svc_id));
   PyFormatter f;
   f.dump_string("hostname", metadata->hostname);
@@ -199,6 +203,7 @@ PyObject *PyModules::get_python(const std::string &what)
     return f.get();
   } else if (what == "osd_metadata") {
     PyFormatter f;
+    // daemon_state was initialized by Mgr::load_all_metadata
     auto dmc = daemon_state.get_by_type(CEPH_ENTITY_TYPE_OSD);
     for (const auto &i : dmc) {
       f.open_object_section(i.first.second.c_str());
@@ -289,6 +294,8 @@ PyObject *PyModules::get_python(const std::string &what)
   }
 }
 
+// called by
+// PyModules::init
 std::string PyModules::get_site_packages()
 {
   std::stringstream site_packages;
@@ -355,11 +362,12 @@ std::string PyModules::get_site_packages()
   return site_packages.str();
 }
 
-
+// called by
+// Mgr::init
 int PyModules::init()
 {
   Mutex::Locker locker(lock);
-
+  Mgr::init
   global_handle = this;
 
   // Set up global python interpreter
@@ -396,7 +404,7 @@ int PyModules::init()
     PyEval_InitThreads();
   }
 
-  // Load python code
+  // Load python code, default "rest"
   boost::tokenizer<> tok(g_conf->mgr_modules);
   for(const auto& module_name : tok) {
     dout(1) << "Loading python module '" << module_name << "'" << dendl;
@@ -441,6 +449,8 @@ public:
   }
 };
 
+// called by
+// Mgr::init
 void PyModules::start()
 {
   Mutex::Locker l(lock);
@@ -579,6 +589,8 @@ void PyModules::set_config(const std::string &handle,
   }
 }
 
+// called by
+// DaemonServer::handle_command
 std::vector<ModuleCommand> PyModules::get_commands()
 {
   Mutex::Locker l(lock);
@@ -627,6 +639,7 @@ PyObject* PyModules::get_counter_python(
   PyFormatter f;
   f.open_array_section(path.c_str());
 
+  // daemon_state was initialized by Mgr::load_all_metadata
   auto metadata = daemon_state.get(DaemonKey(svc_type, svc_id));
 
   // FIXME: this is unsafe, I need to either be inside DaemonStateIndex's

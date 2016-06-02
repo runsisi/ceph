@@ -81,7 +81,12 @@ enum ClientState {
 
 struct Client {
   std::string id;
+  // encoded librbd::journal::ClientData, i.e.,
+  // <journal::ImageClientMeta, IMAGE_CLIENT_META_TYPE>, or
+  // <MirrorPeerClientMeta, MIRROR_PEER_CLIENT_META_TYPE>, or
+  // <CliClientMeta, CLI_CLIENT_META_TYPE>
   bufferlist data;
+  // updated by JournalMetadata::committed
   ObjectSetPosition commit_position;
   ClientState state;
 

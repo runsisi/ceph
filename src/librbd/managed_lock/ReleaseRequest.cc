@@ -23,6 +23,10 @@ using util::detail::C_AsyncCallback;
 using util::create_context_callback;
 using util::create_rados_callback;
 
+// created by
+// ManagedLock<I>::revert_to_unlock_state
+// ManagedLock<I>::handle_pre_release_lock
+// ManagedLock<I>::handle_shutdown_pre_release
 template <typename I>
 ReleaseRequest<I>* ReleaseRequest<I>::create(librados::IoCtx& ioctx,
                                              Watcher *watcher,

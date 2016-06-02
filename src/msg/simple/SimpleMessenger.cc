@@ -85,19 +85,23 @@ void SimpleMessenger::ready()
 int SimpleMessenger::shutdown()
 {
   ldout(cct,10) << "shutdown " << get_myaddr() << dendl;
+
   mark_down_all();
 
   // break ref cycles on the loopback connection
   local_connection->set_priv(NULL);
 
   lock.Lock();
+
   stop_cond.Signal();
   stopped = true;
+
   lock.Unlock();
 
   return 0;
 }
 
+// called by send_message(Message *m, const entity_inst_t& dest)
 int SimpleMessenger::_send_message(Message *m, const entity_inst_t& dest)
 {
   // set envelope
@@ -120,13 +124,17 @@ int SimpleMessenger::_send_message(Message *m, const entity_inst_t& dest)
   }
 
   lock.Lock();
+
   Pipe *pipe = _lookup_pipe(dest.addr);
+
   submit_message(m, (pipe ? pipe->connection_state.get() : NULL),
                  dest.addr, dest.name.type(), true);
+
   lock.Unlock();
   return 0;
 }
 
+// called by send_message(Message *m, Connection *con)
 int SimpleMessenger::_send_message(Message *m, Connection *con)
 {
   //set envelope
@@ -349,16 +357,27 @@ int SimpleMessenger::start()
   return 0;
 }
 
+// called by Accepter::entry
 Pipe *SimpleMessenger::add_accept_pipe(int sd)
 {
   lock.Lock();
+
   Pipe *p = new Pipe(this, Pipe::STATE_ACCEPTING, NULL);
+
   p->sd = sd;
+
   p->pipe_lock.Lock();
+
+  // start reader thread
   p->start_reader();
+
   p->pipe_lock.Unlock();
+
   pipes.insert(p);
+
+  // will be erased and insert into msgr->rank_pipe by Pipe::accept
   accepting_pipes.insert(p);
+
   lock.Unlock();
   return p;
 }
@@ -366,6 +385,9 @@ Pipe *SimpleMessenger::add_accept_pipe(int sd)
 /* connect_rank
  * NOTE: assumes messenger.lock held.
  */
+// callded by
+// SimpleMessenger::get_connection
+// SimpleMessenger::submit_message
 Pipe *SimpleMessenger::connect_rank(const entity_addr_t& addr,
 				    int type,
 				    PipeConnection *con,
@@ -377,17 +399,26 @@ Pipe *SimpleMessenger::connect_rank(const entity_addr_t& addr,
   ldout(cct,10) << "connect_rank to " << addr << ", creating pipe and registering" << dendl;
   
   // create pipe
+  // alloc PipeConnection instance if con is NULL
   Pipe *pipe = new Pipe(this, Pipe::STATE_CONNECTING,
 			static_cast<PipeConnection*>(con));
+
   pipe->pipe_lock.Lock();
+
   pipe->set_peer_type(type);
   pipe->set_peer_addr(addr);
   pipe->policy = get_policy(type);
   pipe->start_writer();
+
   if (first)
+    // push back of Pipe::out_q[prio]
     pipe->_send(first);
+
   pipe->pipe_lock.Unlock();
+
+  // register in SimpleMessenger::rank_pipe
   pipe->register_pipe();
+
   pipes.insert(pipe);
 
   return pipe;
@@ -397,22 +428,40 @@ Pipe *SimpleMessenger::connect_rank(const entity_addr_t& addr,
 
 
 
-
+// called by
+// Pipe::connect
 AuthAuthorizer *SimpleMessenger::get_authorizer(int peer_type, bool force_new)
 {
+  // Dispatcher::ms_get_authorizer
   return ms_deliver_get_authorizer(peer_type, force_new);
 }
 
+// called by
+// Pipe::accept
 bool SimpleMessenger::verify_authorizer(Connection *con, int peer_type,
 					int protocol, bufferlist& authorizer, bufferlist& authorizer_reply,
 					bool& isvalid,CryptoKey& session_key)
 {
+  // Dispatcher::ms_verify_authorizer
   return ms_deliver_verify_authorizer(con, peer_type, protocol, authorizer, authorizer_reply, isvalid,session_key);
 }
 
+// called by
+// Client::_open_mds_session
+// Client::handle_mds_map
+// Client::mds_command
+// MonClient::get_monmap_privately
+// MonClient::ping_monitor
+// MonClient::_reopen_session
+// OSDService::send_message_osd_cluster
+// OSDService::get_con_osd_cluster
+// OSDService::get_con_osd_hb
+// Objecter::_get_session
+// Objecter::_reopen_session
 ConnectionRef SimpleMessenger::get_connection(const entity_inst_t& dest)
 {
   Mutex::Locker l(lock);
+
   if (my_inst.addr == dest.addr) {
     // local
     return local_connection;
@@ -420,14 +469,24 @@ ConnectionRef SimpleMessenger::get_connection(const entity_inst_t& dest)
 
   // remote
   while (true) {
+    // lookup in SimpleMessenger::rank_pipe
     Pipe *pipe = _lookup_pipe(dest.addr);
+
     if (pipe) {
+
+      // pipe has not closed
+
       ldout(cct, 10) << "get_connection " << dest << " existing " << pipe << dendl;
     } else {
+      // SimpleMessenger::connect_rank(addr, type, PipeConnection *con, Message *first)
       pipe = connect_rank(dest.addr, dest.name.type(), NULL, NULL);
+
       ldout(cct, 10) << "get_connection " << dest << " new " << pipe << dendl;
     }
+
     Mutex::Locker l(pipe->pipe_lock);
+
+    // PipeConnectionRef
     if (pipe->connection_state)
       return pipe->connection_state;
     // we failed too quickly!  retry.  FIXME.
@@ -439,6 +498,9 @@ ConnectionRef SimpleMessenger::get_loopback_connection()
   return local_connection;
 }
 
+// called by
+// SimpleMessenger::_send_message(Message *m, const entity_inst_t& dest)
+// SimpleMessenger::_send_message(Message *m, Connection *con)
 void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
 				     const entity_addr_t& dest_addr, int dest_type,
 				     bool already_locked)
@@ -459,6 +521,7 @@ void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
   // existing connection?
   if (con) {
     Pipe *pipe = NULL;
+
     bool ok = static_cast<PipeConnection*>(con)->try_get_pipe(&pipe);
     if (!ok) {
       ldout(cct,0) << "submit_message " << *m << " remote, " << dest_addr
@@ -466,28 +529,42 @@ void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
       m->put();
       return;
     }
+
     while (pipe && ok) {
+
       // we loop in case of a racing reconnect, either from us or them
+
       pipe->pipe_lock.Lock(); // can't use a Locker because of the Pipe ref
+
       if (pipe->state != Pipe::STATE_CLOSED) {
 	ldout(cct,20) << "submit_message " << *m << " remote, " << dest_addr << ", have pipe." << dendl;
+
 	pipe->_send(m);
+
 	pipe->pipe_lock.Unlock();
+
 	pipe->put();
+
 	return;
       }
+
       Pipe *current_pipe;
       ok = con->try_get_pipe(&current_pipe);
+
       pipe->pipe_lock.Unlock();
+
       if (current_pipe == pipe) {
 	ldout(cct,20) << "submit_message " << *m << " remote, " << dest_addr
 		      << ", had pipe " << pipe << ", but it closed." << dendl;
+
 	pipe->put();
 	current_pipe->put();
 	m->put();
+
 	return;
       } else {
 	pipe->put();
+
 	pipe = current_pipe;
       }
     }
@@ -497,47 +574,63 @@ void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
   if (my_inst.addr == dest_addr) {
     // local
     ldout(cct,20) << "submit_message " << *m << " local" << dendl;
+
     m->set_connection(local_connection.get());
+
     dispatch_queue.local_delivery(m, m->get_priority());
+
     return;
   }
 
   // remote, no existing pipe.
   const Policy& policy = get_policy(dest_type);
+
   if (policy.server) {
     ldout(cct,20) << "submit_message " << *m << " remote, " << dest_addr << ", lossy server for target type "
 		  << ceph_entity_type_name(dest_type) << ", no session, dropping." << dendl;
     m->put();
   } else {
     ldout(cct,20) << "submit_message " << *m << " remote, " << dest_addr << ", new pipe." << dendl;
+
     if (!already_locked) {
       /** We couldn't handle the Message without reference to global data, so
        *  grab the lock and do it again. If we got here, we know it's a non-lossy
        *  Connection, so we can use our existing pointer without doing another lookup. */
       Mutex::Locker l(lock);
+
+      // TODO: why recursive, call connect_rank should be better ???
       submit_message(m, con, dest_addr, dest_type, true);
     } else {
+      // SimpleMessenger::lock must be held to call SimpleMessenger::connect_rank
+
       connect_rank(dest_addr, dest_type, static_cast<PipeConnection*>(con), m);
     }
   }
 }
 
+// called by PipeConnection::send_keepalive
 int SimpleMessenger::send_keepalive(Connection *con)
 {
   int ret = 0;
   Pipe *pipe = static_cast<Pipe *>(
     static_cast<PipeConnection*>(con)->get_pipe());
+
   if (pipe) {
     ldout(cct,20) << "send_keepalive con " << con << ", have pipe." << dendl;
+
     assert(pipe->msgr == this);
+
     pipe->pipe_lock.Lock();
     pipe->_send_keepalive();
     pipe->pipe_lock.Unlock();
+
     pipe->put();
   } else {
     ldout(cct,0) << "send_keepalive con " << con << ", no pipe." << dendl;
+
     ret = -EPIPE;
   }
+
   return ret;
 }
 
@@ -550,6 +643,9 @@ void SimpleMessenger::wait()
     lock.Unlock();
     return;
   }
+
+  // will be set and signalled by SimpleMessenger::shutdown, see ms_public->wait() called
+  // in ceph_osd.cc:main as an example
   if (!stopped)
     stop_cond.Wait(lock);
 
@@ -584,12 +680,15 @@ void SimpleMessenger::wait()
 
   // close+reap all pipes
   lock.Lock();
+
   {
     ldout(cct,10) << "wait: closing pipes" << dendl;
 
     while (!rank_pipe.empty()) {
       Pipe *p = rank_pipe.begin()->second;
+
       p->unregister_pipe();
+
       p->pipe_lock.Lock();
       p->stop_and_wait();
       // don't generate an event here; we're shutting down anyway.
@@ -600,20 +699,27 @@ void SimpleMessenger::wait()
     }
 
     reaper();
+
     ldout(cct,10) << "wait: waiting for pipes " << pipes << " to close" << dendl;
+
     while (!pipes.empty()) {
       reaper_cond.Wait(lock);
       reaper();
     }
   }
+
   lock.Unlock();
 
   ldout(cct,10) << "wait: done." << dendl;
   ldout(cct,1) << "shutdown complete." << dendl;
+
   started = false;
 }
 
-
+// called by
+// OSD::_committed_osd_maps
+// SimpleMessenger::shutdown, SimpleMessenger::rebind
+// Monitor::bootstrap
 void SimpleMessenger::mark_down_all()
 {
   ldout(cct,1) << "mark_down_all" << dendl;
@@ -649,11 +755,16 @@ void SimpleMessenger::mark_down_all()
 void SimpleMessenger::mark_down(const entity_addr_t& addr)
 {
   lock.Lock();
+
   Pipe *p = _lookup_pipe(addr);
+
   if (p) {
     ldout(cct,1) << "mark_down " << addr << " -- " << p << dendl;
+
     p->unregister_pipe();
+
     p->pipe_lock.Lock();
+
     p->stop();
     if (p->connection_state) {
       // generate a reset event for the caller in this case, even
@@ -663,10 +774,12 @@ void SimpleMessenger::mark_down(const entity_addr_t& addr)
       if (con && con->clear_pipe(p))
 	dispatch_queue.queue_reset(con.get());
     }
+
     p->pipe_lock.Unlock();
   } else {
     ldout(cct,1) << "mark_down " << addr << " -- pipe dne" << dendl;
   }
+
   lock.Unlock();
 }
 
@@ -674,6 +787,7 @@ void SimpleMessenger::mark_down(Connection *con)
 {
   if (con == NULL)
     return;
+
   lock.Lock();
   Pipe *p = static_cast<Pipe *>(static_cast<PipeConnection*>(con)->get_pipe());
   if (p) {
@@ -695,9 +809,11 @@ void SimpleMessenger::mark_down(Connection *con)
   lock.Unlock();
 }
 
+// called by PipeConnection::mark_disposable
 void SimpleMessenger::mark_disposable(Connection *con)
 {
   lock.Lock();
+
   Pipe *p = static_cast<Pipe *>(static_cast<PipeConnection*>(con)->get_pipe());
   if (p) {
     ldout(cct,1) << "mark_disposable " << con << " -- " << p << dendl;
@@ -709,6 +825,7 @@ void SimpleMessenger::mark_disposable(Connection *con)
   } else {
     ldout(cct,1) << "mark_disposable " << con << " -- pipe dne" << dendl;
   }
+
   lock.Unlock();
 }
 
@@ -720,21 +837,29 @@ void SimpleMessenger::learned_addr(const entity_addr_t &peer_addr_for_me)
   // this always goes from true -> false under the protection of the
   // mutex.  if it is already false, we need not retake the mutex at
   // all.
+  // was set to true in ctor
   if (!need_addr)
     return;
 
   lock.Lock();
+
   if (need_addr) {
     entity_addr_t t = peer_addr_for_me;
+
+    // for client we do not have fixed port, so do not bother to change it
+    // for server we have bound to a fixed port, so do not bother to change it either
     t.set_port(my_inst.addr.get_port());
     t.set_nonce(my_inst.addr.get_nonce());
     ANNOTATE_BENIGN_RACE_SIZED(&my_inst.addr, sizeof(my_inst.addr),
                                "SimpleMessenger learned addr");
     my_inst.addr = t;
     ldout(cct,1) << "learned my addr " << my_inst.addr << dendl;
+
     need_addr = false;
+
     init_local_connection();
   }
+
   lock.Unlock();
 }
 

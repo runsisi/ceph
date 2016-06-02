@@ -53,6 +53,8 @@ void ImageSync<I>::send() {
   send_prune_catch_up_sync_point();
 }
 
+// called by
+// ImageSyncThrottler<I>::cancel_sync, which called by BootstrapRequest<I>::cancel
 template <typename I>
 void ImageSync<I>::cancel() {
   Mutex::Locker locker(m_lock);
@@ -74,10 +76,16 @@ template <typename I>
 void ImageSync<I>::send_prune_catch_up_sync_point() {
   update_progress("PRUNE_CATCH_UP_SYNC_POINT");
 
+  // MirrorPeerClientMeta, got or registered by BootstrapRequest<I>::handle_get_client
   if (m_client_meta->sync_points.empty()) {
+
+    // no sync points need to prune, create new sync point directly
+
     send_create_sync_point();
     return;
   }
+
+  // have sync points, prune to a max of one, maybe zero
 
   dout(20) << dendl;
 
@@ -86,8 +94,12 @@ void ImageSync<I>::send_prune_catch_up_sync_point() {
   // restarted)
   Context *ctx = create_context_callback<
     ImageSync<I>, &ImageSync<I>::handle_prune_catch_up_sync_point>(this);
+
+  // ImageSync<I>::send_prune_sync_points calls create with the second
+  // parameter set to true used to flag if the sync has completed
   SyncPointPruneRequest<I> *request = SyncPointPruneRequest<I>::create(
     m_remote_image_ctx, false, m_journaler, m_client_meta, ctx);
+
   request->send();
 }
 
@@ -112,9 +124,15 @@ void ImageSync<I>::send_create_sync_point() {
   // TODO: when support for disconnecting laggy clients is added,
   //       re-connect and create catch-up sync point
   if (m_client_meta->sync_points.size() > 0) {
+
+    // the master sync point is valid, no need to create a new sync point
+    // have valid sync point
+
     send_copy_snapshots();
     return;
   }
+
+  // currently no master sync point, so create one
 
   dout(20) << dendl;
 
@@ -122,6 +140,7 @@ void ImageSync<I>::send_create_sync_point() {
     ImageSync<I>, &ImageSync<I>::handle_create_sync_point>(this);
   SyncPointCreateRequest<I> *request = SyncPointCreateRequest<I>::create(
     m_remote_image_ctx, m_mirror_uuid, m_journaler, m_client_meta, ctx);
+
   request->send();
 }
 
@@ -136,12 +155,14 @@ void ImageSync<I>::handle_create_sync_point(int r) {
     return;
   }
 
+  // create local snapshots corresponding to the remote snapshots
   send_copy_snapshots();
 }
 
 template <typename I>
 void ImageSync<I>::send_copy_snapshots() {
   m_lock.Lock();
+
   if (m_canceled) {
     m_lock.Unlock();
     finish(-ECANCELED);
@@ -152,10 +173,12 @@ void ImageSync<I>::send_copy_snapshots() {
 
   Context *ctx = create_context_callback<
     ImageSync<I>, &ImageSync<I>::handle_copy_snapshots>(this);
+
   m_snapshot_copy_request = SnapshotCopyRequest<I>::create(
     m_local_image_ctx, m_remote_image_ctx, &m_snap_map, m_journaler,
     m_client_meta, m_work_queue, ctx);
   m_snapshot_copy_request->get();
+
   m_lock.Unlock();
 
   update_progress("COPY_SNAPSHOTS");
@@ -169,8 +192,10 @@ void ImageSync<I>::handle_copy_snapshots(int r) {
 
   {
     Mutex::Locker locker(m_lock);
+
     m_snapshot_copy_request->put();
     m_snapshot_copy_request = nullptr;
+
     if (r == 0 && m_canceled) {
       r = -ECANCELED;
     }
@@ -192,6 +217,7 @@ void ImageSync<I>::handle_copy_snapshots(int r) {
 template <typename I>
 void ImageSync<I>::send_copy_image() {
   m_lock.Lock();
+
   if (m_canceled) {
     m_lock.Unlock();
     finish(-ECANCELED);
@@ -207,6 +233,7 @@ void ImageSync<I>::send_copy_image() {
     m_journaler, m_client_meta, &m_client_meta->sync_points.front(),
     ctx, m_progress_ctx);
   m_image_copy_request->get();
+
   m_lock.Unlock();
 
   update_progress("COPY_IMAGE");
@@ -220,8 +247,10 @@ void ImageSync<I>::handle_copy_image(int r) {
 
   {
     Mutex::Locker locker(m_lock);
+
     m_image_copy_request->put();
     m_image_copy_request = nullptr;
+
     if (r == 0 && m_canceled) {
       r = -ECANCELED;
     }
@@ -245,21 +274,30 @@ void ImageSync<I>::send_copy_object_map() {
   update_progress("COPY_OBJECT_MAP");
 
   m_local_image_ctx->snap_lock.get_read();
+
   if (!m_local_image_ctx->test_features(RBD_FEATURE_OBJECT_MAP,
                                         m_local_image_ctx->snap_lock)) {
     m_local_image_ctx->snap_lock.put_read();
+
+    // we have created the corresponding snapshots of the remote snapshots
+    // and copied all image data, now we have no object_map to copy, so
+    // do the cleanup directly
+
     send_prune_sync_points();
+
     return;
   }
 
   assert(m_local_image_ctx->object_map != nullptr);
 
   assert(!m_client_meta->sync_points.empty());
+
   librbd::journal::MirrorPeerSyncPoint &sync_point =
     m_client_meta->sync_points.front();
   auto snap_id_it = m_local_image_ctx->snap_ids.find({cls::rbd::UserSnapshotNamespace(),
 						      sync_point.snap_name});
   assert(snap_id_it != m_local_image_ctx->snap_ids.end());
+
   librados::snap_t snap_id = snap_id_it->second;
 
   dout(20) << ": snap_id=" << snap_id << ", "
@@ -269,7 +307,9 @@ void ImageSync<I>::send_copy_object_map() {
   RWLock::WLocker object_map_locker(m_local_image_ctx->object_map_lock);
   Context *ctx = create_context_callback<
     ImageSync<I>, &ImageSync<I>::handle_copy_object_map>(this);
+
   m_local_image_ctx->object_map->rollback(snap_id, ctx);
+
   m_local_image_ctx->snap_lock.put_read();
 }
 
@@ -278,6 +318,7 @@ void ImageSync<I>::handle_copy_object_map(int r) {
   dout(20) << dendl;
 
   assert(r == 0);
+
   send_refresh_object_map();
 }
 
@@ -289,7 +330,10 @@ void ImageSync<I>::send_refresh_object_map() {
 
   Context *ctx = create_context_callback<
     ImageSync<I>, &ImageSync<I>::handle_refresh_object_map>(this);
+
+  // alloc an ObjectMap instance
   m_object_map = m_local_image_ctx->create_object_map(CEPH_NOSNAP);
+
   m_object_map->open(ctx);
 }
 
@@ -298,12 +342,15 @@ void ImageSync<I>::handle_refresh_object_map(int r) {
   dout(20) << dendl;
 
   assert(r == 0);
+
   {
     RWLock::WLocker snap_locker(m_local_image_ctx->snap_lock);
     std::swap(m_local_image_ctx->object_map, m_object_map);
   }
+
   delete m_object_map;
 
+  // image sync finished
   send_prune_sync_points();
 }
 
@@ -317,6 +364,9 @@ void ImageSync<I>::send_prune_sync_points() {
     ImageSync<I>, &ImageSync<I>::handle_prune_sync_points>(this);
   SyncPointPruneRequest<I> *request = SyncPointPruneRequest<I>::create(
     m_remote_image_ctx, true, m_journaler, m_client_meta, ctx);
+
+  // sync has completed, prune the sync point
+
   request->send();
 }
 
@@ -332,6 +382,12 @@ void ImageSync<I>::handle_prune_sync_points(int r) {
   }
 
   if (!m_client_meta->sync_points.empty()) {
+
+    // TODO: in ImageSync<I>::send_prune_catch_up_sync_point we may have
+    // pruned to only one sync point, and ImageSync<I>::send_create_sync_point
+    // never create new sync point when the existing sync points are not
+    // empty, so why there is still another sync point ???
+
     send_copy_image();
     return;
   }
@@ -343,6 +399,7 @@ template <typename I>
 void ImageSync<I>::update_progress(const std::string &description) {
   dout(20) << ": " << description << dendl;
 
+  // i.e., ImageReplayer::m_progress_cxt
   if (m_progress_ctx) {
     m_progress_ctx->update_progress("IMAGE_SYNC/" + description);
   }

@@ -177,6 +177,8 @@ std::string AdminSocket::destroy_shutdown_pipe()
   return "";
 }
 
+// called by
+// AdminSocket::init, which called by CephContext::start_service_thread
 std::string AdminSocket::bind_and_listen(const std::string &sock_path, int *fd)
 {
   ldout(m_cct, 5) << "bind_and_listen " << sock_path << dendl;
@@ -231,6 +233,7 @@ std::string AdminSocket::bind_and_listen(const std::string &sock_path, int *fd)
 	}
       }
     }
+
     if (err != 0) {
       ostringstream oss;
       oss << "AdminSocket::bind_and_listen: "
@@ -240,6 +243,7 @@ std::string AdminSocket::bind_and_listen(const std::string &sock_path, int *fd)
       return oss.str();
     }
   }
+
   if (listen(sock_fd, 5) != 0) {
     int err = errno;
     ostringstream oss;
@@ -249,6 +253,7 @@ std::string AdminSocket::bind_and_listen(const std::string &sock_path, int *fd)
     VOID_TEMP_FAILURE_RETRY(unlink(sock_path.c_str()));
     return oss.str();
   }
+
   *fd = sock_fd;
   return "";
 }
@@ -256,6 +261,7 @@ std::string AdminSocket::bind_and_listen(const std::string &sock_path, int *fd)
 void* AdminSocket::entry()
 {
   ldout(m_cct, 5) << "entry start" << dendl;
+
   while (true) {
     struct pollfd fds[2];
     memset(fds, 0, sizeof(fds));
@@ -284,6 +290,7 @@ void* AdminSocket::entry()
       return PFL_SUCCESS;
     }
   }
+
   ldout(m_cct, 5) << "entry exit" << dendl;
 }
 
@@ -571,6 +578,8 @@ public:
   }
 };
 
+// called by
+// CephContext::start_service_thread, which called by common_init_finish
 bool AdminSocket::init(const std::string &path)
 {
   ldout(m_cct, 5) << "init " << path << dendl;
@@ -583,6 +592,7 @@ bool AdminSocket::init(const std::string &path)
     lderr(m_cct) << "AdminSocketConfigObs::init: error: " << err << dendl;
     return false;
   }
+
   int sock_fd;
   err = bind_and_listen(path, &sock_fd);
   if (!err.empty()) {
@@ -609,6 +619,7 @@ bool AdminSocket::init(const std::string &path)
 		   m_getdescs_hook, "list available commands");
 
   create("admin_socket");
+
   add_cleanup_file(m_path.c_str());
   return true;
 }

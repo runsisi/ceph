@@ -50,6 +50,7 @@ int execute_enable_disable(const po::variables_map &vm, bool enable,
   std::string pool_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
       vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
       &snap_name, utils::SNAPSHOT_PRESENCE_NONE, utils::SPEC_VALIDATION_NONE);
@@ -97,6 +98,7 @@ int execute_promote(const po::variables_map &vm) {
   std::string pool_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
       vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
       &snap_name, utils::SNAPSHOT_PRESENCE_NONE, utils::SPEC_VALIDATION_NONE);
@@ -122,6 +124,7 @@ int execute_promote(const po::variables_map &vm) {
   }
 
   std::cout << "Image promoted to primary" << std::endl;
+
   return 0;
 }
 
@@ -130,6 +133,7 @@ int execute_demote(const po::variables_map &vm) {
   std::string pool_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
       vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
       &snap_name, utils::SNAPSHOT_PRESENCE_NONE, utils::SPEC_VALIDATION_NONE);
@@ -153,6 +157,7 @@ int execute_demote(const po::variables_map &vm) {
   }
 
   std::cout << "Image demoted to non-primary" << std::endl;
+
   return 0;
 }
 
@@ -161,6 +166,7 @@ int execute_resync(const po::variables_map &vm) {
   std::string pool_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
       vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
       &snap_name, utils::SNAPSHOT_PRESENCE_NONE, utils::SPEC_VALIDATION_NONE);
@@ -221,6 +227,7 @@ int execute_status(const po::variables_map &vm) {
   }
 
   librbd::mirror_image_status_t status;
+
   r = image.mirror_image_get_status(&status, sizeof(status));
   if (r < 0) {
     std::cerr << "rbd: failed to get status for image " << image_name << ": "
@@ -228,6 +235,7 @@ int execute_status(const po::variables_map &vm) {
     return r;
   }
 
+  // status.up + status.state
   std::string state = utils::mirror_image_status_state(status);
   std::string last_update = (
     status.last_update == 0 ? "" : utils::timestr(status.last_update));

@@ -25,11 +25,13 @@ bool JournalThrottle::set_params(
 
 std::chrono::duration<double> JournalThrottle::get(uint64_t c)
 {
+  // may wait before inc BackoffThrottle::current
   return throttle.get(c);
 }
 
 uint64_t JournalThrottle::take(uint64_t c)
 {
+  // inc BackoffThrottle::current and do nothing else
   return throttle.take(c);
 }
 
@@ -39,12 +41,15 @@ void JournalThrottle::register_throttle_seq(uint64_t seq, uint64_t c)
   journaled_ops.push_back(std::make_pair(seq, c));
 }
 
+// called by FileJournal::committed_thru
 std::pair<uint64_t, uint64_t> JournalThrottle::flush(uint64_t mono_id)
 {
   uint64_t to_put_bytes = 0;
   uint64_t to_put_ops = 0;
+
   {
     locker l(lock);
+
     while (!journaled_ops.empty() &&
 	   journaled_ops.front().first <= mono_id) {
       to_put_bytes += journaled_ops.front().second;
@@ -52,7 +57,9 @@ std::pair<uint64_t, uint64_t> JournalThrottle::flush(uint64_t mono_id)
       journaled_ops.pop_front();
     }
   }
+
   throttle.put(to_put_bytes);
+
   return make_pair(to_put_ops, to_put_bytes);
 }
 

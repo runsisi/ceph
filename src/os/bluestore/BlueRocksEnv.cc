@@ -145,7 +145,9 @@ class BlueRocksRandomAccessFile : public rocksdb::RandomAccessFile {
   }
 };
 
-
+// created by
+// BlueRocksEnv::NewWritableFile
+// BlueRocksEnv::ReuseWritableFile
 // A file abstraction for sequential writing.  The implementation
 // must provide buffering since callers may append small fragments
 // at a time to the file.
@@ -315,6 +317,8 @@ class BlueRocksFileLock : public rocksdb::FileLock {
 // --- BlueRocksEnv ---
 // --------------------
 
+// created by
+// BlueStore::_open_db
 BlueRocksEnv::BlueRocksEnv(BlueFS *f)
   : EnvWrapper(Env::Default()),  // forward most of it to POSIX
     fs(f)
@@ -361,11 +365,14 @@ rocksdb::Status BlueRocksEnv::NewWritableFile(
 {
   std::string dir, file;
   split(fname, &dir, &file);
+
   BlueFS::FileWriter *h;
   int r = fs->open_for_write(dir, file, &h, false);
   if (r < 0)
     return err_to_status(r);
+
   result->reset(new BlueRocksWritableFile(fs, h));
+
   return rocksdb::Status::OK();
 }
 
@@ -377,6 +384,7 @@ rocksdb::Status BlueRocksEnv::ReuseWritableFile(
 {
   std::string old_dir, old_file;
   split(old_fname, &old_dir, &old_file);
+
   std::string new_dir, new_file;
   split(new_fname, &new_dir, &new_file);
 
@@ -388,7 +396,9 @@ rocksdb::Status BlueRocksEnv::ReuseWritableFile(
   r = fs->open_for_write(new_dir, new_file, &h, true);
   if (r < 0)
     return err_to_status(r);
+
   result->reset(new BlueRocksWritableFile(fs, h));
+
   return rocksdb::Status::OK();
 }
 
@@ -398,7 +408,9 @@ rocksdb::Status BlueRocksEnv::NewDirectory(
 {
   if (!fs->dir_exists(name))
     return rocksdb::Status::IOError(name, strerror(ENOENT));
+
   result->reset(new BlueRocksDirectory(fs));
+
   return rocksdb::Status::OK();
 }
 

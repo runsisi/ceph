@@ -290,6 +290,7 @@ ObjectMap::ObjectMapIterator DBObjectMap::get_iterator(
   Header header = lookup_map_header(hl, oid);
   if (!header)
     return ObjectMapIterator(new EmptyIteratorImpl());
+
   DBObjectMapIterator iter = _get_iterator(header);
   iter->hlock.swap(hl);
   return iter;

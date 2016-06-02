@@ -208,6 +208,7 @@ public:
       return;
     full_ratio = full;
     nearfull_ratio = nearfull;
+
     redo_full_sets();
   }
 

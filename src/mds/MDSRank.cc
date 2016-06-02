@@ -2515,6 +2515,8 @@ void MDSRank::create_logger()
   mdcache->register_perfcounters();
 }
 
+// called by
+// MDSRankDispatcher::tick
 void MDSRank::check_ops_in_flight()
 {
   vector<string> warnings;

@@ -190,6 +190,8 @@ void librados::ObjectOperation::assert_exists()
 void librados::ObjectOperation::exec(const char *cls, const char *method, bufferlist& inbl)
 {
   ::ObjectOperation *o = &impl->o;
+
+  // add an op for CEPH_OSD_OP_CALL, encode cls, method, inbl into osd_op.indata
   o->call(cls, method, inbl);
 }
 
@@ -1118,8 +1120,12 @@ bool librados::IoCtx::pool_requires_alignment()
   return io_ctx_impl->client->pool_requires_alignment(get_id());
 }
 
+// called by
+// RGWRados::get_required_alignment
+// rados.cc/rados_tool_common
 int librados::IoCtx::pool_requires_alignment2(bool *requires)
 {
+  // test if it is ec pool and FLAG_EC_OVERWRITES is not set
   return io_ctx_impl->client->pool_requires_alignment2(get_id(), requires);
 }
 
@@ -1147,6 +1153,7 @@ std::string librados::IoCtx::get_pool_name() const
 
 uint64_t librados::IoCtx::get_instance_id() const
 {
+  // i.e., monclient.get_global_id
   return io_ctx_impl->client->get_instance_id();
 }
 
@@ -1452,7 +1459,14 @@ int librados::IoCtx::omap_rm_keys(const std::string& oid,
 }
 
 
-
+// called by
+// librados::IoCtx::aio_operate(..., ObjectWriteOperation, ...)
+// librados::IoCtx::aio_operate(..., ObjectReadOperation, ...)
+// rados_write_op_operate
+// rados_write_op_operate2
+// rados_aio_write_op_operate
+// rados_read_op_operate
+// rados_aio_read_op_operate
 static int translate_flags(int flags)
 {
   int op_flags = 0;
@@ -1509,10 +1523,12 @@ int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 				 snap_t snap_seq, std::vector<snap_t>& snaps)
 {
   object_t obj(oid);
+
   vector<snapid_t> snv;
   snv.resize(snaps.size());
   for (size_t i = 0; i < snaps.size(); ++i)
     snv[i] = snaps[i];
+
   SnapContext snapc(snap_seq, snv);
   return io_ctx_impl->aio_operate(obj, &o->impl->o, c->pc,
 				  snapc, 0);
@@ -1584,12 +1600,19 @@ void librados::IoCtx::snap_set_read(snap_t seq)
   io_ctx_impl->set_snap_read(seq);
 }
 
+// called by
+// librbd::image::RefreshRequest<I>::apply
+// librbd::operation::SnapshotCreateRequest<I>::update_snap_context
 int librados::IoCtx::selfmanaged_snap_set_write_ctx(snap_t seq, vector<snap_t>& snaps)
 {
+  // vector<snap_t> -> vector<snapid_t>
   vector<snapid_t> snv;
   snv.resize(snaps.size());
+
   for (unsigned i=0; i<snaps.size(); i++)
     snv[i] = snaps[i];
+
+  // set librados::IoCtxImpl::snapc
   return io_ctx_impl->set_snap_write_context(seq, snv);
 }
 
@@ -2230,7 +2253,9 @@ librados::Rados::Rados() : client(NULL)
 librados::Rados::Rados(IoCtx &ioctx)
 {
   client = ioctx.io_ctx_impl->client;
+
   assert(client != NULL);
+
   client->get();
 }
 
@@ -2283,8 +2308,10 @@ void librados::Rados::shutdown()
 {
   if (!client)
     return;
+
   if (client->put()) {
     client->shutdown();
+
     delete client;
     client = NULL;
   }
@@ -2292,6 +2319,7 @@ void librados::Rados::shutdown()
 
 uint64_t librados::Rados::get_instance_id()
 {
+  // refer to monclient.get_global_id
   return client->get_instance_id();
 }
 
@@ -2757,6 +2785,7 @@ extern "C" int rados_create(rados_t *pcluster, const char * const id)
   if (id) {
     iparams.name.set(CEPH_ENTITY_TYPE_CLIENT, id);
   }
+
   CephContext *cct = rados_create_cct("", &iparams);
 
   tracepoint(librados, rados_create_enter, id);
@@ -3722,12 +3751,16 @@ extern "C" int rados_ioctx_pool_requires_alignment2(rados_ioctx_t io,
 	int *requires)
 {
   tracepoint(librados, rados_ioctx_pool_requires_alignment_enter2, io);
+
   librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
   bool requires_alignment;
+  // test if it is ec pool and FLAG_EC_OVERWRITES is not set
   int retval = ctx->client->pool_requires_alignment2(ctx->get_id(), 
   	&requires_alignment);
+
   tracepoint(librados, rados_ioctx_pool_requires_alignment_exit2, retval, 
   	requires_alignment);
+
   if (requires)
     *requires = requires_alignment;
   return retval;
@@ -3768,11 +3801,17 @@ extern "C" void rados_ioctx_locator_set_key(rados_ioctx_t io, const char *key)
 extern "C" void rados_ioctx_set_namespace(rados_ioctx_t io, const char *nspace)
 {
   tracepoint(librados, rados_ioctx_set_namespace_enter, io, nspace);
+
   librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
+
+  // <pool, key, nspace, hash>
+  // librados::IoCtxImpl::IoCtxImpl initialize pool and hash
+
   if (nspace)
     ctx->oloc.nspace = nspace;
   else
     ctx->oloc.nspace = "";
+
   tracepoint(librados, rados_ioctx_set_namespace_exit);
 }
 
@@ -4376,6 +4415,7 @@ extern "C" uint32_t rados_nobjects_list_get_pg_hash_position(
 extern "C" int rados_nobjects_list_next(rados_list_ctx_t listctx, const char **entry, const char **key, const char **nspace)
 {
   tracepoint(librados, rados_nobjects_list_next_enter, listctx);
+
   librados::ObjListCtx *lh = (librados::ObjListCtx *)listctx;
   Objecter::NListContext *h = lh->nlc;
 
