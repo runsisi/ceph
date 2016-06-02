@@ -178,8 +178,7 @@ void Replay<I>::process(const EventEntry &event_entry,
   on_ready = util::create_async_context_callback(m_image_ctx, on_ready);
 
   RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
-  boost::apply_visitor(EventVisitor(this, on_ready, on_safe),
-                       event_entry.event);
+  boost::apply_visitor(EventVisitor(this, on_ready, on_safe), event_entry.event);
 }
 
 template <typename I>
@@ -865,6 +864,7 @@ AioCompletion *Replay<I>::create_aio_modify_completion(Context *on_ready,
     ldout(cct, 10) << ": hit AIO replay high-water mark: pausing replay"
                    << dendl;
     assert(m_on_aio_ready == nullptr);
+
     std::swap(m_on_aio_ready, on_ready);
   }
 

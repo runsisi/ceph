@@ -1358,7 +1358,11 @@ void Journal<I>::handle_get_tags(int r) {
   }
 
   transition_state(STATE_REPLAYING, 0);
+
   m_journal_replay = journal::Replay<I>::create(m_image_ctx);
+
+  // create an JournalPlayer instance and register a rbd replay handler
+  // into it, then prefetch
   m_journaler->start_replay(&m_replay_handler);
 }
 
@@ -1373,6 +1377,7 @@ void Journal<I>::handle_replay_ready() {
     }
 
     ldout(cct, 20) << this << " " << __func__ << dendl;
+
     if (!m_journaler->try_pop_front(&replay_entry)) {
       return;
     }
@@ -1381,6 +1386,8 @@ void Journal<I>::handle_replay_ready() {
     assert(!m_processing_entry);
     m_processing_entry = true;
   }
+
+  // process this entry
 
   bufferlist data = replay_entry.get_data();
   bufferlist::iterator it = data.begin();
@@ -1396,6 +1403,7 @@ void Journal<I>::handle_replay_ready() {
 
   Context *on_ready = create_context_callback<
     Journal<I>, &Journal<I>::handle_replay_process_ready>(this);
+
   Context *on_commit = new C_ReplayProcessSafe(this, std::move(replay_entry));
   m_journal_replay->process(event_entry, on_ready, on_commit);
 }
@@ -1439,11 +1447,15 @@ void Journal<I>::handle_replay_complete(int r) {
         handle_flushing_replay();
       }
     });
+
   ctx = new FunctionContext([this, cct, cancel_ops, ctx](int r) {
       ldout(cct, 20) << this << " handle_replay_complete: "
                      << "shut down replay" << dendl;
+
       m_journal_replay->shut_down(cancel_ops, ctx);
     });
+
+  // JournalPlayer::shutdown and delete itself
   m_journaler->stop_replay(ctx);
 }
 
@@ -1459,6 +1471,7 @@ void Journal<I>::handle_replay_process_ready(int r) {
     assert(m_processing_entry);
     m_processing_entry = false;
   }
+
   handle_replay_ready();
 }
 
@@ -1494,11 +1507,13 @@ void Journal<I>::handle_replay_process_safe(ReplayEntry replay_entry, int r) {
           m_journal_replay->shut_down(true, create_context_callback<
             Journal<I>, &Journal<I>::handle_flushing_restart>(this));
         });
+
       m_journaler->stop_replay(ctx);
       return;
     } else if (m_state == STATE_FLUSHING_REPLAY) {
       // end-of-replay flush in-progress -- we need to restart replay
       transition_state(STATE_FLUSHING_RESTART, r);
+
       m_lock.Unlock();
       return;
     }

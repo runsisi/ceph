@@ -316,7 +316,8 @@ void Journaler::get_tags(uint64_t tag_class, Tags *tags, Context *on_finish) {
 }
 
 void Journaler::start_replay(ReplayHandler *replay_handler) {
-  create_player(replay_handler);
+  create_player(replay_handler); // m_player = new JournalPlayer
+
   m_player->prefetch();
 }
 
@@ -358,6 +359,7 @@ void Journaler::stop_replay(Context *on_finish) {
       delete player;
       on_finish->complete(r);
     });
+
   player->shut_down(on_finish);
 }
 
