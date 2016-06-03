@@ -1378,6 +1378,12 @@ void Journal<I>::handle_replay_ready() {
     ldout(cct, 20) << this << " " << __func__ << dendl;
 
     if (!m_journaler->try_pop_front(&replay_entry)) {
+
+      // no more entries, either finished the whole replay process or
+      // fetch in progress, whenever we popped one entry, we try to
+      // fetch the next object if the current object is empty, see
+      // remove_empty_object_player called in JournalPlayer::try_pop_front
+
       return;
     }
 
@@ -1471,6 +1477,7 @@ void Journal<I>::handle_replay_process_ready(int r) {
     m_processing_entry = false;
   }
 
+  // try to process the next entry
   handle_replay_ready();
 }
 
