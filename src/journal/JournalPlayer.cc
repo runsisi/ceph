@@ -186,6 +186,9 @@ void JournalPlayer::shut_down(Context *on_finish) {
   m_async_op_tracker.wait_for_ops(on_finish);
 }
 
+// Journal<I>::handle_replay_ready will be notified by
+// JournalPlayer::notify_entries_available and try to pop an entry to
+// process
 bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
   ldout(m_cct, 20) << __func__ << dendl;
   Mutex::Locker locker(m_lock);
@@ -199,15 +202,18 @@ bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
 
     // playback is not ready, i.e., fetch in progress, no more entries etc.
 
-    if (!is_object_set_ready()) { // watch scheduled or has object fetch in progress
+    if (!is_object_set_ready()) {
+
+      // watch scheduled or has object fetch in progress
+
       m_handler_notified = false;
     } else {
 
-      // no watch scheduled and no object fetch in progress
+      // object set ready, i.e., no watch scheduled and no object fetch in progress
 
-      if (!m_watch_enabled) {
+      if (!m_watch_enabled) { // no more entries and we are not in a live replay
         notify_complete(0);
-      } else if (!m_watch_scheduled) {
+      } else if (!m_watch_scheduled) { // we are in a live replay and we have not scheduled yet
         m_handler_notified = false;
 
         schedule_watch();
@@ -231,7 +237,9 @@ bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
     lderr(m_cct) << "missing prior journal entry: " << *entry << dendl;
 
     m_state = STATE_ERROR;
-    notify_complete(-ENOMSG);
+
+    notify_complete(-ENOMSG); // notify rbd replay handler to complete
+
     return false;
   }
 
@@ -260,12 +268,23 @@ void JournalPlayer::process_state(uint64_t object_number, int r) {
   if (r >= 0) {
     switch (m_state) {
     case STATE_PREFETCH:
+      // this is our first time to fetch, we fetch a set of objects,
+      // whenever we try to process an entry, i.e., in
+      // JournalPlayer::try_pop_front, if all entries in this object
+      // have been processed we always try to fetch the next object
+      // at the same splay offset, only an object instead of a set
+      // of objects in prefetch state
       ldout(m_cct, 10) << "PREFETCH" << dendl;
       r = process_prefetch(object_number);
       break;
     case STATE_PLAYBACK:
       ldout(m_cct, 10) << "PLAYBACK" << dendl;
-      r = process_playback(object_number);
+
+      // ok, an object fetched, let's see if the whole set of objects have
+      // been fetched, if it did then we can notify the rbd replay handler
+      // to do replay
+
+      r = process_playback(object_number); // always return 0
       break;
     case STATE_ERROR:
       ldout(m_cct, 10) << "ERROR" << dendl;
@@ -383,6 +402,10 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
 
     notify_entries_available();
   } else if (is_object_set_ready()) {
+
+    // we have fetch a set of objects and no entries to process which
+    // means we can complete the whole replay process now
+
     if (m_watch_enabled) {
       schedule_watch();
     } else {
@@ -402,16 +425,31 @@ int JournalPlayer::process_playback(uint64_t object_number) {
   assert(m_lock.is_locked());
 
   if (verify_playback_ready()) {
+
+    // more entries to be processed
+
     notify_entries_available();
   } else if (is_object_set_ready()) {
+
+    // no more objects to fetch
+
     if (m_watch_enabled) {
+
+      // object set is ready but currently no entries to process, as we are
+      // in a live replay so we will watch the remote journal
+
       schedule_watch();
     } else {
       ObjectPlayerPtr object_player = get_object_player();
       uint8_t splay_width = m_journal_metadata->get_splay_width();
       uint64_t active_set = m_journal_metadata->get_active_set();
       uint64_t object_set = object_player->get_object_number() / splay_width;
+
       if (object_set == active_set) {
+
+        // we are not in a live replay and no more objects to fetch, finish
+        // the whole replay process
+
         notify_complete(0);
       }
     }
@@ -423,8 +461,13 @@ int JournalPlayer::process_playback(uint64_t object_number) {
 bool JournalPlayer::is_object_set_ready() const {
   assert(m_lock.is_locked());
   if (m_watch_scheduled || !m_fetch_object_numbers.empty()) {
+
+    // we have scheduled a watch timer or the current object set
+    // to fetch has not been finished
+
     return false;
   }
+
   return true;
 }
 
@@ -721,16 +764,22 @@ void JournalPlayer::handle_fetched(uint64_t object_num, int r) {
   }
   if (r == 0) {
     ObjectPlayerPtr object_player = get_object_player(object_num);
+
+    // remove this object if it is empty and try to fetch the next object
+    // if we have not reached the active object set
     remove_empty_object_player(object_player);
   }
 
-  // entries fetched for this object player
-  process_state(object_num, r);
+  // entries fetched for this object, let's see if we can finish our
+  // current set of objects fetch, if so then we can notify the rbd
+  // replay handler to process the fetched entries
+  process_state(object_num, r); // actually a name of process_object may be better
 }
 
 void JournalPlayer::schedule_watch() {
   ldout(m_cct, 10) << __func__ << dendl;
   assert(m_lock.is_locked());
+
   if (m_watch_scheduled) {
     return;
   }
@@ -845,9 +894,18 @@ void JournalPlayer::handle_watch_assert_active(int r) {
 
 void JournalPlayer::notify_entries_available() {
   assert(m_lock.is_locked());
+
   if (m_handler_notified) {
+
+    // previous notify in progress, either 1) rbd Journal replay handler
+    // is processing the entries and we should notify it a second time,
+    // JournalPlayer::try_pop_front will tell us that it has finished
+    // the current process, or 2) we have notified the rbd Journal
+    // replay handler the whole replay process has completed
+
     return;
   }
+
   m_handler_notified = true;
 
   ldout(m_cct, 10) << __func__ << ": entries available" << dendl;
