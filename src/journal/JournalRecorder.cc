@@ -36,6 +36,7 @@ struct C_Flush : public Context {
       delete this;
     }
   }
+
   virtual void finish(int r) {
   }
 };
@@ -58,8 +59,11 @@ JournalRecorder::JournalRecorder(librados::IoCtx &ioctx,
   m_cct = reinterpret_cast<CephContext*>(m_ioctx.cct());
 
   uint8_t splay_width = m_journal_metadata->get_splay_width();
+
   for (uint8_t splay_offset = 0; splay_offset < splay_width; ++splay_offset) {
     uint64_t object_number = splay_offset + (m_current_set * splay_width);
+
+    // each splay offset has an ObjectRecorder associated with it
     m_object_ptrs[splay_offset] = create_object_recorder(object_number);
   }
 

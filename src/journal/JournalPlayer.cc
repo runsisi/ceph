@@ -426,12 +426,12 @@ int JournalPlayer::process_playback(uint64_t object_number) {
 
   if (verify_playback_ready()) {
 
-    // more entries to be processed
+    // a set of object fetched and there are entries to be processed
 
     notify_entries_available();
   } else if (is_object_set_ready()) {
 
-    // no more objects to fetch
+    // no entries to handle
 
     if (m_watch_enabled) {
 
@@ -797,6 +797,7 @@ void JournalPlayer::schedule_watch() {
         handle_watch_assert_active(r);
       });
     m_journal_metadata->assert_active_tag(*m_active_tag_tid, ctx);
+
     return;
   }
 
@@ -889,6 +890,7 @@ void JournalPlayer::handle_watch_assert_active(int r) {
   if (!m_shut_down && m_watch_enabled) {
     schedule_watch();
   }
+
   m_async_op_tracker.finish_op();
 }
 
