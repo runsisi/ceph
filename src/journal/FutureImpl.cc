@@ -20,8 +20,14 @@ void FutureImpl::init(const FutureImplPtr &prev_future) {
   // journal is consistent
   if (prev_future) {
     m_prev_future = prev_future;
+
+    // push back of FutureImpl::m_contexts if the previous future has not
+    // completed yet which means the previous will set m_consistent for us,
+    // else complete this callback directly
     m_prev_future->wait(&m_consistent_ack);
   } else {
+    // this is the first Future, no previous future to set m_consistent for us,
+    // so set m_consistent = true myself
     m_consistent_ack.complete(0);
   }
 }

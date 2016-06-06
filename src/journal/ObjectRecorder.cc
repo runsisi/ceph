@@ -48,6 +48,10 @@ bool ObjectRecorder::append(const AppendBuffers &append_buffers) {
   {
     Mutex::Locker locker(m_lock);
     if (m_overflowed) {
+
+      // already overflowed, we stash this append into m_append_buffers
+      // and after all in-flight flush appends returned, we will
+
       m_append_buffers.insert(m_append_buffers.end(),
                               append_buffers.begin(), append_buffers.end());
       return false;
@@ -146,6 +150,7 @@ void ObjectRecorder::claim_append_buffers(AppendBuffers *append_buffers) {
   assert(m_in_flight_tids.empty());
   assert(m_in_flight_appends.empty());
   assert(m_object_closed || m_overflowed);
+
   append_buffers->splice(append_buffers->end(), m_append_buffers,
                          m_append_buffers.begin(), m_append_buffers.end());
 }
@@ -200,13 +205,18 @@ bool ObjectRecorder::append(const AppendBuffer &append_buffer,
   m_pending_bytes += append_buffer.second.length();
 
   if (!flush_appends(false)) {
+
+    // no enough buffers to send
+
     *schedule_append = true;
   }
+
   return flush_requested;
 }
 
 bool ObjectRecorder::flush_appends(bool force) {
   assert(m_lock.is_locked());
+
   if (m_object_closed || m_overflowed) {
     return true;
   }
@@ -216,13 +226,20 @@ bool ObjectRecorder::flush_appends(bool force) {
        m_size + m_pending_bytes < m_soft_max_size &&
        (m_flush_interval > 0 && m_append_buffers.size() < m_flush_interval) &&
        (m_flush_bytes > 0 && m_pending_bytes < m_flush_bytes))) {
+
     return false;
   }
 
+  // send all pending buffers in a single rados op
+
   m_pending_bytes = 0;
+
   AppendBuffers append_buffers;
   append_buffers.swap(m_append_buffers);
+
+  // send multiple buffers, i.e., entries, in a single rados op
   send_appends(&append_buffers);
+
   return true;
 }
 
@@ -240,7 +257,11 @@ void ObjectRecorder::handle_append_flushed(uint64_t tid, int r) {
     InFlightAppends::iterator iter = m_in_flight_appends.find(tid);
     if (r == -EOVERFLOW || m_overflowed) {
       if (iter != m_in_flight_appends.end()) {
+
         m_overflowed = true;
+
+        // collect in-flight appends and pending appends into m_append_buffers,
+        // it will be re-appended in JournalRecorder::create_next_object_recorder
         append_overflowed(tid);
       } else {
         // must have seen an overflow on a previous append op
@@ -293,7 +314,9 @@ void ObjectRecorder::append_overflowed(uint64_t tid) {
   InFlightAppends in_flight_appends;
   in_flight_appends.swap(m_in_flight_appends);
 
+  // collect the in-flight appends and pending appends
   AppendBuffers restart_append_buffers;
+
   for (InFlightAppends::iterator it = in_flight_appends.begin();
        it != in_flight_appends.end(); ++it) {
     restart_append_buffers.insert(restart_append_buffers.end(),
@@ -304,6 +327,7 @@ void ObjectRecorder::append_overflowed(uint64_t tid) {
                                 m_append_buffers,
                                 m_append_buffers.begin(),
                                 m_append_buffers.end());
+
   restart_append_buffers.swap(m_append_buffers);
 }
 
@@ -314,6 +338,7 @@ void ObjectRecorder::send_appends(AppendBuffers *append_buffers) {
   uint64_t append_tid = m_append_tid++;
   ldout(m_cct, 10) << __func__ << ": " << m_oid << " flushing journal tid="
                    << append_tid << dendl;
+
   C_AppendFlush *append_flush = new C_AppendFlush(this, append_tid);
 
   librados::ObjectWriteOperation op;
@@ -328,6 +353,7 @@ void ObjectRecorder::send_appends(AppendBuffers *append_buffers) {
     op.set_op_flags2(CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
     m_size += it->second.length();
   }
+
   m_in_flight_tids.insert(append_tid);
   m_in_flight_appends[append_tid].swap(*append_buffers);
 
