@@ -35,15 +35,23 @@ void FutureImpl::init(const FutureImplPtr &prev_future) {
 void FutureImpl::flush(Context *on_safe) {
   bool complete;
   FlushHandlerPtr flush_handler;
+
   {
     Mutex::Locker locker(m_lock);
+
     complete = (m_safe && m_consistent);
     if (!complete) {
+
+      //
+
       if (on_safe != NULL) {
         m_contexts.push_back(on_safe);
       }
 
       if (m_flush_state == FLUSH_STATE_NONE) {
+
+        // has never been requested a flush
+
         m_flush_state = FLUSH_STATE_REQUESTED;
         flush_handler = m_flush_handler;
 
@@ -94,20 +102,25 @@ int FutureImpl::get_return_value() const {
 
 bool FutureImpl::attach(const FlushHandlerPtr &flush_handler) {
   Mutex::Locker locker(m_lock);
+
   assert(!m_flush_handler);
   m_flush_handler = flush_handler;
+
   return m_flush_state != FLUSH_STATE_NONE;
 }
 
 void FutureImpl::safe(int r) {
   m_lock.Lock();
+
   assert(!m_safe);
   m_safe = true;
+
   if (m_return_value == 0) {
     m_return_value = r;
   }
 
   m_flush_handler.reset();
+
   if (m_consistent) {
     finish_unlock();
   } else {
