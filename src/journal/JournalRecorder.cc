@@ -107,6 +107,7 @@ Future JournalRecorder::append(uint64_t tag_tid,
   // a future represents an id of a commit
   FutureImplPtr future(new FutureImpl(tag_tid, entry_tid, commit_tid));
   future->init(m_prev_future); // register consistent callback
+
   m_prev_future = future;
 
   bufferlist entry_bl;
@@ -117,12 +118,13 @@ Future JournalRecorder::append(uint64_t tag_tid,
   AppendBuffers append_buffers;
   append_buffers.push_back(std::make_pair(future, entry_bl));
 
-  // try to append this <future, Entry> pair to journal object
+  // try to append this <future, Entry> pair to a journal object
   bool object_full = object_ptr->append(append_buffers);
 
   if (object_full) {
     ldout(m_cct, 10) << "object " << object_ptr->get_oid() << " now full"
                      << dendl;
+
     close_and_advance_object_set(object_ptr->get_object_number() / splay_width);
   }
 
@@ -336,7 +338,9 @@ void JournalRecorder::handle_closed(ObjectRecorder *object_recorder) {
   uint64_t object_number = object_recorder->get_object_number();
   uint8_t splay_width = m_journal_metadata->get_splay_width();
   uint8_t splay_offset = object_number % splay_width;
+
   ObjectRecorderPtr active_object_recorder = m_object_ptrs[splay_offset];
+
   assert(active_object_recorder->get_object_number() == object_number);
 
   assert(m_in_flight_object_closes > 0);
@@ -345,6 +349,7 @@ void JournalRecorder::handle_closed(ObjectRecorder *object_recorder) {
   // object closed after advance active set committed
   ldout(m_cct, 20) << __func__ << ": object "
                    << active_object_recorder->get_oid() << " closed" << dendl;
+
   if (m_in_flight_object_closes == 0) {
     if (m_in_flight_advance_sets == 0) {
       // peer forced closing of object set

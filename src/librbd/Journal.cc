@@ -889,6 +889,7 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
 
   Futures futures;
   uint64_t tid;
+
   {
     Mutex::Locker locker(m_lock);
     assert(m_state == STATE_READY);
@@ -899,6 +900,7 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
 
     for (auto &bl : bufferlists) {
       assert(bl.length() <= m_max_append_size);
+
       futures.push_back(m_journaler->append(m_tag_tid, bl));
     }
     m_events[tid] = Event(futures, requests, offset, length);
@@ -914,6 +916,7 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
 
   Context *on_safe = create_async_context_callback(
     m_image_ctx, new C_IOEventSafe(this, tid));
+
   if (flush_entry) {
     futures.back().flush(on_safe);
   } else {
