@@ -1299,6 +1299,7 @@ void Journal<I>::handle_initialized(int r) {
   }
 
   m_max_append_size = m_journaler->get_max_append_size();
+
   ldout(cct, 20) << this << " max_append_size=" << m_max_append_size << dendl;
 
   // locate the master image client record
@@ -1308,6 +1309,7 @@ void Journal<I>::handle_initialized(int r) {
   if (r < 0) {
     lderr(cct) << this << " " << __func__ << ": "
                << "failed to locate master image client" << dendl;
+
     destroy_journaler(r);
     return;
   }
@@ -1320,6 +1322,7 @@ void Journal<I>::handle_initialized(int r) {
     lderr(cct) << this << " " << __func__ << ": "
                << "failed to decode client meta data: " << err.what()
                << dendl;
+
     destroy_journaler(-EINVAL);
     return;
   }
@@ -1329,6 +1332,7 @@ void Journal<I>::handle_initialized(int r) {
   if (image_client_meta == nullptr) {
     lderr(cct) << this << " " << __func__ << ": "
                << "failed to extract client meta data" << dendl;
+
     destroy_journaler(-EINVAL);
     return;
   }
@@ -1342,6 +1346,7 @@ void Journal<I>::handle_initialized(int r) {
     cct, &m_lock, &m_tag_tid, &m_tag_data, create_async_context_callback(
       m_image_ctx, create_context_callback<
         Journal<I>, &Journal<I>::handle_get_tags>(this)));
+
   m_journaler->get_tags(m_tag_class, &tags_ctx->tags, tags_ctx);
 
   m_journaler->add_listener(&m_metadata_listener);

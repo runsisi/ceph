@@ -161,6 +161,7 @@ void JournalRecorder::close_and_advance_object_set(uint64_t object_set) {
   // entry overflow from open object
   if (m_current_set != object_set) {
     ldout(m_cct, 20) << __func__ << ": close already in-progress" << dendl;
+
     return;
   }
 
@@ -178,7 +179,11 @@ void JournalRecorder::close_and_advance_object_set(uint64_t object_set) {
   ldout(m_cct, 20) << __func__ << ": closing active object set "
                    << object_set << dendl;
 
-  if (close_object_set(m_current_set)) {
+  if (close_object_set(m_current_set)) { // issue object close op for this set of objects
+
+    // no in-flight buffers, i.e., this set of objects closed succeeded
+
+    // update active set in journal metadata object
     advance_object_set();
   }
 }
@@ -186,7 +191,9 @@ void JournalRecorder::close_and_advance_object_set(uint64_t object_set) {
 void JournalRecorder::advance_object_set() {
   assert(m_lock.is_locked());
 
+  // all in-flight buffers must have been flushed
   assert(m_in_flight_object_closes == 0);
+
   ldout(m_cct, 20) << __func__ << ": advance to object set " << m_current_set
                    << dendl;
 
@@ -246,8 +253,9 @@ bool JournalRecorder::close_object_set(uint64_t active_set) {
     if (object_recorder->get_object_number() / splay_width != active_set) {
       ldout(m_cct, 10) << __func__ << ": closing object "
                        << object_recorder->get_oid() << dendl;
+
       // flush out all queued appends and hold future appends
-      if (!object_recorder->close()) {
+      if (!object_recorder->close()) { // flush pending buffers
         ++m_in_flight_object_closes;
       } else {
         ldout(m_cct, 20) << __func__ << ": object "
@@ -351,11 +359,16 @@ void JournalRecorder::handle_closed(ObjectRecorder *object_recorder) {
                    << active_object_recorder->get_oid() << " closed" << dendl;
 
   if (m_in_flight_object_closes == 0) {
+
+    // all objects of this set have been closed
+
     if (m_in_flight_advance_sets == 0) {
       // peer forced closing of object set
+
       open_object_set();
     } else {
-      // local overflow advanced object set
+      // local overflow advanced object set, see JournalRecorder::close_and_advance_object_set
+
       advance_object_set();
     }
   }

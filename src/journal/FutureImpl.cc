@@ -40,9 +40,10 @@ void FutureImpl::flush(Context *on_safe) {
     Mutex::Locker locker(m_lock);
 
     complete = (m_safe && m_consistent);
+
     if (!complete) {
 
-      //
+      // the future has not been completed
 
       if (on_safe != NULL) {
         m_contexts.push_back(on_safe);
@@ -50,9 +51,10 @@ void FutureImpl::flush(Context *on_safe) {
 
       if (m_flush_state == FLUSH_STATE_NONE) {
 
-        // has never been requested a flush
+        // has never been requested to flush
 
         m_flush_state = FLUSH_STATE_REQUESTED;
+
         flush_handler = m_flush_handler;
 
         // walk the chain backwards up to <splay width> futures
@@ -64,8 +66,14 @@ void FutureImpl::flush(Context *on_safe) {
   }
 
   if (complete && on_safe != NULL) {
+
+    // future completed
+
     on_safe->complete(m_return_value);
   } else if (flush_handler) {
+
+    // future has not completed and the future has never been requested a flush
+
     // attached to journal object -- instruct it to flush all entries through
     // this one.  possible to become detached while lock is released, so flush
     // will be re-requested by the object if it doesn't own the future
@@ -80,6 +88,7 @@ void FutureImpl::wait(Context *on_safe) {
   assert(on_safe != NULL);
   {
     Mutex::Locker locker(m_lock);
+
     if (!m_safe || !m_consistent) {
       m_contexts.push_back(on_safe);
       return;
@@ -122,6 +131,9 @@ void FutureImpl::safe(int r) {
   m_flush_handler.reset();
 
   if (m_consistent) {
+
+    // finish all contexts on m_contexts
+
     finish_unlock();
   } else {
     m_lock.Unlock();
@@ -130,9 +142,11 @@ void FutureImpl::safe(int r) {
 
 void FutureImpl::consistent(int r) {
   m_lock.Lock();
+
   assert(!m_consistent);
   m_consistent = true;
   m_prev_future.reset();
+
   if (m_return_value == 0) {
     m_return_value = r;
   }
