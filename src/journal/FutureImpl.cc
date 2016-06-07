@@ -41,6 +41,7 @@ void FutureImpl::flush(Context *on_safe) {
     Mutex::Locker locker(m_lock);
 
     complete = (m_safe && m_consistent);
+
     if (!complete) {
       if (on_safe != nullptr) {
         m_contexts.push_back(on_safe);
@@ -57,6 +58,9 @@ void FutureImpl::flush(Context *on_safe) {
   }
 
   if (complete && on_safe != NULL) {
+
+    // future completed
+
     on_safe->complete(m_return_value);
   } else if (!flush_handlers.empty()) {
     // attached to journal object -- instruct it to flush all entries through
@@ -85,6 +89,7 @@ void FutureImpl::wait(Context *on_safe) {
   assert(on_safe != NULL);
   {
     Mutex::Locker locker(m_lock);
+
     if (!m_safe || !m_consistent) {
       m_contexts.push_back(on_safe);
       return;
@@ -127,6 +132,9 @@ void FutureImpl::safe(int r) {
   m_flush_handler.reset();
 
   if (m_consistent) {
+
+    // finish all contexts on m_contexts
+
     finish_unlock();
   } else {
     m_lock.Unlock();
@@ -135,9 +143,11 @@ void FutureImpl::safe(int r) {
 
 void FutureImpl::consistent(int r) {
   m_lock.Lock();
+
   assert(!m_consistent);
   m_consistent = true;
   m_prev_future.reset();
+
   if (m_return_value == 0) {
     m_return_value = r;
   }

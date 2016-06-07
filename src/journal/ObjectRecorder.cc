@@ -69,9 +69,10 @@ bool ObjectRecorder::append(const AppendBuffers &append_buffers) {
       // contain a buffer, but if we are called by a internal restart
       // then there may be more than one buffer
 
-      if (append(*iter, &schedule_append)) { // append and try to flush
+      if (append(*iter, &schedule_append)) { // push back of m_append_buffers and try to flush
 
-        // this buffer had been requested to flush and delayed by the
+        // the object has not been closed or overflowed, and this buffer
+        // had been requested to flush and delayed by the
         // overflow, so we need to flush it now (may have been flushed
         // in this call already)
 
@@ -112,10 +113,14 @@ void ObjectRecorder::flush(Context *on_safe) {
   {
     Mutex::Locker locker(m_lock);
 
-    // if currently handling flush notifications, wait so that
+    // if currently handling flush callback, wait so that
     // we notify in the correct order (since lock is dropped on
     // callback)
     if (m_in_flight_flushes) {
+
+      // raced with rados callback, we are busy setting all flushed
+      // futures to safe
+
       m_in_flight_flushes_cond.Wait(m_lock);
     }
 
@@ -123,6 +128,7 @@ void ObjectRecorder::flush(Context *on_safe) {
     if (!m_append_buffers.empty()) { // pending buffers
       future = Future(m_append_buffers.rbegin()->first);
 
+      // flush those pending buffers
       flush_appends(true);
     } else if (!m_in_flight_appends.empty()) { // in-flight buffers
       AppendBuffers &append_buffers = m_in_flight_appends.rbegin()->second;
@@ -133,8 +139,16 @@ void ObjectRecorder::flush(Context *on_safe) {
   }
 
   if (future.is_valid()) {
+
+    // now the future points to the last in-flight buffer, flush all the way
+    // up to all previous futures
+
     future.flush(on_safe);
   } else {
+
+    // no in-flight or pending buffers, we can finish this flush request
+    // immediately
+
     on_safe->complete(0);
   }
 }
@@ -146,10 +160,14 @@ void ObjectRecorder::flush(const FutureImplPtr &future) {
   Mutex::Locker locker(m_lock);
 
   if (future->get_flush_handler().get() != &m_flush_handler) {
+
     // if we don't own this future, re-issue the flush so that it hits the
     // correct journal object owner
 
+    // the future belongs to a flush all the way up to all previous futures
+
     future->flush();
+
     return;
   } else if (future->is_flush_in_progress()) {
     return;
@@ -199,7 +217,7 @@ bool ObjectRecorder::close() {
 
   Mutex::Locker locker(m_lock);
 
-  // flush all pending appends
+  // flush all pending buffers
   flush_appends(true);
 
   assert(!m_object_closed);
@@ -215,7 +233,7 @@ void ObjectRecorder::handle_append_task() {
 
   Mutex::Locker locker(m_lock);
 
-  // time driven flush, so flush it forcely
+  // timer driven flush, flush all pending buffers
   flush_appends(true);
 }
 
@@ -247,7 +265,7 @@ bool ObjectRecorder::append(const AppendBuffer &append_buffer,
 
   if (!m_object_closed && !m_overflowed) {
 
-    // attach a flush handler to the future
+    // attach flush handler to the future
 
     flush_requested = append_buffer.first->attach(&m_flush_handler);
   }
@@ -257,7 +275,7 @@ bool ObjectRecorder::append(const AppendBuffer &append_buffer,
 
   if (!flush_appends(false)) { // try to flush pending buffers
 
-    // no enough buffers to send and we will schedule to flush
+    // not enough buffers to send and we will schedule to flush it later
 
     *schedule_append = true;
   }
@@ -425,6 +443,7 @@ void ObjectRecorder::send_appends(AppendBuffers *append_buffers) {
 
   librados::ObjectWriteOperation op;
 
+  // the already written size must less then m_soft_max_size
   client::guard_append(&op, m_soft_max_size);
 
   for (AppendBuffers::iterator it = append_buffers->begin();
