@@ -146,6 +146,7 @@ void FutureImpl::consistent(int r) {
 
   assert(!m_consistent);
   m_consistent = true;
+
   m_prev_future.reset();
 
   if (m_return_value == 0) {
@@ -153,6 +154,9 @@ void FutureImpl::consistent(int r) {
   }
 
   if (m_safe) {
+
+    // finish all contexts on m_contexts
+
     finish_unlock();
   } else {
     m_lock.Unlock();
@@ -167,6 +171,7 @@ void FutureImpl::finish_unlock() {
   contexts.swap(m_contexts);
 
   m_lock.Unlock();
+
   for (Contexts::iterator it = contexts.begin();
        it != contexts.end(); ++it) {
     (*it)->complete(m_return_value);
