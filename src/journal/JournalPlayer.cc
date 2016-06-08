@@ -59,6 +59,8 @@ JournalPlayer::JournalPlayer(librados::IoCtx &ioctx,
   m_cct = reinterpret_cast<CephContext *>(m_ioctx.cct());
 
   ObjectSetPosition commit_position;
+
+  // a list of ObjectPosition, i.e., a splay width of <object_num, tag id, entry id>
   m_journal_metadata->get_commit_position(&commit_position);
 
   if (!commit_position.object_positions.empty()) {
@@ -67,7 +69,9 @@ JournalPlayer::JournalPlayer(librados::IoCtx &ioctx,
     // start replay after the last committed entry's object
     uint8_t splay_width = m_journal_metadata->get_splay_width();
 
-    auto &active_position = commit_position.object_positions.front(); // the first object position
+    // the newer commit position always at the front of the
+    // commit position list, see JournalMetadata::committed
+    auto &active_position = commit_position.object_positions.front();
 
     m_active_tag_tid = active_position.tag_tid;
     m_commit_position_valid = true;
@@ -95,18 +99,24 @@ JournalPlayer::~JournalPlayer() {
 
 void JournalPlayer::prefetch() {
   Mutex::Locker locker(m_lock);
+
   assert(m_state == STATE_INIT);
   m_state = STATE_PREFETCH;
 
   m_active_set = m_journal_metadata->get_active_set();
   uint8_t splay_width = m_journal_metadata->get_splay_width();
+
   for (uint8_t splay_offset = 0; splay_offset < splay_width; ++splay_offset) {
+
+    // used to record our prefetch progress
+
     m_prefetch_splay_offsets.insert(splay_offset);
   }
 
   // compute active object for each splay offset (might be before
   // active set)
   std::map<uint8_t, uint64_t> splay_offset_to_objects;
+
   for (auto &position : m_commit_positions) {
     assert(splay_offset_to_objects.count(position.first) == 0);
 
@@ -120,7 +130,9 @@ void JournalPlayer::prefetch() {
   for (uint8_t splay_offset = 0; splay_offset < splay_width; ++splay_offset) {
     uint64_t object_number = splay_offset;
 
-    if (splay_offset_to_objects.count(splay_offset) != 0) { // has recorded committed object position for this splay offset
+    // prefetch the last committed set of objects
+
+    if (splay_offset_to_objects.count(splay_offset) != 0) {
       object_number = splay_offset_to_objects[splay_offset];
     }
 
@@ -624,9 +636,11 @@ ObjectPlayerPtr JournalPlayer::get_object_player(uint64_t object_number) const {
 
 void JournalPlayer::advance_splay_object() {
   assert(m_lock.is_locked());
+
   ++m_splay_offset;
   m_splay_offset %= m_journal_metadata->get_splay_width();
   m_watch_step = WATCH_STEP_FETCH_CURRENT;
+
   ldout(m_cct, 20) << __func__ << ": new offset "
                    << static_cast<uint32_t>(m_splay_offset) << dendl;
 }

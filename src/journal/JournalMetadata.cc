@@ -784,6 +784,7 @@ void JournalMetadata::cancel_commit_task() {
   assert(m_commit_position_task_ctx != nullptr);
 
   m_timer->cancel_event(m_commit_position_task_ctx);
+
   m_commit_position_task_ctx = NULL;
 }
 
@@ -793,6 +794,7 @@ void JournalMetadata::schedule_commit_task() {
   assert(m_timer_lock->is_locked());
   assert(m_lock.is_locked());
   assert(m_commit_position_ctx != nullptr);
+
   if (m_commit_position_task_ctx == NULL) {
     m_commit_position_task_ctx = new C_CommitPositionTask(this);
     m_timer->add_event_after(m_settings.commit_interval,
@@ -808,9 +810,11 @@ void JournalMetadata::handle_commit_position_task() {
                    << "commit_position=" << m_commit_position << dendl;
 
   librados::ObjectWriteOperation op;
+
   client::client_commit(&op, m_client_id, m_commit_position);
 
   C_NotifyUpdate *ctx = new C_NotifyUpdate(this, m_commit_position_ctx);
+
   m_commit_position_ctx = NULL;
 
   librados::AioCompletion *comp =
@@ -884,6 +888,7 @@ uint64_t JournalMetadata::allocate_commit_tid(uint64_t object_num,
                                               uint64_t entry_tid) {
   Mutex::Locker locker(m_lock);
   uint64_t commit_tid = ++m_commit_tid;
+
   m_pending_commit_tids[commit_tid] = CommitEntry(object_num, tag_tid,
                                                   entry_tid);
 
@@ -929,19 +934,24 @@ void JournalMetadata::committed(uint64_t commit_tid,
 
   ObjectSetPosition commit_position;
   Context *stale_ctx = nullptr;
+
   {
     Mutex::Locker timer_locker(*m_timer_lock);
     Mutex::Locker locker(m_lock);
+
     assert(commit_tid > m_commit_position_tid);
 
     if (!m_commit_position.object_positions.empty()) {
       // in-flight commit position update
+
       commit_position = m_commit_position;
     } else {
       // safe commit position
+
       commit_position = m_client.commit_position;
     }
 
+    // CommitEntry inserted in JournalRecorder::append
     CommitTids::iterator it = m_pending_commit_tids.find(commit_tid);
     assert(it != m_pending_commit_tids.end());
 
@@ -949,30 +959,49 @@ void JournalMetadata::committed(uint64_t commit_tid,
     commit_entry.committed = true;
 
     bool update_commit_position = false;
+
     while (!m_pending_commit_tids.empty()) {
       CommitTids::iterator it = m_pending_commit_tids.begin();
+
       CommitEntry &commit_entry = it->second;
+
+      // commit may not occur in order, only remove the CommitEntry
+      // when all its previous CommitEntry(s) have been committed
+
       if (!commit_entry.committed) {
         break;
       }
 
+      // the newer commit position always at the front of the
+      // commit position list
       commit_position.object_positions.emplace_front(
         commit_entry.object_num, commit_entry.tag_tid,
         commit_entry.entry_tid);
+
       m_pending_commit_tids.erase(it);
+
       update_commit_position = true;
     }
 
     if (!update_commit_position) {
+
+      // the previous CommitEntry(s) have not committed yet
+
       return;
     }
 
     // prune the position to have one position per splay offset
     std::set<uint8_t> in_use_splay_offsets;
     ObjectPositions::iterator ob_it = commit_position.object_positions.begin();
+
     while (ob_it != commit_position.object_positions.end()) {
       uint8_t splay_offset = ob_it->object_number % m_splay_width;
+
       if (!in_use_splay_offsets.insert(splay_offset).second) {
+
+        // insert failed which means there is already an object position
+        // at the splay offset
+
         ob_it = commit_position.object_positions.erase(ob_it);
       } else {
         ++ob_it;
@@ -986,6 +1015,8 @@ void JournalMetadata::committed(uint64_t commit_tid,
 
     ldout(m_cct, 20) << "updated commit position: " << commit_position << ", "
                      << "on_safe=" << m_commit_position_ctx << dendl;
+
+    // schedule a timer to update the commit position
     schedule_commit_task();
   }
 

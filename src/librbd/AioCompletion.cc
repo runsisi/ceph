@@ -30,10 +30,14 @@ namespace librbd {
 
   int AioCompletion::wait_for_complete() {
     tracepoint(librbd, aio_wait_for_complete_enter, this);
+
     lock.Lock();
+
     while (state != STATE_COMPLETE)
       cond.Wait(lock);
+
     lock.Unlock();
+
     tracepoint(librbd, aio_wait_for_complete_exit, 0);
     return 0;
   }
@@ -47,6 +51,7 @@ namespace librbd {
     ldout(cct, 20) << this << " " << __func__ << ": r=" << rval << ", "
                    << "read_buf=" << reinterpret_cast<void*>(read_buf) << ", "
                    << "real_bl=" <<  reinterpret_cast<void*>(read_bl) << dendl;
+
     if (rval >= 0 && aio_type == AIO_TYPE_READ) {
       if (read_buf && !read_bl) {
 	destriper.assemble_result(cct, read_buf, read_buf_len);
@@ -62,6 +67,7 @@ namespace librbd {
 	  ldout(cct, 20) << "copied resulting " << bl.length()
 	    << " bytes to " << (void*)read_buf << dendl;
 	}
+
 	if (read_bl) {
 	  ldout(cct, 20) << " moving resulting " << bl.length()
 	    << " bytes to bl " << (void*)read_bl << dendl;
@@ -77,8 +83,10 @@ namespace librbd {
     CephContext *cct = ictx->cct;
 
     tracepoint(librbd, aio_complete_enter, this, rval);
+
     utime_t elapsed;
     elapsed = ceph_clock_now(cct) - start_time;
+
     switch (aio_type) {
     case AIO_TYPE_OPEN:
     case AIO_TYPE_CLOSE:
@@ -99,10 +107,12 @@ namespace librbd {
     // inform the journal that the op has successfully committed
     if (journal_tid != 0) {
       assert(ictx->journal != NULL);
+
       ictx->journal->commit_io_event(journal_tid, rval);
     }
 
     state = STATE_CALLBACK;
+
     if (complete_cb) {
       lock.Unlock();
       complete_cb(rbd_comp, complete_arg);
@@ -117,12 +127,14 @@ namespace librbd {
     }
 
     state = STATE_COMPLETE;
+
     cond.Signal();
 
     // note: possible for image to be closed after op marked finished
     if (async_op.started()) {
       async_op.finish_op();
     }
+
     tracepoint(librbd, aio_complete_exit);
   }
 
@@ -152,8 +164,11 @@ namespace librbd {
 
     lderr(cct) << this << " " << __func__ << ": " << cpp_strerror(r)
                << dendl;
+
     assert(pending_count == 0);
+
     rval = r;
+
     complete();
     put_unlock();
   }
@@ -164,8 +179,11 @@ namespace librbd {
     CephContext *cct = ictx->cct;
 
     ldout(cct, 20) << this << " " << __func__ << ": pending=" << count << dendl;
+
     assert(pending_count == 0);
+
     pending_count = count;
+
     lock.Unlock();
 
     // if no pending requests, completion will fire now
@@ -175,6 +193,7 @@ namespace librbd {
   void AioCompletion::complete_request(ssize_t r)
   {
     lock.Lock();
+
     assert(ictx != nullptr);
     CephContext *cct = ictx->cct;
 
@@ -184,31 +203,37 @@ namespace librbd {
       else if (r > 0)
 	rval += r;
     }
+
     assert(pending_count);
     int count = --pending_count;
 
     ldout(cct, 20) << this << " " << __func__ << ": cb=" << complete_cb << ", "
                    << "pending=" << pending_count << dendl;
+
     if (!count && blockers == 0) {
       finalize(rval);
       complete();
     }
+
     put_unlock();
   }
 
   void AioCompletion::associate_journal_event(uint64_t tid) {
     Mutex::Locker l(lock);
+
     assert(state == STATE_PENDING);
     journal_tid = tid;
   }
 
   bool AioCompletion::is_complete() {
     tracepoint(librbd, aio_is_complete_enter, this);
+
     bool done;
     {
       Mutex::Locker l(lock);
       done = this->state == STATE_COMPLETE;
     }
+
     tracepoint(librbd, aio_is_complete_exit, done);
     return done;
   }
