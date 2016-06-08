@@ -69,6 +69,9 @@ bool ObjectRecorder::append(const AppendBuffers &append_buffers) {
       // contain a buffer, but if we are called by a internal restart
       // then there may be more than one buffer
 
+      // if multiple buffers to append, then it may flush multiple times if
+      // the pending buffers are big enough, the later appends will fail
+      // with -EOVERFLOW
       if (append(*iter, &schedule_append)) { // push back of m_append_buffers and try to flush
 
         // the object has not been closed or overflowed, and this buffer
@@ -93,7 +96,9 @@ bool ObjectRecorder::append(const AppendBuffers &append_buffers) {
     schedule_append_task();
   } else {
 
-    // object closed or overflowed or flush succeeded in append called above
+    // object closed or overflowed or flushed, which means currently no
+    // pending buffers to flush or we do not want to flush in this
+    // ObjectRecorder
 
     cancel_append_task();
   }
@@ -352,7 +357,7 @@ void ObjectRecorder::handle_append_flushed(uint64_t tid, int r) {
         assert(r == -EOVERFLOW && m_overflowed);
       }
 
-      // notify of overflow once all in-flight ops are returned
+      // notify of overflow once all in-flight appends have returned
       if (m_in_flight_tids.empty()) {
         notify_handler(); // object overflowed
       }
@@ -360,7 +365,7 @@ void ObjectRecorder::handle_append_flushed(uint64_t tid, int r) {
       return;
     }
 
-    // append write succeeded, remove this buffer from in-flight buffers
+    // an append succeeded, remove this append from in-flight appends
 
     assert(iter != m_in_flight_appends.end());
     append_buffers.swap(iter->second);
@@ -369,8 +374,9 @@ void ObjectRecorder::handle_append_flushed(uint64_t tid, int r) {
     m_in_flight_appends.erase(iter);
 
     // if the JournalRecorder has issued the close op and all in-flight
-    // writes have been finished, then notify the JournalRecorder
+    // appends have been finished, then notify the JournalRecorder
     if (m_in_flight_appends.empty() && m_object_closed) {
+
       // all remaining unsent appends should be redirected to new object
 
       notify_handler(); // object close finished
@@ -385,7 +391,8 @@ void ObjectRecorder::handle_append_flushed(uint64_t tid, int r) {
     ldout(m_cct, 20) << __func__ << ": " << *buf_it->first << " marked safe"
                      << dendl;
 
-    // this buffer has written to object safely, so set m_safe = true
+    // this buffer has written to object safely, so set m_safe = true and
+    // reset m_flush_handler to release ref
     buf_it->first->safe(r);
   }
 
@@ -414,6 +421,8 @@ void ObjectRecorder::append_overflowed(uint64_t tid) {
 
   for (InFlightAppends::iterator it = in_flight_appends.begin();
        it != in_flight_appends.end(); ++it) {
+    // each append may consist of multiple buffers
+
     restart_append_buffers.insert(restart_append_buffers.end(),
                                   it->second.begin(), it->second.end());
   }
@@ -481,6 +490,9 @@ void ObjectRecorder::notify_handler() {
        it != m_append_buffers.end(); ++it) {
     ldout(m_cct, 20) << __func__ << ": overflowed " << *it->first
                      << dendl;
+
+    // reset m_flush_handler, this buffer will not be flushed by
+    // this ObjectRecorder anymore,
     it->first->detach();
   }
 
