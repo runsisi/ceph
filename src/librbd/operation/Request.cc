@@ -97,6 +97,7 @@ void Request<I>::replay_op_ready(Context *on_safe) {
 template <typename I>
 void Request<I>::append_op_event(Context *on_safe) {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
   assert(image_ctx.snap_lock.is_locked());
 
@@ -104,6 +105,7 @@ void Request<I>::append_op_event(Context *on_safe) {
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   m_op_tid = image_ctx.journal->allocate_op_tid();
+
   image_ctx.journal->append_op_event(
     m_op_tid, journal::EventEntry{create_event(m_op_tid)},
     new C_OpEventSafe(this, on_safe));

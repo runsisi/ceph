@@ -178,6 +178,7 @@ void Replay<I>::process(const EventEntry &event_entry,
   on_ready = util::create_async_context_callback(m_image_ctx, on_ready);
 
   RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
+
   boost::apply_visitor(EventVisitor(this, on_ready, on_safe), event_entry.event);
 }
 

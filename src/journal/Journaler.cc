@@ -44,6 +44,7 @@ std::string Journaler::object_oid_prefix(int pool_id,
 Journaler::Threads::Threads(CephContext *cct)
     : timer_lock("Journaler::timer_lock") {
   thread_pool = new ThreadPool(cct, "Journaler::thread_pool", "tp_journal", 1);
+
   thread_pool->start();
 
   work_queue = new ContextWQ("Journaler::work_queue", 60, thread_pool);
@@ -215,6 +216,7 @@ int Journaler::create(uint8_t order, uint8_t splay_width, int64_t pool_id) {
     lderr(m_cct) << "failed to create journal: " << cpp_strerror(r) << dendl;
     return r;
   }
+
   return 0;
 }
 
