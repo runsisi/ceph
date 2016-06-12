@@ -145,7 +145,7 @@ void JournalPlayer::prefetch() {
 
   for (auto object_number : prefetch_object_numbers) {
 
-    // fetch the object
+    // create a each ObjectPlayer to fetch the object
     fetch(object_number);
   }
 }
@@ -163,6 +163,7 @@ void JournalPlayer::prefetch_and_watch(double interval) {
 
 void JournalPlayer::shut_down(Context *on_finish) {
   ldout(m_cct, 20) << __func__ << dendl;
+
   Mutex::Locker locker(m_lock);
 
   assert(!m_shut_down);
@@ -197,6 +198,7 @@ void JournalPlayer::shut_down(Context *on_finish) {
 // process
 bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
   ldout(m_cct, 20) << __func__ << dendl;
+
   Mutex::Locker locker(m_lock);
 
   if (m_state != STATE_PLAYBACK) {
@@ -262,6 +264,7 @@ void JournalPlayer::process_state(uint64_t object_number, int r) {
                    << "r=" << r << dendl;
 
   assert(m_lock.is_locked());
+
   if (r >= 0) {
     switch (m_state) {
     case STATE_PREFETCH:
@@ -301,6 +304,7 @@ void JournalPlayer::process_state(uint64_t object_number, int r) {
 
 int JournalPlayer::process_prefetch(uint64_t object_number) {
   ldout(m_cct, 10) << __func__ << ": object_num=" << object_number << dendl;
+
   assert(m_lock.is_locked());
 
   uint8_t splay_width = m_journal_metadata->get_splay_width();
@@ -413,6 +417,7 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
 
 int JournalPlayer::process_playback(uint64_t object_number) {
   ldout(m_cct, 10) << __func__ << ": object_num=" << object_number << dendl;
+
   assert(m_lock.is_locked());
 
   if (verify_playback_ready()) {
@@ -555,6 +560,7 @@ bool JournalPlayer::verify_playback_ready() {
 
 void JournalPlayer::prune_tag(uint64_t tag_tid) {
   assert(m_lock.is_locked());
+
   ldout(m_cct, 10) << __func__ << ": pruning remaining entries for tag "
                    << tag_tid << dendl;
 
@@ -717,6 +723,7 @@ void JournalPlayer::handle_fetched(uint64_t object_num, int r) {
                    << ": r=" << r << dendl;
 
   Mutex::Locker locker(m_lock);
+
   assert(m_fetch_object_numbers.count(object_num) == 1);
   m_fetch_object_numbers.erase(object_num);
 
@@ -761,6 +768,7 @@ void JournalPlayer::refetch(bool immediate) {
 
 void JournalPlayer::schedule_watch(bool immediate) {
   ldout(m_cct, 10) << __func__ << dendl;
+
   assert(m_lock.is_locked());
 
   if (m_watch_scheduled) {
@@ -825,7 +833,9 @@ void JournalPlayer::schedule_watch(bool immediate) {
 
 void JournalPlayer::handle_watch(uint64_t object_num, int r) {
   ldout(m_cct, 10) << __func__ << ": r=" << r << dendl;
+
   Mutex::Locker locker(m_lock);
+
   assert(m_watch_scheduled);
   m_watch_scheduled = false;
 
@@ -860,6 +870,7 @@ void JournalPlayer::handle_watch_assert_active(int r) {
   ldout(m_cct, 10) << __func__ << ": r=" << r << dendl;
 
   Mutex::Locker locker(m_lock);
+
   assert(m_watch_scheduled);
   m_watch_scheduled = false;
 
@@ -904,6 +915,7 @@ void JournalPlayer::notify_entries_available() {
 
 void JournalPlayer::notify_complete(int r) {
   assert(m_lock.is_locked());
+
   m_handler_notified = true;
 
   ldout(m_cct, 10) << __func__ << ": replay complete: r=" << r << dendl;

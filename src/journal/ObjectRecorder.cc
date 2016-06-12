@@ -111,6 +111,8 @@ bool ObjectRecorder::append(const AppendBuffers &append_buffers) {
 void ObjectRecorder::flush(Context *on_safe) {
   ldout(m_cct, 20) << __func__ << ": " << m_oid << dendl;
 
+  // we will flush it manually, so no need to flush it driven
+  // by timer
   cancel_append_task();
 
   Future future;
@@ -207,6 +209,7 @@ void ObjectRecorder::claim_append_buffers(AppendBuffers *append_buffers) {
   ldout(m_cct, 20) << __func__ << ": " << m_oid << dendl;
 
   Mutex::Locker locker(m_lock);
+
   assert(m_in_flight_tids.empty());
   assert(m_in_flight_appends.empty());
   assert(m_object_closed || m_overflowed);
@@ -232,6 +235,8 @@ bool ObjectRecorder::close() {
 }
 
 void ObjectRecorder::handle_append_task() {
+
+  // m_timer_lock and m_timer::lock are the same mutex, see Journaler::Threads::Threads
   assert(m_timer_lock.is_locked());
 
   m_append_task = NULL;
@@ -492,7 +497,7 @@ void ObjectRecorder::notify_handler() {
                      << dendl;
 
     // reset m_flush_handler, this buffer will not be flushed by
-    // this ObjectRecorder anymore,
+    // this ObjectRecorder anymore, see ObjectRecorder::flush
     it->first->detach();
   }
 

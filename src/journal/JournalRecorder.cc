@@ -122,6 +122,12 @@ Future JournalRecorder::append(uint64_t tag_tid,
   bool object_full = object_ptr->append(append_buffers);
 
   if (object_full) {
+
+    // most of the time, we start a new set of objects manually, i.e., if
+    // we find any of the object is full here, but the buffers stashed
+    // when the objects are closing and then be re-appended may start a
+    // new set of objects driven by the -EOVERFLOW of the later appends
+
     ldout(m_cct, 10) << "object " << object_ptr->get_oid() << " now full"
                      << dendl;
 
@@ -136,9 +142,14 @@ void JournalRecorder::flush(Context *on_safe) {
   {
     Mutex::Locker locker(m_lock);
 
+    // we are to flush every object, after all objects flushed, i.e., pending
+    // flushes count to 0, the user's callback will be called
     ctx = new C_Flush(m_journal_metadata, on_safe, m_object_ptrs.size() + 1);
+
     for (ObjectRecorderPtrs::iterator it = m_object_ptrs.begin();
          it != m_object_ptrs.end(); ++it) {
+
+      // ObjectRecoder::flush
       it->second->flush(ctx);
     }
   }
@@ -203,6 +214,7 @@ void JournalRecorder::advance_object_set() {
 
 void JournalRecorder::handle_advance_object_set(int r) {
   Mutex::Locker locker(m_lock);
+
   ldout(m_cct, 20) << __func__ << ": r=" << r << dendl;
 
   assert(m_in_flight_advance_sets > 0);
@@ -233,7 +245,8 @@ void JournalRecorder::open_object_set() {
     if (object_recorder->get_object_number() / splay_width != m_current_set) {
       assert(object_recorder->is_closed());
 
-      // ready to close object and open object in active set
+      // create a new ObjectRecoder and claim all pending buffers from
+      // the previous object at the same splay offset
       create_next_object_recorder(object_recorder);
     }
   }
@@ -310,16 +323,22 @@ void JournalRecorder::create_next_object_recorder(
       new_object_recorder->get_object_number());
   }
 
-  // re-append all those stashed appends
+  // re-append all those stashed appends, ObjectRecorder called in
+  // JournalRecorder::append will check if the object is full, but here
+  // we do not, we can only let the -EOVERFLOW to drive us to start
+  // a new set of objects
   new_object_recorder->append(append_buffers);
 
   m_object_ptrs[splay_offset] = new_object_recorder;
 }
 
+// JournalRecorder::m_listener, registered to JournalMetadata in ctor
+// of JournalRecorder
 void JournalRecorder::handle_update() {
   Mutex::Locker locker(m_lock);
 
   uint64_t active_set = m_journal_metadata->get_active_set();
+
   if (m_current_set < active_set) {
     // peer journal client advanced the active set
     ldout(m_cct, 20) << __func__ << ": "
@@ -327,10 +346,13 @@ void JournalRecorder::handle_update() {
                      << "active_set=" << active_set << dendl;
 
     uint64_t current_set = m_current_set;
+
     m_current_set = active_set;
+
     if (m_in_flight_advance_sets == 0 && m_in_flight_object_closes == 0) {
       ldout(m_cct, 20) << __func__ << ": closing current object set "
                        << current_set << dendl;
+
       if (close_object_set(active_set)) {
         open_object_set();
       }
@@ -363,7 +385,9 @@ void JournalRecorder::handle_closed(ObjectRecorder *object_recorder) {
     // all objects of this set have been closed
 
     if (m_in_flight_advance_sets == 0) {
-      // peer forced closing of object set
+      // peer forced closing of object set, we are notified that the active
+      // set has been advanced, so we do not have to advance the active
+      // set again, see JournalRecorder::handle_update
 
       open_object_set();
     } else {
@@ -382,7 +406,9 @@ void JournalRecorder::handle_overflow(ObjectRecorder *object_recorder) {
   uint64_t object_number = object_recorder->get_object_number();
   uint8_t splay_width = m_journal_metadata->get_splay_width();
   uint8_t splay_offset = object_number % splay_width;
+
   ObjectRecorderPtr active_object_recorder = m_object_ptrs[splay_offset];
+
   assert(active_object_recorder->get_object_number() == object_number);
 
   ldout(m_cct, 20) << __func__ << ": object "
