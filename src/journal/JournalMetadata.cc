@@ -283,6 +283,7 @@ struct C_GetTags : public Context {
 
   void send_tag_list() {
     librados::ObjectReadOperation op;
+
     client::tag_list_start(&op, start_after_tag_tid, MAX_RETURN, client_id,
                            tag_class);
 
@@ -400,7 +401,7 @@ struct C_AssertActiveTag : public Context {
 
 JournalMetadata::JournalMetadata(ContextWQ *work_queue, SafeTimer *timer,
                                  Mutex *timer_lock, librados::IoCtx &ioctx,
-                                 const std::string &oid,
+                                 const std::string &oid, // "journal." + journal_id(i.e., image local id)
                                  const std::string &client_id,
                                  const Settings &settings)
     : RefCountedObject(NULL, 0), m_cct(NULL), m_oid(oid),

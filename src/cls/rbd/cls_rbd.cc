@@ -3432,9 +3432,12 @@ int image_status_get_summary(cls_method_context_t hctx,
 
   string last_read = IMAGE_KEY_PREFIX;
   int max_read = RBD_MAX_KEYS_READ;
+
   r = max_read;
   while (r == max_read) {
     map<string, bufferlist> vals;
+
+    // "image_"
     r = cls_cxx_map_get_vals(hctx, last_read, IMAGE_KEY_PREFIX,
 			     max_read, &vals);
     if (r < 0) {

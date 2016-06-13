@@ -90,9 +90,13 @@ void Journaler::set_up(ContextWQ *work_queue, SafeTimer *timer,
                        const std::string &journal_id,
                        const Settings &settings) {
   m_header_ioctx.dup(header_ioctx);
+
   m_cct = reinterpret_cast<CephContext *>(m_header_ioctx.cct());
 
+  // "journal." + journal_id(i.e., image local id)
   m_header_oid = header_oid(journal_id);
+
+  // "journal_data." + pool_id + "." + journal_id + "."
   m_object_oid_prefix = object_oid_prefix(m_header_ioctx.get_id(), journal_id);
 
   m_metadata = new JournalMetadata(work_queue, timer, timer_lock,
@@ -125,6 +129,10 @@ int Journaler::exists(bool *header_exists) const {
 }
 
 void Journaler::init(Context *on_init) {
+
+  // 1) watch the journal.xxx object, i.e., the journal metadata object
+  // 2) get immutable and mutable metadata etc.
+
   m_metadata->init(new C_InitJournaler(this, on_init));
 }
 
@@ -133,10 +141,12 @@ int Journaler::init_complete() {
 
   if (pool_id < 0 || pool_id == m_header_ioctx.get_id()) {
     ldout(m_cct, 20) << "using image pool for journal data" << dendl;
+
     m_data_ioctx.dup(m_header_ioctx);
   } else {
     ldout(m_cct, 20) << "using pool id=" << pool_id << " for journal data"
 		     << dendl;
+
     librados::Rados rados(m_header_ioctx);
     int r = rados.ioctx_create2(pool_id, m_data_ioctx);
     if (r < 0) {
@@ -147,6 +157,7 @@ int Journaler::init_complete() {
       return r;
     }
   }
+
   m_trimmer = new JournalTrimmer(m_data_ioctx, m_object_oid_prefix,
                                  m_metadata);
   return 0;
@@ -211,6 +222,8 @@ int Journaler::create(uint8_t order, uint8_t splay_width, int64_t pool_id) {
   }
 
   ldout(m_cct, 5) << "creating new journal: " << m_header_oid << dendl;
+
+  // register metadata to journal.xxx object
   int r = client::create(m_header_ioctx, m_header_oid, order, splay_width,
 			 pool_id);
   if (r < 0) {
@@ -288,6 +301,7 @@ void Journaler::get_client(const std::string &client_id,
 int Journaler::get_cached_client(const std::string &client_id,
                                  cls::journal::Client *client) {
   RegisteredClients clients;
+
   m_metadata->get_registered_clients(&clients);
 
   auto it = clients.find({client_id, {}});

@@ -181,6 +181,7 @@ int open_journaler(CephContext *cct, J *journaler,
     return r;
   }
 
+  // get client of the specified client id
   r = journaler->get_cached_client(Journal<ImageCtx>::IMAGE_CLIENT_ID, client);
   if (r < 0) {
     return r;
@@ -199,6 +200,7 @@ int open_journaler(CephContext *cct, J *journaler,
   if (image_client_meta == nullptr) {
     return -EINVAL;
   }
+
   *client_meta = *image_client_meta;
 
   C_SaferCond get_tags_ctx;
@@ -206,6 +208,8 @@ int open_journaler(CephContext *cct, J *journaler,
   uint64_t tag_tid;
   C_DecodeTags *tags_ctx = new C_DecodeTags(
       cct, &lock, &tag_tid, tag_data, &get_tags_ctx);
+
+  // get tags of the journal
   journaler->get_tags(client_meta->tag_class, &tags_ctx->tags, tags_ctx);
 
   r = get_tags_ctx.wait();
@@ -215,6 +219,7 @@ int open_journaler(CephContext *cct, J *journaler,
   return 0;
 }
 
+// called by Journal::create, Journal::promote, Journal::demote
 template <typename J>
 int allocate_journaler_tag(CephContext *cct, J *journaler,
                            const cls::journal::Client &client,
@@ -223,8 +228,14 @@ int allocate_journaler_tag(CephContext *cct, J *journaler,
                            const std::string &mirror_uuid,
                            cls::journal::Tag *new_tag) {
   journal::TagData tag_data;
+
   if (!client.commit_position.object_positions.empty()) {
+
+    // the latest committed entry always at the front of the commit
+    // position list, see JournalMetadata::committed
+
     auto position = client.commit_position.object_positions.front();
+
     tag_data.predecessor_commit_valid = true;
     tag_data.predecessor_tag_tid = position.tag_tid;
     tag_data.predecessor_entry_tid = position.entry_tid;
@@ -236,6 +247,8 @@ int allocate_journaler_tag(CephContext *cct, J *journaler,
   ::encode(tag_data, tag_bl);
 
   C_SaferCond allocate_tag_ctx;
+
+  // allocate a new tag
   journaler->allocate_tag(tag_class, tag_bl, new_tag, &allocate_tag_ctx);
 
   int r = allocate_tag_ctx.wait();
@@ -244,6 +257,7 @@ int allocate_journaler_tag(CephContext *cct, J *journaler,
                << "failed to allocate tag: " << cpp_strerror(r) << dendl;
     return r;
   }
+
   return 0;
 }
 
@@ -364,6 +378,7 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
   int64_t pool_id = -1;
   if (!object_pool.empty()) {
     IoCtx data_io_ctx;
+
     int r = rados.ioctx_create(object_pool.c_str(), data_io_ctx);
     if (r != 0) {
       lderr(cct) << __func__ << ": "
@@ -372,11 +387,15 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
 		 << "': " << cpp_strerror(r) << dendl;
       return r;
     }
+
+    // pool for journal_data.xxx objects
     pool_id = data_io_ctx.get_id();
   }
 
   Journaler journaler(io_ctx, image_id, IMAGE_CLIENT_ID, {});
 
+  // create a journal.xxx metadata object to manage the journaling
+  // of this image
   int r = journaler.create(order, splay_width, pool_id);
   if (r < 0) {
     lderr(cct) << __func__ << ": "
@@ -389,8 +408,11 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
   journal::TagData tag_data;
 
   assert(non_primary ^ primary_mirror_uuid.empty());
+
   std::string mirror_uuid = (non_primary ? primary_mirror_uuid :
                                            LOCAL_MIRROR_UUID);
+
+  // create a new journal metadata object, tag id and tag class start from 0
   r = allocate_journaler_tag(cct, &journaler, client,
                              cls::journal::Tag::TAG_CLASS_NEW,
                              tag_data, mirror_uuid, &tag);
@@ -529,6 +551,7 @@ template <typename I>
 int Journal<I>::get_tag_owner(IoCtx& io_ctx, std::string& image_id,
                               std::string *mirror_uuid) {
   CephContext *cct = (CephContext *)io_ctx.cct();
+
   ldout(cct, 20) << __func__ << dendl;
 
   Journaler journaler(io_ctx, image_id, IMAGE_CLIENT_ID, {});
@@ -536,12 +559,15 @@ int Journal<I>::get_tag_owner(IoCtx& io_ctx, std::string& image_id,
   cls::journal::Client client;
   journal::ImageClientMeta client_meta;
   journal::TagData tag_data;
+
+  //
   int r = open_journaler(cct, &journaler, &client, &client_meta, &tag_data);
   if (r >= 0) {
     *mirror_uuid = tag_data.mirror_uuid;
   }
 
   journaler.shut_down();
+
   return r;
 }
 
@@ -593,6 +619,7 @@ int Journal<I>::promote(I *image_ctx) {
   cls::journal::Client client;
   journal::ImageClientMeta client_meta;
   journal::TagData tag_data;
+
   int r = open_journaler(image_ctx->cct, &journaler, &client, &client_meta,
                          &tag_data);
   BOOST_SCOPE_EXIT_ALL(&journaler) {
@@ -757,6 +784,7 @@ int Journal<I>::demote() {
   return 0;
 }
 
+// called by librbd::journal::StandardPolicy::allocate_tag_on_lock
 template <typename I>
 void Journal<I>::allocate_local_tag(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -765,8 +793,10 @@ void Journal<I>::allocate_local_tag(Context *on_finish) {
   bool predecessor_commit_valid = false;
   uint64_t predecessor_tag_tid = 0;
   uint64_t predecessor_entry_tid = 0;
+
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_journaler != nullptr && is_tag_owner());
 
     cls::journal::Client client;
@@ -781,8 +811,10 @@ void Journal<I>::allocate_local_tag(Context *on_finish) {
     // since we are primary, populate the predecessor with our known commit
     // position
     assert(m_tag_data.mirror_uuid == LOCAL_MIRROR_UUID);
+
     if (!client.commit_position.object_positions.empty()) {
       auto position = client.commit_position.object_positions.front();
+
       predecessor_commit_valid = true;
       predecessor_tag_tid = position.tag_tid;
       predecessor_entry_tid = position.entry_tid;
@@ -819,6 +851,7 @@ void Journal<I>::allocate_tag(const std::string &mirror_uuid,
 
   C_DecodeTag *decode_tag_ctx = new C_DecodeTag(cct, &m_lock, &m_tag_tid,
                                                 &m_tag_data, on_finish);
+
   m_journaler->allocate_tag(m_tag_class, tag_bl, &decode_tag_ctx->tag,
                             decode_tag_ctx);
 }
@@ -1340,6 +1373,7 @@ void Journal<I>::handle_initialized(int r) {
     lderr(cct) << this << " " << __func__ << ": "
                << "failed to initialize journal: " << cpp_strerror(r)
                << dendl;
+
     destroy_journaler(r);
     return;
   }

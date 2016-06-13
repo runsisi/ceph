@@ -407,6 +407,7 @@ int execute_status(const po::variables_map &vm) {
 
   librbd::RBD rbd;
 
+  // <enum { MIRROR_IMAGE_STATUS_STATE_xxx }, int>
   std::map<librbd::mirror_image_status_state_t, int> states;
   r = rbd.mirror_image_status_summary(io_ctx, &states);
   if (r < 0) {

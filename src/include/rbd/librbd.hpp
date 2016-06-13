@@ -60,6 +60,7 @@ namespace librbd {
     bool primary;
   } mirror_image_info_t;
 
+  // enum { MIRROR_IMAGE_STATUS_STATE_xxx }
   typedef rbd_mirror_image_status_state_t mirror_image_status_state_t;
 
   typedef struct {
