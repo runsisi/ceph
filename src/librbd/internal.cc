@@ -1656,6 +1656,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     CephContext *cct = ictx->cct;
+
     if (ictx->read_only) {
       return -EROFS;
     } else if (ictx->old_format) {
@@ -1665,6 +1666,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     uint64_t disable_mask = (RBD_FEATURES_MUTABLE |
                              RBD_FEATURES_DISABLE_ONLY);
+
     if ((enabled && (features & RBD_FEATURES_MUTABLE) != features) ||
         (!enabled && (features & disable_mask) != features)) {
       lderr(cct) << "cannot update immutable features" << dendl;
@@ -1699,6 +1701,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     BOOST_SCOPE_EXIT_ALL( (ictx) ) {
       ictx->aio_work_queue->unblock_writes();
     };
+
     if (r < 0) {
       return r;
     }
@@ -3030,6 +3033,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
                  << dendl;
       return r;
     }
+
     return 0;
   }
 
@@ -3048,6 +3052,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     bool is_primary;
+
     r = Journal<>::is_tag_owner(ictx, &is_primary);
     if (r < 0) {
       lderr(cct) << "failed to determine tag ownership: " << cpp_strerror(r)
@@ -3061,6 +3066,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     RWLock::RLocker owner_lock(ictx->owner_lock);
+
     if (ictx->exclusive_lock == nullptr) {
       lderr(cct) << "exclusive lock is not active" << dendl;
       return -EINVAL;
@@ -3071,7 +3077,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     // don't block holding lock since refresh might be required
     ictx->owner_lock.put_read();
+
     r = lock_ctx.wait();
+
     ictx->owner_lock.get_read();
 
     if (r < 0) {
@@ -3079,6 +3087,10 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       return r;
     } else if (ictx->exclusive_lock == nullptr ||
                !ictx->exclusive_lock->is_lock_owner()) {
+
+      // exclusive lock feature may have been disabled, see
+      // https://github.com/ceph/ceph/pull/9657/files
+
       lderr(cct) << "failed to acquire exclusive lock" << dendl;
       return -EROFS;
     }
@@ -3304,6 +3316,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     } else if (current_mirror_mode == cls::rbd::MIRROR_MODE_DISABLED) {
       uuid_d uuid_gen;
       uuid_gen.generate_random();
+
       r = cls_client::mirror_uuid_set(&io_ctx, uuid_gen.to_string());
       if (r < 0) {
         lderr(cct) << "Failed to allocate mirroring uuid: " << cpp_strerror(r)

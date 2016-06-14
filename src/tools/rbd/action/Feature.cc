@@ -43,6 +43,7 @@ int execute(const po::variables_map &vm, bool enabled) {
   std::string pool_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
     vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
     &snap_name, utils::SNAPSHOT_PRESENCE_NONE, utils::SPEC_VALIDATION_NONE);
@@ -58,6 +59,7 @@ int execute(const po::variables_map &vm, bool enabled) {
 
   const std::vector<std::string> &args = vm[at::POSITIONAL_ARGUMENTS]
     .as<std::vector<std::string> >();
+
   std::vector<std::string> feature_names(args.begin() + 1, args.end());
   if (feature_names.empty()) {
     std::cerr << "rbd: at least one feature name must be specified"
@@ -72,6 +74,7 @@ int execute(const po::variables_map &vm, bool enabled) {
   librados::Rados rados;
   librados::IoCtx io_ctx;
   librbd::Image image;
+
   r = utils::init_and_open_image(pool_name, image_name, "", false,
                                  &rados, &io_ctx, &image);
   if (r < 0) {

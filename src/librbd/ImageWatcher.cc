@@ -356,6 +356,7 @@ void ImageWatcher::notify_acquired_lock() {
   ldout(m_image_ctx.cct, 10) << this << " notify acquired lock" << dendl;
 
   ClientId client_id = get_client_id();
+
   {
     Mutex::Locker owner_client_id_locker(m_owner_client_id_lock);
     set_owner_client_id(client_id);
@@ -415,12 +416,14 @@ void ImageWatcher::notify_request_lock() {
   if (m_image_ctx.exclusive_lock == nullptr) {
     return;
   }
+
   assert(!m_image_ctx.exclusive_lock->is_lock_owner());
 
   ldout(m_image_ctx.cct, 10) << this << " notify request lock" << dendl;
 
   bufferlist bl;
   ::encode(NotifyMessage(RequestLockPayload(get_client_id(), false)), bl);
+
   notify_lock_owner(std::move(bl), create_context_callback<
     ImageWatcher, &ImageWatcher::handle_request_lock>(this));
 }
@@ -551,8 +554,11 @@ bool ImageWatcher::handle_payload(const HeaderUpdatePayload &payload,
 				  C_NotifyAck *ack_ctx) {
   ldout(m_image_ctx.cct, 10) << this << " image header updated" << dendl;
 
+  // ++m_refresh_seq
   m_image_ctx.state->handle_update_notification();
+
   m_image_ctx.perfcounter->inc(l_librbd_notify);
+
   if (ack_ctx != nullptr) {
     m_image_ctx.state->flush_update_watchers(new C_ResponseMessage(ack_ctx));
     return false;
@@ -566,8 +572,10 @@ bool ImageWatcher::handle_payload(const AcquiredLockPayload &payload,
                              << dendl;
 
   bool cancel_async_requests = true;
+
   if (payload.client_id.is_valid()) {
     Mutex::Locker owner_client_id_locker(m_owner_client_id_lock);
+
     if (payload.client_id == m_owner_client_id) {
       cancel_async_requests = false;
     }
@@ -580,6 +588,7 @@ bool ImageWatcher::handle_payload(const AcquiredLockPayload &payload,
        !m_image_ctx.exclusive_lock->is_lock_owner())) {
     schedule_cancel_async_requests();
   }
+
   return true;
 }
 
@@ -588,8 +597,10 @@ bool ImageWatcher::handle_payload(const ReleasedLockPayload &payload,
   ldout(m_image_ctx.cct, 10) << this << " exclusive lock released" << dendl;
 
   bool cancel_async_requests = true;
+
   if (payload.client_id.is_valid()) {
     Mutex::Locker l(m_owner_client_id_lock);
+
     if (payload.client_id != m_owner_client_id) {
       ldout(m_image_ctx.cct, 10) << this << " unexpected owner: "
                                  << payload.client_id << " != "
@@ -613,12 +624,14 @@ bool ImageWatcher::handle_payload(const ReleasedLockPayload &payload,
     m_task_finisher->cancel(TASK_CODE_REQUEST_LOCK);
     m_image_ctx.exclusive_lock->handle_lock_released();
   }
+
   return true;
 }
 
 bool ImageWatcher::handle_payload(const RequestLockPayload &payload,
                                   C_NotifyAck *ack_ctx) {
   ldout(m_image_ctx.cct, 10) << this << " exclusive lock requested" << dendl;
+
   if (payload.client_id == get_client_id()) {
     return true;
   }
@@ -639,11 +652,14 @@ bool ImageWatcher::handle_payload(const RequestLockPayload &payload,
 
       ldout(m_image_ctx.cct, 10) << this << " queuing release of exclusive lock"
                                  << dendl;
+
+      // will call ExclusiveLock<I>::release_lock
       m_image_ctx.get_exclusive_lock_policy()->lock_requested(payload.force);
     } else if (r < 0) {
       ::encode(ResponseMessage(r), ack_ctx->out);
     }
   }
+
   return true;
 }
 

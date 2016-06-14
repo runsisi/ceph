@@ -333,6 +333,7 @@ Journal<I>::Journal(I &image_ctx)
   ThreadPoolSingleton *thread_pool_singleton;
   cct->lookup_or_create_singleton_object<ThreadPoolSingleton>(
     thread_pool_singleton, "librbd::journal::thread_pool");
+
   m_work_queue = new ContextWQ("librbd::journal::work_queue",
                                cct->_conf->rbd_op_thread_timeout,
                                thread_pool_singleton);
@@ -340,6 +341,7 @@ Journal<I>::Journal(I &image_ctx)
   SafeTimerSingleton *safe_timer_singleton;
   cct->lookup_or_create_singleton_object<SafeTimerSingleton>(
     safe_timer_singleton, "librbd::journal::safe_timer");
+
   m_timer = safe_timer_singleton;
   m_timer_lock = &safe_timer_singleton->lock;
 }
@@ -391,6 +393,8 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
     pool_id = data_io_ctx.get_id();
   }
 
+  // create a Journaler instance to interface with the journaling of
+  // this image
   Journaler journaler(io_ctx, image_id, IMAGE_CLIENT_ID,
                       cct->_conf->rbd_journal_commit_age);
 
@@ -790,6 +794,8 @@ int Journal<I>::demote() {
 }
 
 // called by librbd::journal::StandardPolicy::allocate_tag_on_lock
+// ImageCtx has two policy instances: 1) librbd/exclusive_lock/StandardPolicy
+// and 2) librbd/journal/StandardPolicy
 template <typename I>
 void Journal<I>::allocate_local_tag(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;

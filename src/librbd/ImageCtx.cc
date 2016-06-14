@@ -176,14 +176,17 @@ struct C_InvalidateCache : public Context {
   {
     md_ctx.dup(p);
     data_ctx.dup(p);
+
     if (snap)
       snap_name = snap;
 
+    // struct rbd_obj_header_ondisk
     memset(&header, 0, sizeof(header));
 
     ThreadPoolSingleton *thread_pool_singleton;
     cct->lookup_or_create_singleton_object<ThreadPoolSingleton>(
       thread_pool_singleton, "librbd::thread_pool");
+
     aio_work_queue = new AioImageRequestWQ(this, "librbd::aio_work_queue",
                                            cct->_conf->rbd_op_thread_timeout,
                                            thread_pool_singleton);
@@ -1008,18 +1011,21 @@ struct C_InvalidateCache : public Context {
   }
 
   void ImageCtx::notify_update() {
+    // ++m_refresh_seq
     state->handle_update_notification();
     ImageWatcher::notify_header_update(md_ctx, header_oid);
   }
 
   void ImageCtx::notify_update(Context *on_finish) {
     state->handle_update_notification();
+
     image_watcher->notify_header_update(on_finish);
   }
 
   exclusive_lock::Policy *ImageCtx::get_exclusive_lock_policy() const {
     assert(owner_lock.is_locked());
     assert(exclusive_lock_policy != nullptr);
+
     return exclusive_lock_policy;
   }
 

@@ -369,12 +369,14 @@ Context *OpenRequest<I>::handle_register_watch(int *result) {
 template <typename I>
 void OpenRequest<I>::send_refresh() {
   CephContext *cct = m_image_ctx->cct;
+
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   using klass = OpenRequest<I>;
   RefreshRequest<I> *ctx = RefreshRequest<I>::create(
     *m_image_ctx, false,
     create_context_callback<klass, &klass::handle_refresh>(this));
+
   ctx->send();
 }
 
