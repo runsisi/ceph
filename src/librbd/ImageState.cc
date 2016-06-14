@@ -359,6 +359,7 @@ int ImageState<I>::refresh_if_required() {
 
     Action action(ACTION_TYPE_REFRESH);
     action.refresh_seq = m_refresh_seq;
+
     execute_action_unlock(action, &ctx);
   }
 
@@ -466,6 +467,7 @@ template <typename I>
 void ImageState<I>::execute_next_action_unlock() {
   assert(m_lock.is_locked());
   assert(!m_actions_contexts.empty());
+
   switch (m_actions_contexts.front().first.action_type) {
   case ACTION_TYPE_OPEN:
     send_open_unlock();
@@ -489,6 +491,7 @@ void ImageState<I>::execute_action_unlock(const Action &action,
   assert(m_lock.is_locked());
 
   append_context(action, on_finish);
+
   if (!is_transition_state()) {
     execute_next_action_unlock();
   } else {
@@ -586,6 +589,7 @@ void ImageState<I>::handle_close(int r) {
 template <typename I>
 void ImageState<I>::send_refresh_unlock() {
   assert(m_lock.is_locked());
+
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
@@ -601,6 +605,7 @@ void ImageState<I>::send_refresh_unlock() {
     *m_image_ctx, action_context.refresh_acquiring_lock, ctx);
 
   m_lock.Unlock();
+
   req->send();
 }
 

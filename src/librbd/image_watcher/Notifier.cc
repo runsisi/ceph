@@ -66,6 +66,7 @@ void Notifier::handle_notify(int r, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << __func__ << ": pending=" << m_pending_aio_notifies
                  << dendl;
+
   if (m_pending_aio_notifies == 0) {
     for (auto ctx : m_aio_notify_flush_ctxs) {
       m_image_ctx.op_work_queue->queue(ctx, 0);

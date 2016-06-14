@@ -4018,6 +4018,7 @@ void OSD::handle_osd_ping(MOSDPing *m)
 
       if (!cct->get_heartbeat_map()->is_healthy()) {
 	dout(10) << "internal heartbeat not healthy, dropping ping request" << dendl;
+
 	break;
       }
 
@@ -4025,6 +4026,7 @@ void OSD::handle_osd_ping(MOSDPing *m)
 				curmap->get_epoch(),
 				MOSDPing::PING_REPLY,
 				m->stamp);
+
       m->get_connection()->send_message(r);
 
       if (curmap->is_up(from)) {
@@ -4042,6 +4044,7 @@ void OSD::handle_osd_ping(MOSDPing *m)
 				  curmap->get_epoch(),
 				  MOSDPing::YOU_DIED,
 				  m->stamp);
+
 	m->get_connection()->send_message(r);
       }
     }
@@ -4214,7 +4217,9 @@ void OSD::heartbeat()
     i->second.last_tx = now;
     if (i->second.first_tx == utime_t())
       i->second.first_tx = now;
+
     dout(30) << "heartbeat sending ping to osd." << peer << dendl;
+
     i->second.con_back->send_message(new MOSDPing(monc->get_fsid(),
 					  service.get_osdmap()->get_epoch(),
 					  MOSDPing::PING,
@@ -5940,7 +5945,9 @@ void OSD::ms_fast_dispatch(Message *m)
     m->put();
     return;
   }
+
   OpRequestRef op = op_tracker.create_request<OpRequest, Message*>(m);
+
   {
 #ifdef WITH_LTTNG
     osd_reqid_t reqid = op->get_reqid();
@@ -5948,6 +5955,7 @@ void OSD::ms_fast_dispatch(Message *m)
     tracepoint(osd, ms_fast_dispatch, reqid.name._type,
         reqid.name._num, reqid.tid, reqid.inc);
   }
+
   OSDMapRef nextmap = service.get_nextmap_reserved();
   Session *session = static_cast<Session*>(m->get_connection()->get_priv());
   if (session) {
@@ -5957,8 +5965,10 @@ void OSD::ms_fast_dispatch(Message *m)
       session->waiting_on_map.push_back(op);
       dispatch_session_waiting(session, nextmap);
     }
+
     session->put();
   }
+
   service.release_map(nextmap);
 }
 

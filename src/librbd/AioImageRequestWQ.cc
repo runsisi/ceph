@@ -227,6 +227,7 @@ void AioImageRequestWQ::shut_down(Context *on_shutdown) {
 
 bool AioImageRequestWQ::is_lock_request_needed() const {
   RWLock::RLocker locker(m_lock);
+
   return (m_queued_writes.read() > 0 ||
           (m_require_lock_on_read && m_queued_reads.read() > 0));
 }

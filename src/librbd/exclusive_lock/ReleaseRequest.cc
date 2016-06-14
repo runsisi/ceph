@@ -58,6 +58,7 @@ void ReleaseRequest<I>::send_cancel_op_requests() {
   using klass = ReleaseRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_cancel_op_requests>(this);
+
   m_image_ctx.cancel_async_requests(ctx);
 }
 
@@ -112,6 +113,7 @@ void ReleaseRequest<I>::send_flush_notifies() {
   using klass = ReleaseRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_flush_notifies>(this);
+
   m_image_ctx.image_watcher->flush(ctx);
 }
 
@@ -121,6 +123,7 @@ Context *ReleaseRequest<I>::handle_flush_notifies(int *ret_val) {
   ldout(cct, 10) << __func__ << dendl;
 
   assert(*ret_val == 0);
+
   send_close_journal();
   return nullptr;
 }
@@ -181,6 +184,7 @@ void ReleaseRequest<I>::send_close_object_map() {
   using klass = ReleaseRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_close_object_map>(this);
+
   m_object_map->close(ctx);
 }
 
@@ -191,6 +195,7 @@ Context *ReleaseRequest<I>::handle_close_object_map(int *ret_val) {
 
   // object map shouldn't return errors
   assert(*ret_val == 0);
+
   delete m_object_map;
 
   send_unlock();
@@ -214,6 +219,7 @@ void ReleaseRequest<I>::send_unlock() {
   using klass = ReleaseRequest<I>;
   librados::AioCompletion *rados_completion =
     create_rados_safe_callback<klass, &klass::handle_unlock>(this);
+
   int r = m_image_ctx.md_ctx.aio_operate(m_image_ctx.header_oid,
                                          rados_completion, &op);
   assert(r == 0);

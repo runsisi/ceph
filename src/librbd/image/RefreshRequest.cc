@@ -443,6 +443,7 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
   }
 
   // implies exclusive lock dynamically enabled or image open in-progress
+
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
@@ -454,6 +455,8 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
     klass, &klass::handle_v2_init_exclusive_lock>(this);
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
+  // block writes and block read if journaling enabled
   m_exclusive_lock->init(m_features, ctx);
 }
 
@@ -504,6 +507,7 @@ void RefreshRequest<I>::send_v2_open_journal() {
 
   // TODO need safe close
   m_journal = m_image_ctx.create_journal();
+
   m_journal->open(ctx);
 }
 
@@ -543,6 +547,7 @@ void RefreshRequest<I>::send_v2_block_writes() {
   // we need to block writes temporarily to avoid in-flight journal
   // writes
   m_blocked_writes = true;
+
   Context *ctx = create_context_callback<
     RefreshRequest<I>, &RefreshRequest<I>::handle_v2_block_writes>(this);
 
@@ -558,9 +563,12 @@ Context *RefreshRequest<I>::handle_v2_block_writes(int *result) {
   if (*result < 0) {
     lderr(cct) << "failed to block writes: " << cpp_strerror(*result)
                << dendl;
+
     save_result(result);
   }
+
   send_v2_apply();
+
   return nullptr;
 }
 
@@ -604,6 +612,7 @@ void RefreshRequest<I>::send_v2_open_object_map() {
   using klass = RefreshRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_v2_open_object_map>(this);
+
   m_object_map->open(ctx);
 }
 
@@ -632,14 +641,17 @@ void RefreshRequest<I>::send_v2_apply() {
   using klass = RefreshRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_v2_apply>(this);
+
   m_image_ctx.op_work_queue->queue(ctx, 0);
 }
 
 template <typename I>
 Context *RefreshRequest<I>::handle_v2_apply(int *result) {
   CephContext *cct = m_image_ctx.cct;
+
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
+  // refresh finished, now update ImageCtx
   apply();
 
   return send_v2_finalize_refresh_parent();
@@ -657,6 +669,7 @@ Context *RefreshRequest<I>::send_v2_finalize_refresh_parent() {
   using klass = RefreshRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_v2_finalize_refresh_parent>(this);
+
   m_refresh_parent->finalize(ctx);
   return nullptr;
 }
@@ -687,7 +700,9 @@ Context *RefreshRequest<I>::send_v2_shut_down_exclusive_lock() {
   using klass = RefreshRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_v2_shut_down_exclusive_lock>(this);
+
   m_exclusive_lock->shut_down(ctx);
+
   return nullptr;
 }
 
@@ -766,6 +781,7 @@ Context *RefreshRequest<I>::send_v2_close_object_map() {
   using klass = RefreshRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_v2_close_object_map>(this);
+
   m_object_map->close(ctx);
   return nullptr;
 }
@@ -798,12 +814,14 @@ Context *RefreshRequest<I>::send_flush_aio() {
     using klass = RefreshRequest<I>;
     Context *ctx = create_context_callback<
       klass, &klass::handle_flush_aio>(this);
+
     m_image_ctx.flush(ctx);
     return nullptr;
   } else if (m_error_result < 0) {
     // propagate saved error back to caller
     Context *ctx = create_context_callback<
       RefreshRequest<I>, &RefreshRequest<I>::handle_error>(this);
+
     m_image_ctx.op_work_queue->queue(ctx, 0);
     return nullptr;
   }
@@ -915,22 +933,45 @@ void RefreshRequest<I>::apply() {
                                    m_image_ctx.snap_lock)) {
       // disabling exclusive lock will automatically handle closing
       // object map and journaling
+
       assert(m_exclusive_lock == nullptr);
+
+      // ExclusiveLock<I>::handle_shutdown_released will set
+      // m_image_ctx.exclusive_lock to NULL
       m_exclusive_lock = m_image_ctx.exclusive_lock;
     } else {
+
+      // exclusive lock already enabled or dynamically enabled
+
       if (m_exclusive_lock != nullptr) {
+
+        // dynamically enabled exclusive lock
+
         assert(m_image_ctx.exclusive_lock == nullptr);
+
         std::swap(m_exclusive_lock, m_image_ctx.exclusive_lock);
       }
+
       if (!m_image_ctx.test_features(RBD_FEATURE_JOURNALING,
                                      m_image_ctx.snap_lock)) {
+
+        // journaling disabled
+
         if (m_image_ctx.journal != nullptr) {
+
+          // journaling dynamically disabled
+
           m_image_ctx.aio_work_queue->clear_require_lock_on_read();
         }
+
         std::swap(m_journal, m_image_ctx.journal);
       } else if (m_journal != nullptr) {
+
+        // journaling dynamically enabled
+
         std::swap(m_journal, m_image_ctx.journal);
       }
+
       if (!m_image_ctx.test_features(RBD_FEATURE_OBJECT_MAP,
                                      m_image_ctx.snap_lock) ||
           m_object_map != nullptr) {
