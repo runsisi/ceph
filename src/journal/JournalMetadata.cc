@@ -512,6 +512,7 @@ void JournalMetadata::get_mutable_metadata(uint64_t *minimum_set,
 void JournalMetadata::register_client(const bufferlist &data,
 				      Context *on_finish) {
   ldout(m_cct, 10) << __func__ << ": " << m_client_id << dendl;
+
   librados::ObjectWriteOperation op;
   client::client_register(&op, m_client_id, data);
 
@@ -528,6 +529,7 @@ void JournalMetadata::register_client(const bufferlist &data,
 void JournalMetadata::update_client(const bufferlist &data,
 				    Context *on_finish) {
   ldout(m_cct, 10) << __func__ << ": " << m_client_id << dendl;
+
   librados::ObjectWriteOperation op;
   client::client_update_data(&op, m_client_id, data);
 
@@ -545,6 +547,7 @@ void JournalMetadata::unregister_client(Context *on_finish) {
   assert(!m_client_id.empty());
 
   ldout(m_cct, 10) << __func__ << ": " << m_client_id << dendl;
+
   librados::ObjectWriteOperation op;
   client::client_unregister(&op, m_client_id);
 
@@ -744,10 +747,12 @@ void JournalMetadata::refresh(Context *on_complete) {
 
 void JournalMetadata::handle_refresh_complete(C_Refresh *refresh, int r) {
   ldout(m_cct, 10) << "refreshed mutable metadata: r=" << r << dendl;
+
   if (r == 0) {
     Mutex::Locker locker(m_lock);
 
     Client client(m_client_id, bufferlist());
+
     RegisteredClients::iterator it = refresh->registered_clients.find(client);
     if (it != refresh->registered_clients.end()) {
       m_minimum_set = MAX(m_minimum_set, refresh->minimum_set);
@@ -806,6 +811,7 @@ void JournalMetadata::schedule_commit_task() {
 void JournalMetadata::handle_commit_position_task() {
   assert(m_timer_lock->is_locked());
   assert(m_lock.is_locked());
+
   ldout(m_cct, 20) << __func__ << ": "
                    << "client_id=" << m_client_id << ", "
                    << "commit_position=" << m_commit_position << dendl;

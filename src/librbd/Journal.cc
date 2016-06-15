@@ -181,7 +181,7 @@ int open_journaler(CephContext *cct, J *journaler,
     return r;
   }
 
-  // get client of the specified client id
+  // get client data of the local client
   r = journaler->get_cached_client(Journal<ImageCtx>::IMAGE_CLIENT_ID, client);
   if (r < 0) {
     return r;
@@ -209,7 +209,8 @@ int open_journaler(CephContext *cct, J *journaler,
   C_DecodeTags *tags_ctx = new C_DecodeTags(
       cct, &lock, &tag_tid, tag_data, &get_tags_ctx);
 
-  // get tags of the journal
+  // get tags of the journal and filter out those have the tag class and
+  // past the commit position of the local client
   journaler->get_tags(client_meta->tag_class, &tags_ctx->tags, tags_ctx);
 
   r = get_tags_ctx.wait();
@@ -414,7 +415,7 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
   std::string mirror_uuid = (non_primary ? primary_mirror_uuid :
                                            LOCAL_MIRROR_UUID);
 
-  // create a new journal metadata object, tag id and tag class start from 0
+  // new journal metadata object, tag id and tag class start from 0
   r = allocate_journaler_tag(cct, &journaler, client,
                              cls::journal::Tag::TAG_CLASS_NEW,
                              tag_data, mirror_uuid, &tag);
@@ -562,7 +563,7 @@ int Journal<I>::get_tag_owner(IoCtx& io_ctx, std::string& image_id,
   journal::ImageClientMeta client_meta;
   journal::TagData tag_data;
 
-  //
+  // open journal metadata object and get the last tag of the client
   int r = open_journaler(cct, &journaler, &client, &client_meta, &tag_data);
   if (r >= 0) {
     *mirror_uuid = tag_data.mirror_uuid;
@@ -678,7 +679,9 @@ void Journal<I>::open(Context *on_finish) {
 
   Mutex::Locker locker(m_lock);
   assert(m_state == STATE_UNINITIALIZED);
+
   wait_for_steady_state(on_finish);
+
   create_journaler();
 }
 

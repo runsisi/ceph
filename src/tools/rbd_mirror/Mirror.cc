@@ -359,6 +359,7 @@ void Mirror::flush()
 void Mirror::update_replayers(const PoolPeers &pool_peers)
 {
   dout(20) << "enter" << dendl;
+
   assert(m_lock.is_locked());
 
   // remove stale replayers before creating new replayers
@@ -373,6 +374,7 @@ void Mirror::update_replayers(const PoolPeers &pool_peers)
                pool_peer_it->second.find(peer) == pool_peer_it->second.end()) {
       dout(20) << "removing replayer for " << peer << dendl;
       // TODO: make async
+
       it = m_replayers.erase(it);
     } else {
       ++it;
@@ -380,10 +382,19 @@ void Mirror::update_replayers(const PoolPeers &pool_peers)
   }
 
   for (auto &kv : pool_peers) {
+
+    // map<pool id, set<peer_t>>
+
     for (auto &peer : kv.second) {
+
+      // set<peer_t>
+
       PoolPeer pool_peer(kv.first, peer);
+
       if (m_replayers.find(pool_peer) == m_replayers.end()) {
+
         dout(20) << "starting replayer for " << peer << dendl;
+
         unique_ptr<Replayer> replayer(new Replayer(m_threads, m_image_deleter,
                                                    m_image_sync_throttler,
                                                    kv.first, peer, m_args));
@@ -392,6 +403,7 @@ void Mirror::update_replayers(const PoolPeers &pool_peers)
         if (r < 0) {
 	  continue;
         }
+
         m_replayers.insert(std::make_pair(pool_peer, std::move(replayer)));
       }
     }

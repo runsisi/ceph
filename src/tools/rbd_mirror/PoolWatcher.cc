@@ -75,8 +75,10 @@ void PoolWatcher::refresh_images(bool reschedule)
   if (!m_stopping && reschedule) {
     FunctionContext *ctx = new FunctionContext(
       boost::bind(&PoolWatcher::refresh_images, this, true));
+
     m_timer.add_event_after(m_interval, ctx);
   }
+
   m_refresh_cond.Signal();
   // TODO: perhaps use a workqueue instead, once we get notifications
   // about new/removed mirrored images
@@ -86,6 +88,7 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
   dout(20) << "enter" << dendl;
 
   std::string pool_name = m_remote_io_ctx.get_pool_name();
+
   rbd_mirror_mode_t mirror_mode;
   int r = librbd::mirror_mode_get(m_remote_io_ctx, &mirror_mode);
   if (r < 0) {
@@ -93,11 +96,17 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
          << pool_name << ": " << cpp_strerror(r) << dendl;
     return r;
   }
+
   if (mirror_mode == RBD_MIRROR_MODE_DISABLED) {
     dout(20) << "pool " << pool_name << " has mirroring disabled" << dendl;
     return 0;
   }
 
+  // the remote pool has mirror enabled, now we get all the mirror
+  // enabled images
+
+  // get all images of the remote pool
+  // <image name, image id>
   std::map<std::string, std::string> images_map;
   r = librbd::list_images_v2(m_remote_io_ctx, images_map);
   if (r < 0) {
@@ -106,6 +115,7 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
     return r;
   }
 
+  // <image id, image name>
   std::map<std::string, std::string> image_id_to_name;
   for (const auto& img_pair : images_map) {
     image_id_to_name.insert(std::make_pair(img_pair.second, img_pair.first));
@@ -114,6 +124,8 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
   std::string last_read = "";
   int max_read = 1024;
   do {
+    // get all mirror enabled images of the remote pool
+    // <image id, image global id>
     std::map<std::string, std::string> mirror_images;
     r =  mirror_image_list(&m_remote_io_ctx, last_read, max_read,
                            &mirror_images);
@@ -122,17 +134,23 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
            << cpp_strerror(r) << dendl;
       return r;
     }
+
     for (auto it = mirror_images.begin(); it != mirror_images.end(); ++it) {
       boost::optional<std::string> image_name(boost::none);
+
       auto it2 = image_id_to_name.find(it->first);
       if (it2 != image_id_to_name.end()) {
         image_name = it2->second;
       }
+
+      // <image id, image name, image global id>
       image_ids->insert(ImageId(it->first, image_name, it->second));
     }
+
     if (!mirror_images.empty()) {
       last_read = mirror_images.rbegin()->first;
     }
+
     r = mirror_images.size();
   } while (r == max_read);
 
