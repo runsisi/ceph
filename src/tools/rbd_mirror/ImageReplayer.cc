@@ -282,12 +282,14 @@ ImageReplayer<I>::ImageReplayer(Threads *threads,
   // re-registered using "remote_pool_name/remote_image_name" name.
 
   std::string pool_name;
+
   int r = m_remote->pool_reverse_lookup(m_remote_pool_id, &pool_name);
   if (r < 0) {
     derr << "error resolving remote pool " << m_remote_pool_id
 	 << ": " << cpp_strerror(r) << dendl;
     pool_name = stringify(m_remote_pool_id);
   }
+
   m_name = pool_name + "/" + m_global_image_id;
 
   m_asok_hook = new ImageReplayerAdminSocketHook<I>(g_ceph_context, m_name,
@@ -326,9 +328,11 @@ void ImageReplayer<I>::start(Context *on_finish, bool manual)
 {
   assert(m_on_start_finish == nullptr);
   assert(m_on_stop_finish == nullptr);
+
   dout(20) << "on_finish=" << on_finish << dendl;
 
   int r = 0;
+
   {
     Mutex::Locker locker(m_lock);
 

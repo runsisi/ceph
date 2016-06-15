@@ -116,6 +116,7 @@ void ClusterWatcher::read_pool_peers(PoolPeers *pool_peers,
       continue;
     }
 
+    // map<pool id, set<peer_t>>
     pool_peers->insert({pool_id, Peers{configs.begin(), configs.end()}});
     pool_names->insert(pool_name);
   }

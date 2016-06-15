@@ -3414,6 +3414,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
         }
 
         if ((features & RBD_FEATURE_JOURNALING) != 0) {
+
+          // only enable mirror for those images has journaling enabled
+
           ImageCtx *img_ctx = new ImageCtx("", img_pair.second, nullptr,
                                            io_ctx, false);
           r = img_ctx->state->open();
