@@ -174,13 +174,17 @@ int open_journaler(CephContext *cct, J *journaler,
                    journal::ImageClientMeta *client_meta,
                    journal::TagData *tag_data) {
   C_SaferCond init_ctx;
+
+  // watch journal.xxx metadata object, get immutable (order, splay width, pool id)
+  // and mutable metadata (minimum set, active set, set<Client>)
   journaler->init(&init_ctx);
+
   int r = init_ctx.wait();
   if (r < 0) {
     return r;
   }
 
-  // get client data of the local client
+  // get registered local client
   r = journaler->get_cached_client(Journal<ImageCtx>::IMAGE_CLIENT_ID, client);
   if (r < 0) {
     return r;
@@ -240,15 +244,17 @@ int allocate_journaler_tag(CephContext *cct, J *journaler,
     tag_data.predecessor_tag_tid = position.tag_tid;
     tag_data.predecessor_entry_tid = position.entry_tid;
   }
+
   tag_data.predecessor_mirror_uuid = prev_tag_data.mirror_uuid;
-  tag_data.mirror_uuid = mirror_uuid;
+  tag_data.mirror_uuid = mirror_uuid; // owner of the tag (exclusive lock epoch)
 
   bufferlist tag_bl;
   ::encode(tag_data, tag_bl);
 
   C_SaferCond allocate_tag_ctx;
 
-  // allocate a new tag
+  // allocate a new tag with specified tag class and tag data and
+  // then get the allocated tag
   journaler->allocate_tag(tag_class, tag_bl, new_tag, &allocate_tag_ctx);
 
   int r = allocate_tag_ctx.wait();
@@ -414,10 +420,13 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
 
   assert(non_primary ^ primary_mirror_uuid.empty());
 
+  // tag owner
   std::string mirror_uuid = (non_primary ? primary_mirror_uuid :
                                            LOCAL_MIRROR_UUID);
 
-  // new journal metadata object, tag id and tag class start from 0
+  // allocate a tag with owner set to 'mirror_uuid', because we have
+  // created a new journal metadata object, so tag id and tag class
+  // both start from 0
   r = allocate_journaler_tag(cct, &journaler, client,
                              cls::journal::Tag::TAG_CLASS_NEW,
                              tag_data, mirror_uuid, &tag);
@@ -426,12 +435,16 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
   ::encode(journal::ClientData{journal::ImageClientMeta{tag.tag_class}},
            client_data);
 
+  // register local, i.e., master, client, i.e., IMAGE_CLIENT_ID,
+  // rbd-mirror daemon will register a mirror peer client, see
+  // BootstrapRequest<I>::register_client
   r = journaler.register_client(client_data);
   if (r < 0) {
     lderr(cct) << __func__ << ": "
                << "failed to register client: " << cpp_strerror(r) << dendl;
     return r;
   }
+
   return 0;
 }
 
@@ -531,15 +544,22 @@ int Journal<I>::reset(librados::IoCtx &io_ctx, const std::string &image_id) {
   return 0;
 }
 
+// static
 template <typename I>
 int Journal<I>::is_tag_owner(I *image_ctx, bool *is_tag_owner) {
+
+  // call another static function
+
   return Journal<>::is_tag_owner(image_ctx->md_ctx, image_ctx->id, is_tag_owner);
 }
 
+// static
 template <typename I>
 int Journal<I>::is_tag_owner(IoCtx& io_ctx, std::string& image_id,
                              bool *is_tag_owner) {
   std::string mirror_uuid;
+
+  // get the last tag and check the tag owner
   int r = get_tag_owner(io_ctx, image_id, &mirror_uuid);
   if (r < 0) {
     return r;
@@ -549,11 +569,16 @@ int Journal<I>::is_tag_owner(IoCtx& io_ctx, std::string& image_id,
   return 0;
 }
 
+// static
 template <typename I>
 int Journal<I>::get_tag_owner(I *image_ctx, std::string *mirror_uuid) {
+
+  // call another static function
+
   return get_tag_owner(image_ctx->md_ctx, image_ctx->id, mirror_uuid);
 }
 
+// static
 template <typename I>
 int Journal<I>::get_tag_owner(IoCtx& io_ctx, std::string& image_id,
                               std::string *mirror_uuid) {
@@ -561,14 +586,18 @@ int Journal<I>::get_tag_owner(IoCtx& io_ctx, std::string& image_id,
 
   ldout(cct, 20) << __func__ << dendl;
 
+  // <io_ctx, image id> determines which journal we are to interface with
   Journaler journaler(io_ctx, image_id, IMAGE_CLIENT_ID,
                       cct->_conf->rbd_journal_commit_age);
 
+  // <client id, bufferlist data>
   cls::journal::Client client;
+  // <static meta type, tag class, resync_requested>
   journal::ImageClientMeta client_meta;
+  // <mirror uuid, pre mirror uuid, bool pre commit valid, pre tag id, pre entry id>
   journal::TagData tag_data;
 
-  // open journal metadata object and get the last tag of the client
+  // init Journaler and get the last tag of the client
   int r = open_journaler(cct, &journaler, &client, &client_meta, &tag_data);
   if (r >= 0) {
     *mirror_uuid = tag_data.mirror_uuid;
@@ -641,6 +670,8 @@ int Journal<I>::promote(I *image_ctx) {
   }
 
   cls::journal::Tag new_tag;
+
+  // allocate a new tag with owner set to
   r = allocate_journaler_tag(cct, &journaler, client, client_meta.tag_class,
                              tag_data, LOCAL_MIRROR_UUID, &new_tag);
   if (r < 0) {
@@ -677,6 +708,7 @@ void Journal<I>::wait_for_journal_ready(Context *on_ready) {
   }
 }
 
+// called in AcquireRequest<I>::send_open_journal
 template <typename I>
 void Journal<I>::open(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -742,6 +774,8 @@ int Journal<I>::demote() {
   assert(m_journaler != nullptr && is_tag_owner());
 
   cls::journal::Client client;
+
+  // get master client of the journal
   int r = m_journaler->get_cached_client(IMAGE_CLIENT_ID, &client);
   if (r < 0) {
     lderr(cct) << this << " " << __func__ << ": "
@@ -750,6 +784,8 @@ int Journal<I>::demote() {
   }
 
   cls::journal::Tag new_tag;
+
+  // allocate a new tag with owner set to orphan
   r = allocate_journaler_tag(cct, m_journaler, client, m_tag_class,
                              m_tag_data, ORPHAN_MIRROR_UUID, &new_tag);
   if (r < 0) {
@@ -835,6 +871,8 @@ void Journal<I>::allocate_local_tag(Context *on_finish) {
     }
   }
 
+  // allocate a tag with current owner and previous owner set to local, i.e.,
+  // master, client
   allocate_tag(LOCAL_MIRROR_UUID, LOCAL_MIRROR_UUID, predecessor_commit_valid,
                predecessor_tag_tid, predecessor_entry_tid, on_finish);
 }
@@ -854,7 +892,9 @@ void Journal<I>::allocate_tag(const std::string &mirror_uuid,
   assert(m_journaler != nullptr);
 
   journal::TagData tag_data;
-  tag_data.mirror_uuid = mirror_uuid;
+
+  tag_data.mirror_uuid = mirror_uuid; // owner of the tag (exclusive lock epoch)
+
   tag_data.predecessor_mirror_uuid = predecessor_mirror_uuid;
   tag_data.predecessor_commit_valid = predecessor_commit_valid;
   tag_data.predecessor_tag_tid = predecessor_tag_tid;
@@ -866,6 +906,7 @@ void Journal<I>::allocate_tag(const std::string &mirror_uuid,
   C_DecodeTag *decode_tag_ctx = new C_DecodeTag(cct, &m_lock, &m_tag_tid,
                                                 &m_tag_data, on_finish);
 
+  // m_tag_class was set in Journal<I>::handle_initialized
   m_journaler->allocate_tag(m_tag_class, tag_bl, &decode_tag_ctx->tag,
                             decode_tag_ctx);
 }
@@ -1279,7 +1320,7 @@ void Journal<I>::create_journaler() {
 			      m_image_ctx.md_ctx, m_image_ctx.id,
 			      IMAGE_CLIENT_ID, m_image_ctx.journal_commit_age);
 
-  // JournalMetadata::init
+  // open Journaler
   m_journaler->init(create_async_context_callback(
     m_image_ctx, create_context_callback<
       Journal<I>, &Journal<I>::handle_initialized>(this)));

@@ -254,10 +254,14 @@ private:
       Mutex::Locker locker(journal_metadata->m_lock);
       journal_metadata->m_async_op_tracker.start_op();
     }
+
     virtual ~C_ImmutableMetadata() {
       journal_metadata->m_async_op_tracker.finish_op();
     }
+
     virtual void finish(int r) {
+
+      // refresh
       journal_metadata->handle_immutable_metadata(r, on_finish);
     }
   };
@@ -275,13 +279,19 @@ private:
       Mutex::Locker locker(journal_metadata->m_lock);
       journal_metadata->m_async_op_tracker.start_op();
     }
+
     virtual ~C_Refresh() {
       journal_metadata->m_async_op_tracker.finish_op();
     }
+
     virtual void finish(int r) {
       journal_metadata->handle_refresh_complete(this, r);
     }
   };
+
+  // C_WatchCtx, C_WatchReset, C_CommitPositionTask,
+  // C_AioNoty, C_NotifyUpdate,
+  // C_ImmutableMetadata, C_Refresh
 
   librados::IoCtx m_ioctx;
   CephContext *m_cct;
@@ -310,6 +320,7 @@ private:
 
   uint64_t m_minimum_set;
   uint64_t m_active_set;
+  // set<Client>
   RegisteredClients m_registered_clients;
   Client m_client;
 

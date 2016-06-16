@@ -3151,17 +3151,22 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
   int mirror_image_get_info(ImageCtx *ictx, mirror_image_info_t *mirror_image_info,
                             size_t info_size) {
     CephContext *cct = ictx->cct;
+
     ldout(cct, 20) << __func__ << ": ictx=" << ictx << dendl;
+
     if (info_size < sizeof(mirror_image_info_t)) {
       return -ERANGE;
     }
 
+    // ictx->state constructed by ImageCtx ctor
     int r = ictx->state->refresh_if_required();
     if (r < 0) {
       return r;
     }
 
     cls::rbd::MirrorImage mirror_image_internal;
+
+    // get <image global id, enum image mirror state> by image id
     r = cls_client::mirror_image_get(&ictx->md_ctx, ictx->id,
         &mirror_image_internal);
     if (r < 0 && r != -ENOENT) {
@@ -3170,6 +3175,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       return r;
     }
 
+    // populate mirror image info
     mirror_image_info->global_id = mirror_image_internal.global_image_id;
     if (r == -ENOENT) {
       mirror_image_info->state = RBD_MIRROR_IMAGE_DISABLED;
@@ -3179,6 +3185,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     if (mirror_image_info->state == RBD_MIRROR_IMAGE_ENABLED) {
+
+      // get tag owner to check if this image is primary
+
       r = Journal<>::is_tag_owner(ictx, &mirror_image_info->primary);
       if (r < 0) {
         lderr(cct) << "failed to check tag ownership: "
@@ -3205,12 +3214,14 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       return r;
     }
 
+    // <image global id, enum image mirror state, bool primary>
     mirror_image_info_t info;
     r = mirror_image_get_info(ictx, &info, sizeof(info));
     if (r < 0) {
       return r;
     }
 
+    // <image mirror status state, description, last update time, bool up>
     cls::rbd::MirrorImageStatus
       s(cls::rbd::MIRROR_IMAGE_STATUS_STATE_UNKNOWN, "status not found");
 
@@ -3228,6 +3239,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       s.description,
       s.last_update.sec(),
       s.up};
+
     return 0;
   }
 
