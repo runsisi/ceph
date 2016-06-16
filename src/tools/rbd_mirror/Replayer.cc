@@ -407,6 +407,7 @@ void Replayer::init_local_mirroring_images() {
     // get all mirror enabled images of local pool
     // <image id, image global id>
     std::map<std::string, std::string> mirror_images;
+
     r = librbd::cls_client::mirror_image_list(&m_local_io_ctx, last_read,
                                               max_read, &mirror_images);
     if (r < 0) {
@@ -416,7 +417,12 @@ void Replayer::init_local_mirroring_images() {
     }
 
     for (auto it = mirror_images.begin(); it != mirror_images.end(); ++it) {
+
+      // iterate mirror enabled images to get their names
+
       std::string image_name;
+
+      // get image name by image id
       r = dir_get_name(&m_local_io_ctx, RBD_DIRECTORY, it->first, &image_name);
       if (r < 0) {
         derr << "error retrieving local image name: " << cpp_strerror(r)
@@ -435,6 +441,7 @@ void Replayer::init_local_mirroring_images() {
     r = mirror_images.size();
   } while (r == max_read);
 
+  // those images are mirror enabled of the local pool
   m_init_images = std::move(images);
 }
 
@@ -607,6 +614,8 @@ void Replayer::set_sources(const ImageIds &image_ids)
     for (auto &image : m_init_images) {
       dout(20) << "scheduling the deletion of init image: "
                << image.name << dendl;
+      // those primary images in this pool will be ignored, see
+      // ImageDeleter::process_image_delete
       m_image_deleter->schedule_image_delete(m_local_rados, m_local_pool_id,
                                              image.id, image.name,
                                              image.global_id);

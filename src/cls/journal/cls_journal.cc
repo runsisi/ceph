@@ -229,10 +229,15 @@ int get_client_list_range(cls_method_context_t hctx,
                           std::string start_after, uint64_t max_return) {
   std::string last_read;
   if (!start_after.empty()) {
+
+    // "client_"
+
     last_read = key_from_client_id(start_after);
   }
 
   std::map<std::string, bufferlist> vals;
+
+  // "client_"
   int r = cls_cxx_map_get_vals(hctx, last_read, HEADER_KEY_CLIENT_PREFIX,
                                max_return, &vals);
   if (r < 0) {
@@ -245,8 +250,11 @@ int get_client_list_range(cls_method_context_t hctx,
     try {
       bufferlist::iterator iter = it->second.begin();
 
+      // <client id, bufferlist data, commit position, enum client state>
       cls::journal::Client client;
+
       ::decode(client, iter);
+
       clients->insert(client);
     } catch (const buffer::error &err) {
       CLS_ERR("could not decode client '%s': %s", it->first.c_str(),
@@ -629,12 +637,14 @@ int journal_client_register(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
+  // added in commit cb72ac120c6206a82ad4c0af7329f4512803f413
   uint8_t order;
   int r = read_key(hctx, HEADER_KEY_ORDER, &order);
   if (r < 0) {
     return r;
   }
 
+  // "client_"
   std::string key(key_from_client_id(id));
   bufferlist stored_clientbl;
   r = cls_cxx_map_get_val(hctx, key, &stored_clientbl);
@@ -650,6 +660,7 @@ int journal_client_register(cls_method_context_t hctx, bufferlist *in,
   if (r < 0)
     return r;
 
+  // <client id, bufferlist data, commit position, enum client state>
   cls::journal::Client client(id, data, minset);
   r = write_key(hctx, key, client);
   if (r < 0) {
@@ -845,6 +856,7 @@ int journal_client_list(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
+  // set<client id, bufferlist data, commit position, enum client state>
   std::set<cls::journal::Client> clients;
   int r = get_client_list_range(hctx, &clients, start_after, max_return);
   if (r < 0)
@@ -864,6 +876,8 @@ int journal_client_list(cls_method_context_t hctx, bufferlist *in,
 int journal_get_next_tag_tid(cls_method_context_t hctx, bufferlist *in,
                              bufferlist *out) {
   uint64_t tag_tid;
+
+  // "next_tag_tid"
   int r = read_key(hctx, HEADER_KEY_NEXT_TAG_TID, &tag_tid);
   if (r < 0) {
     return r;
@@ -892,8 +906,10 @@ int journal_get_tag(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
+  // "tag_"
   std::string key(key_from_tag_tid(tag_tid));
   cls::journal::Tag tag;
+
   int r = read_key(hctx, key, &tag);
   if (r < 0) {
     return r;

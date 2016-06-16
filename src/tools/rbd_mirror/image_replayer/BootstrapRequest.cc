@@ -93,6 +93,8 @@ void BootstrapRequest<I>::get_local_image_id() {
   update_progress("GET_LOCAL_IMAGE_ID");
 
   // attempt to cross-reference a local image by the global image id
+  // try to check if the local pool has the image mirror enabled,
+  // see cls_rbd::mirror_image_set
   librados::ObjectReadOperation op;
   librbd::cls_client::mirror_image_get_image_id_start(&op, m_global_image_id);
 
@@ -109,7 +111,12 @@ void BootstrapRequest<I>::handle_get_local_image_id(int r) {
   dout(20) << ": r=" << r << dendl;
 
   if (r == 0) {
+
+    // we already have a local mirror image of the remote image, so
+    // we know the local image id already
+
     bufferlist::iterator iter = m_out_bl.begin();
+
     r = librbd::cls_client::mirror_image_get_image_id_finish(
       &iter, &m_local_image_id);
   }
@@ -134,6 +141,8 @@ void BootstrapRequest<I>::get_remote_tag_class() {
   Context *ctx = create_context_callback<
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_get_remote_tag_class>(
       this);
+
+  // get local, i.e., master, client of remote journal
   m_journaler->get_client(librbd::Journal<>::IMAGE_CLIENT_ID, &m_client, ctx);
 }
 
@@ -146,6 +155,8 @@ void BootstrapRequest<I>::handle_get_remote_tag_class(int r) {
     finish(r);
     return;
   }
+
+  // get local, i.e., master, client data of remote journal
 
   librbd::journal::ClientData client_data;
   bufferlist::iterator it = m_client.data.begin();
@@ -167,8 +178,10 @@ void BootstrapRequest<I>::handle_get_remote_tag_class(int r) {
   }
 
   m_remote_tag_class = client_meta->tag_class;
+
   dout(10) << ": remote tag class=" << m_remote_tag_class << dendl;
 
+  // get mirror peer client of remote journal
   get_client();
 }
 
@@ -181,6 +194,8 @@ void BootstrapRequest<I>::get_client() {
   Context *ctx = create_context_callback<
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_get_client>(
       this);
+
+  // get mirror peer client of remote journal
   m_journaler->get_client(m_local_mirror_uuid, &m_client, ctx);
 }
 
@@ -209,15 +224,19 @@ void BootstrapRequest<I>::register_client() {
 
   update_progress("REGISTER_CLIENT");
 
-  // record an place-holder record
+  // record an place-holder record, we do not know m_local_image_id currently,
+  // will update the client data in BootstrapRequest<I>::update_client
   librbd::journal::ClientData client_data{
     librbd::journal::MirrorPeerClientMeta{m_local_image_id}};
+
   bufferlist client_data_bl;
   ::encode(client_data, client_data_bl);
 
   Context *ctx = create_context_callback<
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_register_client>(
       this);
+
+  // register a mirror peer client(Journal<I>::handle_initialized) of the Journaler
   m_journaler->register_client(client_data_bl, ctx);
 }
 
@@ -228,11 +247,13 @@ void BootstrapRequest<I>::handle_register_client(int r) {
   if (r < 0) {
     derr << ": failed to register with remote journal: " << cpp_strerror(r)
          << dendl;
+
     finish(r);
     return;
   }
 
   *m_client_meta = librbd::journal::MirrorPeerClientMeta(m_local_image_id);
+
   open_remote_image();
 }
 
@@ -245,9 +266,11 @@ void BootstrapRequest<I>::open_remote_image() {
   Context *ctx = create_context_callback<
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_open_remote_image>(
       this);
+
   OpenImageRequest<I> *request = OpenImageRequest<I>::create(
     m_remote_io_ctx, &m_remote_image_ctx, m_remote_image_id, false,
     m_work_queue, ctx);
+
   request->send();
 }
 
@@ -279,7 +302,9 @@ void BootstrapRequest<I>::handle_open_remote_image(int r) {
   if (!tag_owner) {
     dout(5) << ": remote image is not primary -- skipping image replay"
             << dendl;
+
     m_ret_val = -EREMOTEIO;
+
     close_remote_image();
     return;
   }
@@ -290,10 +315,15 @@ void BootstrapRequest<I>::handle_open_remote_image(int r) {
   }
 
   if (m_local_image_id.empty()) {
+
+    // local mirror image does not exist, create it now
+
     create_local_image();
+
     return;
   }
 
+  // the local mirror image has exists, see BootstrapRequest<I>::get_local_image_id
   open_local_image();
 }
 
@@ -306,10 +336,12 @@ void BootstrapRequest<I>::open_local_image() {
   Context *ctx = create_context_callback<
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_open_local_image>(
       this);
+
   OpenLocalImageRequest<I> *request = OpenLocalImageRequest<I>::create(
     m_local_io_ctx, m_local_image_ctx,
     (!m_local_image_id.empty() ? std::string() : m_local_image_name),
     m_local_image_id, m_work_queue, ctx);
+
   request->send();
 }
 
@@ -320,18 +352,23 @@ void BootstrapRequest<I>::handle_open_local_image(int r) {
   if (r == -ENOENT) {
     assert(*m_local_image_ctx == nullptr);
     dout(10) << ": local image missing" << dendl;
+
     create_local_image();
     return;
   } else if (r == -EREMOTEIO) {
     assert(*m_local_image_ctx == nullptr);
     dout(10) << "local image is primary -- skipping image replay" << dendl;
+
     m_ret_val = r;
+
     close_remote_image();
     return;
   } else if (r < 0) {
     assert(*m_local_image_ctx == nullptr);
     derr << ": failed to open local image: " << cpp_strerror(r) << dendl;
+
     m_ret_val = r;
+
     close_remote_image();
     return;
   }
@@ -360,14 +397,17 @@ void BootstrapRequest<I>::create_local_image() {
   dout(20) << dendl;
 
   m_local_image_id = "";
+
   update_progress("CREATE_LOCAL_IMAGE");
 
   Context *ctx = create_context_callback<
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_create_local_image>(
       this);
+
   CreateImageRequest<I> *request = CreateImageRequest<I>::create(
     m_local_io_ctx, m_work_queue, m_global_image_id, m_remote_mirror_uuid,
     m_local_image_name, m_remote_image_ctx, ctx);
+
   request->send();
 }
 
@@ -383,6 +423,7 @@ void BootstrapRequest<I>::handle_create_local_image(int r) {
   }
 
   m_created_local_image = true;
+
   open_local_image();
 }
 
@@ -397,6 +438,7 @@ void BootstrapRequest<I>::update_client() {
     get_remote_tags();
     return;
   }
+
   m_local_image_id = (*m_local_image_ctx)->id;
 
   dout(20) << dendl;
@@ -453,6 +495,7 @@ void BootstrapRequest<I>::get_remote_tags() {
 
   Context *ctx = create_context_callback<
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_get_remote_tags>(this);
+
   m_journaler->get_tags(m_remote_tag_class, &m_remote_tags, ctx);
 }
 

@@ -74,6 +74,7 @@ bool ExclusiveLock<I>::is_lock_owner() const {
   return lock_owner;
 }
 
+// called in ImageWatcher::handle_payload
 template <typename I>
 bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
   Mutex::Locker locker(m_lock);
@@ -84,6 +85,7 @@ bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
 
   ldout(m_image_ctx.cct, 20) << this << " " << __func__ << "="
                              << accept_requests << dendl;
+
   return accept_requests;
 }
 
@@ -119,6 +121,7 @@ void ExclusiveLock<I>::init(uint64_t features, Context *on_init) {
   }
 
   m_image_ctx.aio_work_queue->block_writes(new C_InitComplete(this, on_init));
+
   if ((features & RBD_FEATURE_JOURNALING) != 0) {
     m_image_ctx.aio_work_queue->set_require_lock_on_read();
   }
@@ -380,7 +383,9 @@ void ExclusiveLock<I>::send_acquire_lock() {
     util::create_context_callback<el, &el::handle_acquire_lock>(this));
 
   m_lock.Unlock();
+
   req->send();
+
   m_lock.Lock();
 }
 

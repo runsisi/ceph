@@ -3141,6 +3141,7 @@ int write_peer(cls_method_context_t hctx, const std::string &id,
             cpp_strerror(r).c_str());
     return r;
   }
+
   return 0;
 }
 
@@ -3173,11 +3174,13 @@ int image_set(cls_method_context_t hctx, const string &image_id,
   ::encode(mirror_image, bl);
 
   cls::rbd::MirrorImage existing_mirror_image;
+
   int r = image_get(hctx, image_id, &existing_mirror_image);
   if (r == -ENOENT) {
     // make sure global id doesn't already exist
     std::string global_id_key = global_key(mirror_image.global_image_id);
     std::string image_id;
+
     r = read_key(hctx, global_id_key, &image_id);
     if (r >= 0) {
       return -EEXIST;
@@ -3202,6 +3205,7 @@ int image_set(cls_method_context_t hctx, const string &image_id,
     return -EINVAL;
   }
 
+  // "image_", image id -> MirrorImage<global image id, enum mirror state>
   r = cls_cxx_map_set_val(hctx, image_key(image_id), &bl);
   if (r < 0) {
     CLS_ERR("error adding mirrored image '%s': %s", image_id.c_str(),
@@ -3211,6 +3215,8 @@ int image_set(cls_method_context_t hctx, const string &image_id,
 
   bufferlist image_id_bl;
   ::encode(image_id, image_id_bl);
+
+  // "global_", global image id -> image id
   r = cls_cxx_map_set_val(hctx, global_key(mirror_image.global_image_id),
                           &image_id_bl);
   if (r < 0) {
@@ -3288,7 +3294,9 @@ WRITE_CLASS_ENCODER_FEATURES(MirrorImageStatusOnDisk)
 
 int image_status_set(cls_method_context_t hctx, const string &global_image_id,
 		     const cls::rbd::MirrorImageStatus &status) {
+  // ondisk structure has an additional field entity_inst_t
   MirrorImageStatusOnDisk ondisk_status(status);
+
   ondisk_status.up = false;
   ondisk_status.last_update = ceph_clock_now(g_ceph_context);
 
@@ -3298,12 +3306,14 @@ int image_status_set(cls_method_context_t hctx, const string &global_image_id,
   bufferlist bl;
   encode(ondisk_status, bl, cls_get_features(hctx));
 
+  // "status_global_"
   r = cls_cxx_map_set_val(hctx, status_global_key(global_image_id), &bl);
   if (r < 0) {
     CLS_ERR("error setting status for mirrored image, global id '%s': %s",
 	    global_image_id.c_str(), cpp_strerror(r).c_str());
     return r;
   }
+
   return 0;
 }
 
@@ -3323,6 +3333,8 @@ int image_status_get(cls_method_context_t hctx, const string &global_image_id,
 		     cls::rbd::MirrorImageStatus *status) {
 
   bufferlist bl;
+
+  // "status_global_"
   int r = cls_cxx_map_get_val(hctx, status_global_key(global_image_id), &bl);
   if (r < 0) {
     if (r != -ENOENT) {
@@ -3350,10 +3362,12 @@ int image_status_get(cls_method_context_t hctx, const string &global_image_id,
   }
 
   *status = static_cast<cls::rbd::MirrorImageStatus>(ondisk_status);
+
   status->up = false;
   for (auto &w : watchers.entries) {
     if (w.name == ondisk_status.origin.name &&
 	w.addr == ondisk_status.origin.addr) {
+      // the only place set status->up to 'true'
       status->up = true;
       break;
     }
@@ -3911,7 +3925,10 @@ int mirror_image_list(cls_method_context_t hctx, bufferlist *in,
 
   while (r == max_read && mirror_images.size() < max_return) {
     std::map<std::string, bufferlist> vals;
+
     CLS_LOG(20, "last_read = '%s'", last_read.c_str());
+
+    // "image_"
     r = cls_cxx_map_get_vals(hctx, last_read, mirror::IMAGE_KEY_PREFIX,
 			     max_read, &vals);
     if (r < 0) {
@@ -3923,8 +3940,11 @@ int mirror_image_list(cls_method_context_t hctx, bufferlist *in,
     for (auto it = vals.begin(); it != vals.end(); ++it) {
       const std::string &image_id =
         it->first.substr(mirror::IMAGE_KEY_PREFIX.size());
+
+      // <image global id, enum image state>
       cls::rbd::MirrorImage mirror_image;
       bufferlist::iterator iter = it->second.begin();
+
       try {
 	::decode(mirror_image, iter);
       } catch (const buffer::error &err) {
@@ -3938,6 +3958,7 @@ int mirror_image_list(cls_method_context_t hctx, bufferlist *in,
 	break;
       }
     }
+
     if (!vals.empty()) {
       last_read = mirror::image_key(mirror_images.rbegin()->first);
     }
@@ -3966,6 +3987,8 @@ int mirror_image_get_image_id(cls_method_context_t hctx, bufferlist *in,
   }
 
   std::string image_id;
+
+  // "global_"
   int r = read_key(hctx, mirror::global_key(global_id), &image_id);
   if (r < 0) {
     CLS_ERR("error retrieving image id for global id '%s': %s",
@@ -4026,6 +4049,8 @@ int mirror_image_set(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
+  // register image id -> MirrorImage<global image id, enum mirror state>
+  // and global image id -> image id
   int r = mirror::image_set(hctx, image_id, mirror_image);
   if (r < 0) {
     return r;
@@ -4126,6 +4151,7 @@ int mirror_image_status_get(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
+  // <image mirror status state, description, last update time, bool up>
   cls::rbd::MirrorImageStatus status;
   int r = mirror::image_status_get(hctx, global_image_id, &status);
   if (r < 0) {

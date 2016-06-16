@@ -399,6 +399,9 @@ struct C_AssertActiveTag : public Context {
 
 } // anonymous namespace
 
+// C_GetClient, C_AllocateTag, C_GetTag, C_GetTags, C_AssertActiveTag
+// C_FlushCommitPosition
+
 JournalMetadata::JournalMetadata(ContextWQ *work_queue, SafeTimer *timer,
                                  Mutex *timer_lock, librados::IoCtx &ioctx,
                                  const std::string &oid, // "journal." + journal_id(i.e., image local id)
@@ -431,12 +434,17 @@ void JournalMetadata::init(Context *on_finish) {
   // chain the init sequence (reverse order)
   on_finish = utils::create_async_context_callback(
     this, on_finish);
+
+  // journal_metadata->handle_immutable_metadata
   on_finish = new C_ImmutableMetadata(this, on_finish);
+
   on_finish = new FunctionContext([this, on_finish](int r) {
       if (r < 0) {
         lderr(m_cct) << __func__ << ": failed to watch journal"
                      << cpp_strerror(r) << dendl;
+
         Mutex::Locker locker(m_lock);
+
         m_watch_handle = 0;
         on_finish->complete(r);
         return;
@@ -447,6 +455,7 @@ void JournalMetadata::init(Context *on_finish) {
 
   librados::AioCompletion *comp = librados::Rados::aio_create_completion(
     on_finish, nullptr, utils::rados_ctx_callback);
+
   int r = m_ioctx.aio_watch(m_oid, comp, &m_watch_handle, &m_watch_ctx);
   assert(r == 0);
   comp->release();
@@ -497,6 +506,9 @@ void JournalMetadata::get_immutable_metadata(uint8_t *order,
 					     uint8_t *splay_width,
 					     int64_t *pool_id,
 					     Context *on_finish) {
+
+  // new client::C_ImmutableMetadata
+
   client::get_immutable_metadata(m_ioctx, m_oid, order, splay_width, pool_id,
 				 on_finish);
 }
@@ -505,6 +517,9 @@ void JournalMetadata::get_mutable_metadata(uint64_t *minimum_set,
 					   uint64_t *active_set,
 					   RegisteredClients *clients,
 					   Context *on_finish) {
+
+  // new client::C_MutableMetadata
+
   client::get_mutable_metadata(m_ioctx, m_oid, minimum_set, active_set, clients,
 			       on_finish);
 }
@@ -596,6 +611,7 @@ void JournalMetadata::add_listener(JournalMetadataListener *listener) {
   while (m_update_notifications > 0) {
     m_update_cond.Wait(m_lock);
   }
+
   m_listeners.push_back(listener);
 }
 
@@ -604,6 +620,7 @@ void JournalMetadata::remove_listener(JournalMetadataListener *listener) {
   while (m_update_notifications > 0) {
     m_update_cond.Wait(m_lock);
   }
+
   m_listeners.remove(listener);
 }
 
@@ -730,17 +747,26 @@ void JournalMetadata::handle_immutable_metadata(int r, Context *on_init) {
   if (r < 0) {
     lderr(m_cct) << "failed to initialize immutable metadata: "
                  << cpp_strerror(r) << dendl;
+
     on_init->complete(r);
     return;
   }
 
+  // immutable metadata are set directly to member variables of JournalMetadata,
+  // while mutable metadata are stashed in C_Refresh instance
+
   ldout(m_cct, 10) << "initialized immutable metadata" << dendl;
+
   refresh(on_init);
 }
 
 void JournalMetadata::refresh(Context *on_complete) {
   ldout(m_cct, 10) << "refreshing mutable metadata" << dendl;
+
+  // journal_metadata->handle_refresh_complete
   C_Refresh *refresh = new C_Refresh(this, on_complete);
+
+  // mutable metadata are stashed in C_Refresh instance
   get_mutable_metadata(&refresh->minimum_set, &refresh->active_set,
 		       &refresh->registered_clients, refresh);
 }
@@ -749,24 +775,40 @@ void JournalMetadata::handle_refresh_complete(C_Refresh *refresh, int r) {
   ldout(m_cct, 10) << "refreshed mutable metadata: r=" << r << dendl;
 
   if (r == 0) {
+
+    // now set mutable metadata from stashed mutable metadata
+
     Mutex::Locker locker(m_lock);
 
+    // we only set the mutable metadata of the specified client, the
+    // client is passed in originally from Journaler -> JournalMetadata
     Client client(m_client_id, bufferlist());
 
     RegisteredClients::iterator it = refresh->registered_clients.find(client);
+
     if (it != refresh->registered_clients.end()) {
+
+      // set only when the client exists
+
       m_minimum_set = MAX(m_minimum_set, refresh->minimum_set);
       m_active_set = MAX(m_active_set, refresh->active_set);
+
       m_registered_clients = refresh->registered_clients;
       m_client = *it;
 
       ++m_update_notifications;
+
       m_lock.Unlock();
       for (Listeners::iterator it = m_listeners.begin();
            it != m_listeners.end(); ++it) {
+
+        // notify JournalRecorder and JournalTrimmer that the journal
+        // mutable metadata has been updated
+
         (*it)->handle_update(this);
       }
       m_lock.Lock();
+
       if (--m_update_notifications == 0) {
         m_update_cond.Signal();
       }

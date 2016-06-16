@@ -976,6 +976,7 @@ void ImageReplayer<I>::allocate_local_tag() {
 
   std::string predecessor_mirror_uuid =
     m_replay_tag_data.predecessor_mirror_uuid;
+
   if (predecessor_mirror_uuid == librbd::Journal<>::LOCAL_MIRROR_UUID) {
     predecessor_mirror_uuid = m_remote_mirror_uuid;
   } else if (predecessor_mirror_uuid == m_local_mirror_uuid) {
@@ -984,6 +985,7 @@ void ImageReplayer<I>::allocate_local_tag() {
 
   Context *ctx = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_allocate_local_tag>(this);
+
   m_local_journal->allocate_tag(
     mirror_uuid, predecessor_mirror_uuid,
     m_replay_tag_data.predecessor_commit_valid,
@@ -1050,6 +1052,7 @@ void ImageReplayer<I>::process_entry() {
   Context *on_ready = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_process_entry_ready>(this);
   Context *on_commit = new C_ReplayCommitted(this, std::move(m_replay_entry));
+
   m_local_replay->process(m_event_entry, on_ready, on_commit);
   m_event_entry = {};
 }

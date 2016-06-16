@@ -173,6 +173,7 @@ Context *AcquireRequest<I>::send_open_journal() {
 
   if (!m_image_ctx.test_features(RBD_FEATURE_JOURNALING)) {
     apply();
+
     return m_on_finish;
   }
 
@@ -182,12 +183,14 @@ Context *AcquireRequest<I>::send_open_journal() {
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_open_journal>(
     this);
+
   m_journal = m_image_ctx.create_journal();
 
   // journal playback requires object map (if enabled) and itself
   apply();
 
   m_journal->open(ctx);
+
   return nullptr;
 }
 

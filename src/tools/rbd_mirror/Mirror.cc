@@ -387,7 +387,7 @@ void Mirror::update_replayers(const PoolPeers &pool_peers)
 
     for (auto &peer : kv.second) {
 
-      // set<peer_t>
+      // <pool id, set<peer_t>>
 
       PoolPeer pool_peer(kv.first, peer);
 

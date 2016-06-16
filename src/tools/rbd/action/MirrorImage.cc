@@ -222,6 +222,7 @@ int execute_status(const po::variables_map &vm) {
   librados::Rados rados;
   librados::IoCtx io_ctx;
   librbd::Image image;
+
   r = utils::init_and_open_image(pool_name, image_name, "", false,
                                  &rados, &io_ctx, &image);
   if (r < 0) {
@@ -229,6 +230,7 @@ int execute_status(const po::variables_map &vm) {
   }
 
   librbd::mirror_image_status_t status;
+
   r = image.mirror_image_get_status(&status, sizeof(status));
   if (r < 0) {
     std::cerr << "rbd: failed to get status for image " << image_name << ": "
@@ -236,6 +238,7 @@ int execute_status(const po::variables_map &vm) {
     return r;
   }
 
+  // status.up + status.state
   std::string state = utils::mirror_image_status_state(status);
   std::string last_update = utils::timestr(status.last_update);
 

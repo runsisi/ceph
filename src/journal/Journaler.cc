@@ -270,7 +270,9 @@ void Journaler::remove_listener(JournalMetadataListener *listener) {
 
 int Journaler::register_client(const bufferlist &data) {
   C_SaferCond cond;
+
   register_client(data, &cond);
+
   return cond.wait();
 }
 
@@ -281,6 +283,9 @@ int Journaler::unregister_client() {
 }
 
 void Journaler::register_client(const bufferlist &data, Context *on_finish) {
+
+  // register JournalMetadata::m_client_id, i.e. Journaler::m_client_id
+
   return m_metadata->register_client(data, on_finish);
 }
 
@@ -300,8 +305,11 @@ void Journaler::get_client(const std::string &client_id,
 
 int Journaler::get_cached_client(const std::string &client_id,
                                  cls::journal::Client *client) {
+  // set<cls::journal::Client>
   RegisteredClients clients;
 
+  // JournalMetadata::m_registered_clients was set in
+  // JournalMetadata::handle_refresh_complete
   m_metadata->get_registered_clients(&clients);
 
   auto it = clients.find({client_id, {}});
@@ -321,6 +329,8 @@ void Journaler::allocate_tag(const bufferlist &data, cls::journal::Tag *tag,
 
 void Journaler::allocate_tag(uint64_t tag_class, const bufferlist &data,
                              cls::journal::Tag *tag, Context *on_finish) {
+  // allocate a tag with specified tag class and tag data
+
   m_metadata->allocate_tag(tag_class, data, tag, on_finish);
 }
 
