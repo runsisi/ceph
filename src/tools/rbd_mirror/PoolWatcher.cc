@@ -143,7 +143,7 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
         image_name = it2->second;
       }
 
-      // <image id, image name, image global id>
+      // set<image id, image name, image global id>
       image_ids->insert(ImageId(it->first, image_name, it->second));
     }
 

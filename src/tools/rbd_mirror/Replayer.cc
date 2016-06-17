@@ -627,6 +627,9 @@ void Replayer::set_sources(const ImageIds &image_ids)
 
   for (auto image_it = m_image_replayers.begin();
        image_it != m_image_replayers.end();) {
+
+    // check if the remote image mirroring has been disabled, if so then
+    // we need to stop the ImageReplayer for this image
     if (image_ids.find(ImageId(image_it->first)) == image_ids.end()) {
       if (image_it->second->is_running()) {
         dout(20) << "stop image replayer for "
@@ -635,6 +638,7 @@ void Replayer::set_sources(const ImageIds &image_ids)
 
       if (stop_image_replayer(image_it->second)) {
         image_it = m_image_replayers.erase(image_it);
+
         continue;
       }
     }
@@ -643,12 +647,23 @@ void Replayer::set_sources(const ImageIds &image_ids)
   }
 
   if (image_ids.empty()) {
+
+    // no new remote mirror image added
+
     if (existing_image_replayers && m_image_replayers.empty()) {
+
+      // all existing replayers are being shutdown, so shutdown the
+      // image mirror status
+
       mirror_image_status_shut_down();
     }
+
     return;
   }
 
+  // ok, we have new remote images to mirror
+
+  // get local client id as a mirror peer
   std::string local_mirror_uuid;
   int r = librbd::cls_client::mirror_uuid_get(&m_local_io_ctx,
                                               &local_mirror_uuid);
@@ -658,6 +673,7 @@ void Replayer::set_sources(const ImageIds &image_ids)
     return;
   }
 
+  // get remote client id as a mirror peer
   std::string remote_mirror_uuid;
   r = librbd::cls_client::mirror_uuid_get(&m_remote_io_ctx,
                                           &remote_mirror_uuid);
@@ -668,6 +684,9 @@ void Replayer::set_sources(const ImageIds &image_ids)
   }
 
   if (m_image_replayers.empty() && !existing_image_replayers) {
+
+    // this is the first time we start the mirror process for the remote pool
+
     // create entry for pool if it doesn't exist
     r = mirror_image_status_init();
     if (r < 0) {
@@ -675,8 +694,13 @@ void Replayer::set_sources(const ImageIds &image_ids)
     }
   }
 
+  // set<image id, image name, image global id>
   for (auto &image_id : image_ids) {
+
+    // iterate new remote images to mirror
+
     auto it = m_image_replayers.find(image_id.id);
+
     if (it == m_image_replayers.end()) {
       unique_ptr<ImageReplayer<> > image_replayer(new ImageReplayer<>(
         m_threads, m_image_deleter, m_image_sync_throttler, m_local_rados,
@@ -685,6 +709,7 @@ void Replayer::set_sources(const ImageIds &image_ids)
       it = m_image_replayers.insert(
         std::make_pair(image_id.id, std::move(image_replayer))).first;
     }
+
     if (!it->second->is_running()) {
       dout(20) << "starting image replayer for "
                << it->second->get_global_image_id() << dendl;
@@ -697,6 +722,7 @@ int Replayer::mirror_image_status_init() {
   assert(!m_status_watcher);
 
   uint64_t instance_id = librados::Rados(m_local_io_ctx).get_instance_id();
+
   dout(20) << "pool_id=" << m_local_pool_id << ", "
            << "instance_id=" << instance_id << dendl;
 
@@ -751,6 +777,8 @@ void Replayer::start_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer
     return;
   }
 
+  // now m_state == STATE_STOPPED
+
   if (image_name) {
     FunctionContext *ctx = new FunctionContext(
         [this, image_id, image_name] (int r) {
@@ -772,6 +800,7 @@ void Replayer::start_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer
           }
        }
     );
+
     m_image_deleter->wait_for_scheduled_deletion(image_name.get(), ctx, false);
   }
 }
