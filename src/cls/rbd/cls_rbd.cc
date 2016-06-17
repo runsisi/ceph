@@ -3176,6 +3176,9 @@ int image_set(cls_method_context_t hctx, const string &image_id,
   cls::rbd::MirrorImage existing_mirror_image;
 
   int r = image_get(hctx, image_id, &existing_mirror_image);
+
+  // we can only 1) add a new mirror image or 2) update the image mirror state
+
   if (r == -ENOENT) {
     // make sure global id doesn't already exist
     std::string global_id_key = global_key(mirror_image.global_image_id);
@@ -3259,6 +3262,7 @@ int image_remove(cls_method_context_t hctx, const string &image_id) {
   return 0;
 }
 
+// <image mirror status state, description, last update, bool up, entity_inst_t origin>
 struct MirrorImageStatusOnDisk : cls::rbd::MirrorImageStatus {
   entity_inst_t origin;
 
@@ -3300,6 +3304,7 @@ int image_status_set(cls_method_context_t hctx, const string &global_image_id,
   ondisk_status.up = false;
   ondisk_status.last_update = ceph_clock_now(g_ceph_context);
 
+  // get who is to update the image mirror status
   int r = cls_get_request_origin(hctx, &ondisk_status.origin);
   assert(r == 0);
 
@@ -3329,6 +3334,7 @@ int image_status_remove(cls_method_context_t hctx,
   return 0;
 }
 
+// image mirror status is index by image global id
 int image_status_get(cls_method_context_t hctx, const string &global_image_id,
 		     cls::rbd::MirrorImageStatus *status) {
 
@@ -3355,6 +3361,8 @@ int image_status_get(cls_method_context_t hctx, const string &global_image_id,
   }
 
   obj_list_watch_response_t watchers;
+
+  // list the current watcher of the 'rbd_mirroring' object
   r = cls_cxx_list_watchers(hctx, &watchers);
   if (r < 0 && r != -ENOENT) {
     CLS_ERR("error listing watchers: '%s'", cpp_strerror(r).c_str());
@@ -3364,6 +3372,9 @@ int image_status_get(cls_method_context_t hctx, const string &global_image_id,
   *status = static_cast<cls::rbd::MirrorImageStatus>(ondisk_status);
 
   status->up = false;
+
+  // to check if who last updated the image mirror status is still
+  // alive, see image_status_set above
   for (auto &w : watchers.entries) {
     if (w.name == ondisk_status.origin.name &&
 	w.addr == ondisk_status.origin.addr) {
@@ -3380,13 +3391,17 @@ int image_status_list(cls_method_context_t hctx,
 	const std::string &start_after, uint64_t max_return,
 	map<std::string, cls::rbd::MirrorImage> *mirror_images,
         map<std::string, cls::rbd::MirrorImageStatus> *mirror_statuses) {
+  // "image_"
   std::string last_read = image_key(start_after);
   int max_read = RBD_MAX_KEYS_READ;
   int r = max_read;
 
   while (r == max_read && mirror_images->size() < max_return) {
     std::map<std::string, bufferlist> vals;
+
     CLS_LOG(20, "last_read = '%s'", last_read.c_str());
+
+    // get all mirroring enabled images
     r = cls_cxx_map_get_vals(hctx, last_read, IMAGE_KEY_PREFIX, max_read,
 			     &vals);
     if (r < 0) {
@@ -3398,6 +3413,7 @@ int image_status_list(cls_method_context_t hctx,
     for (auto it = vals.begin(); it != vals.end() &&
 	   mirror_images->size() < max_return; ++it) {
       const std::string &image_id = it->first.substr(IMAGE_KEY_PREFIX.size());
+
       cls::rbd::MirrorImage mirror_image;
       bufferlist::iterator iter = it->second.begin();
       try {
@@ -3418,6 +3434,7 @@ int image_status_list(cls_method_context_t hctx,
 
       (*mirror_statuses)[image_id] = status;
     }
+
     if (!vals.empty()) {
       last_read = image_key(mirror_images->rbegin()->first);
     }
@@ -3510,8 +3527,11 @@ int image_status_remove_down(cls_method_context_t hctx) {
   string last_read = STATUS_GLOBAL_KEY_PREFIX;
   int max_read = RBD_MAX_KEYS_READ;
   r = max_read;
+
   while (r == max_read) {
     map<string, bufferlist> vals;
+
+    // "status_global_"
     r = cls_cxx_map_get_vals(hctx, last_read, STATUS_GLOBAL_KEY_PREFIX,
 			     max_read, &vals);
     if (r < 0) {
@@ -3520,6 +3540,10 @@ int image_status_remove_down(cls_method_context_t hctx) {
     }
 
     for (auto &list_it : vals) {
+
+      // every mirror image has a status object associated with it, this
+      // info is registered in 'rbd_mirroring' object
+
       const string &key = list_it.first;
 
       if (0 != key.compare(0, STATUS_GLOBAL_KEY_PREFIX.size(),
@@ -3540,6 +3564,7 @@ int image_status_remove_down(cls_method_context_t hctx) {
       if (watchers.find(status.origin) == watchers.end()) {
 	CLS_LOG(20, "removing stale status object for key %s",
 		key.c_str());
+
 	int r1 = cls_cxx_map_remove_key(hctx, key);
 	if (r1 < 0) {
 	  CLS_ERR("error removing stale status for key '%s': %s",
