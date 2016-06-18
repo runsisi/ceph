@@ -3168,6 +3168,9 @@ int image_get(cls_method_context_t hctx, const string &image_id,
   return 0;
 }
 
+// create two keys:
+// image id -> MirrorImage
+// global image id -> image id
 int image_set(cls_method_context_t hctx, const string &image_id,
 	      const cls::rbd::MirrorImage &mirror_image) {
   bufferlist bl;
@@ -3305,6 +3308,7 @@ int image_status_set(cls_method_context_t hctx, const string &global_image_id,
   ondisk_status.last_update = ceph_clock_now(g_ceph_context);
 
   // get who is to update the image mirror status
+  // TODO: may not be the one who created the mirror image status key ???
   int r = cls_get_request_origin(hctx, &ondisk_status.origin);
   assert(r == 0);
 
@@ -3524,6 +3528,7 @@ int image_status_remove_down(cls_method_context_t hctx) {
     watchers.insert(entity_inst_t(w.name, w.addr));
   }
 
+  // "status_global_"
   string last_read = STATUS_GLOBAL_KEY_PREFIX;
   int max_read = RBD_MAX_KEYS_READ;
   r = max_read;
@@ -3562,6 +3567,10 @@ int image_status_remove_down(cls_method_context_t hctx) {
       }
 
       if (watchers.find(status.origin) == watchers.end()) {
+
+        // the rbd-mirror daemon who created/updated the mirror image
+        // status object shutdown/disconnected, see Replayer::mirror_image_status_init
+
 	CLS_LOG(20, "removing stale status object for key %s",
 		key.c_str());
 
