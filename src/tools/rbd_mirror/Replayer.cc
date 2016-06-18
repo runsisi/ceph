@@ -456,8 +456,10 @@ void Replayer::run()
 
     if (m_asok_hook_name != asok_hook_name || m_asok_hook == nullptr) {
       m_asok_hook_name = asok_hook_name;
+
       delete m_asok_hook;
 
+      // the commands are registered in the ctor
       m_asok_hook = new ReplayerAdminSocketHook(g_ceph_context,
                                                 m_asok_hook_name, this);
     }
@@ -729,6 +731,9 @@ int Replayer::mirror_image_status_init() {
            << "instance_id=" << instance_id << dendl;
 
   librados::ObjectWriteOperation op;
+
+  // remove those mirror image status keys whose rbd-mirror daemon
+  // has shutdown/disconnected, see image_status_remove_down
   librbd::cls_client::mirror_image_status_remove_down(&op);
   int r = m_local_io_ctx.operate(RBD_MIRRORING, &op);
   if (r < 0) {
@@ -740,6 +745,7 @@ int Replayer::mirror_image_status_init() {
   unique_ptr<MirrorStatusWatchCtx> watch_ctx(
     new MirrorStatusWatchCtx(m_local_io_ctx, m_threads->work_queue));
 
+  // watch RBD_MIRRORING object
   r = watch_ctx->register_watch();
   if (r < 0) {
     derr << "error registering watcher for " << watch_ctx->get_oid()
@@ -748,6 +754,7 @@ int Replayer::mirror_image_status_init() {
   }
 
   m_status_watcher = std::move(watch_ctx);
+
   return 0;
 }
 
@@ -771,6 +778,8 @@ void Replayer::start_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer
            << dendl;
 
   if (!image_replayer->is_stopped()) {
+    // the image replayer has not stopped yet
+
     return;
   } else if (image_replayer->is_blacklisted()) {
     derr << "blacklisted detected during image replay" << dendl;
@@ -803,6 +812,8 @@ void Replayer::start_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer
        }
     );
 
+    // if the image is scheduled to be deleted, then wait for the deletion
+    // to be finished
     m_image_deleter->wait_for_scheduled_deletion(image_name.get(), ctx, false);
   }
 }
@@ -818,6 +829,7 @@ bool Replayer::stop_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer)
     m_image_deleter->cancel_waiter(image_replayer->get_local_image_name());
     if (!m_stopping.read()) {
       dout(20) << "scheduling delete" << dendl;
+
       m_image_deleter->schedule_image_delete(
         m_local_rados,
         image_replayer->get_local_pool_id(),
@@ -825,11 +837,13 @@ bool Replayer::stop_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer)
         image_replayer->get_local_image_name(),
         image_replayer->get_global_image_id());
     }
+
     return true;
   } else {
     if (!m_stopping.read()) {
       dout(20) << "scheduling delete after image replayer stopped" << dendl;
     }
+
     FunctionContext *ctx = new FunctionContext(
         [&image_replayer, this] (int r) {
           if (!m_stopping.read() && r >= 0) {
@@ -842,6 +856,9 @@ bool Replayer::stop_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer)
           }
         }
     );
+
+    // stop the image replayer first, then delete the mirrored image
+    // in its callback
     image_replayer->stop(ctx);
   }
 
