@@ -4083,8 +4083,8 @@ int mirror_image_set(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
-  // register image id -> MirrorImage<global image id, enum mirror state>
-  // and global image id -> image id
+  // register 1) image id -> MirrorImage<global image id, enum mirror state>
+  // and 2) global image id -> image id
   int r = mirror::image_set(hctx, image_id, mirror_image);
   if (r < 0) {
     return r;
