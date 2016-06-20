@@ -76,11 +76,13 @@ void BootstrapRequest<I>::send() {
   get_local_image_id();
 }
 
+// called by ImageReplayer<I>::stop if we are in bootstrap stage
 template <typename I>
 void BootstrapRequest<I>::cancel() {
   dout(20) << dendl;
 
   Mutex::Locker locker(m_lock);
+
   m_canceled = true;
 
   m_image_sync_throttler->cancel_sync(m_local_io_ctx, m_local_image_id);
@@ -373,6 +375,9 @@ void BootstrapRequest<I>::handle_open_local_image(int r) {
     return;
   }
 
+  // local mirror image opened, update the MirrorPeerClientMeta of the
+  // remote image journal in case this is a newly created local mirror
+  // image
   update_client();
 }
 
@@ -396,6 +401,11 @@ template <typename I>
 void BootstrapRequest<I>::create_local_image() {
   dout(20) << dendl;
 
+  // create a local mirror image with the same name as the remote
+  // image, currently we do not know the id of the local mirror image
+  // to create, will be set after the local mirror image has been
+  // opened, see BootstrapRequest<I>::update_client
+
   m_local_image_id = "";
 
   update_progress("CREATE_LOCAL_IMAGE");
@@ -408,6 +418,8 @@ void BootstrapRequest<I>::create_local_image() {
     m_local_io_ctx, m_work_queue, m_global_image_id, m_remote_mirror_uuid,
     m_local_image_name, m_remote_image_ctx, ctx);
 
+  // create a local mirror image, if the remote image is a clone then
+  // we need to mirror the remote parent image first
   request->send();
 }
 
@@ -417,6 +429,7 @@ void BootstrapRequest<I>::handle_create_local_image(int r) {
 
   if (r < 0) {
     derr << ": failed to create local image: " << cpp_strerror(r) << dendl;
+
     m_ret_val = r;
     close_remote_image();
     return;
@@ -434,16 +447,23 @@ void BootstrapRequest<I>::update_client() {
   update_progress("UPDATE_CLIENT");
 
   if (m_client_meta->image_id == (*m_local_image_ctx)->id) {
+
     // already registered local image with remote journal
+
     get_remote_tags();
+
     return;
   }
 
+  // newly created local mirror image, we do not know the image
+  // id until now
   m_local_image_id = (*m_local_image_ctx)->id;
 
   dout(20) << dendl;
 
   librbd::journal::MirrorPeerClientMeta client_meta;
+
+  // update mirror peer client of remote journal
   client_meta.image_id = m_local_image_id;
 
   librbd::journal::ClientData client_data(client_meta);
@@ -453,6 +473,7 @@ void BootstrapRequest<I>::update_client() {
   Context *ctx = create_context_callback<
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_update_client>(
       this);
+
   m_journaler->update_client(data_bl, ctx);
 }
 
@@ -462,6 +483,7 @@ void BootstrapRequest<I>::handle_update_client(int r) {
 
   if (r < 0) {
     derr << ": failed to update client: " << cpp_strerror(r) << dendl;
+
     m_ret_val = r;
     close_local_image();
     return;
@@ -469,12 +491,16 @@ void BootstrapRequest<I>::handle_update_client(int r) {
 
   if (m_canceled) {
     dout(10) << ": request canceled" << dendl;
+
     m_ret_val = -ECANCELED;
     close_local_image();
     return;
   }
 
+  // update data in memory finally
   m_client_meta->image_id = m_local_image_id;
+
+  // get tags of remote journal
   get_remote_tags();
 }
 

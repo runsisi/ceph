@@ -318,6 +318,7 @@ void Mirror::stop()
 
   m_manual_stop = true;
 
+  // admin op, stop all replayers
   for (auto it = m_replayers.begin(); it != m_replayers.end(); it++) {
     auto &replayer = it->second;
     replayer->stop(true);
@@ -337,6 +338,7 @@ void Mirror::restart()
 
   for (auto it = m_replayers.begin(); it != m_replayers.end(); it++) {
     auto &replayer = it->second;
+
     replayer->restart();
   }
 }
@@ -383,18 +385,20 @@ void Mirror::update_replayers(const PoolPeers &pool_peers)
 
   for (auto &kv : pool_peers) {
 
-    // map<pool id, set<peer_t>>
+    // iterate map<pool id, set<peer_t>>
 
     for (auto &peer : kv.second) {
 
-      // <pool id, set<peer_t>>
+      // iterate set<peer_t>
 
+      // <pool id, peer_t>
       PoolPeer pool_peer(kv.first, peer);
 
       if (m_replayers.find(pool_peer) == m_replayers.end()) {
 
         dout(20) << "starting replayer for " << peer << dendl;
 
+        // <pool + peer> -> Replayer
         unique_ptr<Replayer> replayer(new Replayer(m_threads, m_image_deleter,
                                                    m_image_sync_throttler,
                                                    kv.first, peer, m_args));

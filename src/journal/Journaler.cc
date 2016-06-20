@@ -236,10 +236,14 @@ int Journaler::create(uint8_t order, uint8_t splay_width, int64_t pool_id) {
 
 int Journaler::remove(bool force) {
   C_SaferCond ctx;
+
+  // flush commit position and watch
   m_metadata->shut_down(&ctx);
+
   ctx.wait();
 
   ldout(m_cct, 5) << "removing journal: " << m_header_oid << dendl;
+
   int r = m_trimmer->remove_objects(force);
   if (r < 0) {
     lderr(m_cct) << "failed to remove journal objects: " << cpp_strerror(r)
@@ -253,6 +257,7 @@ int Journaler::remove(bool force) {
                  << dendl;
     return r;
   }
+
   return 0;
 }
 

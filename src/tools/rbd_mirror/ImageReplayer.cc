@@ -407,6 +407,7 @@ void ImageReplayer<I>::bootstrap() {
 
   {
     Mutex::Locker locker(m_lock);
+
     request->get();
     m_bootstrap_request = request;
   }
@@ -423,8 +424,10 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
 
   {
     Mutex::Locker locker(m_lock);
+
     m_bootstrap_request->put();
     m_bootstrap_request = nullptr;
+
     if (m_local_image_ctx) {
       m_local_image_id = m_local_image_ctx->id;
       m_local_image_name = m_local_image_ctx->name;
@@ -641,26 +644,41 @@ void ImageReplayer<I>::stop(Context *on_finish, bool manual)
   image_replayer::BootstrapRequest<I> *bootstrap_request = nullptr;
   bool shut_down_replay = false;
   bool running = true;
+
   {
     Mutex::Locker locker(m_lock);
+
     if (!is_running_()) {
+
+      // already stopped or the previous stop is in progress
+
       running = false;
     } else {
+
+      // !is_stopped_() && m_state != STATE_STOPPING && !m_stop_requested
+
       if (!is_stopped_()) {
 	if (m_state == STATE_STARTING) {
 	  dout(20) << "canceling start" << dendl;
+
 	  if (m_bootstrap_request) {
             bootstrap_request = m_bootstrap_request;
             bootstrap_request->get();
 	  }
 	} else {
 	  dout(20) << "interrupting replay" << dendl;
+
 	  shut_down_replay = true;
 	}
 
+        // ImageReplayer::handle_shut_down will execute this callback
         assert(m_on_stop_finish == nullptr);
         std::swap(m_on_stop_finish, on_finish);
         m_stop_requested = true;
+        // Replayer::stop is called by admin socket, so it's a manual op,
+        // while Replayer::stop_image_replayer and Replayer::restart is
+        // not, we do not start the image replayer process automatically
+        // if we stopped it manually via admin socket
         m_manual_stop = manual;
       }
     }
@@ -680,9 +698,18 @@ void ImageReplayer<I>::stop(Context *on_finish, bool manual)
     return;
   }
 
+  // currently we are running actively, so stop it
+
   if (shut_down_replay) {
+
+    // we have boostrapped already, and now we are actively replaying,
+    // so we need to do much more
+
     on_stop_journal_replay();
   } else if (on_finish != nullptr) {
+
+    // we are in bootstrap stage
+
     on_finish->complete(0);
   }
 }
@@ -744,6 +771,8 @@ void ImageReplayer<I>::restart(Context *on_finish)
       }
       start(on_finish, true);
     });
+
+  // for restart op, we do not deem the stop as a manual stop
   stop(ctx);
 }
 
@@ -1311,6 +1340,7 @@ void ImageReplayer<I>::reschedule_update_status_task(int new_interval) {
 template <typename I>
 void ImageReplayer<I>::shut_down(int r, Context *on_start) {
   dout(20) << "r=" << r << dendl;
+
   {
     Mutex::Locker locker(m_lock);
     assert(m_state == STATE_STOPPING);

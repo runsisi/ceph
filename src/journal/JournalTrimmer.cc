@@ -44,11 +44,16 @@ void JournalTrimmer::shut_down(Context *on_finish) {
   on_finish = new FunctionContext([this, on_finish](int r) {
       m_async_op_tracker.wait_for_ops(on_finish);
     });
+
   m_journal_metadata->flush_commit_position(on_finish);
 }
 
 int JournalTrimmer::remove_objects(bool force) {
   ldout(m_cct, 20) << __func__ << dendl;
+
+  // op started in C_CommitPositionSafe, i.e. JournalTrimmer::committed,
+  // or JournalTrimmer::remove_set
+
   m_async_op_tracker.wait_for_ops();
 
   C_SaferCond ctx;
@@ -81,6 +86,8 @@ int JournalTrimmer::remove_objects(bool force) {
 
 void JournalTrimmer::committed(uint64_t commit_tid) {
   ldout(m_cct, 20) << __func__ << ": commit_tid=" << commit_tid << dendl;
+
+  // callback is an instance of C_CommitPositionSafe
   m_journal_metadata->committed(commit_tid,
                                 m_create_commit_position_safe_context);
 }
@@ -107,11 +114,14 @@ void JournalTrimmer::remove_set(uint64_t object_set) {
   assert(m_lock.is_locked());
 
   m_async_op_tracker.start_op();
+
   uint8_t splay_width = m_journal_metadata->get_splay_width();
+
   C_RemoveSet *ctx = new C_RemoveSet(this, object_set, splay_width);
 
   ldout(m_cct, 20) << __func__ << ": removing object set " << object_set
                    << dendl;
+
   for (uint64_t object_number = object_set * splay_width;
        object_number < (object_set + 1) * splay_width;
        ++object_number) {
@@ -119,6 +129,7 @@ void JournalTrimmer::remove_set(uint64_t object_set) {
                                              object_number);
 
     ldout(m_cct, 20) << "removing journal object " << oid << dendl;
+
     librados::AioCompletion *comp =
       librados::Rados::aio_create_completion(ctx, NULL,
                                              utils::rados_ctx_callback);

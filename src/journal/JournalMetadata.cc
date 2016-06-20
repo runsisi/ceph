@@ -456,6 +456,7 @@ void JournalMetadata::init(Context *on_finish) {
   librados::AioCompletion *comp = librados::Rados::aio_create_completion(
     on_finish, nullptr, utils::rados_ctx_callback);
 
+  // watch the journal metadata object, i.e., journal header object
   int r = m_ioctx.aio_watch(m_oid, comp, &m_watch_handle, &m_watch_ctx);
   assert(r == 0);
   comp->release();
@@ -466,6 +467,7 @@ void JournalMetadata::shut_down(Context *on_finish) {
   ldout(m_cct, 20) << __func__ << dendl;
 
   uint64_t watch_handle = 0;
+
   {
     Mutex::Locker locker(m_lock);
     m_initialized = false;
@@ -491,9 +493,12 @@ void JournalMetadata::shut_down(Context *on_finish) {
   on_finish = new FunctionContext([this, on_finish](int r) {
       flush_commit_position(on_finish);
     });
+
   if (watch_handle != 0) {
     librados::AioCompletion *comp = librados::Rados::aio_create_completion(
       on_finish, nullptr, utils::rados_ctx_callback);
+
+    // a watch handle is a pointer to Objecter::LingerOp
     int r = m_ioctx.aio_unwatch(watch_handle, comp);
     assert(r == 0);
     comp->release();

@@ -368,6 +368,7 @@ Journal<I>::~Journal() {
   assert(m_wait_for_state_contexts.empty());
 }
 
+// static
 template <typename I>
 bool Journal<I>::is_journal_supported(I &image_ctx) {
   assert(image_ctx.snap_lock.is_locked());
@@ -375,6 +376,7 @@ bool Journal<I>::is_journal_supported(I &image_ctx) {
           !image_ctx.read_only && image_ctx.snap_id == CEPH_NOSNAP);
 }
 
+// static
 template <typename I>
 int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
 		       uint8_t order, uint8_t splay_width,
@@ -446,6 +448,7 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
   return 0;
 }
 
+// static
 template <typename I>
 int Journal<I>::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
   CephContext *cct = reinterpret_cast<CephContext *>(io_ctx.cct());
@@ -454,6 +457,8 @@ int Journal<I>::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
   Journaler journaler(io_ctx, image_id, IMAGE_CLIENT_ID, {});
 
   bool journal_exists;
+
+  // stat journal header to check if the journal metadata object exists
   int r = journaler.exists(&journal_exists);
   if (r < 0) {
     lderr(cct) << __func__ << ": "
@@ -464,6 +469,8 @@ int Journal<I>::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
   }
 
   C_SaferCond cond;
+
+  // open journal
   journaler.init(&cond);
   BOOST_SCOPE_EXIT_ALL(&journaler) {
     journaler.shut_down();
@@ -484,9 +491,11 @@ int Journal<I>::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
                << "failed to remove journal: " << cpp_strerror(r) << dendl;
     return r;
   }
+
   return 0;
 }
 
+// static
 template <typename I>
 int Journal<I>::reset(librados::IoCtx &io_ctx, const std::string &image_id) {
   CephContext *cct = reinterpret_cast<CephContext *>(io_ctx.cct());
@@ -602,6 +611,7 @@ int Journal<I>::get_tag_owner(IoCtx& io_ctx, std::string& image_id,
   return r;
 }
 
+// static
 template <typename I>
 int Journal<I>::request_resync(I *image_ctx) {
   CephContext *cct = image_ctx->cct;
@@ -640,6 +650,7 @@ int Journal<I>::request_resync(I *image_ctx) {
   return 0;
 }
 
+// static
 template <typename I>
 int Journal<I>::promote(I *image_ctx) {
   CephContext *cct = image_ctx->cct;
@@ -777,7 +788,8 @@ int Journal<I>::demote() {
 
   cls::journal::Tag new_tag;
 
-  // allocate a new tag with owner set to orphan
+  // allocate a new tag with owner set to orphan, so neither the local (master)
+  // client nor the remote (mirror peer) client owns the exclusive lock
   r = allocate_journaler_tag(cct, m_journaler, client, m_tag_class,
                              m_tag_data, ORPHAN_MIRROR_UUID, &new_tag);
   if (r < 0) {

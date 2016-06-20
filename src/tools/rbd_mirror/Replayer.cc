@@ -250,6 +250,7 @@ Replayer::~Replayer()
   delete m_asok_hook;
 
   m_stopping.set(1);
+
   {
     Mutex::Locker l(m_lock);
     m_cond.Signal();
@@ -505,8 +506,10 @@ void Replayer::print_status(Formatter *f, stringstream *ss)
     f->open_array_section("image_replayers");
   };
 
+  // map<image id, image replayer>
   for (auto &kv : m_image_replayers) {
     auto &image_replayer = kv.second;
+
     image_replayer->print_status(f, ss);
   }
 
@@ -549,8 +552,12 @@ void Replayer::stop(bool manual)
   }
 
   m_manual_stop = true;
+
+  // admin op, stop all image replayers
   for (auto &kv : m_image_replayers) {
     auto &image_replayer = kv.second;
+
+    // stop an individual image replayer, this is a manually stop op
     image_replayer->stop(nullptr, true);
   }
 }
@@ -569,6 +576,7 @@ void Replayer::restart()
 
   for (auto &kv : m_image_replayers) {
     auto &image_replayer = kv.second;
+
     image_replayer->restart();
   }
 }
@@ -766,6 +774,7 @@ void Replayer::mirror_image_status_shut_down() {
     derr << "error unregistering watcher for " << m_status_watcher->get_oid()
 	 << " object: " << cpp_strerror(r) << dendl;
   }
+
   m_status_watcher.reset();
 }
 
@@ -818,6 +827,7 @@ void Replayer::start_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer
   }
 }
 
+// called by Replayer::set_sources
 bool Replayer::stop_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer)
 {
   assert(m_lock.is_locked());
