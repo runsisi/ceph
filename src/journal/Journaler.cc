@@ -243,6 +243,8 @@ int Journaler::remove(bool force) {
 
   ldout(m_cct, 5) << "removing journal: " << m_header_oid << dendl;
 
+  // remove object set by set, must only the local(master) image
+  // client exists before remove all jounal data objects
   int r = m_trimmer->remove_objects(force);
   if (r < 0) {
     lderr(m_cct) << "failed to remove journal objects: " << cpp_strerror(r)
@@ -423,6 +425,8 @@ void Journaler::stop_append(Context *on_safe) {
       delete recorder;
       on_safe->complete(r);
     });
+
+  // flush a splay width of ObjectRecorder(s)
   recorder->flush(on_safe);
 }
 

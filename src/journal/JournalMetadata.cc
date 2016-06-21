@@ -634,6 +634,7 @@ void JournalMetadata::set_minimum_set(uint64_t object_set) {
 
   ldout(m_cct, 20) << __func__ << ": current=" << m_minimum_set
                    << ", new=" << object_set << dendl;
+
   if (m_minimum_set >= object_set) {
     return;
   }
