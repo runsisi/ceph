@@ -699,6 +699,7 @@ bool Journal<I>::is_journal_replaying() const {
           m_state == STATE_RESTARTING_REPLAY);
 }
 
+// called by ImageReplayer<I>::start_replay
 template <typename I>
 void Journal<I>::wait_for_journal_ready(Context *on_ready) {
   on_ready = create_async_context_callback(m_image_ctx, on_ready);
@@ -724,6 +725,7 @@ void Journal<I>::open(Context *on_finish) {
 
   wait_for_steady_state(on_finish);
 
+  // new an Journaler instance and open it
   create_journaler();
 }
 
@@ -1268,6 +1270,7 @@ void Journal<I>::handle_start_external_replay(int r,
   if (r < 0) {
     lderr(cct) << this << " " << __func__ << ": "
                << "failed to stop recording: " << cpp_strerror(r) << dendl;
+
     *journal_replay = nullptr;
 
     if (m_on_replay_close_request != nullptr) {
@@ -1282,8 +1285,10 @@ void Journal<I>::handle_start_external_replay(int r,
   }
 
   transition_state(STATE_REPLAYING, 0);
+
   m_journal_replay = journal::Replay<I>::create(m_image_ctx);
   *journal_replay = m_journal_replay;
+
   on_finish->complete(0);
 }
 
@@ -1414,9 +1419,12 @@ void Journal<I>::complete_event(typename Events::iterator it, int r) {
 template <typename I>
 void Journal<I>::start_append() {
   assert(m_lock.is_locked());
+
+  // new JournalRecorder
   m_journaler->start_append(m_image_ctx.journal_object_flush_interval,
 			    m_image_ctx.journal_object_flush_bytes,
 			    m_image_ctx.journal_object_flush_age);
+
   transition_state(STATE_READY, 0);
 }
 
@@ -1751,8 +1759,10 @@ void Journal<I>::handle_recording_stopped(int r) {
   ldout(cct, 20) << this << " " << __func__ << ": r=" << r << dendl;
 
   Mutex::Locker locker(m_lock);
+
   assert(m_state == STATE_STOPPING);
 
+  // shutdown Journaler, i.e., m_journaler which created in Journal<I>::open
   destroy_journaler(r);
 }
 
@@ -1889,6 +1899,7 @@ void Journal<I>::stop_recording() {
 
   transition_state(STATE_STOPPING, 0);
 
+  // flush pending appends and delete the JournalRecorder
   m_journaler->stop_append(util::create_async_context_callback(
     m_image_ctx, create_context_callback<
       Journal<I>, &Journal<I>::handle_recording_stopped>(this)));
@@ -1944,6 +1955,7 @@ void Journal<I>::wait_for_steady_state(Context *on_state) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": on_state=" << on_state
                  << dendl;
+
   m_wait_for_state_contexts.push_back(on_state);
 }
 

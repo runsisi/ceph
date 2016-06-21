@@ -2014,8 +2014,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
             }
           } else if (mirror_mode == RBD_MIRROR_MODE_POOL) {
 
-            // the mirroring of the image has been disabled above
-
+            // the mirroring of the image has been disabled above, now
+            // unregister the image from RBD_MIRRORING object
             r = cls_client::mirror_image_remove(&ictx->md_ctx, ictx->id);
             if (r < 0 && r != -ENOENT) {
               lderr(cct) << "failed to remove image from mirroring directory: "
@@ -2025,7 +2025,10 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
           }
 
           C_SaferCond cond;
+
+          // stop recording, i.e., flush current appending
           ictx->journal->close(&cond);
+
           r = cond.wait();
           if (r < 0) {
             lderr(cct) << "error closing image journal: " << cpp_strerror(r)
@@ -2033,6 +2036,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
             return r;
           }
 
+          // remove all journal data objects and journal metadata object
           r = Journal<>::remove(ictx->md_ctx, ictx->id);
           if (r < 0) {
             lderr(cct) << "error removing image journal: " << cpp_strerror(r)
