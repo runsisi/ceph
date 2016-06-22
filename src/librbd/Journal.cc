@@ -695,12 +695,16 @@ int Journal<I>::promote(I *image_ctx) {
 template <typename I>
 bool Journal<I>::is_journal_ready() const {
   Mutex::Locker locker(m_lock);
+
+  // replay has finished
+
   return (m_state == STATE_READY);
 }
 
 template <typename I>
 bool Journal<I>::is_journal_replaying() const {
   Mutex::Locker locker(m_lock);
+
   return (m_state == STATE_REPLAYING ||
           m_state == STATE_FLUSHING_REPLAY ||
           m_state == STATE_FLUSHING_RESTART ||
@@ -732,7 +736,7 @@ void Journal<I>::open(Context *on_finish) {
 
   wait_for_steady_state(on_finish);
 
-  // new an Journaler instance and open it
+  // create an Journaler instance and open it
   create_journaler();
 }
 
@@ -1175,6 +1179,7 @@ void Journal<I>::commit_op_event(uint64_t op_tid, int r) {
                                    op_finish_future)));
 }
 
+// called by Request<I>::replay_op_ready
 template <typename I>
 void Journal<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   CephContext *cct = m_image_ctx.cct;

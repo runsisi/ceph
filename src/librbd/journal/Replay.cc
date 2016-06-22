@@ -254,6 +254,7 @@ void Replay<I>::flush(Context *on_finish) {
   AioImageRequest<I>::aio_flush(&m_image_ctx, aio_comp);
 }
 
+// called by Journal<I>::replay_op_ready
 template <typename I>
 void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   CephContext *cct = m_image_ctx.cct;
@@ -265,6 +266,7 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   assert(op_it != m_op_events.end());
 
   OpEvent &op_event = op_it->second;
+
   assert(op_event.op_in_progress &&
          op_event.on_op_finish_event == nullptr &&
          op_event.on_finish_ready == nullptr &&
@@ -747,6 +749,7 @@ void Replay<I>::handle_aio_flush_complete(Context *on_flush_safe,
     // m_on_aio_ready is set in Replay<I>::create_aio_modify_completion
     // when the inflight aio modification has hit the high water mark
     std::swap(on_aio_ready, m_on_aio_ready);
+
     if (m_in_flight_op_events == 0 &&
         (m_in_flight_aio_flush + m_in_flight_aio_modify) == 0) {
       on_flush = m_flush_ctx;
