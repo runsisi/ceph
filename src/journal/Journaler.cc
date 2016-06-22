@@ -193,6 +193,7 @@ void Journaler::shut_down(Context *on_finish) {
       delete trimmer;
       metadata->shut_down(on_finish);
     });
+
   trimmer->shut_down(on_finish);
 }
 

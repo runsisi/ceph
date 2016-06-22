@@ -61,6 +61,7 @@ void ObjectPlayer::watch(Context *on_fetch, double interval) {
   ldout(m_cct, 20) << __func__ << ": " << m_oid << " watch" << dendl;
 
   Mutex::Locker timer_locker(m_timer_lock);
+
   m_watch_interval = interval;
 
   assert(m_watch_ctx == nullptr);
@@ -256,10 +257,12 @@ void ObjectPlayer::handle_watch_task() {
   assert(m_timer_lock.is_locked());
 
   ldout(m_cct, 10) << __func__ << ": " << m_oid << " polling" << dendl;
+
   assert(m_watch_ctx != nullptr);
   assert(m_watch_task != nullptr);
 
   m_watch_task = nullptr;
+
   fetch(new C_WatchFetch(this));
 }
 

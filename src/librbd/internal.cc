@@ -2026,7 +2026,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
           C_SaferCond cond;
 
-          // stop recording, i.e., flush current appending
+          // stop recording, i.e., flush current appending, then shutdown
+          // Journaler and delete it
           ictx->journal->close(&cond);
 
           r = cond.wait();

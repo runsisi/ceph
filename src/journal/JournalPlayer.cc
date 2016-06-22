@@ -253,9 +253,11 @@ bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
 
   m_journal_metadata->reserve_entry_tid(entry->get_tag_tid(),
                                         entry->get_entry_tid());
+
   *commit_tid = m_journal_metadata->allocate_commit_tid(
     object_player->get_object_number(), entry->get_tag_tid(),
     entry->get_entry_tid());
+
   return true;
 }
 
@@ -784,9 +786,11 @@ void JournalPlayer::schedule_watch(bool immediate) {
                      << *m_active_tag_tid << dendl;
 
     m_async_op_tracker.start_op();
+
     FunctionContext *ctx = new FunctionContext([this](int r) {
         handle_watch_assert_active(r);
       });
+
     m_journal_metadata->assert_active_tag(*m_active_tag_tid, ctx);
 
     return;
@@ -825,6 +829,7 @@ void JournalPlayer::schedule_watch(bool immediate) {
 
   ldout(m_cct, 20) << __func__ << ": scheduling watch on "
                    << object_player->get_oid() << dendl;
+
   Context *ctx = utils::create_async_context_callback(
     m_journal_metadata, new C_Watch(this, object_player->get_object_number()));
 
@@ -896,7 +901,7 @@ void JournalPlayer::notify_entries_available() {
   if (m_handler_notified) {
 
     // previous notify in progress, either 1) rbd Journal replay handler
-    // is processing the entries and we should notify it a second time,
+    // is processing the entries and we should not notify it a second time,
     // JournalPlayer::try_pop_front will tell us that it has finished
     // the current process, or 2) we have notified the rbd Journal
     // replay handler the whole replay process has completed

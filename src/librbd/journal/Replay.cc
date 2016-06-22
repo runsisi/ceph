@@ -188,6 +188,7 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
   ldout(cct, 20) << dendl;
 
   AioCompletion *flush_comp = nullptr;
+
   on_finish = util::create_async_context_callback(
     m_image_ctx, on_finish);
 
@@ -201,6 +202,7 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
 
     for (auto &op_event_pair : m_op_events) {
       OpEvent &op_event = op_event_pair.second;
+
       if (cancel_ops) {
         // cancel ops that are waiting to start (waiting for
         // OpFinishEvent or waiting for ready)
@@ -230,8 +232,10 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
   // execute the following outside of lock scope
   if (flush_comp != nullptr) {
     RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
     AioImageRequest<I>::aio_flush(&m_image_ctx, flush_comp);
   }
+
   if (on_finish != nullptr) {
     on_finish->complete(0);
   }
@@ -256,6 +260,7 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   ldout(cct, 20) << ": op_tid=" << op_tid << dendl;
 
   Mutex::Locker locker(m_lock);
+
   auto op_it = m_op_events.find(op_tid);
   assert(op_it != m_op_events.end());
 
@@ -299,8 +304,10 @@ void Replay<I>::handle_event(const journal::AioDiscardEvent &event,
   AioCompletion *aio_comp = create_aio_modify_completion(on_ready, on_safe,
                                                          AIO_TYPE_DISCARD,
                                                          &flush_required);
+
   AioImageRequest<I>::aio_discard(&m_image_ctx, aio_comp, event.offset,
                                   event.length);
+
   if (flush_required) {
     m_lock.Lock();
     AioCompletion *flush_comp = create_aio_flush_completion(nullptr);
@@ -317,13 +324,20 @@ void Replay<I>::handle_event(const journal::AioWriteEvent &event,
   ldout(cct, 20) << ": AIO write event" << dendl;
 
   bufferlist data = event.data;
+
   bool flush_required;
   AioCompletion *aio_comp = create_aio_modify_completion(on_ready, on_safe,
                                                          AIO_TYPE_WRITE,
                                                          &flush_required);
+
   AioImageRequest<I>::aio_write(&m_image_ctx, aio_comp, event.offset,
                                 event.length, data.c_str(), 0);
+
   if (flush_required) {
+
+    // the inflight aio modification has hit the low water mark, we
+    // need to flush it manually
+
     m_lock.Lock();
     AioCompletion *flush_comp = create_aio_flush_completion(nullptr);
     m_lock.Unlock();
@@ -339,12 +353,20 @@ void Replay<I>::handle_event(const journal::AioFlushEvent &event,
   ldout(cct, 20) << ": AIO flush event" << dendl;
 
   AioCompletion *aio_comp;
+
   {
     Mutex::Locker locker(m_lock);
+
+    // the flush event from journal entry and the inflight aio modification
+    // water mark both can initiate aio_flush, here we flush it bc of
+    // journal flush event entry
+
     aio_comp = create_aio_flush_completion(on_safe);
   }
+
   AioImageRequest<I>::aio_flush(&m_image_ctx, aio_comp);
 
+  // ready for the next journal entry
   on_ready->complete(0);
 }
 
@@ -361,6 +383,7 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
   Context *on_op_finish_event = nullptr;
   {
     Mutex::Locker locker(m_lock);
+
     auto op_it = m_op_events.find(event.op_tid);
     if (op_it == m_op_events.end()) {
       ldout(cct, 10) << ": unable to locate associated op: assuming previously "
@@ -410,10 +433,12 @@ void Replay<I>::handle_event(const journal::SnapCreateEvent &event,
   ldout(cct, 20) << ": Snap create event" << dendl;
 
   Mutex::Locker locker(m_lock);
+
   OpEvent *op_event;
   Context *on_op_complete = create_op_context_callback(event.op_tid, on_ready,
                                                        on_safe, &op_event);
   if (on_op_complete == nullptr) {
+    // duplicated op event
     return;
   }
 
@@ -439,6 +464,7 @@ void Replay<I>::handle_event(const journal::SnapRemoveEvent &event,
   ldout(cct, 20) << ": Snap remove event" << dendl;
 
   Mutex::Locker locker(m_lock);
+
   OpEvent *op_event;
   Context *on_op_complete = create_op_context_callback(event.op_tid, on_ready,
                                                        on_safe, &op_event);
@@ -671,13 +697,23 @@ template <typename I>
 void Replay<I>::handle_aio_modify_complete(Context *on_ready, Context *on_safe,
                                            int r) {
   Mutex::Locker locker(m_lock);
+
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << ": on_ready=" << on_ready << ", "
                  << "on_safe=" << on_safe << ", r=" << r << dendl;
 
   if (on_ready != nullptr) {
+
+    // if we are not blocked by the inflight aio high water mark, we
+    // can proceed to process the next journal entry
+
     on_ready->complete(0);
   }
+
+  // we only complete the on_safe callback in rados callback if it fails,
+  // else we complete a batch of on_safe callbacks in callback of the
+  // folloing flush op, see Replay<I>::create_aio_flush_completion
+
   if (r < 0) {
     lderr(cct) << ": AIO modify op failed: " << cpp_strerror(r) << dendl;
     on_safe->complete(r);
@@ -700,13 +736,18 @@ void Replay<I>::handle_aio_flush_complete(Context *on_flush_safe,
 
   Context *on_aio_ready = nullptr;
   Context *on_flush = nullptr;
+
   {
     Mutex::Locker locker(m_lock);
     assert(m_in_flight_aio_flush > 0);
     assert(m_in_flight_aio_modify >= on_safe_ctxs.size());
+
     --m_in_flight_aio_flush;
+
     m_in_flight_aio_modify -= on_safe_ctxs.size();
 
+    // m_on_aio_ready is set in Replay<I>::create_aio_modify_completion
+    // when the inflight aio modification has hit the high water mark
     std::swap(on_aio_ready, m_on_aio_ready);
     if (m_in_flight_op_events == 0 &&
         (m_in_flight_aio_flush + m_in_flight_aio_modify) == 0) {
@@ -715,29 +756,56 @@ void Replay<I>::handle_aio_flush_complete(Context *on_flush_safe,
 
     // strip out previously failed on_safe contexts
     for (auto it = on_safe_ctxs.begin(); it != on_safe_ctxs.end(); ) {
+
+      // iterate each on_safe callbacks between previous flush op
+      // and this one
+
       if (m_aio_modify_safe_contexts.erase(*it)) {
+
+        // the aio modification associated with this on_safe callback
+        // committed to disk succeeded
+
         ++it;
       } else {
+
+        // committed to disk failed, remove it
         it = on_safe_ctxs.erase(it);
       }
     }
   }
 
   if (on_aio_ready != nullptr) {
+
+    // inflight aio modification high water mark relieved, fetch the
+    // next journal entry to process
+
     ldout(cct, 10) << ": resuming paused AIO" << dendl;
+
     on_aio_ready->complete(0);
   }
 
   if (on_flush_safe != nullptr) {
+
+    // for inflight aio water mark resulted flush op this callback
+    // will be nullptr, for flush op from journal entry this is non-nullptr
+
     on_safe_ctxs.push_back(on_flush_safe);
   }
+
   for (auto ctx : on_safe_ctxs) {
+
+    // iterate those on_safe callbacks committed to disk succeeded and
+    // may plus the on_safe callback of the flush op from the journal
+    // entry
+
     ldout(cct, 20) << ": completing safe context: " << ctx << dendl;
+
     ctx->complete(r);
   }
 
   if (on_flush != nullptr) {
     ldout(cct, 20) << ": completing flush context: " << on_flush << dendl;
+
     on_flush->complete(r);
   }
 }
@@ -750,6 +818,7 @@ Context *Replay<I>::create_op_context_callback(uint64_t op_tid,
   CephContext *cct = m_image_ctx.cct;
 
   assert(m_lock.is_locked());
+
   if (m_op_events.count(op_tid) != 0) {
     lderr(cct) << ": duplicate op tid detected: " << op_tid << dendl;
 
@@ -762,10 +831,13 @@ Context *Replay<I>::create_op_context_callback(uint64_t op_tid,
 
   ++m_in_flight_op_events;
   *op_event = &m_op_events[op_tid];
+
   (*op_event)->on_start_safe = on_safe;
 
   Context *on_op_complete = new C_OpOnComplete(this, op_tid);
+
   (*op_event)->on_op_complete = on_op_complete;
+
   return on_op_complete;
 }
 
@@ -777,8 +849,10 @@ void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
 
   OpEvent op_event;
   bool shutting_down = false;
+
   {
     Mutex::Locker locker(m_lock);
+
     auto op_it = m_op_events.find(op_tid);
     assert(op_it != m_op_events.end());
 
@@ -846,6 +920,9 @@ AioCompletion *Replay<I>::create_aio_modify_completion(Context *on_ready,
   assert(m_on_aio_ready == nullptr);
 
   ++m_in_flight_aio_modify;
+
+  // stash those on_safe callbacks, it will be completed in batch
+  // by the following flush op, either manually or from journal entry
   m_aio_modify_unsafe_contexts.push_back(on_safe);
 
   // FLUSH if we hit the low-water mark -- on_safe contexts are
@@ -854,7 +931,12 @@ AioCompletion *Replay<I>::create_aio_modify_completion(Context *on_ready,
 
   *flush_required = (m_aio_modify_unsafe_contexts.size() ==
                        IN_FLIGHT_IO_LOW_WATER_MARK);
+
   if (*flush_required) {
+
+    // we will start a flush op manually right after the modification
+    // of this journal entry
+
     ldout(cct, 10) << ": hit AIO replay low-water mark: scheduling flush"
                    << dendl;
   }
@@ -867,14 +949,20 @@ AioCompletion *Replay<I>::create_aio_modify_completion(Context *on_ready,
   if (m_in_flight_aio_modify == IN_FLIGHT_IO_HIGH_WATER_MARK) {
     ldout(cct, 10) << ": hit AIO replay high-water mark: pausing replay"
                    << dendl;
+
     assert(m_on_aio_ready == nullptr);
 
+    // now the on_ready will be nullptr, so we will never try to fetch
+    // the next journal entry until the m_on_aio_ready is completed by
+    // Replay<I>::handle_aio_flush_complete, i.e., until the manually
+    // created flush op finished
     std::swap(m_on_aio_ready, on_ready);
   }
 
   // when the modification is ACKed by librbd, we can process the next
   // event. when flushed, the completion of the next flush will fire the
   // on_safe callback
+  // Replay<I>::handle_aio_modify_complete
   AioCompletion *aio_comp = AioCompletion::create_and_start<Context>(
     new C_AioModifyComplete(this, on_ready, on_safe),
     util::get_image_ctx(&m_image_ctx), aio_type);
@@ -888,11 +976,14 @@ AioCompletion *Replay<I>::create_aio_flush_completion(Context *on_safe) {
   ++m_in_flight_aio_flush;
 
   // associate all prior write/discard ops to this flush request
+  // all previous on_safe callbacks between the last flush op and this
+  // one will be completed by this rados callback
   AioCompletion *aio_comp = AioCompletion::create_and_start<Context>(
       new C_AioFlushComplete(this, on_safe,
                              std::move(m_aio_modify_unsafe_contexts)),
       util::get_image_ctx(&m_image_ctx), AIO_TYPE_FLUSH);
   m_aio_modify_unsafe_contexts.clear();
+
   return aio_comp;
 }
 
