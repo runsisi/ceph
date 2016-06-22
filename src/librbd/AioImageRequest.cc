@@ -74,6 +74,7 @@ struct C_FlushJournalCommit : public Context {
 
 } // anonymous namespace
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_read(
     I *ictx, AioCompletion *c,
@@ -86,6 +87,7 @@ void AioImageRequest<I>::aio_read(
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
                                   uint64_t off, size_t len, char *buf,
@@ -97,6 +99,7 @@ void AioImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
                                    uint64_t off, size_t len, const char *buf,
@@ -108,6 +111,7 @@ void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_discard(I *ictx, AioCompletion *c,
                                      uint64_t off, uint64_t len) {
@@ -118,6 +122,7 @@ void AioImageRequest<I>::aio_discard(I *ictx, AioCompletion *c,
   req.send();
 }
 
+// static
 template <typename I>
 void AioImageRequest<I>::aio_flush(I *ictx, AioCompletion *c) {
   c->init_time(ictx, librbd::AIO_TYPE_FLUSH);

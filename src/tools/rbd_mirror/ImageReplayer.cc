@@ -539,6 +539,7 @@ void ImageReplayer<I>::handle_start_replay(int r) {
     m_local_journal = nullptr;
     derr << "error starting external replay on local image "
 	 <<  m_local_image_id << ": " << cpp_strerror(r) << dendl;
+
     on_start_fail(r, "error starting replay on local image");
     return;
   }

@@ -707,7 +707,6 @@ bool Journal<I>::is_journal_replaying() const {
           m_state == STATE_RESTARTING_REPLAY);
 }
 
-// called by ImageReplayer<I>::start_replay
 template <typename I>
 void Journal<I>::wait_for_journal_ready(Context *on_ready) {
   on_ready = create_async_context_callback(m_image_ctx, on_ready);
@@ -763,6 +762,8 @@ void Journal<I>::close(Context *on_finish) {
     m_on_replay_close_request = nullptr;
   }
 
+  // if we are in state STATE_REPLAYING or other non-steady states, we
+  // will wait, and the flag m_close_pending will notify them to shutdown
   m_close_pending = true;
 
   wait_for_steady_state(on_finish);
@@ -932,6 +933,7 @@ void Journal<I>::flush_commit_position(Context *on_finish) {
 
   Mutex::Locker locker(m_lock);
   assert(m_journaler != nullptr);
+
   m_journaler->flush_commit_position(on_finish);
 }
 
@@ -1239,6 +1241,7 @@ typename Journal<I>::Future Journal<I>::wait_event(Mutex &lock, uint64_t tid,
   return event.futures.back();
 }
 
+// called by ImageReplayer<I>::start_replay
 template <typename I>
 void Journal<I>::start_external_replay(journal::Replay<I> **journal_replay,
                                        Context *on_start,
@@ -1287,14 +1290,21 @@ void Journal<I>::handle_start_external_replay(int r,
     }
 
     // get back to a sane-state
+    // m_journaler->m_recorder has been deleted by Journaler::stop_append,
+    // so we need to recreate it
     start_append();
+
     on_finish->complete(r);
     return;
   }
 
   transition_state(STATE_REPLAYING, 0);
 
+  // the internal replay started in Journal<I>::handle_get_tags has been
+  // finished, so create a new replay handler
   m_journal_replay = journal::Replay<I>::create(m_image_ctx);
+
+  // the image replayer will need this
   *journal_replay = m_journal_replay;
 
   on_finish->complete(0);
@@ -1357,11 +1367,13 @@ void Journal<I>::destroy_journaler(int r) {
 
   transition_state(STATE_CLOSING, r);
 
+  // shutdown JournalTrimmer and JournalMetadata
   m_journaler->shut_down(create_async_context_callback(
     m_image_ctx, create_context_callback<
       Journal<I>, &Journal<I>::handle_journal_destroyed>(this)));
 }
 
+// called by Journal<I>::handle_flushing_restart
 template <typename I>
 void Journal<I>::recreate_journaler(int r) {
   CephContext *cct = m_image_ctx.cct;
@@ -1377,6 +1389,9 @@ void Journal<I>::recreate_journaler(int r) {
   m_journaler->remove_listener(&m_metadata_listener);
 
   transition_state(STATE_RESTARTING_REPLAY, r);
+
+  // shutdown and delete the current Journaler, then create a new Journaler,
+  // the state will transit into STATE_INITIALIZING first
   m_journaler->shut_down(create_async_context_callback(
     m_image_ctx, create_context_callback<
       Journal<I>, &Journal<I>::handle_journal_destroyed>(this)));
@@ -1532,6 +1547,10 @@ void Journal<I>::handle_get_tags(int r) {
 template <typename I>
 void Journal<I>::handle_replay_ready() {
   CephContext *cct = m_image_ctx.cct;
+
+  // the JournalPlayer has notified us that it has fetched a set
+  // of journal objects, and we can process the journal entries now
+
   ReplayEntry replay_entry;
 
   {
@@ -1558,7 +1577,7 @@ void Journal<I>::handle_replay_ready() {
     m_processing_entry = true;
   }
 
-  // process this entry
+  // process this entry, i.e., to replay this journal entry
 
   bufferlist data = replay_entry.get_data();
   bufferlist::iterator it = data.begin();
@@ -1582,9 +1601,14 @@ void Journal<I>::handle_replay_ready() {
 
 template <typename I>
 void Journal<I>::handle_replay_complete(int r) {
+
+  // all replay entries have been fetched and replayed, or something
+  // has been failed
+
   CephContext *cct = m_image_ctx.cct;
 
   bool cancel_ops = false;
+
   {
     Mutex::Locker locker(m_lock);
 
@@ -1595,10 +1619,17 @@ void Journal<I>::handle_replay_complete(int r) {
     ldout(cct, 20) << this << " " << __func__ << ": r=" << r << dendl;
 
     if (r < 0) {
+
+      // fetch and replay failed, we need to recreate the Journaler and restart
+      // the whole replay process, see handle_flushing_restart
+
       cancel_ops = true;
 
       transition_state(STATE_FLUSHING_RESTART, r);
     } else {
+
+      // currently no error occurred, but the
+
       // state might change back to FLUSHING_RESTART on flush error
       transition_state(STATE_FLUSHING_REPLAY, 0);
     }
@@ -1611,14 +1642,23 @@ void Journal<I>::handle_replay_complete(int r) {
       State state;
       {
         Mutex::Locker locker(m_lock);
+
         assert(m_state == STATE_FLUSHING_RESTART ||
                m_state == STATE_FLUSHING_REPLAY);
+
         state = m_state;
       }
 
       if (state == STATE_FLUSHING_RESTART) {
+
+        // the whole replay process failed, restart the replay again
+
         handle_flushing_restart(0);
       } else {
+
+        // replay succeeded, delete m_journal_replay and new JournalRecorder
+        // then transit state to STATE_READY
+
         handle_flushing_replay();
       }
     });
@@ -1630,7 +1670,7 @@ void Journal<I>::handle_replay_complete(int r) {
       m_journal_replay->shut_down(cancel_ops, ctx);
     });
 
-  // JournalPlayer::shutdown and delete itself
+  // JournalPlayer::shutdown and delete the JournalPlayer instance
   m_journaler->stop_replay(ctx);
 }
 
@@ -1697,6 +1737,10 @@ void Journal<I>::handle_replay_process_safe(ReplayEntry replay_entry, int r) {
 
       return;
     } else if (m_state == STATE_FLUSHING_REPLAY) {
+
+      // STATE_FLUSHING_REPLAY can only be set in
+      // Journal<I>::handle_replay_complete
+
       // end-of-replay flush in-progress -- we need to restart replay
       transition_state(STATE_FLUSHING_RESTART, r);
 
@@ -1712,6 +1756,7 @@ void Journal<I>::handle_replay_process_safe(ReplayEntry replay_entry, int r) {
   m_lock.Unlock();
 }
 
+// called by　Journal<I>::handle_replay_complete and Journal<I>::handle_replay_process_safe
 template <typename I>
 void Journal<I>::handle_flushing_restart(int r) {
   Mutex::Locker locker(m_lock);
@@ -1724,6 +1769,9 @@ void Journal<I>::handle_flushing_restart(int r) {
   assert(m_state == STATE_FLUSHING_RESTART);
 
   if (m_close_pending) {
+
+    // we are to close, see Journal<I>::close
+
     destroy_journaler(r);
     return;
   }
@@ -1731,6 +1779,7 @@ void Journal<I>::handle_flushing_restart(int r) {
   recreate_journaler(r);
 }
 
+// called by　Journal<I>::handle_replay_complete
 template <typename I>
 void Journal<I>::handle_flushing_replay() {
   Mutex::Locker locker(m_lock);
@@ -1742,8 +1791,9 @@ void Journal<I>::handle_flushing_replay() {
 
   if (m_close_pending) {
 
-    // will delete m_journaler, see Journal::handle_journal_destroyed
+    // we are to close, see Journal<I>::close
 
+    // will shutdown Journaler and delete it, see Journal::handle_journal_destroyed
     destroy_journaler(0);
     return;
   } else if (m_state == STATE_FLUSHING_RESTART) {
@@ -1751,6 +1801,7 @@ void Journal<I>::handle_flushing_replay() {
     recreate_journaler(0);
     return;
   }
+
 
   delete m_journal_replay;
   m_journal_replay = NULL;
@@ -1792,6 +1843,9 @@ void Journal<I>::handle_journal_destroyed(int r) {
   assert(m_state == STATE_CLOSING || m_state == STATE_RESTARTING_REPLAY);
 
   if (m_state == STATE_RESTARTING_REPLAY) {
+
+    // create a new Journaler
+
     create_journaler();
     return;
   }
@@ -1896,6 +1950,7 @@ void Journal<I>::handle_op_event_safe(int r, uint64_t tid,
   m_journaler->flush_commit_position(nullptr);
 }
 
+// called by Journal<I>::close
 template <typename I>
 void Journal<I>::stop_recording() {
   assert(m_lock.is_locked());
