@@ -38,8 +38,10 @@ protected:
     ImageCtxT &image_ctx = this->m_image_ctx;
 
     assert(can_affect_io());
+
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     if (image_ctx.journal != NULL) {
       Context *ctx = util::create_context_callback<T, MF>(request);
       if (image_ctx.journal->is_journal_replaying()) {

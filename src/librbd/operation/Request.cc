@@ -27,6 +27,7 @@ void Request<I>::send() {
   // automatically create the event if we don't need to worry
   // about affecting concurrent IO ops
   if (can_affect_io() || !append_op_event()) {
+    // pure virtual function
     send_op();
   }
 }
@@ -67,6 +68,7 @@ void Request<I>::finish(int r) {
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
   assert(!m_appended_op_event || m_committed_op_event);
+
   AsyncRequest<I>::finish(r);
 }
 
@@ -75,13 +77,20 @@ bool Request<I>::append_op_event() {
   I &image_ctx = this->m_image_ctx;
 
   assert(image_ctx.owner_lock.is_locked());
+
   RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
   if (image_ctx.journal != NULL &&
       !image_ctx.journal->is_journal_replaying()) {
+
+    //
+
     append_op_event(util::create_context_callback<
       Request<I>, &Request<I>::handle_op_event_safe>(this));
+
     return true;
   }
+
   return false;
 }
 
@@ -128,6 +137,7 @@ void Request<I>::handle_commit_op_event(int r, int original_ret_val) {
   finish(r);
 }
 
+// called by Request<I>::append_op_event
 template <typename I>
 void Request<I>::replay_op_ready(Context *on_safe) {
   I &image_ctx = this->m_image_ctx;
@@ -136,6 +146,8 @@ void Request<I>::replay_op_ready(Context *on_safe) {
   assert(m_op_tid != 0);
 
   m_appended_op_event = true;
+
+  // will call Replay<I>::replay_op_ready eventually
   image_ctx.journal->replay_op_ready(
     m_op_tid, util::create_async_context_callback(image_ctx, on_safe));
 }
