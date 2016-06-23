@@ -175,6 +175,8 @@ void ObjectMap::aio_resize(uint64_t new_size, uint8_t default_object_state,
   req->send();
 }
 
+// called by AbstractAioObjectWrite::send_pre, AbstractAioObjectWrite::send_post
+// and UpdateObjectMap::send
 bool ObjectMap::aio_update(uint64_t object_no, uint8_t new_state,
 			   const boost::optional<uint8_t> &current_state,
 			   Context *on_finish)

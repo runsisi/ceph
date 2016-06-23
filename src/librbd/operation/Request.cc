@@ -32,6 +32,7 @@ void Request<I>::send() {
   }
 }
 
+// overrided from AsyncRequest::finish
 template <typename I>
 void Request<I>::finish(int r) {
   // automatically commit the event if we don't need to worry
@@ -42,6 +43,7 @@ void Request<I>::finish(int r) {
 
   assert(!m_appended_op_event || m_committed_op_event);
 
+  // finish_request() and complete m_on_finish
   AsyncRequest<I>::finish(r);
 }
 

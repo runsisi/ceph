@@ -151,6 +151,7 @@ namespace librbd {
     Mutex::Locker locker(lock);
     assert(ictx != nullptr);
     assert(!async_op.started());
+
     if (state == STATE_PENDING && (ignore_type || aio_type != AIO_TYPE_FLUSH)) {
       async_op.start_op(*ictx);
     }
