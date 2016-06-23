@@ -42,6 +42,8 @@ protected:
   Context *create_callback_context();
   Context *create_async_callback_context();
 
+  // called by AsyncRequest<T>::create_async_callback_context to queue
+  // a context(created by create_callback_context) on m_image_ctx.op_work_queue
   void async_complete(int r);
 
   virtual bool should_complete(int r) = 0;
@@ -56,7 +58,9 @@ protected:
   }
 
   virtual void finish(int r) {
+    // remove from m_image_ctx.async_requests
     finish_request();
+
     m_on_finish->complete(r);
   }
 

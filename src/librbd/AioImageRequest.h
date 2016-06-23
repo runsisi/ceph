@@ -41,7 +41,9 @@ public:
     return false;
   }
 
+  // called by AioImageRequestWQ::_void_dequeue
   void start_op() {
+    // push AioCompletion::async_op back of m_image_ctx->async_ops
     m_aio_comp->start_op();
   }
 

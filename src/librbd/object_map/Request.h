@@ -33,6 +33,8 @@ protected:
     // never propagate an error back to the caller
     return 0;
   }
+
+  // TODO: it can not override AsyncRequest::finish_request ???
   virtual void finish_request() {
   }
 
@@ -50,6 +52,7 @@ private:
 
   State m_state;
 
+  // called by object_map::Request::should_complete
   bool invalidate();
 };
 

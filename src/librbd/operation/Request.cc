@@ -32,6 +32,7 @@ void Request<I>::send() {
   }
 }
 
+// overrided from AsyncRequest::finish
 template <typename I>
 Context *Request<I>::create_context_finisher(int r) {
   // automatically commit the event if required (delete after commit)
@@ -69,6 +70,7 @@ void Request<I>::finish(int r) {
 
   assert(!m_appended_op_event || m_committed_op_event);
 
+  // finish_request() and complete m_on_finish
   AsyncRequest<I>::finish(r);
 }
 
