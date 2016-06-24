@@ -64,15 +64,28 @@ public:
 
 protected:
   virtual void complete(int r) override {
+    // call member function T::MF first
     Context *on_finish = (obj->*MF)(&r);
+
+    // if T::MF returns nullptr which means the T::MF will continue the
+    // state machine, while if it returns non-nullptr which means the
+    // state machine are to be terminated here
+
     if (on_finish != nullptr) {
+
+      // terminate the state machine
+
       on_finish->complete(r);
+
       if (destroy) {
         delete obj;
       }
     }
+
+    // delete this wrapper context
     Context::complete(r);
   }
+
   virtual void finish(int r) override {
   }
 };
