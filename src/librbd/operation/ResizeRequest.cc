@@ -128,6 +128,10 @@ Context *ResizeRequest<I>::send_append_op_event() {
   }
 
   ldout(cct, 5) << this << " " << __func__ << dendl;
+
+  // append_op_event called above succeeded, handle_append_op_event will
+  // continue the state machine
+
   return nullptr;
 }
 
@@ -140,6 +144,7 @@ Context *ResizeRequest<I>::handle_append_op_event(int *result) {
   if (*result < 0) {
     lderr(cct) << "failed to commit journal entry: " << cpp_strerror(*result)
                << dendl;
+
     image_ctx.aio_work_queue->unblock_writes();
     return this->create_context_finisher(*result);
   }
@@ -217,6 +222,7 @@ Context *ResizeRequest<I>::send_grow_object_map() {
     RWLock::WLocker snap_locker(image_ctx.snap_lock);
     m_shrink_size_visible = true;
   }
+
   image_ctx.aio_work_queue->unblock_writes();
 
   if (m_original_size == m_new_size) {
@@ -228,6 +234,7 @@ Context *ResizeRequest<I>::send_grow_object_map() {
 
   image_ctx.owner_lock.get_read();
   image_ctx.snap_lock.get_read();
+
   if (image_ctx.object_map == nullptr) {
     image_ctx.snap_lock.put_read();
     image_ctx.owner_lock.put_read();
@@ -246,8 +253,10 @@ Context *ResizeRequest<I>::send_grow_object_map() {
   image_ctx.object_map->aio_resize(
     m_new_size, OBJECT_NONEXISTENT, create_context_callback<
       ResizeRequest<I>, &ResizeRequest<I>::handle_grow_object_map>(this));
+
   image_ctx.snap_lock.put_read();
   image_ctx.owner_lock.put_read();
+
   return nullptr;
 }
 
@@ -268,6 +277,7 @@ Context *ResizeRequest<I>::send_shrink_object_map() {
 
   image_ctx.owner_lock.get_read();
   image_ctx.snap_lock.get_read();
+
   if (image_ctx.object_map == nullptr || m_new_size > m_original_size) {
     image_ctx.snap_lock.put_read();
     image_ctx.owner_lock.put_read();
@@ -288,8 +298,10 @@ Context *ResizeRequest<I>::send_shrink_object_map() {
   image_ctx.object_map->aio_resize(
     m_new_size, OBJECT_NONEXISTENT, create_context_callback<
       ResizeRequest<I>, &ResizeRequest<I>::handle_shrink_object_map>(this));
+
   image_ctx.snap_lock.put_read();
   image_ctx.owner_lock.put_read();
+
   return nullptr;
 }
 

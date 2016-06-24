@@ -26,7 +26,10 @@ public:
   Request(ImageCtxT &image_ctx, Context *on_finish,
           uint64_t journal_op_tid = 0);
 
-  // call send_op() based on can_affect_io()
+  // call send_op() based on can_affect_io(), if this op affect the io,
+  // i.e., this is ResizeRequest or SnapshotCreateRequest, or if we can
+  // not journal it now, i.e., ImageCtx->journal is nullptr is the journal
+  // currently is replaying
   virtual void send();
 
 protected:
@@ -43,10 +46,13 @@ protected:
 
   virtual journal::Event create_event(uint64_t op_tid) const = 0;
 
+  // T is a specific request type, either ResizeRequest or SnapshotCreateRequest
   template <typename T, Context*(T::*MF)(int*)>
   bool append_op_event(T *request) {
     ImageCtxT &image_ctx = this->m_image_ctx;
 
+    // only ResizeRequest or SnapshotCreateRequest overrides the can_affect_io
+    // and returns true
     assert(can_affect_io());
 
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
@@ -54,13 +60,16 @@ protected:
 
     if (image_ctx.journal != NULL) {
       Context *ctx = util::create_context_callback<T, MF>(request);
+
       if (image_ctx.journal->is_journal_replaying()) {
         replay_op_ready(ctx);
       } else {
         append_op_event(ctx);
       }
+
       return true;
     }
+
     return false;
   }
 
