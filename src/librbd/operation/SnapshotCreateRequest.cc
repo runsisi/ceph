@@ -125,6 +125,8 @@ Context *SnapshotCreateRequest<I>::handle_suspend_aio(int *result) {
 template <typename I>
 void SnapshotCreateRequest<I>::send_append_op_event() {
   I &image_ctx = this->m_image_ctx;
+
+  // see http://stackoverflow.com/questions/5533354/what-does-a-call-to-this-template-somename-do
   if (!this->template append_op_event<
         SnapshotCreateRequest<I>,
         &SnapshotCreateRequest<I>::handle_append_op_event>(this)) {

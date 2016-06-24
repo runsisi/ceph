@@ -16,21 +16,31 @@ class ImageCtx;
 
 namespace operation {
 
+// pure virtual function:
+// send_op, create_event, should_complete
+// virtual function:
+// can_affect_io, send, finish
 template <typename ImageCtxT = ImageCtx>
 class Request : public AsyncRequest<ImageCtxT> {
 public:
   Request(ImageCtxT &image_ctx, Context *on_finish,
           uint64_t journal_op_tid = 0);
 
+  // call send_op() based on can_affect_io()
   virtual void send();
 
 protected:
+  // call commit_op_event() based on can_affect_io()
   virtual void finish(int r) override;
+
+  // called by send and Request<I>::handle_op_event_safe
   virtual void send_op() = 0;
 
+  // only ResizeRequest and SnapshotCreateRequest override this and return true
   virtual bool can_affect_io() const {
     return false;
   }
+
   virtual journal::Event create_event(uint64_t op_tid) const = 0;
 
   template <typename T, Context*(T::*MF)(int*)>

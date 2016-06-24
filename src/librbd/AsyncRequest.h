@@ -12,6 +12,10 @@ namespace librbd {
 
 class ImageCtx;
 
+// pure virtual function:
+// send, should_complete
+// virtual function:
+// filter_return_code, finish
 template <typename ImageCtxT = ImageCtx>
 class AsyncRequest
 {
@@ -22,7 +26,7 @@ public:
   void complete(int r) {
     if (should_complete(r)) {
       r = filter_return_code(r);
-      // finish_request() and complete m_on_finish
+      // call finish_request() and complete m_on_finish
       finish(r);
       delete this;
     }
@@ -33,6 +37,8 @@ public:
   inline bool is_canceled() const {
     return m_canceled;
   }
+
+  // called by ImageCtx::cancel_async_requests
   inline void cancel() {
     m_canceled = true;
   }
@@ -65,7 +71,9 @@ private:
   bool m_canceled;
   typename xlist<AsyncRequest<ImageCtxT> *>::item m_xlist_item;
 
+  // push ourself back of m_image_ctx.async_requests
   void start_request();
+  // remove ourself from m_image_ctx.async_requests and complete the waiters
   void finish_request();
 };
 
