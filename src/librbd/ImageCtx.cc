@@ -293,6 +293,7 @@ struct C_InvalidateCache : public Context {
     readahead.set_max_readahead_size(readahead_max_bytes);
   }
 
+  // called by CloseRequest<I>::finish
   void ImageCtx::shutdown() {
     delete image_watcher;
     image_watcher = nullptr;
@@ -781,9 +782,12 @@ struct C_InvalidateCache : public Context {
     object_cacher->clear_nonexistence(object_set);
   }
 
+  // called in OpenRequest<I>::send_register_watch
   void ImageCtx::register_watch(Context *on_finish) {
     assert(image_watcher == NULL);
     image_watcher = new ImageWatcher(*this);
+
+    // used to handle requests under librbd/operation
     image_watcher->register_watch(on_finish);
   }
 
@@ -1010,13 +1014,17 @@ struct C_InvalidateCache : public Context {
     }
   }
 
+  // called by librbd::update_features, librbd::lock, librbd::unlock, librbd::break_lock
   void ImageCtx::notify_update() {
     // ++m_refresh_seq
     state->handle_update_notification();
+
     ImageWatcher::notify_header_update(md_ctx, header_oid);
   }
 
+  // called by C_NotifyUpdate::complete
   void ImageCtx::notify_update(Context *on_finish) {
+    // ++m_refresh_seq
     state->handle_update_notification();
 
     image_watcher->notify_header_update(on_finish);

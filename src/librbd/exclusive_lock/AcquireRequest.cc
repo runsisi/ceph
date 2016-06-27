@@ -87,6 +87,7 @@ void AcquireRequest<I>::send_flush_notifies() {
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_flush_notifies>(
     this);
+
   m_image_ctx.image_watcher->flush(ctx);
 }
 
@@ -96,6 +97,7 @@ Context *AcquireRequest<I>::handle_flush_notifies(int *ret_val) {
   ldout(cct, 10) << __func__ << dendl;
 
   assert(*ret_val == 0);
+
   send_lock();
   return nullptr;
 }
@@ -130,7 +132,9 @@ Context *AcquireRequest<I>::handle_lock(int *ret_val) {
     return m_on_finish;
   }
 
+  // lock failed, break the current locker and then lock again
   send_get_lockers();
+
   return nullptr;
 }
 
@@ -145,7 +149,10 @@ Context *AcquireRequest<I>::send_refresh() {
 
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_refresh>(this);
+
+  // refresh image
   m_image_ctx.state->acquire_lock_refresh(ctx);
+
   return nullptr;
 }
 
@@ -157,6 +164,7 @@ Context *AcquireRequest<I>::handle_refresh(int *ret_val) {
   if (*ret_val < 0) {
     lderr(cct) << "failed to refresh image: " << cpp_strerror(*ret_val)
                << dendl;
+
     m_error_result = *ret_val;
     send_unlock();
     return nullptr;
@@ -164,6 +172,9 @@ Context *AcquireRequest<I>::handle_refresh(int *ret_val) {
 
   return send_open_object_map();
 }
+
+// ImageCtx::object_map is created in AcquireRequest<I>::send_open_journal
+// ImageCtx::journal is created in AcquireRequest<I>::send_open_object_map
 
 template <typename I>
 Context *AcquireRequest<I>::send_open_journal() {
@@ -187,6 +198,8 @@ Context *AcquireRequest<I>::send_open_journal() {
   m_journal = m_image_ctx.create_journal();
 
   // journal playback requires object map (if enabled) and itself
+
+  // set ImageCtx::object_map and ImageCtx::journal
   apply();
 
   m_journal->open(ctx);
@@ -219,6 +232,8 @@ void AcquireRequest<I>::send_allocate_journal_tag() {
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_allocate_journal_tag>(this);
+
+  // m_image_ctx->journal->allocate_local_tag
   m_image_ctx.get_journal_policy()->allocate_tag_on_lock(ctx);
 }
 
@@ -234,6 +249,7 @@ Context *AcquireRequest<I>::handle_allocate_journal_tag(int *ret_val) {
     send_close_journal();
     return nullptr;
   }
+
   return m_on_finish;
 }
 
@@ -245,6 +261,7 @@ void AcquireRequest<I>::send_close_journal() {
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_close_journal>(
     this);
+
   m_journal->close(ctx);
 }
 
@@ -276,6 +293,7 @@ Context *AcquireRequest<I>::send_open_object_map() {
     this);
 
   m_object_map = m_image_ctx.create_object_map(CEPH_NOSNAP);
+
   m_object_map->open(ctx);
   return nullptr;
 }
@@ -290,6 +308,7 @@ Context *AcquireRequest<I>::handle_open_object_map(int *ret_val) {
                << dendl;
 
     *ret_val = 0;
+
     delete m_object_map;
     m_object_map = nullptr;
   }
@@ -350,7 +369,9 @@ Context *AcquireRequest<I>::handle_unlock(int *ret_val) {
     lderr(cct) << "failed to unlock image: " << cpp_strerror(*ret_val) << dendl;
   }
 
+  // reset ImageCtx::object_map and ImageCtx::journal to nullptr
   revert(ret_val);
+
   return m_on_finish;
 }
 
@@ -432,6 +453,7 @@ Context *AcquireRequest<I>::handle_get_lockers(int *ret_val) {
 
   ldout(cct, 10) << "retrieved exclusive locker: "
                  << m_locker_entity << "@" << m_locker_address << dendl;
+
   send_get_watchers();
   return nullptr;
 }
@@ -497,6 +519,7 @@ void AcquireRequest<I>::send_blacklist() {
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_blacklist>(
     this);
+
   m_image_ctx.op_work_queue->queue(new C_BlacklistClient<I>(m_image_ctx,
                                                             m_locker_address,
                                                             ctx), 0);
@@ -512,6 +535,7 @@ Context *AcquireRequest<I>::handle_blacklist(int *ret_val) {
                << dendl;
     return m_on_finish;
   }
+
   send_break_lock();
   return nullptr;
 }

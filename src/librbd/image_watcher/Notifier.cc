@@ -46,7 +46,10 @@ void Notifier::notify(bufferlist &bl, bufferlist *out_bl, Context *on_finish) {
                    << dendl;
   }
 
+  // handle_notify, queue on_finish on ImageCtx::op_work_queue and
+  // complete flush contexts
   C_AioNotify *ctx = new C_AioNotify(this, on_finish);
+
   librados::AioCompletion *comp = util::create_rados_ack_callback(ctx);
   int r = m_image_ctx.md_ctx.aio_notify(m_image_ctx.header_oid, comp, bl,
                                         NOTIFY_TIMEOUT, out_bl);
@@ -71,6 +74,7 @@ void Notifier::handle_notify(int r, Context *on_finish) {
     for (auto ctx : m_aio_notify_flush_ctxs) {
       m_image_ctx.op_work_queue->queue(ctx, 0);
     }
+
     m_aio_notify_flush_ctxs.clear();
   }
 }

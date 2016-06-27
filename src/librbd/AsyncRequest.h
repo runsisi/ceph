@@ -48,10 +48,15 @@ protected:
 
   librados::AioCompletion *create_callback_completion();
   Context *create_callback_context();
+  // called in TrimRequest<I>::send_clean_boundary
   Context *create_async_callback_context();
 
   // called by AsyncRequest<T>::create_async_callback_context to queue
   // a context(created by create_callback_context) on m_image_ctx.op_work_queue
+  // and other places:
+  // object_map::InvalidateRequest
+  // operation::ResizeRequest, SnapshotProtectRequest, SnapshotRemoveRequest,
+  // SnapshotUnprotectRequest, TrimRequest
   void async_complete(int r);
 
   virtual bool should_complete(int r) = 0;

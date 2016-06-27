@@ -17,6 +17,13 @@ namespace util {
 
 namespace detail {
 
+// rados_callback, rados_state_callback:
+//   (obj->*MF)(rados_aio_get_return_value(c))
+// C_CallbackAdapter, C_StateCallbackAdapter:
+//   (obj->*MF)(r)
+// C_AsyncCallback:
+//   op_work_queue->queue(on_finish, r)
+
 template <typename T>
 void rados_callback(rados_completion_t c, void *arg) {
   reinterpret_cast<T*>(arg)->complete(rados_aio_get_return_value(c));
@@ -25,17 +32,23 @@ void rados_callback(rados_completion_t c, void *arg) {
 template <typename T, void(T::*MF)(int)>
 void rados_callback(rados_completion_t c, void *arg) {
   T *obj = reinterpret_cast<T*>(arg);
+
   int r = rados_aio_get_return_value(c);
+
   (obj->*MF)(r);
 }
 
 template <typename T, Context*(T::*MF)(int*), bool destroy>
 void rados_state_callback(rados_completion_t c, void *arg) {
   T *obj = reinterpret_cast<T*>(arg);
+
   int r = rados_aio_get_return_value(c);
+
   Context *on_finish = (obj->*MF)(&r);
+
   if (on_finish != nullptr) {
     on_finish->complete(r);
+
     if (destroy) {
       delete obj;
     }

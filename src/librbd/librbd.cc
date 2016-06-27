@@ -205,7 +205,9 @@ namespace librbd {
   int RBD::open(IoCtx& io_ctx, Image& image, const char *name,
 		const char *snap_name)
   {
+    // we currently do not know image_id yet, so set it to ""
     ImageCtx *ictx = new ImageCtx(name, "", snap_name, io_ctx, false);
+
     TracepointProvider::initialize<tracepoint_traits>(get_cct(io_ctx));
     tracepoint(librbd, open_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str(), ictx->snap_name.c_str(), ictx->read_only);
 
@@ -222,6 +224,7 @@ namespace librbd {
     }
 
     image.ctx = (image_ctx_t) ictx;
+
     tracepoint(librbd, open_image_exit, 0);
     return 0;
   }
@@ -230,6 +233,7 @@ namespace librbd {
 		    const char *snap_name, RBD::AioCompletion *c)
   {
     ImageCtx *ictx = new ImageCtx(name, "", snap_name, io_ctx, false);
+
     TracepointProvider::initialize<tracepoint_traits>(get_cct(io_ctx));
     tracepoint(librbd, aio_open_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str(), ictx->snap_name.c_str(), ictx->read_only, c->pc);
 
@@ -248,6 +252,7 @@ namespace librbd {
 			  const char *snap_name)
   {
     ImageCtx *ictx = new ImageCtx(name, "", snap_name, io_ctx, true);
+
     TracepointProvider::initialize<tracepoint_traits>(get_cct(io_ctx));
     tracepoint(librbd, open_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str(), ictx->snap_name.c_str(), ictx->read_only);
 
@@ -272,6 +277,7 @@ namespace librbd {
 			      const char *snap_name, RBD::AioCompletion *c)
   {
     ImageCtx *ictx = new ImageCtx(name, "", snap_name, io_ctx, true);
+
     TracepointProvider::initialize<tracepoint_traits>(get_cct(io_ctx));
     tracepoint(librbd, aio_open_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str(), ictx->snap_name.c_str(), ictx->read_only, c->pc);
 
@@ -927,6 +933,12 @@ namespace librbd {
   {
     ImageCtx *ictx = (ImageCtx *)ctx;
     tracepoint(librbd, snap_create_enter, ictx, ictx->name.c_str(), ictx->snap_name.c_str(), ictx->read_only, snap_name);
+
+    // ImageCtx::operations is allocated in ImageCtx::ImageCtx, but it is
+    // not the same as ImageCtx::state, ImageCtx::state is a state machine
+    // it need to be opened while ImageCtx::operations is a collection of
+    // functions, it can only operate only after the ImageCtx::state is in
+    // opened state
     int r = ictx->operations->snap_create(snap_name);
     tracepoint(librbd, snap_create_exit, r);
     return r;
