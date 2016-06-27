@@ -38,7 +38,7 @@ struct TaskFinisherSingleton {
   }
 };
 
-
+// this class only used in class ImageWatcher
 template <typename Task>
 class TaskFinisher {
 public:

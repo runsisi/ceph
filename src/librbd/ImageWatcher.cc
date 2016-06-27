@@ -234,6 +234,7 @@ void ImageWatcher::notify_snap_create(const std::string &snap_name,
 
   bufferlist bl;
   ::encode(NotifyMessage(SnapCreatePayload(snap_name)), bl);
+
   notify_lock_owner(std::move(bl), on_finish);
 }
 
@@ -460,8 +461,10 @@ void ImageWatcher::handle_request_lock(int r) {
 void ImageWatcher::notify_lock_owner(bufferlist &&bl, Context *on_finish) {
   assert(on_finish != nullptr);
   assert(m_image_ctx.owner_lock.is_locked());
+
   NotifyLockOwner *notify_lock_owner = NotifyLockOwner::create(
     m_image_ctx, m_notifier, std::move(bl), on_finish);
+
   notify_lock_owner->send();
 }
 
@@ -744,15 +747,18 @@ bool ImageWatcher::handle_payload(const ResizePayload &payload,
   return true;
 }
 
+// return true if the caller need to ack the notify
 bool ImageWatcher::handle_payload(const SnapCreatePayload &payload,
 				  C_NotifyAck *ack_ctx) {
   RWLock::RLocker l(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
       ldout(m_image_ctx.cct, 10) << this << " remote snap_create request: "
 			         << payload.snap_name << dendl;
 
+      // will notify the ack in callback
       m_image_ctx.operations->execute_snap_create(payload.snap_name,
                                                   new C_ResponseMessage(ack_ctx),
                                                   0, false);
@@ -899,16 +905,19 @@ bool ImageWatcher::handle_payload(const UnknownPayload &payload,
   return true;
 }
 
+// called by ImageWatcher::handle_notify
 void ImageWatcher::process_payload(uint64_t notify_id, uint64_t handle,
                                    const Payload &payload, int r) {
   if (r < 0) {
     bufferlist out_bl;
     acknowledge_notify(notify_id, handle, out_bl);
   } else {
+    // call ImageWatcher::handle_payload to handle the payload of the notify message
     apply_visitor(HandlePayloadVisitor(this, notify_id, handle), payload);
   }
 }
 
+// called by ImageWatcher::WatchCtx::handle_notify
 void ImageWatcher::handle_notify(uint64_t notify_id, uint64_t handle,
 				 bufferlist &bl) {
   NotifyMessage notify_message;
@@ -952,6 +961,7 @@ void ImageWatcher::handle_error(uint64_t handle, int err) {
 
     FunctionContext *ctx = new FunctionContext(
       boost::bind(&ImageWatcher::reregister_watch, this));
+
     m_task_finisher->queue(TASK_CODE_REREGISTER_WATCH, ctx);
   }
 }
@@ -1007,6 +1017,7 @@ void ImageWatcher::reregister_watch() {
 
     m_watch_state = WATCH_STATE_REGISTERED;
   }
+
   handle_payload(HeaderUpdatePayload(), NULL);
 }
 
@@ -1047,6 +1058,7 @@ void ImageWatcher::C_ResponseMessage::finish(int r) {
   ldout(cct, 10) << this << " C_ResponseMessage: r=" << r << dendl;
 
   ::encode(ResponseMessage(r), notify_ack->out);
+
   notify_ack->complete(0);
 }
 

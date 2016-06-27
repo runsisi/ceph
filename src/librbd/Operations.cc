@@ -69,6 +69,7 @@ struct C_NotifyUpdate : public Context {
     notified = true;
     image_ctx.notify_update(this);
   }
+
   virtual void finish(int r) override {
     on_finish->complete(r);
   }
@@ -133,12 +134,15 @@ struct C_InvokeAsyncRequest : public Context {
       return;
     }
 
+    // need to refresh
+
     CephContext *cct = image_ctx.cct;
     ldout(cct, 20) << __func__ << dendl;
 
     Context *ctx = util::create_context_callback<
       C_InvokeAsyncRequest<I>,
       &C_InvokeAsyncRequest<I>::handle_refresh_image>(this);
+
     image_ctx.state->refresh(ctx);
   }
 
@@ -159,33 +163,61 @@ struct C_InvokeAsyncRequest : public Context {
     // context can complete before owner_lock is unlocked
     RWLock &owner_lock(image_ctx.owner_lock);
     owner_lock.get_read();
+
     image_ctx.snap_lock.get_read();
+
     if (image_ctx.read_only ||
         (!permit_snapshot && image_ctx.snap_id != CEPH_NOSNAP)) {
+      // release lock in case the complete(-EROFS) called below finished
+      // too quick
       image_ctx.snap_lock.put_read();
+
       owner_lock.put_read();
+
       complete(-EROFS);
       return;
     }
+
     image_ctx.snap_lock.put_read();
 
     if (image_ctx.exclusive_lock == nullptr) {
+
+      // exclusive lock not enabled
+
       send_local_request();
       owner_lock.put_read();
       return;
     } else if (image_ctx.image_watcher == nullptr) {
+
+      // ImageCtx::image_watcher is set in ImageCtx::register_watch and
+      // deleted in ImageCtx::shutdown
+      // we always registered the image watcher if we have opened
+      // the image without read-only, see OpenRequest<I>::send_register_watch
+
+      // TODO: ImageCtx::image_watcher can be nullptr only after shutdown
+      // or the image is opened with read-only, so we do not need this check ???
+
       owner_lock.put_read();
       complete(-EROFS);
       return;
     }
 
+    // image_ctx.exclusive_lock is not nullptr
+
     int r;
     if (image_ctx.exclusive_lock->is_lock_owner() &&
         image_ctx.exclusive_lock->accept_requests(&r)) {
+
+      // currently we are lock owner and can accept requests
+
       send_local_request();
+
       owner_lock.put_read();
       return;
     }
+
+    // currently we are not the lock owner, so lock it before we can do
+    // some modification
 
     CephContext *cct = image_ctx.cct;
     ldout(cct, 20) << __func__ << dendl;
@@ -194,7 +226,9 @@ struct C_InvokeAsyncRequest : public Context {
       C_InvokeAsyncRequest<I>,
       &C_InvokeAsyncRequest<I>::handle_acquire_exclusive_lock>(
         this);
+
     image_ctx.exclusive_lock->try_lock(ctx);
+
     owner_lock.put_read();
   }
 
@@ -211,12 +245,20 @@ struct C_InvokeAsyncRequest : public Context {
     RWLock &owner_lock(image_ctx.owner_lock);
     owner_lock.get_read();
     if (image_ctx.exclusive_lock->is_lock_owner()) {
+
       send_local_request();
+
       owner_lock.put_read();
       return;
     }
 
+    // try to lock exclusive lock failed, we did not persist in get the
+    // lock, so we are good if we are not the owner of the exclusive lock
+    // after tried to lock
+
+    // let the remote lock owner to do the request instead of locally
     send_remote_request();
+
     owner_lock.put_read();
   }
 
@@ -229,6 +271,7 @@ struct C_InvokeAsyncRequest : public Context {
     Context *ctx = util::create_context_callback<
       C_InvokeAsyncRequest<I>, &C_InvokeAsyncRequest<I>::handle_remote_request>(
         this);
+
     remote(ctx);
   }
 
@@ -245,6 +288,8 @@ struct C_InvokeAsyncRequest : public Context {
 
     ldout(cct, 5) << request_type << " timed out notifying lock owner"
                   << dendl;
+
+    // r is ETIMEOUT or ERESTART
     send_refresh_image();
   }
 
@@ -258,6 +303,7 @@ struct C_InvokeAsyncRequest : public Context {
       image_ctx, util::create_context_callback<
         C_InvokeAsyncRequest<I>,
         &C_InvokeAsyncRequest<I>::handle_local_request>(this));
+
     local(ctx);
   }
 
@@ -269,6 +315,7 @@ struct C_InvokeAsyncRequest : public Context {
       send_refresh_image();
       return;
     }
+
     complete(r);
   }
 
@@ -276,6 +323,7 @@ struct C_InvokeAsyncRequest : public Context {
     if (filter_error_codes.count(r) != 0) {
       r = 0;
     }
+
     on_finish->complete(r);
   }
 };
@@ -633,6 +681,7 @@ void Operations<I>::execute_resize(uint64_t size, bool allow_shrink, ProgressCon
   req->send();
 }
 
+// called by Image::snap_create or rbd_snap_create
 template <typename I>
 int Operations<I>::snap_create(const char *snap_name) {
   if (m_image_ctx.read_only) {
@@ -668,8 +717,10 @@ void Operations<I>::snap_create(const char *snap_name, Context *on_finish) {
   }
 
   m_image_ctx.snap_lock.get_read();
+  // iterate ImageCtx::snap_ids
   if (m_image_ctx.get_snap_id(snap_name) != CEPH_NOSNAP) {
     m_image_ctx.snap_lock.put_read();
+
     on_finish->complete(-EEXIST);
     return;
   }
@@ -678,10 +729,11 @@ void Operations<I>::snap_create(const char *snap_name, Context *on_finish) {
   C_InvokeAsyncRequest<I> *req = new C_InvokeAsyncRequest<I>(
     m_image_ctx, "snap_create", true,
     boost::bind(&Operations<I>::execute_snap_create, this, snap_name, _1, 0,
-                false),
+                false), // local
     boost::bind(&ImageWatcher::notify_snap_create, m_image_ctx.image_watcher,
-                snap_name, _1),
+                snap_name, _1), // remote, only called when we are not the exclusive lock owner
     {-EEXIST}, on_finish);
+
   req->send();
 }
 
@@ -789,6 +841,7 @@ void Operations<I>::execute_snap_rollback(const std::string &snap_name,
     new operation::SnapshotRollbackRequest<I>(
       m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), snap_name,
       snap_id, new_size, prog_ctx);
+
   request->send();
 }
 
@@ -1232,6 +1285,8 @@ int Operations<I>::prepare_image_update() {
   return r;
 }
 
+// snap_create and snap_remove create C_InvokeAsyncRequest instance directly
+// instead of call this interface
 template <typename I>
 int Operations<I>::invoke_async_request(const std::string& request_type,
                                         bool permit_snapshot,

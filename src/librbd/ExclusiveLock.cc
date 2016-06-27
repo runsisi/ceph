@@ -74,13 +74,14 @@ bool ExclusiveLock<I>::is_lock_owner() const {
   return lock_owner;
 }
 
-// called in ImageWatcher::handle_payload
+// called in ImageWatcher::handle_payload and send_acquire_exclusive_lock
 template <typename I>
 bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
   Mutex::Locker locker(m_lock);
 
   bool accept_requests = (!is_shutdown() && m_state == STATE_LOCKED &&
                           !m_request_blocked);
+
   *ret_val = m_request_blocked_ret_val;
 
   ldout(m_image_ctx.cct, 20) << this << " " << __func__ << "="
@@ -92,6 +93,7 @@ bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
 template <typename I>
 void ExclusiveLock<I>::block_requests(int r) {
   Mutex::Locker locker(m_lock);
+
   assert(!m_request_blocked);
   m_request_blocked = true;
   m_request_blocked_ret_val = r;
@@ -120,9 +122,13 @@ void ExclusiveLock<I>::init(uint64_t features, Context *on_init) {
     m_state = STATE_INITIALIZING;
   }
 
+  // block r/w until exclusive lock locked, see ExclusiveLock<I>::handle_acquire_lock
+
+  // ExclusiveLock<I>::handle_init_complete
   m_image_ctx.aio_work_queue->block_writes(new C_InitComplete(this, on_init));
 
   if ((features & RBD_FEATURE_JOURNALING) != 0) {
+    // block read too
     m_image_ctx.aio_work_queue->set_require_lock_on_read();
   }
 }
@@ -148,11 +154,14 @@ void ExclusiveLock<I>::try_lock(Context *on_tried_lock) {
   {
     Mutex::Locker locker(m_lock);
     assert(m_image_ctx.owner_lock.is_locked());
+
     if (is_shutdown()) {
       r = -ESHUTDOWN;
     } else if (m_state != STATE_LOCKED || !m_actions_contexts.empty()) {
       ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
+
       execute_action(ACTION_TRY_LOCK, on_tried_lock);
+
       return;
     }
   }
@@ -453,6 +462,9 @@ void ExclusiveLock<I>::handle_acquire_lock(int r) {
   }
 
   if (next_state == STATE_LOCKED) {
+
+    // only unblock r/w on exclusive lock locked, see ExclusiveLock<I>::init
+
     m_image_ctx.image_watcher->notify_acquired_lock();
 
     m_image_ctx.aio_work_queue->clear_require_lock_on_read();
@@ -460,6 +472,7 @@ void ExclusiveLock<I>::handle_acquire_lock(int r) {
   }
 
   Mutex::Locker locker(m_lock);
+
   complete_active_action(next_state, r);
 }
 
@@ -472,6 +485,7 @@ void ExclusiveLock<I>::send_release_lock() {
   }
 
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
+
   m_state = STATE_PRE_RELEASING;
 
   using el = ExclusiveLock<I>;

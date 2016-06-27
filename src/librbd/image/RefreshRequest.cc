@@ -223,7 +223,11 @@ void RefreshRequest<I>::send_v2_get_mutable_metadata() {
   }
 
   bool read_only = m_image_ctx.read_only || snap_id != CEPH_NOSNAP;
+
   librados::ObjectReadOperation op;
+  // size, features, snapcontext, parent and lock type
+  // `read_only` flag is used to compute incompatible features between
+  // rbd client and server
   cls_client::get_mutable_metadata_start(&op, read_only);
 
   using klass = RefreshRequest<I>;
@@ -438,6 +442,7 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
   if ((m_features & RBD_FEATURE_EXCLUSIVE_LOCK) == 0 ||
       m_image_ctx.read_only || !m_image_ctx.snap_name.empty() ||
       m_image_ctx.exclusive_lock != nullptr) {
+    // exclusive lock disabled, read only/snapshot, exclusive lock initialized
     send_v2_open_object_map();
     return;
   }
@@ -456,7 +461,7 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
 
-  // block writes and block read if journaling enabled
+  // block r/w
   m_exclusive_lock->init(m_features, ctx);
 }
 
@@ -474,6 +479,7 @@ Context *RefreshRequest<I>::handle_v2_init_exclusive_lock(int *result) {
   // object map and journal will be opened when exclusive lock is
   // acquired (if features are enabled)
   send_v2_apply();
+
   return nullptr;
 }
 

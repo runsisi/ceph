@@ -1483,6 +1483,7 @@ int librados::IoCtxImpl::notify_ack(
 {
   ::ObjectOperation rd;
   prepare_assert_ops(&rd);
+  // CEPH_OSD_OP_NOTIFY_ACK
   rd.notify_ack(notify_id, cookie, bl);
   objecter->read(oid, oloc, rd, snap_seq, (bufferlist*)NULL, 0, 0, 0);
   return 0;

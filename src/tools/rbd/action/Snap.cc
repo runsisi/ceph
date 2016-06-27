@@ -228,6 +228,8 @@ int execute_create(const po::variables_map &vm) {
   librados::Rados rados;
   librados::IoCtx io_ctx;
   librbd::Image image;
+
+  // connect to cluster, create ioctx, then open the image
   r = utils::init_and_open_image(pool_name, image_name, "", false, &rados,
                                  &io_ctx, &image);
   if (r < 0) {

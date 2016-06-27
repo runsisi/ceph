@@ -282,13 +282,17 @@ void CloseRequest<I>::handle_flush_image_watcher(int r) {
   if (r < 0) {
     lderr(cct) << "error flushing image watcher: " << cpp_strerror(r) << dendl;
   }
+
   save_result(r);
+
   finish();
 }
 
 template <typename I>
 void CloseRequest<I>::finish() {
+  // delete image watcher and admin socket
   m_image_ctx->shutdown();
+
   m_on_finish->complete(m_error_result);
   delete this;
 }
