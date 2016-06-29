@@ -923,6 +923,7 @@ void ImageWatcher::process_payload(uint64_t notify_id, uint64_t handle,
 void ImageWatcher::handle_notify(uint64_t notify_id, uint64_t handle,
 				 bufferlist &bl) {
   NotifyMessage notify_message;
+
   if (bl.length() == 0) {
     // legacy notification for header updates
     notify_message = NotifyMessage(HeaderUpdatePayload());

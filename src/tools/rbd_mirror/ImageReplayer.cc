@@ -411,6 +411,7 @@ void ImageReplayer<I>::bootstrap() {
   }
 
   update_mirror_image_status(false, boost::none);
+
   reschedule_update_status_task(10);
 
   request->send();
@@ -457,13 +458,19 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
     }
 
     if (do_resync) {
+
+      // see Journal<I>::request_resync which called by user interface
+      // rbd_mirror_image_resync eventually
+
       Context *on_finish = m_on_start_finish;
       FunctionContext *ctx = new FunctionContext([this, on_finish](int r) {
           resync_image(on_finish);
         });
+
       m_on_start_finish = ctx;
     }
 
+    // recreate admin socket if needed
     std::string name = m_local_ioctx.get_pool_name() + "/" +
       m_local_image_ctx->name;
     if (m_name != name) {
@@ -481,6 +488,7 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
   }
 
   update_mirror_image_status(false, boost::none);
+
   init_remote_journaler();
 }
 
@@ -490,6 +498,7 @@ void ImageReplayer<I>::init_remote_journaler() {
 
   Context *ctx = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_init_remote_journaler>(this);
+
   m_remote_journaler->init(ctx);
 }
 
@@ -513,8 +522,10 @@ void ImageReplayer<I>::start_replay() {
   dout(20) << dendl;
 
   assert(m_local_journal == nullptr);
+
   {
     RWLock::RLocker snap_locker(m_local_image_ctx->snap_lock);
+
     if (m_local_image_ctx->journal != nullptr) {
       m_local_journal = m_local_image_ctx->journal;
 
@@ -522,6 +533,7 @@ void ImageReplayer<I>::start_replay() {
         ImageReplayer, &ImageReplayer<I>::handle_start_replay>(this);
       Context *stop_ctx = create_context_callback<
         ImageReplayer, &ImageReplayer<I>::handle_stop_replay_request>(this);
+
       m_local_journal->start_external_replay(&m_local_replay, start_ctx,
                                              stop_ctx);
       return;
@@ -545,6 +557,7 @@ void ImageReplayer<I>::handle_start_replay(int r) {
   }
 
   Context *on_finish(nullptr);
+
   {
     Mutex::Locker locker(m_lock);
     assert(m_state == STATE_STARTING);
@@ -562,6 +575,7 @@ void ImageReplayer<I>::handle_start_replay(int r) {
   reschedule_update_status_task(30);
 
   dout(20) << "start succeeded" << dendl;
+
   if (on_finish != nullptr) {
     dout(20) << "on finish complete, r=" << r << dendl;
     on_finish->complete(r);
@@ -573,6 +587,7 @@ void ImageReplayer<I>::handle_start_replay(int r) {
 
   {
     Mutex::Locker locker(m_lock);
+
     m_replay_handler = new ReplayHandler<I>(this);
     m_remote_journaler->start_live_replay(m_replay_handler,
                                           1 /* TODO: configurable */);
@@ -592,6 +607,7 @@ void ImageReplayer<I>::handle_stop_replay_request(int r) {
   // journal close has been requested, stop replay so the journal
   // can be closed (since it will wait on replay to finish)
   dout(20) << dendl;
+
   on_stop_journal_replay();
 }
 
@@ -599,6 +615,7 @@ template <typename I>
 void ImageReplayer<I>::on_start_fail(int r, const std::string &desc)
 {
   dout(20) << "r=" << r << dendl;
+
   Context *ctx = new FunctionContext([this, r, desc](int _r) {
       Context *on_start_finish(nullptr);
       {
@@ -609,6 +626,7 @@ void ImageReplayer<I>::on_start_fail(int r, const std::string &desc)
         } else {
           dout(20) << "start canceled" << dendl;
         }
+
         std::swap(m_on_start_finish, on_start_finish);
       }
 
@@ -617,6 +635,7 @@ void ImageReplayer<I>::on_start_fail(int r, const std::string &desc)
       reschedule_update_status_task(-1);
       shut_down(r, on_start_finish);
     });
+
   m_threads->work_queue->queue(ctx, 0);
 }
 
