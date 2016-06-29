@@ -1863,6 +1863,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     // if disabling features w/ exclusive lock supported, we need to
     // acquire the lock to temporarily block IO against the image
     bool acquired_lock = false;
+
     if (ictx->exclusive_lock != nullptr &&
         !ictx->exclusive_lock->is_lock_owner() && !enabled) {
       acquired_lock = true;
@@ -1925,22 +1926,27 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
             lderr(cct) << "cannot enable object map" << dendl;
             return -EINVAL;
           }
+
           enable_flags |= RBD_FLAG_OBJECT_MAP_INVALID;
           features_mask |= RBD_FEATURE_EXCLUSIVE_LOCK;
         }
+
         if ((features & RBD_FEATURE_FAST_DIFF) != 0) {
           if ((new_features & RBD_FEATURE_OBJECT_MAP) == 0) {
             lderr(cct) << "cannot enable fast diff" << dendl;
             return -EINVAL;
           }
+
           enable_flags |= RBD_FLAG_FAST_DIFF_INVALID;
           features_mask |= (RBD_FEATURE_OBJECT_MAP | RBD_FEATURE_EXCLUSIVE_LOCK);
         }
+
         if ((features & RBD_FEATURE_JOURNALING) != 0) {
           if ((new_features & RBD_FEATURE_EXCLUSIVE_LOCK) == 0) {
             lderr(cct) << "cannot enable journaling" << dendl;
             return -EINVAL;
           }
+
           features_mask |= RBD_FEATURE_EXCLUSIVE_LOCK;
 
           r = Journal<>::create(ictx->md_ctx, ictx->id, ictx->journal_order,
@@ -1952,6 +1958,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
             return r;
           }
 
+          // journal enabled and the mirror mode is pool, so we need to enable mirror
+          // for this image
           enable_mirroring = (mirror_mode == RBD_MIRROR_MODE_POOL);
         }
 
@@ -2053,6 +2061,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
       ldout(cct, 10) << "update_features: features=" << new_features << ", "
                      << "mask=" << features_mask << dendl;
+
       r = librbd::cls_client::set_features(&ictx->md_ctx, ictx->header_oid,
                                            new_features, features_mask);
       if (r < 0) {
@@ -2060,8 +2069,12 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
                    << dendl;
         return r;
       }
+
       if (((ictx->features & RBD_FEATURE_OBJECT_MAP) == 0) &&
         ((features & RBD_FEATURE_OBJECT_MAP) != 0)) {
+
+        // object map dynamically enabled
+
         r = create_object_map(ictx);
         if (r < 0) {
           lderr(cct) << "failed to create object map" << dendl;
@@ -2077,8 +2090,14 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       }
 
       if (enable_mirroring) {
+
+        // journal dynamically enabled and the mirror mode is pool, so enable mirror for
+        // this image automatically
+
+        // TODO: why not use the existing ImageCtx ???
         ImageCtx *img_ctx = new ImageCtx("", ictx->id, nullptr,
             ictx->md_ctx, false);
+
         r = img_ctx->state->open();
         if (r < 0) {
           lderr(cct) << "error opening image: " << cpp_strerror(r) << dendl;
@@ -2089,6 +2108,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
             lderr(cct) << "error enabling mirroring: " << cpp_strerror(r)
               << dendl;
           }
+
           img_ctx->state->close();
         }
       }
@@ -2109,6 +2129,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
         return r;
       }
     }
+
     return 0;
   }
 

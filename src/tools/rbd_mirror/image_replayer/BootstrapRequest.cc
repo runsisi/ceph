@@ -568,8 +568,10 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
   // image is primary.  Attempt to link the local image's most recent tag
   // to the remote image's tag chain.
   I *local_image_ctx = (*m_local_image_ctx);
+
   {
     RWLock::RLocker snap_locker(local_image_ctx->snap_lock);
+
     if (local_image_ctx->journal == nullptr) {
       derr << ": local image does not support journaling" << dendl;
       m_ret_val = -EINVAL;
@@ -579,6 +581,7 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
 
     librbd::journal::TagData tag_data =
       local_image_ctx->journal->get_tag_data();
+
     dout(20) << ": local tag data: " << tag_data << dendl;
 
     if (tag_data.mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID &&
@@ -665,6 +668,7 @@ void BootstrapRequest<I>::close_local_image() {
       this);
   CloseImageRequest<I> *request = CloseImageRequest<I>::create(
     m_local_image_ctx, m_work_queue, false, ctx);
+
   request->send();
 }
 
@@ -691,6 +695,7 @@ void BootstrapRequest<I>::close_remote_image() {
       this);
   CloseImageRequest<I> *request = CloseImageRequest<I>::create(
     &m_remote_image_ctx, m_work_queue, false, ctx);
+
   request->send();
 }
 
