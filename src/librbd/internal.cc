@@ -1836,6 +1836,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     RWLock::RLocker owner_locker(ictx->owner_lock);
+
+    // ExclusiveLock<I>::init called by RefreshRequest<I>::send_v2_init_exclusive_lock
+    // on OpenRequest has blocked the writes
     r = ictx->aio_work_queue->block_writes();
     BOOST_SCOPE_EXIT_ALL( (ictx) ) {
       ictx->aio_work_queue->unblock_writes();
@@ -1847,6 +1850,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     // avoid accepting new requests from peers while we manipulate
     // the image features
+    // see ImageWatcher::handle_payload
     if (ictx->exclusive_lock != nullptr) {
       ictx->exclusive_lock->block_requests(0);
     }
@@ -2090,9 +2094,13 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       }
     }
 
+    // header updated
     ictx->notify_update();
 
     if (ictx->exclusive_lock != nullptr && acquired_lock) {
+
+      // we acquired the exclusive lock to disable features
+
       C_SaferCond lock_ctx;
       ictx->exclusive_lock->release_lock(&lock_ctx);
       r = lock_ctx.wait();

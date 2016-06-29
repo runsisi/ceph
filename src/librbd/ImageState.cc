@@ -286,6 +286,7 @@ void ImageState<I>::close(Context *on_finish) {
 
   Action action(ACTION_TYPE_CLOSE);
   action.refresh_seq = m_refresh_seq;
+
   execute_action_unlock(action, on_finish);
 }
 
@@ -358,6 +359,7 @@ void ImageState<I>::refresh(bool acquiring_lock, Context *on_finish) {
 template <typename I>
 int ImageState<I>::refresh_if_required() {
   C_SaferCond ctx;
+
   {
     m_lock.Lock();
     if (m_last_refresh == m_refresh_seq) {
@@ -386,6 +388,7 @@ void ImageState<I>::snap_set(const std::string &snap_name, Context *on_finish) {
   action.snap_name = snap_name;
 
   m_lock.Lock();
+
   execute_action_unlock(action, on_finish);
 }
 
@@ -504,7 +507,9 @@ void ImageState<I>::execute_action_unlock(const Action &action,
   append_context(action, on_finish);
 
   if (!is_transition_state()) {
-    // we are currently uninitialized or opened or closed
+
+    // STATE_UNINITIALIZED, STATE_OPEN, STATE_CLOSED
+
     execute_next_action_unlock();
   } else {
     // do not try to start another action if we have not finished the last
@@ -525,11 +530,16 @@ void ImageState<I>::complete_action_unlock(State next_state, int r) {
 
   m_lock.Unlock();
 
+  // complete the user provided callbacks before execute the next user action
   for (auto ctx : action_contexts.second) {
     ctx->complete(r);
   }
 
   if (next_state != STATE_CLOSED) {
+
+    // if the next state is not STATE_CLOSED, then try to proceed the
+    // state machine
+
     m_lock.Lock();
     if (!is_transition_state() && !m_actions_contexts.empty()) {
       // we have finished the last action, try to start the next action
@@ -570,6 +580,7 @@ void ImageState<I>::handle_open(int r) {
   }
 
   m_lock.Lock();
+
   complete_action_unlock(r < 0 ? STATE_UNINITIALIZED : STATE_OPEN, r);
 }
 
@@ -602,6 +613,7 @@ void ImageState<I>::handle_close(int r) {
   }
 
   m_lock.Lock();
+
   complete_action_unlock(STATE_CLOSED, r);
 }
 
@@ -687,6 +699,7 @@ void ImageState<I>::handle_set_snap(int r) {
   }
 
   m_lock.Lock();
+
   complete_action_unlock(STATE_OPEN, r);
 }
 

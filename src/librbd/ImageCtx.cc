@@ -148,8 +148,8 @@ struct C_InvalidateCache : public Context {
       flush_encountered(false),
       exclusive_locked(false),
       name(image_name),
-      image_watcher(NULL),
-      journal(NULL),
+      image_watcher(NULL), // see ImageCtx::register_watch called by OpenRequest<I>::send_register_watch
+      journal(NULL), // AcquireRequest or RefreshRequest
       owner_lock(util::unique_lock_name("librbd::ImageCtx::owner_lock", this)),
       md_lock(util::unique_lock_name("librbd::ImageCtx::md_lock", this)),
       cache_lock(util::unique_lock_name("librbd::ImageCtx::cache_lock", this)),
@@ -170,10 +170,15 @@ struct C_InvalidateCache : public Context {
       total_bytes_read(0),
       state(new ImageState<>(this)),
       operations(new Operations<>(*this)),
-      exclusive_lock(nullptr), object_map(nullptr),
+      exclusive_lock(nullptr), // AcquireRequest or RefreshRequest
+      object_map(nullptr), // AcquireRequest or RefreshRequest
       aio_work_queue(nullptr), op_work_queue(nullptr),
       asok_hook(nullptr)
   {
+    // initialized fields after ctor:
+    // state, operations, aio_work_queue, op_work_queue
+    // exclusive_lock_policy, journal_policy
+
     md_ctx.dup(p);
     data_ctx.dup(p);
 
