@@ -427,6 +427,7 @@ Context *OpenRequest<I>::send_set_snap(int *result) {
     create_context_callback<klass, &klass::handle_set_snap>(this));
 
   ctx->send();
+
   return nullptr;
 }
 

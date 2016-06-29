@@ -642,6 +642,8 @@ bool ImageWatcher::handle_payload(const RequestLockPayload &payload,
   RWLock::RLocker l(m_image_ctx.owner_lock);
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
+
+    // see update_features
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
       // need to send something back so the client can detect a missing leader
       ::encode(ResponseMessage(0), ack_ctx->out);

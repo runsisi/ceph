@@ -59,6 +59,7 @@ void ReleaseRequest<I>::send_cancel_op_requests() {
   Context *ctx = create_context_callback<
     klass, &klass::handle_cancel_op_requests>(this);
 
+  // cancel and wait all requests on ImageCtx::async_requests
   m_image_ctx.cancel_async_requests(ctx);
 }
 
@@ -70,6 +71,7 @@ Context *ReleaseRequest<I>::handle_cancel_op_requests(int *ret_val) {
   assert(*ret_val == 0);
 
   send_block_writes();
+
   return nullptr;
 }
 
@@ -84,9 +86,11 @@ void ReleaseRequest<I>::send_block_writes() {
 
   {
     RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
     if (m_image_ctx.test_features(RBD_FEATURE_JOURNALING)) {
       m_image_ctx.aio_work_queue->set_require_lock_on_read();
     }
+
     m_image_ctx.aio_work_queue->block_writes(ctx);
   }
 }
@@ -97,6 +101,9 @@ Context *ReleaseRequest<I>::handle_block_writes(int *ret_val) {
   ldout(cct, 10) << __func__ << ": r=" << *ret_val << dendl;
 
   if (*ret_val < 0) {
+
+    // TODO: clear lock on read ???
+
     m_image_ctx.aio_work_queue->unblock_writes();
     return m_on_finish;
   }
@@ -146,6 +153,7 @@ void ReleaseRequest<I>::send_close_journal() {
   using klass = ReleaseRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_close_journal>(
     this);
+
   m_journal->close(ctx);
 }
 
@@ -163,6 +171,7 @@ Context *ReleaseRequest<I>::handle_close_journal(int *ret_val) {
   delete m_journal;
 
   send_close_object_map();
+
   return nullptr;
 }
 

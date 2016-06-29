@@ -483,6 +483,9 @@ template <typename I>
 void ExclusiveLock<I>::send_release_lock() {
   assert(m_lock.is_locked());
   if (m_state == STATE_UNLOCKED) {
+
+    // did not own the lock, do need to release it
+
     complete_active_action(STATE_UNLOCKED, 0);
     return;
   }
@@ -556,6 +559,9 @@ void ExclusiveLock<I>::send_shutdown() {
   assert(m_lock.is_locked());
 
   if (m_state == STATE_UNLOCKED) {
+
+    // we do not own the exclusive lock, so no need to release it
+
     m_state = STATE_SHUTTING_DOWN;
 
     m_image_ctx.op_work_queue->queue(util::create_context_callback<
@@ -563,6 +569,8 @@ void ExclusiveLock<I>::send_shutdown() {
 
     return;
   }
+
+  // release the owned exclusive lock
 
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
 
@@ -582,6 +590,7 @@ void ExclusiveLock<I>::send_shutdown_release() {
   std::string cookie;
   {
     Mutex::Locker locker(m_lock);
+    // m_watch_handle
     cookie = encode_lock_cookie();
   }
 
@@ -590,6 +599,9 @@ void ExclusiveLock<I>::send_shutdown_release() {
     m_image_ctx, cookie,
     util::create_context_callback<el, &el::handle_shutdown_releasing>(this),
     util::create_context_callback<el, &el::handle_shutdown_released>(this));
+
+  // release exclusive lock: including cancel op requests, close journal,
+  // close object_map
   req->send();
 }
 
@@ -619,11 +631,15 @@ void ExclusiveLock<I>::handle_shutdown_released(int r) {
     lderr(cct) << "failed to shut down exclusive lock: " << cpp_strerror(r)
                << dendl;
   } else {
+
+    // see ReleaseRequest<I>::send_block_writes
+
     m_image_ctx.aio_work_queue->clear_require_lock_on_read();
     m_image_ctx.aio_work_queue->unblock_writes();
   }
 
   m_image_ctx.image_watcher->notify_released_lock();
+
   complete_shutdown(r);
 }
 
@@ -639,6 +655,7 @@ void ExclusiveLock<I>::handle_shutdown(int r) {
 
   m_image_ctx.aio_work_queue->clear_require_lock_on_read();
   m_image_ctx.aio_work_queue->unblock_writes();
+
   m_image_ctx.image_watcher->flush(util::create_context_callback<
     ExclusiveLock<I>, &ExclusiveLock<I>::complete_shutdown>(this));
 }

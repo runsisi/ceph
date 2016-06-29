@@ -453,7 +453,9 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
     return;
   }
 
-  // exclusive lock enabled and is null, so init it
+  // exclusive lock enabled and is null(dynamically enabled or we are
+  // on OpenRequest), so init it, the journal and object_map will be
+  // created and opened on AcquireRequest, see AcquireRequest<I>::apply
 
   // implies exclusive lock dynamically enabled or image open in-progress
 
@@ -492,6 +494,8 @@ Context *RefreshRequest<I>::handle_v2_init_exclusive_lock(int *result) {
   return nullptr;
 }
 
+// exclusive lock does not needed(disabled or image is read-only/snap),
+// or is not null
 template <typename I>
 void RefreshRequest<I>::send_v2_open_journal() {
   if ((m_features & RBD_FEATURE_JOURNALING) == 0 ||
@@ -505,14 +509,20 @@ void RefreshRequest<I>::send_v2_open_journal() {
     if ((m_features & RBD_FEATURE_JOURNALING) != 0 &&
         m_image_ctx.exclusive_lock != nullptr &&
         m_image_ctx.journal == nullptr) {
+
+      // journal dynamically enabled but we are not the lock owner
+
       m_image_ctx.aio_work_queue->set_require_lock_on_read();
     }
 
+    // journal disabled or is not null, or we are not lock owner
+
     send_v2_block_writes();
+
     return;
   }
 
-  // journal enabled and currently is null, and we are the exclusive lock owner
+  // journal dynamically enabled, and we are the exclusive lock owner
 
   // implies journal dynamically enabled since ExclusiveLock will init
   // the journal upon acquiring the lock
@@ -541,23 +551,31 @@ Context *RefreshRequest<I>::handle_v2_open_journal(int *result) {
   }
 
   send_v2_block_writes();
+
   return nullptr;
 }
 
 template <typename I>
 void RefreshRequest<I>::send_v2_block_writes() {
   bool disabled_journaling = false;
+
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     disabled_journaling = ((m_features & RBD_FEATURE_EXCLUSIVE_LOCK) != 0 &&
                            (m_features & RBD_FEATURE_JOURNALING) == 0 &&
                            m_image_ctx.journal != nullptr);
   }
 
   if (!disabled_journaling) {
+
+    // non-dynamically disabled journal
+
     send_v2_apply();
     return;
   }
+
+  // journal dynamically disabled
 
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
@@ -570,6 +588,7 @@ void RefreshRequest<I>::send_v2_block_writes() {
     RefreshRequest<I>, &RefreshRequest<I>::handle_v2_block_writes>(this);
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   m_image_ctx.aio_work_queue->block_writes(ctx);
 }
 
@@ -590,6 +609,8 @@ Context *RefreshRequest<I>::handle_v2_block_writes(int *result) {
   return nullptr;
 }
 
+// exclusive lock does not needed(disabled or image is read-only/snap),
+// or is not null
 template <typename I>
 void RefreshRequest<I>::send_v2_open_object_map() {
   if ((m_features & RBD_FEATURE_OBJECT_MAP) == 0 ||
@@ -605,7 +626,7 @@ void RefreshRequest<I>::send_v2_open_object_map() {
     return;
   }
 
-  // object map enabled is null, and we are the exclusive lock owner
+  // object map enabled and is null, and we are the exclusive lock owner
 
   // implies object map dynamically enabled or image open in-progress
   // since SetSnapRequest loads the object map for a snapshot and
@@ -791,7 +812,10 @@ Context *RefreshRequest<I>::handle_v2_close_journal(int *result) {
   assert(m_blocked_writes);
   m_blocked_writes = false;
 
+  // journal dynamically disabled, and we have blocked the writes in
+  // RefreshRequest<I>::send_v2_block_writes
   m_image_ctx.aio_work_queue->unblock_writes();
+
   return send_v2_close_object_map();
 }
 
