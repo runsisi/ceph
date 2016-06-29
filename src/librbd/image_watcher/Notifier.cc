@@ -39,6 +39,7 @@ void Notifier::flush(Context *on_finish) {
 void Notifier::notify(bufferlist &bl, bufferlist *out_bl, Context *on_finish) {
   {
     Mutex::Locker aio_notify_locker(m_aio_notify_lock);
+
     ++m_pending_aio_notifies;
 
     CephContext *cct = m_image_ctx.cct;
@@ -46,7 +47,7 @@ void Notifier::notify(bufferlist &bl, bufferlist *out_bl, Context *on_finish) {
                    << dendl;
   }
 
-  // handle_notify, queue on_finish on ImageCtx::op_work_queue and
+  // Notifier::handle_notify, queue on_finish on ImageCtx::op_work_queue and
   // complete flush contexts
   C_AioNotify *ctx = new C_AioNotify(this, on_finish);
 
@@ -59,6 +60,9 @@ void Notifier::notify(bufferlist &bl, bufferlist *out_bl, Context *on_finish) {
 
 void Notifier::handle_notify(int r, Context *on_finish) {
   if (on_finish != nullptr) {
+
+    // NotifyLockOwner::handle_notify, see NotifyLockOwner::send_notify
+
     m_image_ctx.op_work_queue->queue(on_finish, r);
   }
 

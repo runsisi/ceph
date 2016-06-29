@@ -456,8 +456,11 @@ void ExclusiveLock<I>::handle_acquire_lock(int r) {
 
   State next_state = (r < 0 ? STATE_UNLOCKED : STATE_LOCKED);
 
-  // ACTION_TRY_LOCK
   if (r == -EAGAIN) {
+
+    // for ExclusiveLock::try_lock, the remote locker is still alive,
+    // see AcquireRequest<I>::handle_get_watchers
+
     r = 0;
   }
 

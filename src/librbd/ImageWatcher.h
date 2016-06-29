@@ -219,6 +219,8 @@ private:
 
       if (image_watcher->handle_payload(payload, ctx)) {
 
+        // handle the payload finished, reply the notification directly
+
         ctx->complete(0);
       }
     }
