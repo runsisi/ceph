@@ -847,6 +847,8 @@ struct C_InvalidateCache : public Context {
       // flush cache after completing all in-flight AIO ops
       on_safe = new C_FlushCache(this, on_safe);
     }
+
+    // check if ImageCtx::async_ops is empty
     flush_async_operations(on_safe);
   }
 
@@ -1000,6 +1002,7 @@ struct C_InvalidateCache : public Context {
     return new ObjectMap(*this, snap_id);
   }
 
+  // called in RefreshRequest<I>::send_v2_open_journal and AcquireRequest<I>::send_open_journal
   Journal<ImageCtx> *ImageCtx::create_journal() {
     return new Journal<ImageCtx>(*this);
   }

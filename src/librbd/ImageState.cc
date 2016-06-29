@@ -328,6 +328,7 @@ void ImageState<I>::refresh(Context *on_finish) {
   refresh(false, on_finish);
 }
 
+// called by AcquireRequest<I>::send_ref
 template <typename I>
 void ImageState<I>::acquire_lock_refresh(Context *on_finish) {
   CephContext *cct = m_image_ctx->cct;

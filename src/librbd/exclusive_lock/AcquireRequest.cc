@@ -126,6 +126,9 @@ Context *AcquireRequest<I>::handle_lock(int *ret_val) {
   ldout(cct, 10) << __func__ << ": r=" << *ret_val << dendl;
 
   if (*ret_val == 0) {
+
+    // acquire exclusive lock succeeded, refresh image
+
     return send_refresh();
   } else if (*ret_val != -EBUSY) {
     lderr(cct) << "failed to lock: " << cpp_strerror(*ret_val) << dendl;
@@ -144,13 +147,15 @@ Context *AcquireRequest<I>::send_refresh() {
     return send_open_object_map();
   }
 
+  // need to refresh image
+
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << __func__ << dendl;
 
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_refresh>(this);
 
-  // refresh image
+  // refresh image with exclusive lock locked
   m_image_ctx.state->acquire_lock_refresh(ctx);
 
   return nullptr;
@@ -166,9 +171,12 @@ Context *AcquireRequest<I>::handle_refresh(int *ret_val) {
                << dendl;
 
     m_error_result = *ret_val;
+
     send_unlock();
     return nullptr;
   }
+
+  // refresh succeeded
 
   return send_open_object_map();
 }
@@ -202,6 +210,7 @@ Context *AcquireRequest<I>::send_open_journal() {
   // set ImageCtx::object_map and ImageCtx::journal
   apply();
 
+  // the callback will be called until librbd::STATE_READY or librbd::STATE_CLOSED
   m_journal->open(ctx);
 
   return nullptr;
@@ -295,6 +304,7 @@ Context *AcquireRequest<I>::send_open_object_map() {
   m_object_map = m_image_ctx.create_object_map(CEPH_NOSNAP);
 
   m_object_map->open(ctx);
+
   return nullptr;
 }
 
@@ -329,6 +339,7 @@ void AcquireRequest<I>::send_close_object_map() {
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_close_object_map>(this);
+
   m_object_map->close(ctx);
 }
 
@@ -339,6 +350,7 @@ Context *AcquireRequest<I>::handle_close_object_map(int *ret_val) {
 
   // object map should never result in an error
   assert(*ret_val == 0);
+
   send_unlock();
   return nullptr;
 }
@@ -445,6 +457,7 @@ Context *AcquireRequest<I>::handle_get_lockers(int *ret_val) {
   m_locker_entity = iter->first.locker;
   m_locker_cookie = iter->first.cookie;
   m_locker_address = stringify(iter->second.addr);
+
   if (m_locker_cookie.empty() || m_locker_address.empty()) {
     ldout(cct, 20) << "no valid lockers detected" << dendl;
     send_lock();
@@ -494,12 +507,17 @@ Context *AcquireRequest<I>::handle_get_watchers(int *ret_val) {
     if ((strncmp(m_locker_address.c_str(),
                  watcher.addr, sizeof(watcher.addr)) == 0) &&
         (m_locker_handle == watcher.cookie)) {
+
+      // the current remote locker is still alive
+
       ldout(cct, 10) << "lock owner is still alive" << dendl;
 
       *ret_val = -EAGAIN;
       return m_on_finish;
     }
   }
+
+  // the current locker is dead, break the lock
 
   send_blacklist();
   return nullptr;
@@ -520,6 +538,7 @@ void AcquireRequest<I>::send_blacklist() {
   Context *ctx = create_context_callback<klass, &klass::handle_blacklist>(
     this);
 
+  // rados.blacklist_add is sync interface
   m_image_ctx.op_work_queue->queue(new C_BlacklistClient<I>(m_image_ctx,
                                                             m_locker_address,
                                                             ctx), 0);

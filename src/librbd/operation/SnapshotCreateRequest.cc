@@ -261,7 +261,9 @@ Context *SnapshotCreateRequest<I>::send_create_object_map() {
   if (image_ctx.object_map == nullptr || m_skip_object_map) {
     image_ctx.snap_lock.put_read();
 
+    // commit op event and unblock writes
     finalize(0);
+
     return this->create_context_finisher();
   }
 
@@ -270,12 +272,14 @@ Context *SnapshotCreateRequest<I>::send_create_object_map() {
 
   {
     RWLock::RLocker object_map_lock(image_ctx.object_map_lock);
+
     image_ctx.object_map->snapshot_add(
       m_snap_id, create_context_callback<
         SnapshotCreateRequest<I>,
         &SnapshotCreateRequest<I>::handle_create_object_map>(this));
   }
   image_ctx.snap_lock.put_read();
+
   return nullptr;
 }
 
@@ -328,6 +332,8 @@ void SnapshotCreateRequest<I>::finalize(int r) {
   if (r == 0) {
     this->commit_op_event(0);
   }
+
+  // the aio has been blocked by SnapshotCreateRequest<I>::send_suspend_requests
   image_ctx.aio_work_queue->unblock_writes();
 }
 

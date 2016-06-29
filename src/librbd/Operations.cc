@@ -47,6 +47,7 @@ struct C_NotifyUpdate : public Context {
 
   virtual void complete(int r) override {
     CephContext *cct = image_ctx.cct;
+
     if (notified) {
       if (r == -ETIMEDOUT) {
         // don't fail the op if a peer fails to get the update notification
@@ -56,6 +57,7 @@ struct C_NotifyUpdate : public Context {
         lderr(cct) << "update notification failed: " << cpp_strerror(r)
                    << dendl;
       }
+
       Context::complete(r);
       return;
     }
@@ -185,6 +187,7 @@ struct C_InvokeAsyncRequest : public Context {
       // exclusive lock not enabled
 
       send_local_request();
+
       owner_lock.put_read();
       return;
     } else if (image_ctx.image_watcher == nullptr) {
@@ -252,9 +255,10 @@ struct C_InvokeAsyncRequest : public Context {
       return;
     }
 
-    // try to lock exclusive lock failed, we did not persist in get the
-    // lock, so we are good if we are not the owner of the exclusive lock
-    // after tried to lock
+    // try to lock exclusive lock failed, the remote locker is still alive,
+    // see AcquireRequest<I>::handle_get_watchers, we do not persist on get the
+    // lock, we are good if we are not the owner of the exclusive lock,
+    // we will notify the remote lock owner to do the request for us
 
     // let the remote lock owner to do the request instead of locally
     send_remote_request();
@@ -280,16 +284,22 @@ struct C_InvokeAsyncRequest : public Context {
     ldout(cct, 20) << __func__ << ": r=" << r << dendl;
 
     if (r != -ETIMEDOUT && r != -ERESTART) {
+
+      // success or fatal error
+
+      // ++m_refresh_seq
       image_ctx.state->handle_update_notification();
 
       complete(r);
       return;
     }
 
+    // r == -ETIMEDOUT || r == -ERESTART, i.e. non-fatal error,
+    // restart the whole process
+
     ldout(cct, 5) << request_type << " timed out notifying lock owner"
                   << dendl;
 
-    // r is ETIMEOUT or ERESTART
     send_refresh_image();
   }
 
@@ -737,6 +747,10 @@ void Operations<I>::snap_create(const char *snap_name, Context *on_finish) {
   req->send();
 }
 
+// only SnapshotCreateRequest<I>::send_snap_create calls with skip_object_map
+// set to true
+// only ExecuteOp::execute(journal::SnapCreateEvent) calls with journal_op_tid
+// set to non-zero
 template <typename I>
 void Operations<I>::execute_snap_create(const std::string &snap_name,
                                         Context *on_finish,
@@ -762,6 +776,7 @@ void Operations<I>::execute_snap_create(const std::string &snap_name,
     new operation::SnapshotCreateRequest<I>(
       m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), snap_name,
       journal_op_tid, skip_object_map);
+
   req->send();
 }
 
@@ -799,6 +814,7 @@ int Operations<I>::snap_rollback(const char *snap_name,
   if (r < 0) {
     return -EROFS;
   }
+
   if (m_image_ctx.exclusive_lock != nullptr &&
       !m_image_ctx.exclusive_lock->is_lock_owner()) {
     return -EROFS;

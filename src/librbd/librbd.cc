@@ -936,8 +936,8 @@ namespace librbd {
 
     // ImageCtx::operations is allocated in ImageCtx::ImageCtx, but it is
     // not the same as ImageCtx::state, ImageCtx::state is a state machine
-    // it need to be opened while ImageCtx::operations is a collection of
-    // functions, it can only operate only after the ImageCtx::state is in
+    // which needs to be opened while ImageCtx::operations is a collection of
+    // functions, it can only operate after the ImageCtx::state is in the
     // opened state
     int r = ictx->operations->snap_create(snap_name);
     tracepoint(librbd, snap_create_exit, r);

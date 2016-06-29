@@ -734,6 +734,7 @@ void Journal<I>::open(Context *on_finish) {
   Mutex::Locker locker(m_lock);
   assert(m_state == STATE_UNINITIALIZED);
 
+  // called until STATE_READY or STATE_CLOSED
   wait_for_steady_state(on_finish);
 
   // create an Journaler instance and open it
