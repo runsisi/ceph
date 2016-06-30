@@ -147,7 +147,7 @@ Context *AcquireRequest<I>::send_refresh() {
     return send_open_object_map();
   }
 
-  // need to refresh image
+  // need to refresh image before open object_map and journal
 
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << __func__ << dendl;

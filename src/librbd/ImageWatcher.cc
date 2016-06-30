@@ -94,8 +94,11 @@ void ImageWatcher::register_watch(Context *on_finish) {
 
   RWLock::RLocker watch_locker(m_watch_lock);
   assert(m_watch_state == WATCH_STATE_UNREGISTERED);
+
   librados::AioCompletion *aio_comp = create_rados_safe_callback(
     new C_RegisterWatch(this, on_finish));
+
+  // m_watch_handle is address of current ioctx
   int r = m_image_ctx.md_ctx.aio_watch(m_image_ctx.header_oid, aio_comp,
                                        &m_watch_handle, &m_watch_ctx);
   assert(r == 0);
@@ -226,6 +229,7 @@ void ImageWatcher::notify_resize(uint64_t request_id, uint64_t size,
   notify_async_request(async_request_id, std::move(bl), prog_ctx, on_finish);
 }
 
+// called by Operations<I>::snap_create
 void ImageWatcher::notify_snap_create(const std::string &snap_name,
                                       Context *on_finish) {
   assert(m_image_ctx.owner_lock.is_locked());
@@ -322,6 +326,7 @@ void ImageWatcher::notify_header_update(librados::IoCtx &io_ctx,
   // supports legacy (empty buffer) clients
   bufferlist bl;
   ::encode(NotifyMessage(HeaderUpdatePayload()), bl);
+
   io_ctx.notify2(oid, bl, image_watcher::Notifier::NOTIFY_TIMEOUT, nullptr);
 }
 
@@ -353,6 +358,7 @@ ClientId ImageWatcher::get_client_id() {
   return ClientId(m_image_ctx.md_ctx.get_instance_id(), m_watch_handle);
 }
 
+// called by ExclusiveLock<I>::handle_acquire_lock
 void ImageWatcher::notify_acquired_lock() {
   ldout(m_image_ctx.cct, 10) << this << " notify acquired lock" << dendl;
 
@@ -914,7 +920,9 @@ void ImageWatcher::process_payload(uint64_t notify_id, uint64_t handle,
     bufferlist out_bl;
     acknowledge_notify(notify_id, handle, out_bl);
   } else {
-    // call ImageWatcher::handle_payload to handle the payload of the notify message
+    // call ImageWatcher::handle_payload to handle the payload of the
+    // notify message, in the handle_payload will create C_NotifyAck
+    // to ack the notify message
     apply_visitor(HandlePayloadVisitor(this, notify_id, handle), payload);
   }
 }
@@ -938,9 +946,19 @@ void ImageWatcher::handle_notify(uint64_t notify_id, uint64_t handle,
     }
   }
 
+  // CHECK_FOR_REFRESH == false:
+  // AcquiredLockPayload, ReleasedLockPayload, RequestLockPayload,
+  // HeaderUpdatePayload, AsyncProgressPayload, AsyncCompletePayload
+
   // if an image refresh is required, refresh before processing the request
   if (notify_message.check_for_refresh() &&
       m_image_ctx.state->is_refresh_required()) {
+
+    // CHECK_FOR_REFRESH == true:
+    // FlattenPayload, ResizePayload, SnapCreatePayload, SnapRenamePayload,
+    // SnapRemovePayload, SnapProtectPayload, SnapUnprotectPayload,
+    // RebuildObjectMapPayload, RenamePayload
+
     m_image_ctx.state->refresh(new C_ProcessPayload(this, notify_id, handle,
                                                     notify_message.payload));
   } else {

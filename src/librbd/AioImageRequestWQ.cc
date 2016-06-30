@@ -147,10 +147,14 @@ void AioImageRequestWQ::aio_write(AioCompletion *c, uint64_t off, uint64_t len,
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
   if (m_image_ctx.non_blocking_aio || writes_blocked()) {
+
+    // rbd_non_blocking_aio default is true
+
     queue(new AioImageWrite(m_image_ctx, c, off, len, buf, op_flags));
   } else {
     c->start_op();
     AioImageRequest<>::aio_write(&m_image_ctx, c, off, len, buf, op_flags);
+
     finish_in_flight_op();
   }
 }
@@ -343,7 +347,9 @@ void *AioImageRequestWQ::_void_dequeue() {
     return nullptr;
   }
 
+  // m_aio_comp->start_op, push AioCompletion::async_op back of ImageCtx::async_ops
   item->start_op();
+
   return item;
 }
 

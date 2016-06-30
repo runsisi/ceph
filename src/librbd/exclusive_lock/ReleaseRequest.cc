@@ -59,7 +59,8 @@ void ReleaseRequest<I>::send_cancel_op_requests() {
   Context *ctx = create_context_callback<
     klass, &klass::handle_cancel_op_requests>(this);
 
-  // cancel and wait all requests on ImageCtx::async_requests
+  // cancel and wait all requests on ImageCtx::async_requests, note
+  // these are async op requests while not aio requests
   m_image_ctx.cancel_async_requests(ctx);
 }
 
