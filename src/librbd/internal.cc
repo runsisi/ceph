@@ -2138,6 +2138,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     string id;
     bool old_format = false;
     bool unknown_format = true;
+
     ImageCtx *ictx = new ImageCtx(imgname, "", NULL, io_ctx, false);
     int r = ictx->state->open();
     if (r < 0) {
@@ -2155,6 +2156,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
           // releasing read lock to avoid a deadlock when upgrading to
           // write lock in the shut_down process
           ictx->owner_lock.put_read();
+
           if (ictx->exclusive_lock != nullptr) {
             C_SaferCond ctx;
             ictx->exclusive_lock->shut_down(&ctx);
@@ -2165,15 +2167,20 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
               ictx->state->close();
               return r;
             }
+
             assert (ictx->exclusive_lock == nullptr);
+
             ictx->owner_lock.get_read();
           }
         } else {
+          // try exclusive lock
           r = ictx->operations->prepare_image_update();
           if (r < 0 || !ictx->exclusive_lock->is_lock_owner()) {
 	    lderr(cct) << "cannot obtain exclusive lock - not removing" << dendl;
+
 	    ictx->owner_lock.put_read();
 	    ictx->state->close();
+
             return -EBUSY;
           }
         }
@@ -2242,15 +2249,23 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     if (old_format || unknown_format) {
       ldout(cct, 2) << "removing rbd image from v1 directory..." << dendl;
       r = tmap_rm(io_ctx, imgname);
+
+      // then if tmap_rm succeeded we known this is definitely old format
       old_format = (r == 0);
+
       if (r < 0 && !unknown_format) {
+
+        // known format, and is old format, but we remove it failed
+
         if (r != -ENOENT) {
           lderr(cct) << "error removing image from v1 directory: "
                      << cpp_strerror(-r) << dendl;
         }
+
 	return r;
       }
     }
+
     if (!old_format) {
       if (id.empty()) {
         ldout(cct, 5) << "attempting to determine image id" << dendl;
@@ -2260,6 +2275,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
           return r;
         }
       }
+
       if (!id.empty()) {
         ldout(cct, 10) << "removing journal..." << dendl;
         r = Journal<>::remove(io_ctx, id);
@@ -2286,6 +2302,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       }
 
       ldout(cct, 2) << "removing id object..." << dendl;
+
       r = io_ctx.remove(util::id_obj_name(imgname));
       if (r < 0 && r != -ENOENT) {
 	lderr(cct) << "error removing id object: " << cpp_strerror(r)

@@ -98,6 +98,7 @@ void CreateImageRequest<I>::create_image() {
                               m_remote_mirror_uuid);
       handle_create_image(r);
     });
+
   m_work_queue->queue(ctx, 0);
 }
 

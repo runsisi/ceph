@@ -621,6 +621,7 @@ void BootstrapRequest<I>::image_sync() {
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_image_sync>(
       this);
 
+  // after sync, then close remote image, but with local image opened
   m_image_sync_throttler->start_sync(*m_local_image_ctx,
                                      m_remote_image_ctx, m_timer,
                                      m_timer_lock,
