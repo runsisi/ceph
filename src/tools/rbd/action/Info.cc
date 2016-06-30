@@ -263,6 +263,7 @@ int execute(const po::variables_map &vm) {
   librados::IoCtx io_ctx;
   librbd::Image image;
 
+  // opened with read-only
   r = utils::init_and_open_image(pool_name, image_name, snap_name, true,
                                  &rados, &io_ctx, &image);
   if (r < 0) {

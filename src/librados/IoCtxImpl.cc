@@ -29,6 +29,12 @@
 namespace librados {
 namespace {
 
+// C_notify_Finish
+// C_aio_linger_cancel
+// C_aio_linger_Complete
+// C_aio_notify_Complete
+// C_aio_notify_Ack
+
 struct C_notify_Finish : public Context {
   CephContext *cct;
   Context *ctx;
@@ -176,6 +182,7 @@ struct C_aio_notify_Ack : public Context {
   {
     ldout(cct, 10) << __func__ << " linger op " << oncomplete->linger_op << " "
                    << "acked (" << r << ")" << dendl;
+
     oncomplete->handle_ack(r);
     if (r < 0) {
       // on failure, we won't expect to see a notify_finish callback
@@ -1425,6 +1432,7 @@ int librados::IoCtxImpl::watch(const object_t& oid, uint64_t *handle,
   C_SaferCond onfinish;
 
   Objecter::LingerOp *linger_op = objecter->linger_register(oid, oloc, 0);
+
   *handle = linger_op->get_cookie();
   linger_op->watch_context = new WatchInfo(this,
 					   oid, ctx, ctx2, internal);
@@ -1456,17 +1464,24 @@ int librados::IoCtxImpl::aio_watch(const object_t& oid,
                                    librados::WatchCtx2 *ctx2,
                                    bool internal)
 {
+  // new LingerOp and insert into Objecter::linger_ops and Objecter::linger_ops_set
   Objecter::LingerOp *linger_op = objecter->linger_register(oid, oloc, 0);
+
   c->io = this;
+
   Context *oncomplete = new C_aio_linger_Complete(c, linger_op, false);
 
   ::ObjectOperation wr;
+
+  // (uint64_t)this
   *handle = linger_op->get_cookie();
+
   linger_op->watch_context = new WatchInfo(this, oid, ctx, ctx2, internal);
 
   prepare_assert_ops(&wr);
   wr.watch(*handle, CEPH_OSD_WATCH_OP_WATCH);
   bufferlist bl;
+
   objecter->linger_watch(linger_op, wr,
                          snapc, ceph::real_clock::now(), bl,
                          oncomplete, &c->objver);
@@ -1537,10 +1552,14 @@ int librados::IoCtxImpl::notify(const object_t& oid, bufferlist& bl,
   Objecter::LingerOp *linger_op = objecter->linger_register(oid, oloc, 0);
 
   C_SaferCond notify_finish_cond;
+
+  // the ctor of C_notify_Finish will set LingerOp::on_notify_finish and
+  // LingerOp::notify_result_bl
   Context *notify_finish = new C_notify_Finish(client->cct, &notify_finish_cond,
                                                objecter, linger_op, preply_bl,
                                                preply_buf, preply_buf_len);
 
+  // default is 10s
   uint32_t timeout = notify_timeout;
   if (timeout_ms)
     timeout = timeout_ms / 1000;
@@ -1549,6 +1568,8 @@ int librados::IoCtxImpl::notify(const object_t& oid, bufferlist& bl,
   ::ObjectOperation rd;
   prepare_assert_ops(&rd);
   bufferlist inbl;
+
+  // CEPH_OSD_OP_NOTIFY
   rd.notify(linger_op->get_cookie(), 1, timeout, bl, &inbl);
 
   // Issue RADOS op
@@ -1559,13 +1580,17 @@ int librados::IoCtxImpl::notify(const object_t& oid, bufferlist& bl,
 			  &onack, &objver);
 
   ldout(client->cct, 10) << __func__ << " issued linger op " << linger_op << dendl;
+
+  // wait until the linger op registered
   int r = onack.wait();
+
   ldout(client->cct, 10) << __func__ << " linger op " << linger_op
 			 << " acked (" << r << ")" << dendl;
 
   if (r == 0) {
     ldout(client->cct, 10) << __func__ << " waiting for watch_notify finish "
 			   << linger_op << dendl;
+
     r = notify_finish_cond.wait();
 
   } else {

@@ -191,6 +191,7 @@ Context *SetSnapRequest<I>::handle_shut_down_exclusive_lock(int *result) {
   if (*result < 0) {
     lderr(cct) << "failed to shut down exclusive lock: "
                << cpp_strerror(*result) << dendl;
+
     finalize();
     return m_on_finish;
   }

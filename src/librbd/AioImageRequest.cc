@@ -83,7 +83,10 @@ void AioImageRequest<I>::aio_read(
   c->init_time(ictx, librbd::AIO_TYPE_READ);
 
   AioImageRead req(*ictx, c, extents, buf, pbl, op_flags);
+
+  // m_aio_comp->start_op, push AioCompletion::async_op back of ImageCtx::async_ops
   req.start_op();
+
   req.send();
 }
 
@@ -95,7 +98,10 @@ void AioImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
   c->init_time(ictx, librbd::AIO_TYPE_READ);
 
   AioImageRead req(*ictx, c, off, len, buf, pbl, op_flags);
+
+  // m_aio_comp->start_op, push AioCompletion::async_op back of ImageCtx::async_ops
   req.start_op();
+
   req.send();
 }
 
@@ -107,7 +113,10 @@ void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
   c->init_time(ictx, librbd::AIO_TYPE_WRITE);
 
   AioImageWrite req(*ictx, c, off, len, buf, op_flags);
+
+  // m_aio_comp->start_op, push AioCompletion::async_op back of ImageCtx::async_ops
   req.start_op();
+
   req.send();
 }
 
@@ -118,7 +127,10 @@ void AioImageRequest<I>::aio_discard(I *ictx, AioCompletion *c,
   c->init_time(ictx, librbd::AIO_TYPE_DISCARD);
 
   AioImageDiscard req(*ictx, c, off, len);
+
+  // m_aio_comp->start_op, push AioCompletion::async_op back of ImageCtx::async_ops
   req.start_op();
+
   req.send();
 }
 
@@ -128,7 +140,10 @@ void AioImageRequest<I>::aio_flush(I *ictx, AioCompletion *c) {
   c->init_time(ictx, librbd::AIO_TYPE_FLUSH);
 
   AioImageFlush req(*ictx, c);
+
+  // m_aio_comp->start_op, push AioCompletion::async_op back of ImageCtx::async_ops
   req.start_op();
+
   req.send();
 }
 
@@ -141,6 +156,10 @@ void AioImageRequest<I>::send() {
                  << "completion=" << m_aio_comp <<  dendl;
 
   m_aio_comp->get();
+
+  // pure virutal function, implemented by AioImageRead,
+  // AbstractAioImageWrite (including AioImageWrite and AioImageDiscard)
+  // and AioImageFlush
   send_request();
 }
 
@@ -241,10 +260,12 @@ void AbstractAioImageWrite::send_request() {
   uint64_t clip_len = m_len;
   ObjectExtents object_extents;
   ::SnapContext snapc;
+
   {
     // prevent image size from changing between computing clip and recording
     // pending async operation
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
       m_aio_comp->fail(-EROFS);
       return;
@@ -271,6 +292,7 @@ void AbstractAioImageWrite::send_request() {
 
   if (!object_extents.empty()) {
     uint64_t journal_tid = 0;
+
     m_aio_comp->set_request_count(
       object_extents.size() + get_cache_request_count(journaling));
 
@@ -279,12 +301,17 @@ void AbstractAioImageWrite::send_request() {
                          (journaling ? &requests : nullptr));
 
     if (journaling) {
+
       // in-flight ops are flushed prior to closing the journal
       assert(m_image_ctx.journal != NULL);
+
+      // pure virutal function, implemented by AioImageWrite or AioImageDiscard
       journal_tid = append_journal_event(requests, m_synchronous);
     }
 
     if (m_image_ctx.object_cacher != NULL) {
+
+      // pure virutal function, implemented by AioImageWrite or AioImageDiscard
       send_cache_requests(object_extents, journal_tid);
     }
   } else {
@@ -293,6 +320,7 @@ void AbstractAioImageWrite::send_request() {
   }
 
   update_stats(clip_len);
+
   m_aio_comp->put();
 }
 
@@ -305,7 +333,10 @@ void AbstractAioImageWrite::send_object_requests(
        p != object_extents.end(); ++p) {
     ldout(cct, 20) << " oid " << p->oid << " " << p->offset << "~" << p->length
                    << " from " << p->buffer_extents << dendl;
+
     C_AioRequest *req_comp = new C_AioRequest(m_aio_comp);
+
+    // pure virtual function, implemented by AioImageWrite and AioImageDiscard
     AioObjectRequest *request = create_object_request(*p, snapc, req_comp);
 
     // if journaling, stash the request for later; otherwise send
