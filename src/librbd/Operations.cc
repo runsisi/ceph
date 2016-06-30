@@ -619,8 +619,10 @@ void Operations<I>::execute_rename(const std::string &dest_name,
     m_image_ctx.image_watcher->unregister_watch(on_finish);
     return;
   }
+
   operation::RenameRequest<I> *req = new operation::RenameRequest<I>(
     m_image_ctx, on_finish, dest_name);
+
   req->send();
 }
 

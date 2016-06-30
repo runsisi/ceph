@@ -449,6 +449,7 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
 }
 
 // static
+// called by librbd::update_features and librbd::remove
 template <typename I>
 int Journal<I>::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
   CephContext *cct = reinterpret_cast<CephContext *>(io_ctx.cct());
@@ -729,7 +730,7 @@ void Journal<I>::open(Context *on_finish) {
   // called until STATE_READY or STATE_CLOSED
   wait_for_steady_state(on_finish);
 
-  // create an Journaler instance and open it
+  // new Journaler and init it, see also ImageReplayer<I>::init_remote_journaler
   create_journaler();
 }
 

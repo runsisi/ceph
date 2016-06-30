@@ -442,7 +442,7 @@ void Replayer::init_local_mirroring_images() {
     r = mirror_images.size();
   } while (r == max_read);
 
-  // those images are mirror enabled of the local pool
+  // those images are mirror enabled of the local pool, including primary or secondary images
   m_init_images = std::move(images);
 }
 
@@ -606,13 +606,15 @@ void Replayer::set_sources(const ImageIds &image_ids)
 
   if (!m_init_images.empty()) {
 
-    // all mirror enabled images (journaling must be enabed first) of
+    // all mirrored images (journaling must be enabed first) of
     // the local pool
 
     dout(20) << "scanning initial local image set" << dendl;
 
     // <image id, image name, image global id>
     for (auto &remote_image : image_ids) {
+
+      // TODO: only find by global_id ???
       auto it = m_init_images.find(InitImageInfo(remote_image.global_id));
 
       if (it != m_init_images.end()) {
@@ -620,7 +622,9 @@ void Replayer::set_sources(const ImageIds &image_ids)
       }
     }
 
-    // the remaining images in m_init_images must be deleted
+    // the remaining images in m_init_images including 1) previously mirrored but
+    // now the remote has mirror disabled or has been deleted, or 2) non-mirrored
+    // images or primary images that should be ignored
     for (auto &image : m_init_images) {
       dout(20) << "scheduling the deletion of init image: "
                << image.name << dendl;
@@ -726,6 +730,7 @@ void Replayer::set_sources(const ImageIds &image_ids)
       dout(20) << "starting image replayer for "
                << it->second->get_global_image_id() << dendl;
     }
+
     start_image_replayer(it->second, image_id.id, image_id.name);
   }
 }
