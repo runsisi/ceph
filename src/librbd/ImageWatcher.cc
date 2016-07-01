@@ -167,6 +167,7 @@ int ImageWatcher::notify_async_progress(const AsyncRequestId &request,
   return 0;
 }
 
+// called by ImageWatcher::RemoteContext::finish
 void ImageWatcher::schedule_async_complete(const AsyncRequestId &request,
 					   int r) {
   FunctionContext *ctx = new FunctionContext(
@@ -181,6 +182,7 @@ void ImageWatcher::notify_async_complete(const AsyncRequestId &request, int r) {
 
   bufferlist bl;
   ::encode(NotifyMessage(AsyncCompletePayload(request, r)), bl);
+
   m_notifier.notify(bl, nullptr, new FunctionContext(
     boost::bind(&ImageWatcher::handle_async_complete, this, request, r, _1)));
 }
@@ -190,14 +192,18 @@ void ImageWatcher::handle_async_complete(const AsyncRequestId &request, int r,
   ldout(m_image_ctx.cct, 20) << this << " " << __func__ << ": "
                              << "request=" << request << ", r=" << ret_val
                              << dendl;
+
   if (ret_val < 0) {
     lderr(m_image_ctx.cct) << this << " failed to notify async complete: "
 			   << cpp_strerror(ret_val) << dendl;
+
     if (ret_val == -ETIMEDOUT) {
       schedule_async_complete(request, r);
     }
   } else {
     RWLock::WLocker async_request_locker(m_async_request_lock);
+
+    // inserted by ImageWatcher::prepare_async_request
     m_async_pending.erase(request);
   }
 }
@@ -544,6 +550,10 @@ void ImageWatcher::notify_async_request(const AsyncRequestId &async_request_id,
   notify_lock_owner(std::move(in), on_notify);
 }
 
+// called by:
+// ImageWatcher::handle_payload(FlattenPayload)
+// ImageWatcher::handle_payload(ResizePayload)
+// ImageWatcher::handle_payload(RebuildObjectMapPayload)
 int ImageWatcher::prepare_async_request(const AsyncRequestId& async_request_id,
                                         bool* new_request, Context** ctx,
                                         ProgressContext** prog_ctx) {
@@ -551,9 +561,11 @@ int ImageWatcher::prepare_async_request(const AsyncRequestId& async_request_id,
     return -ERESTART;
   } else {
     RWLock::WLocker l(m_async_request_lock);
+
     if (m_async_pending.count(async_request_id) == 0) {
       m_async_pending.insert(async_request_id);
       *new_request = true;
+
       *prog_ctx = new RemoteProgressContext(*this, async_request_id);
       *ctx = new RemoteContext(*this, async_request_id, *prog_ctx);
     } else {
@@ -735,6 +747,7 @@ bool ImageWatcher::handle_payload(const FlattenPayload &payload,
 bool ImageWatcher::handle_payload(const ResizePayload &payload,
 				  C_NotifyAck *ack_ctx) {
   RWLock::RLocker l(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {

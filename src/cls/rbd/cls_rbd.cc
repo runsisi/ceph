@@ -1863,16 +1863,19 @@ int set_id(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 
 static const string dir_key_for_id(const string &id)
 {
+  // "id_"
   return RBD_DIR_ID_KEY_PREFIX + id;
 }
 
 static const string dir_key_for_name(const string &name)
 {
+  // "name_"
   return RBD_DIR_NAME_KEY_PREFIX + name;
 }
 
 static const string dir_name_from_key(const string &key)
 {
+  // "name_"
   return key.substr(strlen(RBD_DIR_NAME_KEY_PREFIX));
 }
 
@@ -1901,6 +1904,7 @@ static int dir_add_image_helper(cls_method_context_t hctx,
     CLS_LOG(10, "id already exists");
     return -EBADF;
   }
+
   bufferlist id_bl, name_bl;
   ::encode(id, id_bl);
   ::encode(name, name_bl);
@@ -1985,6 +1989,7 @@ int dir_rename_image(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   int r = dir_remove_image_helper(hctx, src, id);
   if (r < 0)
     return r;
+
   // ignore duplicate id because the result of
   // remove_image_helper is not visible yet
   return dir_add_image_helper(hctx, dest, id, false);
