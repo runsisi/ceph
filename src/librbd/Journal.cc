@@ -730,7 +730,8 @@ void Journal<I>::open(Context *on_finish) {
   // called until STATE_READY or STATE_CLOSED
   wait_for_steady_state(on_finish);
 
-  // new Journaler and init it, see also ImageReplayer<I>::init_remote_journaler
+  // new Journaler instance and init it, see also ImageReplayer<I>::init_remote_journaler
+  // transit into STATE_INITIALIZING
   create_journaler();
 }
 
@@ -1442,7 +1443,7 @@ template <typename I>
 void Journal<I>::start_append() {
   assert(m_lock.is_locked());
 
-  // new JournalRecorder
+  // new JournalRecorder instance
   m_journaler->start_append(m_image_ctx.journal_object_flush_interval,
 			    m_image_ctx.journal_object_flush_bytes,
 			    m_image_ctx.journal_object_flush_age);
@@ -1656,6 +1657,8 @@ void Journal<I>::handle_replay_complete(int r) {
         handle_flushing_restart(0);
       } else {
 
+        // STATE_FLUSHING_REPLAY
+
         // replay succeeded, delete m_journal_replay and new JournalRecorder
         // then transit state to STATE_READY
 
@@ -1669,6 +1672,9 @@ void Journal<I>::handle_replay_complete(int r) {
 
       m_journal_replay->shut_down(cancel_ops, ctx);
     });
+
+  // all journal entries has been replayed or some entries failed,
+  // stop replay and flush or restart replay
 
   // JournalPlayer::shutdown and delete the JournalPlayer instance
   m_journaler->stop_replay(ctx);
@@ -1795,10 +1801,15 @@ void Journal<I>::handle_flushing_replay() {
 
     // will shutdown Journaler and delete it, see Journal::handle_journal_destroyed
     destroy_journaler(0);
+
     return;
   } else if (m_state == STATE_FLUSHING_RESTART) {
+
     // failed to replay one-or-more events -- restart
+
+    // transit into STATE_RESTARTING_REPLAY
     recreate_journaler(0);
+
     return;
   }
 
@@ -1808,6 +1819,7 @@ void Journal<I>::handle_flushing_replay() {
 
   m_error_result = 0;
 
+  // transit into STATE_READY
   start_append();
 }
 

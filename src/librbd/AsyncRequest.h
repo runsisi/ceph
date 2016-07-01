@@ -24,6 +24,7 @@ public:
   virtual ~AsyncRequest();
 
   void complete(int r) {
+    // pure virtual
     if (should_complete(r)) {
       r = filter_return_code(r);
       finish_and_destroy(r);

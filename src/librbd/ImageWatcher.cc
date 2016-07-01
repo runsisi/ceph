@@ -171,6 +171,7 @@ void ImageWatcher::schedule_async_complete(const AsyncRequestId &request,
 					   int r) {
   FunctionContext *ctx = new FunctionContext(
     boost::bind(&ImageWatcher::notify_async_complete, this, request, r));
+
   m_task_finisher->queue(ctx);
 }
 
@@ -394,6 +395,7 @@ void ImageWatcher::schedule_request_lock(bool use_timer, int timer_delay) {
     // exclusive lock dynamically disabled via image refresh
     return;
   }
+
   assert(m_image_ctx.exclusive_lock &&
          !m_image_ctx.exclusive_lock->is_lock_owner());
 
@@ -403,10 +405,12 @@ void ImageWatcher::schedule_request_lock(bool use_timer, int timer_delay) {
 
     FunctionContext *ctx = new FunctionContext(
       boost::bind(&ImageWatcher::notify_request_lock, this));
+
     if (use_timer) {
       if (timer_delay < 0) {
         timer_delay = RETRY_DELAY_SECONDS;
       }
+
       m_task_finisher->add_event_after(TASK_CODE_REQUEST_LOCK, timer_delay,
                                        ctx);
     } else {
@@ -1027,9 +1031,11 @@ void ImageWatcher::reregister_watch() {
     if (r < 0) {
       lderr(m_image_ctx.cct) << this << " failed to re-register image watch: "
                              << cpp_strerror(r) << dendl;
+
       if (r != -ESHUTDOWN) {
         FunctionContext *ctx = new FunctionContext(boost::bind(
           &ImageWatcher::reregister_watch, this));
+
         m_task_finisher->add_event_after(TASK_CODE_REREGISTER_WATCH,
                                          RETRY_DELAY_SECONDS, ctx);
       }

@@ -59,11 +59,19 @@ protected:
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
 
     if (image_ctx.journal != NULL) {
+
+      // the T::MF callback should be either ResizeRequest<I>::handle_append_op_event
+      // or SnapshotCreateRequest<I>::handle_append_op_event
       Context *ctx = util::create_context_callback<T, MF>(request);
 
+      // TODO: !journal->is_journal_ready() ???
       if (image_ctx.journal->is_journal_replaying()) {
+
         replay_op_ready(ctx);
       } else {
+
+        // librbd::Journal must be STATE_READY
+
         append_op_event(ctx);
       }
 
@@ -86,10 +94,12 @@ private:
     C_AppendOpEvent(Request *request, Context *on_safe)
       : request(request), on_safe(on_safe) {
     }
+
     virtual void finish(int r) override {
       if (r >= 0) {
         request->m_appended_op_event = true;
       }
+
       on_safe->complete(r);
     }
   };
@@ -106,7 +116,11 @@ private:
     }
   };
 
+  // only ResizeRequest and SnapshotCreateRequest will create the request
+  // with non-zero journal_op_tid constructed, see Operations<I>::execute_resize
+  // and Operations<I>::execute_snap_create
   uint64_t m_op_tid = 0;
+
   bool m_appended_op_event = false;
   bool m_committed_op_event = false;
 

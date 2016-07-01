@@ -27,6 +27,14 @@ void Request<I>::send() {
   // automatically create the event if we don't need to worry
   // about affecting concurrent IO ops
   if (can_affect_io() || !append_op_event()) {
+
+    // 1) this op will affect data io, so the sequence of the data io and
+    // the mgmt op is important, we need to stop the data io first,
+    // see ResizeRequest<I>::send_pre_block_writes and
+    // SnapshotCreateRequest<I>::send_suspend_aio
+    // or 2) journal disabled, no need to append op event
+    // or 3) journal enabled, but it's not ready
+
     // pure virtual function
     send_op();
   }
@@ -85,6 +93,9 @@ bool Request<I>::append_op_event() {
 
   RWLock::RLocker snap_locker(image_ctx.snap_lock);
 
+  // if the journal are opened by acquiring exclusive lock, then
+  // ImageCtx::journal is set before the journal has opened, see
+  // AcquireRequest<I>::send_open_journal
   if (image_ctx.journal != NULL &&
       !image_ctx.journal->is_journal_replaying()) {
 
@@ -95,7 +106,7 @@ bool Request<I>::append_op_event() {
     return true;
   }
 
-  // no need to append the event or we need to defer the append
+  // journal not enabled or lirbd::Journal is not ready
   return false;
 }
 
@@ -175,6 +186,7 @@ void Request<I>::append_op_event(Context *on_safe) {
 
   m_op_tid = image_ctx.journal->allocate_op_tid();
 
+  // librbd::Journal must be STATE_READY
   image_ctx.journal->append_op_event(
     m_op_tid, journal::EventEntry{create_event(m_op_tid)},
     new C_AppendOpEvent(this, on_safe));
@@ -203,6 +215,7 @@ void Request<I>::handle_op_event_safe(int r) {
     // haven't started the request state machine yet
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
 
+    // pure virtual
     send_op();
   }
 }

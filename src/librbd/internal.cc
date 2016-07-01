@@ -1866,12 +1866,17 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     if (ictx->exclusive_lock != nullptr &&
         !ictx->exclusive_lock->is_lock_owner() && !enabled) {
+
+      // disable features, we need to acquire the lock
+
       acquired_lock = true;
 
       C_SaferCond lock_ctx;
+
       ictx->exclusive_lock->request_lock(&lock_ctx);
 
       // don't block holding lock since refresh might be required
+      // see AcquireRequest<I>::handle_lock
       ictx->owner_lock.put_read();
       r = lock_ctx.wait();
       ictx->owner_lock.get_read();
@@ -3591,9 +3596,14 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     if (current_mirror_mode == next_mirror_mode) {
       return 0;
     } else if (current_mirror_mode == cls::rbd::MIRROR_MODE_DISABLED) {
+
+      // every mirror enabled pool has an uuid, which is used to identify
+      // the mirror peer client
+
       uuid_d uuid_gen;
       uuid_gen.generate_random();
 
+      // set this uuid on rbd_mirroring object
       r = cls_client::mirror_uuid_set(&io_ctx, uuid_gen.to_string());
       if (r < 0) {
         lderr(cct) << "Failed to allocate mirroring uuid: " << cpp_strerror(r)

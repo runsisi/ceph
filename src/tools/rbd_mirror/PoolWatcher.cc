@@ -136,6 +136,10 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
     }
 
     for (auto it = mirror_images.begin(); it != mirror_images.end(); ++it) {
+
+      // mirror enabled images only has <image id, image global id> info,
+      // we need to get the name of the mirror enabled image
+
       boost::optional<std::string> image_name(boost::none);
 
       auto it2 = image_id_to_name.find(it->first);

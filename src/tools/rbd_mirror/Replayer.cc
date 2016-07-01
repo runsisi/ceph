@@ -345,6 +345,7 @@ int Replayer::init_rados(const std::string &cluster_name,
   // librados::Rados::conf_parse_env
   std::vector<const char*> args;
   env_to_vec(args, nullptr);
+
   r = cct->_conf->parse_argv(args);
   if (r < 0) {
     derr << "could not parse environment for " << description << ":"
@@ -470,6 +471,12 @@ void Replayer::run()
       m_blacklisted = true;
       m_stopping.set(1);
     } else if (!m_manual_stop) {
+
+      // start ImageReplayer for those mirror enabled images of
+      // the remote pool, i.e., set<image id, image name, image global id>,
+      // the image name may be boost::none if the image name can not be
+      // get by image id, see PoolWatcher::refresh
+
       set_sources(m_pool_watcher->get_images());
     }
 
@@ -597,7 +604,8 @@ void Replayer::flush()
   }
 }
 
-// replay remote images that has mirror enabled
+// replay remote images that has mirror enabled, the Replayer identifies
+// a <pool id, peer_t> pair
 void Replayer::set_sources(const ImageIds &image_ids)
 {
   dout(20) << "enter" << dendl;
@@ -606,7 +614,7 @@ void Replayer::set_sources(const ImageIds &image_ids)
 
   if (!m_init_images.empty()) {
 
-    // all mirrored images (journaling must be enabed first) of
+    // all mirrored images (journaling must be enabled first) of
     // the local pool
 
     dout(20) << "scanning initial local image set" << dendl;
@@ -647,6 +655,10 @@ void Replayer::set_sources(const ImageIds &image_ids)
     // check if the remote image mirroring has been disabled, if so then
     // we need to stop the ImageReplayer for this image
     if (image_ids.find(ImageId(image_it->first)) == image_ids.end()) {
+
+      // the remote image has mirror disabled or deleted, so the image
+      // replayer has to be stopped too
+
       if (image_it->second->is_running()) {
         dout(20) << "stop image replayer for "
                  << image_it->second->get_global_image_id() << dendl;
