@@ -606,6 +606,7 @@ template <typename I>
 void Operations<I>::execute_rename(const std::string &dest_name,
                                    Context *on_finish) {
   assert(m_image_ctx.owner_lock.is_locked());
+
   if (m_image_ctx.test_features(RBD_FEATURE_JOURNALING)) {
     assert(m_image_ctx.exclusive_lock == nullptr ||
            m_image_ctx.exclusive_lock->is_lock_owner());
@@ -688,6 +689,7 @@ void Operations<I>::execute_resize(uint64_t size, bool allow_shrink, ProgressCon
 
   CephContext *cct = m_image_ctx.cct;
   m_image_ctx.snap_lock.get_read();
+
   ldout(cct, 5) << this << " " << __func__ << ": "
                 << "size=" << m_image_ctx.size << ", "
                 << "new_size=" << size << dendl;
@@ -703,6 +705,7 @@ void Operations<I>::execute_resize(uint64_t size, bool allow_shrink, ProgressCon
     on_finish->complete(-EINVAL);
     return;
   }
+
   m_image_ctx.snap_lock.put_read();
 
   operation::ResizeRequest<I> *req = new operation::ResizeRequest<I>(
