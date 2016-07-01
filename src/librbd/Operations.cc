@@ -35,6 +35,8 @@ namespace librbd {
 
 namespace {
 
+// used by the 10 operations, notify the update then after the notification
+// acked by the peers then call the user callback
 template <typename I>
 struct C_NotifyUpdate : public Context {
   I &image_ctx;
@@ -58,6 +60,7 @@ struct C_NotifyUpdate : public Context {
                    << dendl;
       }
 
+      // complete the user callback
       Context::complete(r);
       return;
     }
@@ -127,6 +130,9 @@ struct C_InvokeAsyncRequest : public Context {
   }
 
   void send() {
+
+    // start the whole process, i.e., refresh -> acquire lock -> call local/remote
+
     send_refresh_image();
   }
 
@@ -249,6 +255,8 @@ struct C_InvokeAsyncRequest : public Context {
     owner_lock.get_read();
     if (image_ctx.exclusive_lock->is_lock_owner()) {
 
+      // call local function object with user callback set to
+      // C_InvokeAsyncRequest<I>::handle_local_request
       send_local_request();
 
       owner_lock.put_read();
@@ -260,7 +268,9 @@ struct C_InvokeAsyncRequest : public Context {
     // lock, we are good if we are not the owner of the exclusive lock,
     // we will notify the remote lock owner to do the request for us
 
-    // let the remote lock owner to do the request instead of locally
+    // let the remote lock owner to do the request instead of locally,
+    // call remote function object with user callback set to
+    // C_InvokeAsyncRequest<I>::handle_remote_request
     send_remote_request();
 
     owner_lock.put_read();
@@ -291,6 +301,7 @@ struct C_InvokeAsyncRequest : public Context {
       image_ctx.state->handle_update_notification();
 
       complete(r);
+
       return;
     }
 
@@ -299,6 +310,8 @@ struct C_InvokeAsyncRequest : public Context {
 
     ldout(cct, 5) << request_type << " timed out notifying lock owner"
                   << dendl;
+
+    // start over again, i.e., refresh -> acquire lock -> call local/remote
 
     send_refresh_image();
   }
@@ -322,6 +335,9 @@ struct C_InvokeAsyncRequest : public Context {
     ldout(cct, 20) << __func__ << ": r=" << r << dendl;
 
     if (r == -ERESTART) {
+
+      // start over again, i.e., refresh -> acquire lock -> call local/remote
+
       send_refresh_image();
       return;
     }
@@ -334,6 +350,7 @@ struct C_InvokeAsyncRequest : public Context {
       r = 0;
     }
 
+    // the user callback
     on_finish->complete(r);
   }
 };
@@ -446,6 +463,7 @@ void Operations<I>::execute_flatten(ProgressContext &prog_ctx,
   operation::FlattenRequest<I> *req = new operation::FlattenRequest<I>(
     m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), object_size,
     overlap_objects, snapc, prog_ctx);
+
   req->send();
 }
 
@@ -690,6 +708,7 @@ void Operations<I>::execute_resize(uint64_t size, bool allow_shrink, ProgressCon
   operation::ResizeRequest<I> *req = new operation::ResizeRequest<I>(
     m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), size, allow_shrink,
     prog_ctx, journal_op_tid, false);
+
   req->send();
 }
 
@@ -1311,6 +1330,7 @@ int Operations<I>::invoke_async_request(const std::string& request_type,
                                         const boost::function<void(Context*)>& local_request,
                                         const boost::function<void(Context*)>& remote_request) {
   C_SaferCond ctx;
+
   C_InvokeAsyncRequest<I> *req = new C_InvokeAsyncRequest<I>(m_image_ctx,
                                                              request_type,
                                                              permit_snapshot,
@@ -1318,6 +1338,7 @@ int Operations<I>::invoke_async_request(const std::string& request_type,
                                                              remote_request,
                                                              {}, &ctx);
   req->send();
+
   return ctx.wait();
 }
 

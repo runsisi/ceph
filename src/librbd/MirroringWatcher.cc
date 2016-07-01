@@ -47,6 +47,7 @@ int MirroringWatcher<I>::notify_mode_updated(librados::IoCtx &io_ctx,
                << cpp_strerror(r) << dendl;
     return r;
   }
+
   return 0;
 }
 
@@ -69,6 +70,7 @@ int MirroringWatcher<I>::notify_image_updated(
                << cpp_strerror(r) << dendl;
     return r;
   }
+
   return 0;
 }
 
@@ -93,6 +95,7 @@ void MirroringWatcher<I>::handle_notify(uint64_t notify_id, uint64_t handle,
     return;
   }
 
+  // call MirroringWatcher<I>::handle_payload
   apply_visitor(HandlePayloadVisitor(this, ctx), notify_message.payload);
 }
 
@@ -102,6 +105,7 @@ void MirroringWatcher<I>::handle_payload(const ModeUpdatedPayload &payload,
   CephContext *cct = this->m_cct;
   ldout(cct, 20) << ": mode updated: " << payload.mirror_mode << dendl;
 
+  // pure virutal
   handle_mode_updated(payload.mirror_mode, on_notify_ack);
 }
 
@@ -111,6 +115,7 @@ void MirroringWatcher<I>::handle_payload(const ImageUpdatedPayload &payload,
   CephContext *cct = this->m_cct;
   ldout(cct, 20) << ": image state updated" << dendl;
 
+  // pure virutal
   handle_image_updated(payload.mirror_image_state, payload.image_id,
                        payload.global_image_id, on_notify_ack);
 }

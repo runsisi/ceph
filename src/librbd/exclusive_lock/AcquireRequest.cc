@@ -127,7 +127,7 @@ Context *AcquireRequest<I>::handle_lock(int *ret_val) {
 
   if (*ret_val == 0) {
 
-    // acquire exclusive lock succeeded, refresh image
+    // acquire exclusive lock succeeded, refresh image if needed
 
     return send_refresh();
   } else if (*ret_val != -EBUSY) {
@@ -203,11 +203,14 @@ Context *AcquireRequest<I>::send_open_journal() {
   Context *ctx = create_context_callback<klass, &klass::handle_open_journal>(
     this);
 
+  // new Journal<ImageCtx> instance
   m_journal = m_image_ctx.create_journal();
 
   // journal playback requires object map (if enabled) and itself
 
-  // set ImageCtx::object_map and ImageCtx::journal
+  // set ImageCtx::object_map and ImageCtx::journal, before the journal
+  // opened, this is not the same as dynamically enabled journal, see
+  // RefreshRequest<I>::send_v2_open_journal
   apply();
 
   // the callback will be called until librbd::STATE_READY or librbd::STATE_CLOSED

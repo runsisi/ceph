@@ -232,10 +232,12 @@ void Mirror::run()
   dout(20) << "enter" << dendl;
   while (!m_stopping.read()) {
     m_local_cluster_watcher->refresh_pools();
+
     Mutex::Locker l(m_lock);
     if (!m_manual_stop) {
       update_replayers(m_local_cluster_watcher->get_pool_peers());
     }
+
     // TODO: make interval configurable
     m_cond.WaitInterval(g_ceph_context, m_lock, seconds(30));
   }
@@ -353,6 +355,8 @@ void Mirror::flush()
   }
 }
 
+// map<int64_t, Peers>, each pool can have a set of peers, each peer
+// is a tuple of <uuid, cluster name, client name>
 void Mirror::update_replayers(const PoolPeers &pool_peers)
 {
   dout(20) << "enter" << dendl;
@@ -386,7 +390,8 @@ void Mirror::update_replayers(const PoolPeers &pool_peers)
 
       // iterate set<peer_t>
 
-      // <pool id, peer_t>
+      // <pool id, peer_t>, each <pool id, peer_t> pair is associated
+      // with a Replayer instance
       PoolPeer pool_peer(kv.first, peer);
 
       if (m_replayers.find(pool_peer) == m_replayers.end()) {

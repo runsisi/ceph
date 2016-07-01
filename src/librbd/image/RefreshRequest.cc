@@ -557,6 +557,8 @@ Context *RefreshRequest<I>::handle_v2_open_journal(int *result) {
     save_result(result);
   }
 
+  // journal opened
+
   send_v2_block_writes();
 
   return nullptr;
@@ -591,6 +593,7 @@ void RefreshRequest<I>::send_v2_block_writes() {
 
   // we need to block writes temporarily to avoid in-flight journal
   // writes
+  // this is a debug only flag
   m_blocked_writes = true;
 
   Context *ctx = create_context_callback<

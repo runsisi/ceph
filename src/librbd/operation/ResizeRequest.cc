@@ -81,6 +81,9 @@ void ResizeRequest<I>::send_op() {
   assert(image_ctx.owner_lock.is_locked());
 
   if (this->is_canceled()) {
+
+    // queue on ImageCtx::op_work_queue to complete this request
+
     this->async_complete(-ERESTART);
   } else {
     send_pre_block_writes();
@@ -125,13 +128,16 @@ Context *ResizeRequest<I>::send_append_op_event() {
 
   if (m_disable_journal || !this->template append_op_event<
         ResizeRequest<I>, &ResizeRequest<I>::handle_append_op_event>(this)) {
+
+    // if ImageCtx::journal is not null, then append_op_event always return
+    // true, and it will proceed the state machine
+
     return send_grow_object_map();
   }
 
-  ldout(cct, 5) << this << " " << __func__ << dendl;
+  // append_op_event succeeded
 
-  // append_op_event called above succeeded, handle_append_op_event will
-  // continue the state machine
+  ldout(cct, 5) << this << " " << __func__ << dendl;
 
   return nullptr;
 }

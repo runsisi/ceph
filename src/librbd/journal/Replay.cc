@@ -254,7 +254,8 @@ void Replay<I>::flush(Context *on_finish) {
   AioImageRequest<I>::aio_flush(&m_image_ctx, aio_comp);
 }
 
-// called by Journal<I>::replay_op_ready
+// called by Journal<I>::replay_op_ready when librbd::Journal is not
+// in STATE_READY and we still need to append op event
 template <typename I>
 void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   CephContext *cct = m_image_ctx.cct;

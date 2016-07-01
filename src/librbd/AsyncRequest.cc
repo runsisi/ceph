@@ -14,6 +14,7 @@ AsyncRequest<T>::AsyncRequest(T &image_ctx, Context *on_finish)
     m_xlist_item(this) {
   assert(m_on_finish != NULL);
   
+  // push back of ImageCtx::async_requests
   start_request();
 }
 
@@ -60,6 +61,7 @@ void AsyncRequest<T>::finish_request() {
 
   {
     Mutex::Locker async_ops_locker(m_image_ctx.async_ops_lock);
+
     assert(m_xlist_item.remove_myself());
 
     if (m_image_ctx.async_requests.empty()) {

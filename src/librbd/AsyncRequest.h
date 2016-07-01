@@ -24,10 +24,13 @@ public:
   virtual ~AsyncRequest();
 
   void complete(int r) {
+    // pure virtual
     if (should_complete(r)) {
       r = filter_return_code(r);
+
       // call finish_request() and complete m_on_finish
       finish(r);
+
       delete this;
     }
   }
