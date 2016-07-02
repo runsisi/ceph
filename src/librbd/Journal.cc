@@ -1133,6 +1133,7 @@ void Journal<I>::append_op_event(uint64_t op_tid,
       // ensure all committed IO before this op is committed
       m_journaler->flush_commit_position(on_safe);
     });
+
   future.flush(on_safe);
 
   CephContext *cct = m_image_ctx.cct;
@@ -1182,6 +1183,7 @@ void Journal<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
 
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_journal_replay != nullptr);
     m_journal_replay->replay_op_ready(op_tid, on_resume);
   }
@@ -1310,6 +1312,7 @@ void Journal<I>::handle_start_external_replay(int r,
   on_finish->complete(0);
 }
 
+// called by ImageReplayer<I>::replay_flush, ImageReplayer<I>::shut_down
 template <typename I>
 void Journal<I>::stop_external_replay() {
   Mutex::Locker locker(m_lock);
@@ -1329,6 +1332,7 @@ void Journal<I>::stop_external_replay() {
     return;
   }
 
+  // call m_journaler->start_append and transit into STATE_READY
   start_append();
 }
 
@@ -1439,6 +1443,7 @@ void Journal<I>::complete_event(typename Events::iterator it, int r) {
   }
 }
 
+// called by Journal<I>::stop_external_replay, Journal<I>::handle_flushing_replay
 template <typename I>
 void Journal<I>::start_append() {
   assert(m_lock.is_locked());

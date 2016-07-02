@@ -67,6 +67,7 @@ protected:
       // TODO: !journal->is_journal_ready() ???
       if (image_ctx.journal->is_journal_replaying()) {
 
+        // will call Request<I>::replay_op_ready, which calls Replay<I>::replay_op_ready eventually
         replay_op_ready(ctx);
       } else {
 

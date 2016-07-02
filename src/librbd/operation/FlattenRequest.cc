@@ -103,6 +103,7 @@ void FlattenRequest<I>::send_op() {
   ldout(cct, 5) << this << " send" << dendl;
 
   m_state = STATE_FLATTEN_OBJECTS;
+
   typename AsyncObjectThrottle<I>::ContextFactory context_factory(
     boost::lambda::bind(boost::lambda::new_ptr<C_FlattenObject<I> >(),
       boost::lambda::_1, &image_ctx, m_object_size, m_snapc,

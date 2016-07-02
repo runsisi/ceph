@@ -379,6 +379,7 @@ bool Journaler::try_pop_front(ReplayEntry *replay_entry,
   return true;
 }
 
+// only called by test code
 void Journaler::stop_replay() {
   C_SaferCond ctx;
   stop_replay(&ctx);
@@ -442,6 +443,7 @@ uint64_t Journaler::get_max_append_size() const {
   return max_payload_size;
 }
 
+// m_recorder instance was created by Journaler::start_append
 Future Journaler::append(uint64_t tag_tid, const bufferlist &payload_bl) {
   return m_recorder->append(tag_tid, payload_bl);
 }
@@ -450,8 +452,10 @@ void Journaler::flush_append(Context *on_safe) {
   m_recorder->flush(on_safe);
 }
 
+// called by Journaler::start_replay, Journaler::start_live_replay
 void Journaler::create_player(ReplayHandler *replay_handler) {
   assert(m_player == NULL);
+
   m_player = new JournalPlayer(m_data_ioctx, m_object_oid_prefix, m_metadata,
                                replay_handler);
 }
