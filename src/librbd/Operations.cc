@@ -253,6 +253,7 @@ struct C_InvokeAsyncRequest : public Context {
     // context can complete before owner_lock is unlocked
     RWLock &owner_lock(image_ctx.owner_lock);
     owner_lock.get_read();
+
     if (image_ctx.exclusive_lock->is_lock_owner()) {
 
       // call local function object with user callback set to
@@ -437,6 +438,7 @@ void Operations<I>::execute_flatten(ProgressContext &prog_ctx,
     on_finish->complete(-EINVAL);
     return;
   }
+
   if (m_image_ctx.snap_id != CEPH_NOSNAP) {
     lderr(cct) << "snapshots cannot be flattened" << dendl;
     m_image_ctx.parent_lock.put_read();
@@ -921,6 +923,7 @@ void Operations<I>::snap_remove(const char *snap_name, Context *on_finish) {
 
   // quickly filter out duplicate ops
   m_image_ctx.snap_lock.get_read();
+
   if (m_image_ctx.get_snap_id(snap_name) == CEPH_NOSNAP) {
     m_image_ctx.snap_lock.put_read();
     on_finish->complete(-ENOENT);
@@ -929,6 +932,7 @@ void Operations<I>::snap_remove(const char *snap_name, Context *on_finish) {
 
   bool proxy_op = ((m_image_ctx.features & RBD_FEATURE_FAST_DIFF) != 0 ||
                    (m_image_ctx.features & RBD_FEATURE_JOURNALING) != 0);
+
   m_image_ctx.snap_lock.put_read();
 
   if (proxy_op) {
@@ -938,6 +942,7 @@ void Operations<I>::snap_remove(const char *snap_name, Context *on_finish) {
       boost::bind(&ImageWatcher::notify_snap_remove, m_image_ctx.image_watcher,
                   snap_name, _1),
       {-ENOENT}, on_finish);
+
     req->send();
   } else {
     RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
@@ -1069,6 +1074,7 @@ void Operations<I>::execute_snap_rename(const uint64_t src_snap_id,
     new operation::SnapshotRenameRequest<I>(
       m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), src_snap_id,
       dest_snap_name);
+
   req->send();
 }
 

@@ -22,6 +22,7 @@ Request<I>::Request(I &image_ctx, Context *on_finish, uint64_t journal_op_tid)
 template <typename I>
 void Request<I>::send() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
 
   // automatically create the event if we don't need to worry
@@ -72,7 +73,7 @@ bool Request<I>::append_op_event() {
   if (image_ctx.journal != NULL &&
       !image_ctx.journal->is_journal_replaying()) {
 
-    // append the op event now
+    // allocate op event tid and append the op event now
     append_op_event(util::create_context_callback<
       Request<I>, &Request<I>::handle_op_event_safe>(this));
 

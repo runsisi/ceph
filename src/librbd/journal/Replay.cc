@@ -179,6 +179,7 @@ void Replay<I>::process(const EventEntry &event_entry,
 
   RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
 
+  // call Replay<I>::handle_event to handle the journaled event
   boost::apply_visitor(EventVisitor(this, on_ready, on_safe), event_entry.event);
 }
 
@@ -263,6 +264,8 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
 
   Mutex::Locker locker(m_lock);
 
+  // m_op_events inserted by Replay<I>::create_op_context_callback
+
   auto op_it = m_op_events.find(op_tid);
   assert(op_it != m_op_events.end());
 
@@ -297,6 +300,7 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   }
 }
 
+// called by Replay<I>::process
 template <typename I>
 void Replay<I>::handle_event(const journal::AioDiscardEvent &event,
                              Context *on_ready, Context *on_safe) {
@@ -812,6 +816,7 @@ void Replay<I>::handle_aio_flush_complete(Context *on_flush_safe,
   }
 }
 
+// called by Replay<I>::handle_event
 template <typename I>
 Context *Replay<I>::create_op_context_callback(uint64_t op_tid,
                                                Context *on_ready,
