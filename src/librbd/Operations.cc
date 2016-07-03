@@ -574,6 +574,7 @@ int Operations<I>::rename(const char *dstname) {
                << dstname << ":" << cpp_strerror(r) << dendl;
     return r;
   }
+
   if (r == 0) {
     lderr(cct) << "rbd image " << dstname << " already exists" << dendl;
     return -EEXIST;
@@ -591,6 +592,7 @@ int Operations<I>::rename(const char *dstname) {
     }
   } else {
     RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
+
     C_SaferCond cond_ctx;
     execute_rename(dstname, &cond_ctx);
 
@@ -601,6 +603,7 @@ int Operations<I>::rename(const char *dstname) {
   }
 
   m_image_ctx.set_image_name(dstname);
+
   return 0;
 }
 
