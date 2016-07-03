@@ -1251,7 +1251,8 @@ typename Journal<I>::Future Journal<I>::wait_event(Mutex &lock, uint64_t tid,
   return event.futures.back();
 }
 
-// called by ImageReplayer<I>::start_replay
+// called by ImageReplayer<I>::start_replay, pay attention to the difference
+// between this and Journaler::start_replay
 template <typename I>
 void Journal<I>::start_external_replay(journal::Replay<I> **journal_replay,
                                        Context *on_start,
@@ -1260,9 +1261,13 @@ void Journal<I>::start_external_replay(journal::Replay<I> **journal_replay,
   ldout(cct, 20) << this << " " << __func__ << dendl;
 
   Mutex::Locker locker(m_lock);
+
+  // Journal<I>::start_append transit us into STATE_READY
   assert(m_state == STATE_READY);
+
   assert(m_journal_replay == nullptr);
   assert(m_on_replay_close_request == nullptr);
+
   m_on_replay_close_request = on_close_request;
 
   on_start = util::create_async_context_callback(m_image_ctx, on_start);

@@ -534,6 +534,7 @@ void ImageReplayer<I>::start_replay() {
       Context *stop_ctx = create_context_callback<
         ImageReplayer, &ImageReplayer<I>::handle_stop_replay_request>(this);
 
+      // m_journaler->stop_append
       m_local_journal->start_external_replay(&m_local_replay, start_ctx,
                                              stop_ctx);
       return;
@@ -560,6 +561,7 @@ void ImageReplayer<I>::handle_start_replay(int r) {
 
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_state == STATE_STARTING);
     m_state = STATE_REPLAYING;
     std::swap(m_on_start_finish, on_finish);
@@ -758,6 +760,7 @@ template <typename I>
 void ImageReplayer<I>::handle_replay_ready()
 {
   dout(20) << "enter" << dendl;
+
   if (on_replay_interrupted()) {
     return;
   }
@@ -916,6 +919,7 @@ void ImageReplayer<I>::handle_replay_complete(int r, const std::string &error_de
   on_replay_interrupted();
 }
 
+// called by ImageReplayer<I>::handle_replay_ready
 template <typename I>
 void ImageReplayer<I>::replay_flush() {
   dout(20) << dendl;
@@ -942,6 +946,7 @@ void ImageReplayer<I>::replay_flush() {
         ImageReplayer, &ImageReplayer<I>::handle_stop_replay_request>(this);
       m_local_journal->start_external_replay(&m_local_replay, ctx, stop_ctx);
     });
+
   m_local_replay->shut_down(true, ctx);
 }
 
@@ -1093,6 +1098,7 @@ void ImageReplayer<I>::process_entry() {
 
   Context *on_ready = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_process_entry_ready>(this);
+
   Context *on_commit = new C_ReplayCommitted(this, std::move(m_replay_entry));
 
   m_local_replay->process(m_event_entry, on_ready, on_commit);

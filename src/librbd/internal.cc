@@ -3445,7 +3445,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       uuid_d uuid_gen;
       uuid_gen.generate_random();
 
-      // set this uuid on rbd_mirroring object
+      // set this uuid on rbd_mirroring object, this uuid is used identify the
+      // mirror peer client, see ImageReplayer<I>::allocate_local_tag
       r = cls_client::mirror_uuid_set(&io_ctx, uuid_gen.to_string());
       if (r < 0) {
         lderr(cct) << "Failed to allocate mirroring uuid: " << cpp_strerror(r)
@@ -3647,6 +3648,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       uuid_d uuid_gen;
       uuid_gen.generate_random();
 
+      // this uuid is used to remove peer, see mirror_peer_remove
       *uuid = uuid_gen.to_string();
       r = cls_client::mirror_peer_add(&io_ctx, *uuid, cluster_name,
                                       client_name);
@@ -3671,6 +3673,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
                  << cpp_strerror(r) << dendl;
       return r;
     }
+
     return 0;
   }
 
