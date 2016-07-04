@@ -53,7 +53,7 @@ void SyncPointPruneRequest<I>::send() {
     if (it == m_client_meta_copy.sync_points.end() ||
         it->from_snap_name != sync_point.snap_name) {
 
-      // only one sync point or corrupted data
+      // TODO: only one sync point or ???
 
       m_snap_names.push_back(sync_point.snap_name);
     }
@@ -69,19 +69,27 @@ void SyncPointPruneRequest<I>::send() {
     RWLock::RLocker snap_locker(m_remote_image_ctx->snap_lock);
 
     std::set<std::string> snap_names;
+
     for (auto it = m_client_meta_copy.sync_points.rbegin();
          it != m_client_meta_copy.sync_points.rend(); ++it) {
       MirrorPeerSyncPoint &sync_point = *it;
 
       if (&sync_point == &m_client_meta_copy.sync_points.front()) {
 
-        // this is the first sync point, i.e., the master sync point
+        // this is the first sync point, i.e., the master sync point, check if
+        // this master sync point is valid
 
         if (m_remote_image_ctx->get_snap_id(sync_point.snap_name) ==
               CEPH_NOSNAP) {
+
+          // can not find the snapshot
+
           derr << ": failed to locate sync point snapshot: "
                << sync_point.snap_name << dendl;
         } else if (!sync_point.from_snap_name.empty()) {
+
+          // the master sync point must not be from another sync point
+
           derr << ": unexpected from_snap_name in primary sync point: "
                << sync_point.from_snap_name << dendl;
         } else {
@@ -93,7 +101,11 @@ void SyncPointPruneRequest<I>::send() {
       }
 
       if (snap_names.count(sync_point.snap_name) == 0) {
+
+        // remove all snapshots except the snapshot of the master sync point if it is valid
+
         snap_names.insert(sync_point.snap_name);
+
         m_snap_names.push_back(sync_point.snap_name);
       }
 
@@ -103,21 +115,32 @@ void SyncPointPruneRequest<I>::send() {
       if (!sync_point.from_snap_name.empty() &&
           snap_names.count(sync_point.from_snap_name) == 0 &&
           sync_point.from_snap_name != front_sync_point.snap_name) {
+
+        // remove all from snapshots, and do not remove the snapshot of the first, i.e.,
+        // the master sync point blindly
+
         snap_names.insert(sync_point.from_snap_name);
+
         m_snap_names.push_back(sync_point.from_snap_name);
       }
     }
   }
 
+  // remove snapshots one by one
   send_remove_snap();
 }
 
 template <typename I>
 void SyncPointPruneRequest<I>::send_remove_snap() {
   if (m_snap_names.empty()) {
+
+    // no snapshots need to remove
+
     send_refresh_image();
     return;
   }
+
+  // remove snapshot one by one
 
   const std::string &snap_name = m_snap_names.front();
 
@@ -126,6 +149,7 @@ void SyncPointPruneRequest<I>::send_remove_snap() {
   Context *ctx = create_context_callback<
     SyncPointPruneRequest<I>, &SyncPointPruneRequest<I>::handle_remove_snap>(
       this);
+
   m_remote_image_ctx->operations->snap_remove(snap_name.c_str(), ctx);
 }
 
@@ -134,12 +158,14 @@ void SyncPointPruneRequest<I>::handle_remove_snap(int r) {
   dout(20) << ": r=" << r << dendl;
 
   assert(!m_snap_names.empty());
+
   std::string snap_name = m_snap_names.front();
   m_snap_names.pop_front();
 
   if (r == -ENOENT) {
     r = 0;
   }
+
   if (r < 0) {
     derr << ": failed to remove snapshot '" << snap_name << "': "
          << cpp_strerror(r) << dendl;
@@ -147,6 +173,7 @@ void SyncPointPruneRequest<I>::handle_remove_snap(int r) {
     return;
   }
 
+  // remove the next snapshot
   send_remove_snap();
 }
 
@@ -186,10 +213,16 @@ void SyncPointPruneRequest<I>::send_update_client() {
     }
   } else {
     while (m_client_meta_copy.sync_points.size() > 1) {
+
+      // prune sync points until the first, i.e., the master sync point
+
       m_client_meta_copy.sync_points.pop_back();
     }
 
     if (m_invalid_master_sync_point) {
+
+      // the first, i.e., the master sync point, is not valid, prune it too
+
       // all subsequent sync points would have been pruned
       m_client_meta_copy.sync_points.clear();
     }

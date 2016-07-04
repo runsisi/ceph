@@ -43,6 +43,9 @@ SyncPointCreateRequest<I>::SyncPointCreateRequest(I *remote_image_ctx,
   // initialize the updated client meta with the new sync point
   m_client_meta_copy.sync_points.emplace_back();
   if (m_client_meta_copy.sync_points.size() > 1) {
+
+    // from the master sync point
+
     m_client_meta_copy.sync_points.back().from_snap_name =
       m_client_meta_copy.sync_points.front().snap_name;
   }
