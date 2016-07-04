@@ -839,6 +839,8 @@ int Operations<I>::snap_rollback(const char *snap_name,
     }
   }
 
+  // other operations will use C_InvokeAsyncRequest or invoke_async_request,
+  // so no need to call this interface to acquire exclusive lock
   r = prepare_image_update();
   if (r < 0) {
     return -EROFS;
@@ -1300,13 +1302,16 @@ void Operations<I>::execute_snap_set_limit(const uint64_t limit,
 
   operation::SnapshotLimitRequest<I> *request =
     new operation::SnapshotLimitRequest<I>(m_image_ctx, on_finish, limit);
+
   request->send();
 }
 
+// called by Operations<I>::snap_rollback, librbd::remove
 template <typename I>
 int Operations<I>::prepare_image_update() {
   assert(m_image_ctx.owner_lock.is_locked() &&
          !m_image_ctx.owner_lock.is_wlocked());
+
   if (m_image_ctx.image_watcher == NULL) {
     return -EROFS;
   }

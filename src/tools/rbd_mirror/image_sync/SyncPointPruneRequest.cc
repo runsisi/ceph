@@ -34,18 +34,27 @@ SyncPointPruneRequest<I>::SyncPointPruneRequest(I *remote_image_ctx,
 template <typename I>
 void SyncPointPruneRequest<I>::send() {
   if (m_client_meta->sync_points.empty()) {
+
+    // no sync points to prune
+
     send_remove_snap();
     return;
   }
 
   if (m_sync_complete) {
+
     // if sync is complete, we can remove the master sync point
+
     auto it = m_client_meta_copy.sync_points.begin();
+
     MirrorPeerSyncPoint &sync_point = *it;
 
     ++it;
     if (it == m_client_meta_copy.sync_points.end() ||
         it->from_snap_name != sync_point.snap_name) {
+
+      // only one sync point or corrupted data
+
       m_snap_names.push_back(sync_point.snap_name);
     }
 
@@ -53,14 +62,21 @@ void SyncPointPruneRequest<I>::send() {
       m_snap_names.push_back(sync_point.from_snap_name);
     }
   } else {
+
     // if we have more than one sync point or invalid sync points,
     // trim them off
+
     RWLock::RLocker snap_locker(m_remote_image_ctx->snap_lock);
+
     std::set<std::string> snap_names;
     for (auto it = m_client_meta_copy.sync_points.rbegin();
          it != m_client_meta_copy.sync_points.rend(); ++it) {
       MirrorPeerSyncPoint &sync_point = *it;
+
       if (&sync_point == &m_client_meta_copy.sync_points.front()) {
+
+        // this is the first sync point, i.e., the master sync point
+
         if (m_remote_image_ctx->get_snap_id(sync_point.snap_name) ==
               CEPH_NOSNAP) {
           derr << ": failed to locate sync point snapshot: "
@@ -72,6 +88,7 @@ void SyncPointPruneRequest<I>::send() {
           // first sync point is OK -- keep it
           break;
         }
+
         m_invalid_master_sync_point = true;
       }
 
@@ -82,6 +99,7 @@ void SyncPointPruneRequest<I>::send() {
 
       MirrorPeerSyncPoint &front_sync_point =
         m_client_meta_copy.sync_points.front();
+
       if (!sync_point.from_snap_name.empty() &&
           snap_names.count(sync_point.from_snap_name) == 0 &&
           sync_point.from_snap_name != front_sync_point.snap_name) {
@@ -139,6 +157,7 @@ void SyncPointPruneRequest<I>::send_refresh_image() {
   Context *ctx = create_context_callback<
     SyncPointPruneRequest<I>, &SyncPointPruneRequest<I>::handle_refresh_image>(
       this);
+
   m_remote_image_ctx->state->refresh(ctx);
 }
 
@@ -161,6 +180,7 @@ void SyncPointPruneRequest<I>::send_update_client() {
 
   if (m_sync_complete) {
     m_client_meta_copy.sync_points.pop_front();
+
     if (m_client_meta_copy.sync_points.empty()) {
       m_client_meta_copy.state = librbd::journal::MIRROR_PEER_STATE_REPLAYING;
     }
@@ -168,6 +188,7 @@ void SyncPointPruneRequest<I>::send_update_client() {
     while (m_client_meta_copy.sync_points.size() > 1) {
       m_client_meta_copy.sync_points.pop_back();
     }
+
     if (m_invalid_master_sync_point) {
       // all subsequent sync points would have been pruned
       m_client_meta_copy.sync_points.clear();
@@ -181,6 +202,7 @@ void SyncPointPruneRequest<I>::send_update_client() {
   Context *ctx = create_context_callback<
     SyncPointPruneRequest<I>, &SyncPointPruneRequest<I>::handle_update_client>(
       this);
+
   m_journaler->update_client(client_data_bl, ctx);
 }
 
@@ -197,6 +219,7 @@ void SyncPointPruneRequest<I>::handle_update_client(int r) {
 
   // update provided meta structure to reflect reality
   *m_client_meta = m_client_meta_copy;
+
   finish(0);
 }
 

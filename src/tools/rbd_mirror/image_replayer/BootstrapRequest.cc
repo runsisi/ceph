@@ -517,6 +517,8 @@ void BootstrapRequest<I>::get_remote_tags() {
     return;
   }
 
+  // detect split-brain and do image sync
+
   dout(20) << dendl;
 
   Context *ctx = create_context_callback<
@@ -545,6 +547,7 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
 
   // decode the remote tags
   librbd::journal::TagData remote_tag_data;
+
   for (auto &tag : m_remote_tags) {
     try {
       bufferlist::iterator it = tag.data.begin();
@@ -557,6 +560,7 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
     }
 
     dout(10) << ": decoded remote tag: " << remote_tag_data << dendl;
+
     if (remote_tag_data.mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID &&
         remote_tag_data.predecessor_mirror_uuid == m_local_mirror_uuid) {
       // remote tag is chained off a local tag demotion

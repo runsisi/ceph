@@ -416,6 +416,7 @@ void ImageReplayer<I>::bootstrap() {
 
   reschedule_update_status_task(10);
 
+  // bootstrap will do image sync
   request->send();
 }
 
@@ -516,6 +517,7 @@ void ImageReplayer<I>::handle_init_remote_journaler(int r) {
     return;
   }
 
+  // start external replay
   start_replay();
 }
 
