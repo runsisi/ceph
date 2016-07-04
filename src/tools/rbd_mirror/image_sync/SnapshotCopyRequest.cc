@@ -64,6 +64,7 @@ SnapshotCopyRequest<I>::SnapshotCopyRequest(I *local_image_ctx,
 template <typename I>
 void SnapshotCopyRequest<I>::send() {
   librbd::parent_spec remote_parent_spec;
+
   int r = validate_parent(m_remote_image_ctx, &remote_parent_spec);
   if (r < 0) {
     derr << ": remote image parent spec mismatch" << dendl;
@@ -167,7 +168,9 @@ void SnapshotCopyRequest<I>::send_snap_unprotect() {
   Context *ctx = create_context_callback<
     SnapshotCopyRequest<I>, &SnapshotCopyRequest<I>::handle_snap_unprotect>(
       this);
+
   RWLock::RLocker owner_locker(m_local_image_ctx->owner_lock);
+
   m_local_image_ctx->operations->execute_snap_unprotect(m_snap_name.c_str(),
                                                         ctx);
 }
@@ -182,6 +185,7 @@ void SnapshotCopyRequest<I>::handle_snap_unprotect(int r) {
     finish(r);
     return;
   }
+
   if (handle_cancellation())
   {
     return;
@@ -509,6 +513,7 @@ int SnapshotCopyRequest<I>::validate_parent(I *image_ctx,
 
   // ensure remote image's parent specs are still consistent
   *spec = image_ctx->parent_md.spec;
+
   for (auto &snap_info_pair : image_ctx->snap_info) {
     auto &parent_spec = snap_info_pair.second.parent.spec;
     if (parent_spec.pool_id == -1) {

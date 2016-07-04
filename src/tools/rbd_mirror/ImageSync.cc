@@ -75,6 +75,9 @@ void ImageSync<I>::send_prune_catch_up_sync_point() {
 
   // MirrorPeerClientMeta, got or registered by BootstrapRequest<I>::handle_get_client
   if (m_client_meta->sync_points.empty()) {
+
+    // no sync points need to prune, create new sync point directly
+
     send_create_sync_point();
     return;
   }
@@ -119,13 +122,14 @@ void ImageSync<I>::send_create_sync_point() {
   //       re-connect and create catch-up sync point
   if (m_client_meta->sync_points.size() > 0) {
 
+    // the master sync point is valid, no need to create a new sync point
     // have valid sync point
 
     send_copy_snapshots();
     return;
   }
 
-  // currently no sync point, so create one
+  // currently no master sync point, so create one
 
   dout(20) << dendl;
 
