@@ -152,6 +152,7 @@ void ImageSync<I>::handle_create_sync_point(int r) {
     return;
   }
 
+  // create local snapshots corresponding to the remote snapshots
   send_copy_snapshots();
 }
 
@@ -191,6 +192,7 @@ void ImageSync<I>::handle_copy_snapshots(int r) {
 
     m_snapshot_copy_request->put();
     m_snapshot_copy_request = nullptr;
+
     if (r == 0 && m_canceled) {
       r = -ECANCELED;
     }
@@ -245,6 +247,7 @@ void ImageSync<I>::handle_copy_image(int r) {
 
     m_image_copy_request->put();
     m_image_copy_request = nullptr;
+
     if (r == 0 && m_canceled) {
       r = -ECANCELED;
     }
@@ -273,7 +276,12 @@ void ImageSync<I>::send_copy_object_map() {
                                         m_local_image_ctx->snap_lock)) {
     m_local_image_ctx->snap_lock.put_read();
 
+    // we have created the corresponding snapshots of the remote snapshots
+    // and copied all image data, now we have no object_map to copy, so
+    // do the cleanup directly
+
     send_prune_sync_points();
+
     return;
   }
 
@@ -286,6 +294,7 @@ void ImageSync<I>::send_copy_object_map() {
 
   auto snap_id_it = m_local_image_ctx->snap_ids.find(sync_point.snap_name);
   assert(snap_id_it != m_local_image_ctx->snap_ids.end());
+
   librados::snap_t snap_id = snap_id_it->second;
 
   dout(20) << ": snap_id=" << snap_id << ", "
@@ -318,6 +327,7 @@ void ImageSync<I>::send_refresh_object_map() {
 
   Context *ctx = create_context_callback<
     ImageSync<I>, &ImageSync<I>::handle_refresh_object_map>(this);
+
   m_object_map = m_local_image_ctx->create_object_map(CEPH_NOSNAP);
 
   m_object_map->open(ctx);
@@ -333,8 +343,10 @@ void ImageSync<I>::handle_refresh_object_map(int r) {
     RWLock::WLocker snap_locker(m_local_image_ctx->snap_lock);
     std::swap(m_local_image_ctx->object_map, m_object_map);
   }
+
   delete m_object_map;
 
+  // image sync finished
   send_prune_sync_points();
 }
 
@@ -367,10 +379,10 @@ void ImageSync<I>::handle_prune_sync_points(int r) {
 
   if (!m_client_meta->sync_points.empty()) {
 
-    // in ImageSync<I>::send_prune_catch_up_sync_point we may have
-    // pruned to one sync point, and then we created a new one
-    // in ImageSync<I>::handle_prune_catch_up_sync_point, so we may
-    // still has one sync point
+    // TODO: in ImageSync<I>::send_prune_catch_up_sync_point we may have
+    // pruned to only one sync point, and ImageSync<I>::send_create_sync_point
+    // never create new sync point when the existing sync points are not
+    // empty, so why there is still another sync point ???
 
     send_copy_image();
     return;

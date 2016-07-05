@@ -2305,6 +2305,9 @@ int object_map_resize(cls_method_context_t hctx, bufferlist *in, bufferlist *out
 
   // protect against excessive memory requirements
   if (object_count > cls::rbd::MAX_OBJECT_MAP_OBJECT_COUNT) {
+
+    // 1PB
+
     CLS_ERR("object map too large: %" PRIu64, object_count);
     return -EINVAL;
   }
@@ -2323,9 +2326,11 @@ int object_map_resize(cls_method_context_t hctx, bufferlist *in, bufferlist *out
 	return -ESTALE;
       }
     }
+
     object_map.resize(object_count);
   } else if (object_count > orig_object_map_size) {
     object_map.resize(object_count);
+
     for (uint64_t i = orig_object_map_size; i < object_count; ++i) {
       object_map[i] = default_state;
     }
@@ -2333,8 +2338,10 @@ int object_map_resize(cls_method_context_t hctx, bufferlist *in, bufferlist *out
 
   bufferlist map;
   ::encode(object_map, map);
+
   CLS_LOG(20, "object_map_resize: object size=%" PRIu64 ", byte size=%u",
 	  object_count, map.length());
+
   return cls_cxx_write_full(hctx, &map);
 }
 
