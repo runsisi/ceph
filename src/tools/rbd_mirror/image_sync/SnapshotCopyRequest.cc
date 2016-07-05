@@ -23,13 +23,17 @@ namespace {
 
 template <typename I>
 const std::string &get_snapshot_name(I *image_ctx, librados::snap_t snap_id) {
+  // <snap_name, snap_id>
   auto snap_it = std::find_if(image_ctx->snap_ids.begin(),
                               image_ctx->snap_ids.end(),
                               [snap_id](
       const std::pair<std::string, librados::snap_t> &pair) {
     return pair.second == snap_id;
   });
+
   assert(snap_it != image_ctx->snap_ids.end());
+
+  // snap_name
   return snap_it->first;
 }
 
@@ -65,6 +69,13 @@ template <typename I>
 void SnapshotCopyRequest<I>::send() {
   librbd::parent_spec remote_parent_spec;
 
+  // the remote image must has snapshots, because we have created
+  // sync point in SyncPointCreateRequest<I>::send_create_snap
+
+  // get the parent spec of the remote image's
+  // snapshots(if deep-flatten feature is not enabled for the cloned
+  // image, after flatten the parent spec will be different between
+  // the HEAD and the snapshots)
   int r = validate_parent(m_remote_image_ctx, &remote_parent_spec);
   if (r < 0) {
     derr << ": remote image parent spec mismatch" << dendl;
@@ -72,6 +83,7 @@ void SnapshotCopyRequest<I>::send() {
     return;
   }
 
+  // get local image's parent spec
   r = validate_parent(m_local_image_ctx, &m_local_parent_spec);
   if (r < 0) {
     derr << ": local image parent spec mismatch" << dendl;
@@ -79,6 +91,7 @@ void SnapshotCopyRequest<I>::send() {
     return;
   }
 
+  // unprotect snapshots one by one
   send_snap_unprotect();
 }
 
@@ -87,6 +100,7 @@ void SnapshotCopyRequest<I>::cancel() {
   Mutex::Locker locker(m_lock);
 
   dout(20) << dendl;
+
   m_canceled = true;
 }
 
@@ -94,15 +108,25 @@ template <typename I>
 void SnapshotCopyRequest<I>::send_snap_unprotect() {
 
   SnapIdSet::iterator snap_id_it = m_local_snap_ids.begin();
+
   if (m_prev_snap_id != CEPH_NOSNAP) {
+
+    // the next snap id
+
     snap_id_it = m_local_snap_ids.upper_bound(m_prev_snap_id);
   }
 
   for (; snap_id_it != m_local_snap_ids.end(); ++snap_id_it) {
+
+    // iterate snapshots of local image
+
     librados::snap_t local_snap_id = *snap_id_it;
 
     m_local_image_ctx->snap_lock.get_read();
+
     bool local_unprotected;
+
+    // find SnapInfo from ImageCtx::snap_info and get the protection status
     int r = m_local_image_ctx->is_snap_unprotected(local_snap_id,
                                                    &local_unprotected);
     if (r < 0) {
@@ -112,15 +136,22 @@ void SnapshotCopyRequest<I>::send_snap_unprotect() {
       finish(r);
       return;
     }
+
     m_local_image_ctx->snap_lock.put_read();
 
     if (local_unprotected) {
+
       // snap is already unprotected -- check next snap
+
       continue;
     }
 
+    // local snapshot protected, check if we should unprotect it
+
     // if local snapshot is protected and (1) it isn't in our mapping
     // table, or (2) the remote snapshot isn't protected, unprotect it
+
+
     auto snap_seq_it = std::find_if(
       m_snap_seqs.begin(), m_snap_seqs.end(),
       [local_snap_id](const SnapSeqs::value_type& pair) {
@@ -128,7 +159,11 @@ void SnapshotCopyRequest<I>::send_snap_unprotect() {
       });
 
     if (snap_seq_it != m_snap_seqs.end()) {
+
+      // the local snap id is in m_snap_seqs
+
       m_remote_image_ctx->snap_lock.get_read();
+
       bool remote_unprotected;
       r = m_remote_image_ctx->is_snap_unprotected(snap_seq_it->first,
                                                   &remote_unprotected);
@@ -139,6 +174,7 @@ void SnapshotCopyRequest<I>::send_snap_unprotect() {
         finish(r);
         return;
       }
+
       m_remote_image_ctx->snap_lock.put_read();
 
       if (remote_unprotected) {
@@ -152,13 +188,24 @@ void SnapshotCopyRequest<I>::send_snap_unprotect() {
   }
 
   if (snap_id_it == m_local_snap_ids.end()) {
+
+    // finished iterating all local snapshots
     // no local snapshots to unprotect
+
     m_prev_snap_id = CEPH_NOSNAP;
+
+    // remove snapshot one by one
     send_snap_remove();
+
     return;
   }
 
+  // need to unprotect local snapshot
+
+  // note down the last unprotected local snapshot, used as the start
+  // snapshot id of the next iteration
   m_prev_snap_id = *snap_id_it;
+
   m_snap_name = get_snapshot_name(m_local_image_ctx, m_prev_snap_id);
 
   dout(20) << ": "
@@ -191,6 +238,7 @@ void SnapshotCopyRequest<I>::handle_snap_unprotect(int r) {
     return;
   }
 
+  // unprotect the next snapshot start from m_prev_snap_id
   send_snap_unprotect();
 }
 
@@ -219,7 +267,10 @@ void SnapshotCopyRequest<I>::send_snap_remove() {
   if (snap_id_it == m_local_snap_ids.end()) {
     // no local snapshots to delete
     m_prev_snap_id = CEPH_NOSNAP;
+
+    // create snapshot one by one
     send_snap_create();
+
     return;
   }
 
@@ -233,7 +284,9 @@ void SnapshotCopyRequest<I>::send_snap_remove() {
   Context *ctx = create_context_callback<
     SnapshotCopyRequest<I>, &SnapshotCopyRequest<I>::handle_snap_remove>(
       this);
+
   RWLock::RLocker owner_locker(m_local_image_ctx->owner_lock);
+
   m_local_image_ctx->operations->execute_snap_remove(m_snap_name.c_str(), ctx);
 }
 
@@ -247,17 +300,20 @@ void SnapshotCopyRequest<I>::handle_snap_remove(int r) {
     finish(r);
     return;
   }
+
   if (handle_cancellation())
   {
     return;
   }
 
+  // remove the next snapshot
   send_snap_remove();
 }
 
 template <typename I>
 void SnapshotCopyRequest<I>::send_snap_create() {
   SnapIdSet::iterator snap_id_it = m_remote_snap_ids.begin();
+
   if (m_prev_snap_id != CEPH_NOSNAP) {
     snap_id_it = m_remote_snap_ids.upper_bound(m_prev_snap_id);
   }
@@ -279,10 +335,14 @@ void SnapshotCopyRequest<I>::send_snap_create() {
   }
 
   m_prev_snap_id = *snap_id_it;
+
+  // get snap name by snap id
   m_snap_name = get_snapshot_name(m_remote_image_ctx, m_prev_snap_id);
 
   m_remote_image_ctx->snap_lock.get_read();
+
   auto snap_info_it = m_remote_image_ctx->snap_info.find(m_prev_snap_id);
+
   if (snap_info_it == m_remote_image_ctx->snap_info.end()) {
     m_remote_image_ctx->snap_lock.put_read();
     derr << ": failed to retrieve remote snap info: " << m_snap_name
@@ -294,12 +354,13 @@ void SnapshotCopyRequest<I>::send_snap_create() {
   uint64_t size = snap_info_it->second.size;
   librbd::parent_spec parent_spec;
   uint64_t parent_overlap = 0;
+
   if (snap_info_it->second.parent.spec.pool_id != -1) {
     parent_spec = m_local_parent_spec;
     parent_overlap = snap_info_it->second.parent.overlap;
   }
-  m_remote_image_ctx->snap_lock.put_read();
 
+  m_remote_image_ctx->snap_lock.put_read();
 
   dout(20) << ": "
            << "snap_name=" << m_snap_name << ", "
@@ -316,6 +377,7 @@ void SnapshotCopyRequest<I>::send_snap_create() {
       this);
   SnapshotCreateRequest<I> *req = SnapshotCreateRequest<I>::create(
     m_local_image_ctx, m_snap_name, size, parent_spec, parent_overlap, ctx);
+
   req->send();
 }
 
@@ -329,6 +391,7 @@ void SnapshotCopyRequest<I>::handle_snap_create(int r) {
     finish(r);
     return;
   }
+
   if (handle_cancellation())
   {
     return;
@@ -342,8 +405,10 @@ void SnapshotCopyRequest<I>::handle_snap_create(int r) {
 
   dout(20) << ": mapping remote snap id " << m_prev_snap_id << " to "
            << local_snap_id << dendl;
+
   m_snap_seqs[m_prev_snap_id] = local_snap_id;
 
+  // create the next snapshot
   send_snap_create();
 }
 
@@ -505,6 +570,9 @@ void SnapshotCopyRequest<I>::compute_snap_map() {
   }
 }
 
+// if deep-flatten feature is not enabled for the cloned image, then
+// after flatten the HEAD and snapshots will have different parent
+// specs, see cls_rbd::remove_parent
 template <typename I>
 int SnapshotCopyRequest<I>::validate_parent(I *image_ctx,
                                             librbd::parent_spec *spec) {
@@ -512,21 +580,44 @@ int SnapshotCopyRequest<I>::validate_parent(I *image_ctx,
   RWLock::RLocker snap_locker(image_ctx->snap_lock);
 
   // ensure remote image's parent specs are still consistent
+
   *spec = image_ctx->parent_md.spec;
 
   for (auto &snap_info_pair : image_ctx->snap_info) {
+
+    // iterate all parent specs of the snapshots of this image
+
+    // parent spec of the snapshot, if the deep-flatten feature is not
+    // enabled for the clone image, then the parent spec of the snapshot
+    // will be different than the HEAD after flatten, the HEAD should not
+    // have parent, while the snapshots still have parent, see cls_rbd::remove_parent
+    // and http://ceph-users.ceph.narkive.com/H1A9Hryx/how-to-understand-deep-flatten-implementation
     auto &parent_spec = snap_info_pair.second.parent.spec;
+
     if (parent_spec.pool_id == -1) {
+
+      // this specific snapshot has no parent
+
       continue;
     } else if (spec->pool_id == -1) {
+
+      // this specific snapshot has parent, while the HEAD has no parent,
+      // because once the 'spec' variable is updated, then the spec->pool_id
+      // can never be -1 again
+
       *spec = parent_spec;
+
       continue;
     }
+
+    // this snapshot has parent, and the HEAD/last recorded snapshot has parent,
+    // check if the two parent specs are the same
 
     if (*spec != parent_spec) {
       return -EINVAL;
     }
   }
+
   return 0;
 }
 

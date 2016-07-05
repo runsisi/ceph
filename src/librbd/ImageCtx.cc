@@ -509,12 +509,15 @@ struct C_InvalidateCache : public Context {
 				    bool *is_unprotected) const
   {
     assert(snap_lock.is_locked());
+
+    // find from ImageCtx::snap_info
     const SnapInfo *info = get_snap_info(in_snap_id);
     if (info) {
       *is_unprotected =
 	(info->protection_status == RBD_PROTECTION_STATUS_UNPROTECTED);
       return 0;
     }
+
     return -ENOENT;
   }
 
