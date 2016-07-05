@@ -248,6 +248,8 @@ Context *RefreshRequest<I>::handle_v2_get_mutable_metadata(int *result) {
 
   if (*result == 0) {
     bufferlist::iterator it = m_out_bl.begin();
+
+    // m_snapc: <snapid_t seq, vector<snapid_t> snaps>
     *result = cls_client::get_mutable_metadata_finish(&it, &m_size, &m_features,
                                                       &m_incompatible_features,
                                                       &m_lockers,
@@ -353,6 +355,7 @@ void RefreshRequest<I>::send_v2_get_snapshots() {
     m_snap_sizes.clear();
     m_snap_parents.clear();
     m_snap_protection.clear();
+
     send_v2_refresh_parent();
     return;
   }
@@ -388,7 +391,12 @@ Context *RefreshRequest<I>::handle_v2_get_snapshots(int *result) {
   }
   if (*result == -ENOENT) {
     ldout(cct, 10) << "out-of-sync snapshot state detected" << dendl;
+
+    // m_snapc.snaps says it is not empty, but here we got no snapshots, so
+    // we need to refresh the mutable metadata again
+
     send_v2_get_mutable_metadata();
+
     return nullptr;
   } else if (*result < 0) {
     lderr(cct) << "failed to retrieve snapshots: " << cpp_strerror(*result)
@@ -397,6 +405,7 @@ Context *RefreshRequest<I>::handle_v2_get_snapshots(int *result) {
   }
 
   send_v2_refresh_parent();
+
   return nullptr;
 }
 
@@ -406,16 +415,23 @@ void RefreshRequest<I>::send_v2_refresh_parent() {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     RWLock::RLocker parent_locker(m_image_ctx.parent_lock);
 
+    // <parent_spec, overlap>
     parent_info parent_md;
+    // get parent info of this image(maybe snapshot of the image)
     int r = get_parent_info(m_image_ctx.snap_id, &parent_md);
     if (r < 0 ||
         RefreshParentRequest<I>::is_refresh_required(m_image_ctx, parent_md)) {
+
+      // if r < 0, then the parent_md will get a default parent spec, which
+      // means no parent
+
       CephContext *cct = m_image_ctx.cct;
       ldout(cct, 10) << this << " " << __func__ << dendl;
 
       using klass = RefreshRequest<I>;
       Context *ctx = create_context_callback<
         klass, &klass::handle_v2_refresh_parent>(this);
+
       m_refresh_parent = RefreshParentRequest<I>::create(
         m_image_ctx, parent_md, ctx);
     }
@@ -442,6 +458,7 @@ Context *RefreshRequest<I>::handle_v2_refresh_parent(int *result) {
   }
 
   send_v2_init_exclusive_lock();
+
   return nullptr;
 }
 

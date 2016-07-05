@@ -988,12 +988,19 @@ int get_parent(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
       if (r < 0 && r != -ENOENT)
 	return r;
     } else {
+
+      // the parent of the snapshot is set in snapshot_add
+
       cls_rbd_snap snap;
       string snapshot_key;
+
+      // "snapshot_" + snap_id
       key_from_snap_id(snap_id, &snapshot_key);
+
       r = read_key(hctx, snapshot_key, &snap);
       if (r < 0 && r != -ENOENT)
 	return r;
+
       parent = snap.parent;
     }
   }
@@ -1128,6 +1135,8 @@ int remove_parent(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
         if ((*it).find(RBD_SNAP_KEY_PREFIX) != 0) {
 	  break;
         }
+
+        // iterate those "snapshot_" started keys
 
         uint64_t snap_id = snap_id_from_key(*it);
         cls_rbd_snap snap_meta;
@@ -1553,6 +1562,8 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   int max_read = RBD_MAX_KEYS_READ;
   uint64_t total_read = 0;
   string last_read = RBD_SNAP_KEY_PREFIX;
+
+  // check if the snap_name or snap_id has been taken
   do {
     map<string, bufferlist> vals;
     r = cls_cxx_map_get_vals(hctx, last_read, RBD_SNAP_KEY_PREFIX,
@@ -1570,6 +1581,7 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 	 it != vals.end(); ++it) {
       cls_rbd_snap old_meta;
       bufferlist::iterator iter = it->second.begin();
+
       try {
 	::decode(old_meta, iter);
       } catch (const buffer::error &err) {
@@ -1578,6 +1590,7 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 	        (unsigned long long)snap_id.val);
 	return -EIO;
       }
+
       if (snap_meta.name == old_meta.name || snap_meta.id == old_meta.id) {
 	CLS_LOG(20, "snap_name %s or snap_id %llu matches existing snap %s %llu",
 		snap_meta.name.c_str(), (unsigned long long)snap_meta.id.val,
@@ -1595,6 +1608,7 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   r = read_key(hctx, "parent", &parent);
   if (r < 0 && r != -ENOENT)
     return r;
+
   if (r == 0) {
     snap_meta.parent = parent;
   }
@@ -1604,10 +1618,13 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   ::encode(snap_meta.id, snap_seqbl);
 
   string snapshot_key;
+  // "snapshot_" + snap_id
   key_from_snap_id(snap_meta.id, &snapshot_key);
+
   map<string, bufferlist> vals;
   vals["snap_seq"] = snap_seqbl;
   vals[snapshot_key] = snap_metabl;
+
   r = cls_cxx_map_set_vals(hctx, &vals);
   if (r < 0) {
     CLS_ERR("error writing snapshot metadata: %s", cpp_strerror(r).c_str());
