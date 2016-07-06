@@ -191,6 +191,7 @@ void ImageCopyRequest<I>::send_next_object_copy() {
 
   if (m_canceled && m_ret_val == 0) {
     dout(10) << ": image copy canceled" << dendl;
+
     m_ret_val = -ECANCELED;
   }
 
@@ -218,8 +219,10 @@ void ImageCopyRequest<I>::handle_object_copy(int r) {
 
   int percent;
   bool complete;
+
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_current_ops > 0);
     --m_current_ops;
 
@@ -227,12 +230,15 @@ void ImageCopyRequest<I>::handle_object_copy(int r) {
 
     if (r < 0) {
       derr << ": object copy failed: " << cpp_strerror(r) << dendl;
+
       if (m_ret_val == 0) {
         m_ret_val = r;
       }
     }
 
+    // finished a object, try a next object
     send_next_object_copy();
+
     complete = (m_current_ops == 0);
   }
 
