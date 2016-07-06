@@ -543,11 +543,16 @@ struct C_InvalidateCache : public Context {
   uint64_t ImageCtx::get_image_size(snap_t in_snap_id) const
   {
     assert(snap_lock.is_locked());
+
     if (in_snap_id == CEPH_NOSNAP) {
+
+      // see ResizeRequest<I>::send
+
       if (!resize_reqs.empty() &&
           resize_reqs.front()->shrinking()) {
         return resize_reqs.front()->get_image_size();
       }
+
       return size;
     }
 
@@ -560,7 +565,9 @@ struct C_InvalidateCache : public Context {
 
   uint64_t ImageCtx::get_object_count(snap_t in_snap_id) const {
     assert(snap_lock.is_locked());
+
     uint64_t image_size = get_image_size(in_snap_id);
+
     return Striper::get_num_objects(layout, image_size);
   }
 

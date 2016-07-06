@@ -14,6 +14,8 @@
 /**
  * calculate intervals/extents that vary between two snapshots
  */
+
+// called by C_DiffObject::compute_diffs, ObjectCopyRequest<I>::compute_diffs
 void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
 			librados::snap_t start, librados::snap_t end,
 			interval_set<uint64_t> *diff, uint64_t *end_size,
@@ -21,6 +23,7 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
 {
   ldout(cct, 10) << "calc_snap_set_diff start " << start << " end " << end
 		 << ", snap_set seq " << snap_set.seq << dendl;
+
   bool saw_start = false;
   uint64_t start_size = 0;
   diff->clear();
@@ -33,6 +36,7 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
     // make an interval, and hide the fact that the HEAD doesn't
     // include itself in the snaps list
     librados::snap_t a, b;
+
     if (r->cloneid == librados::SNAP_HEAD) {
       // head is valid starting from right after the last seen seq
       a = snap_set.seq + 1;
@@ -42,6 +46,7 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
       // note: b might be < r->cloneid if a snap has been trimmed.
       b = r->snaps[r->snaps.size()-1];
     }
+
     ldout(cct, 20) << " clone " << r->cloneid << " snaps " << r->snaps
 		   << " -> [" << a << "," << b << "]"
 		   << " size " << r->size << " overlap to next " << r->overlap << dendl;
@@ -67,18 +72,24 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
     }
 
     *end_size = r->size;
+
     if (end < a) {
       ldout(cct, 20) << " past end " << end << ", end object does not exist" << dendl;
+
       *end_exists = false;
       diff->clear();
       if (start_size) {
 	diff->insert(0, start_size);
       }
+
       break;
     }
+
     if (end <= b) {
       ldout(cct, 20) << " end" << dendl;
+
       *end_exists = true;
+
       break;
     }
 
@@ -92,15 +103,20 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
       if (r->size > max_size)
 	max_size = r->size;
     }
+
     if (max_size)
       diff_to_next.insert(0, max_size);
+
     for (vector<pair<uint64_t, uint64_t> >::const_iterator p = overlap->begin();
 	 p != overlap->end();
 	 ++p) {
       diff_to_next.erase(p->first, p->second);
     }
+
     ldout(cct, 20) << "  diff_to_next " << diff_to_next << dendl;
+
     diff->union_of(diff_to_next);
+
     ldout(cct, 20) << "  diff now " << *diff << dendl;
   }
 }

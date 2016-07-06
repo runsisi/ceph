@@ -54,8 +54,11 @@ void ObjectCopyRequest<I>::send_list_snaps() {
     ObjectCopyRequest<I>, &ObjectCopyRequest<I>::handle_list_snaps>(this);
 
   librados::ObjectReadOperation op;
+  // CEPH_OSD_OP_LIST_SNAPS, <vector<clone_info_t>, seq>
   op.list_snaps(&m_snap_set, &m_snap_ret);
 
+  // m->get_snapid() must return CEPH_SNAPDIR for CEPH_OSD_OP_LIST_SNAPS,
+  // see ReplicatedPG::do_op
   m_remote_io_ctx.snap_set_read(CEPH_SNAPDIR);
   int r = m_remote_io_ctx.aio_operate(m_remote_oid, rados_completion, &op,
                                       nullptr);
@@ -75,6 +78,7 @@ void ObjectCopyRequest<I>::handle_list_snaps(int r) {
     finish(0);
     return;
   }
+
   if (r < 0) {
     derr << ": failed to list snaps: " << cpp_strerror(r) << dendl;
     finish(r);
@@ -82,11 +86,15 @@ void ObjectCopyRequest<I>::handle_list_snaps(int r) {
   }
 
   compute_diffs();
+
   send_read_object();
 }
 
 template <typename I>
 void ObjectCopyRequest<I>::send_read_object() {
+
+  // m_snap_sync_ops got from ObjectCopyRequest<I>::compute_diffs
+
   if (m_snap_sync_ops.empty()) {
     // no more snapshot diffs to read from remote
     finish(0);
@@ -229,6 +237,7 @@ void ObjectCopyRequest<I>::handle_write_object(int r) {
 template <typename I>
 void ObjectCopyRequest<I>::send_update_object_map() {
   m_local_image_ctx->snap_lock.get_read();
+
   if (!m_local_image_ctx->test_features(RBD_FEATURE_OBJECT_MAP,
                                         m_local_image_ctx->snap_lock) ||
       m_snap_object_states.empty()) {
@@ -271,10 +280,12 @@ void ObjectCopyRequest<I>::handle_update_object_map(int r) {
   dout(20) << ": r=" << r << dendl;
 
   assert(r == 0);
+
   if (!m_snap_object_states.empty()) {
     send_update_object_map();
     return;
   }
+
   finish(0);
 }
 
@@ -285,14 +296,18 @@ void ObjectCopyRequest<I>::compute_diffs() {
   uint64_t prev_end_size = 0;
   bool prev_exists = false;
   librados::snap_t start_remote_snap_id = 0;
+
+  // map<remote snap id, vector<local snap id>>
   for (auto &pair : *m_snap_map) {
     assert(!pair.second.empty());
+
     librados::snap_t end_remote_snap_id = pair.first;
     librados::snap_t end_local_snap_id = pair.second.front();
 
     interval_set<uint64_t> diff;
     uint64_t end_size;
     bool exists;
+
     calc_snap_set_diff(cct, m_snap_set, start_remote_snap_id,
                        end_remote_snap_id, &diff, &end_size, &exists);
 
@@ -308,9 +323,11 @@ void ObjectCopyRequest<I>::compute_diffs() {
       // clip diff to size of object (in case it was truncated)
       if (end_size < prev_end_size) {
         interval_set<uint64_t> trunc;
+
         trunc.insert(end_size, prev_end_size);
         trunc.intersection_of(diff);
         diff.subtract(trunc);
+
         dout(20) << ": clearing truncate diff: " << trunc << dendl;
       }
 
@@ -323,6 +340,7 @@ void ObjectCopyRequest<I>::compute_diffs() {
             diff.empty() && end_size == prev_end_size) {
           object_state = OBJECT_EXISTS_CLEAN;
         }
+
         m_snap_object_states[end_local_snap_id] = object_state;
       }
 
@@ -330,13 +348,16 @@ void ObjectCopyRequest<I>::compute_diffs() {
       for (auto it = diff.begin(); it != diff.end(); ++it) {
         dout(20) << ": read/write op: " << it.get_start() << "~"
                  << it.get_len() << dendl;
+
         m_snap_sync_ops[end_remote_snap_id].emplace_back(SYNC_OP_TYPE_WRITE,
                                                          it.get_start(),
                                                          it.get_len(),
                                                          bufferlist());
       }
+
       if (end_size < prev_end_size) {
         dout(20) << ": trunc op: " << end_size << dendl;
+
         m_snap_sync_ops[end_remote_snap_id].emplace_back(SYNC_OP_TYPE_TRUNC,
                                                          end_size, 0U,
                                                          bufferlist());
@@ -344,7 +365,9 @@ void ObjectCopyRequest<I>::compute_diffs() {
     } else {
       if (prev_exists) {
         // object remove
+
         dout(20) << ": remove op" << dendl;
+
         m_snap_sync_ops[end_remote_snap_id].emplace_back(SYNC_OP_TYPE_REMOVE,
                                                          0U, 0U, bufferlist());
       }
