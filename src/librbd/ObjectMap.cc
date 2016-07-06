@@ -217,6 +217,7 @@ bool ObjectMap::aio_update(uint64_t start_object_no, uint64_t end_object_no,
                  << (current_state ?
                        stringify(static_cast<uint32_t>(*current_state)) : "")
 		 << "->" << static_cast<uint32_t>(new_state) << dendl;
+
   if (end_object_no > m_object_map.size()) {
     ldout(cct, 20) << "skipping update of invalid object map" << dendl;
     return false;
@@ -225,6 +226,7 @@ bool ObjectMap::aio_update(uint64_t start_object_no, uint64_t end_object_no,
   for (uint64_t object_no = start_object_no; object_no < end_object_no;
        ++object_no) {
     uint8_t state = m_object_map[object_no];
+
     if ((!current_state || state == *current_state ||
           (*current_state == OBJECT_EXISTS && state == OBJECT_EXISTS_CLEAN)) &&
         state != new_state) {

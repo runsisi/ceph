@@ -87,6 +87,7 @@ void ObjectCopyRequest<I>::handle_list_snaps(int r) {
 
   compute_diffs();
 
+  // read and write objects one by one
   send_read_object();
 }
 
@@ -96,6 +97,10 @@ void ObjectCopyRequest<I>::send_read_object() {
   // m_snap_sync_ops got from ObjectCopyRequest<I>::compute_diffs
 
   if (m_snap_sync_ops.empty()) {
+
+    // the first time came in and there is no objects to copy, we never
+    // get here except the first time, see ObjectCopyRequest<I>::handle_write_object
+
     // no more snapshot diffs to read from remote
     finish(0);
     return;
@@ -107,10 +112,13 @@ void ObjectCopyRequest<I>::send_read_object() {
 
   // map the sync op start snap id back to the necessary read snap id
   librados::snap_t remote_snap_seq = m_snap_sync_ops.begin()->first;
+
+  // set IoCtxImpl::snap_seq
   m_remote_io_ctx.snap_set_read(remote_snap_seq);
 
   bool read_required = false;
   librados::ObjectReadOperation op;
+
   for (auto &sync_op : sync_ops) {
     switch (std::get<0>(sync_op)) {
     case SYNC_OP_TYPE_WRITE:
@@ -121,6 +129,8 @@ void ObjectCopyRequest<I>::send_read_object() {
 
       dout(20) << ": read op: " << std::get<1>(sync_op) << "~"
                << std::get<2>(sync_op) << dendl;
+
+      // offset, len, bl
       op.read(std::get<1>(sync_op), std::get<2>(sync_op),
               &std::get<3>(sync_op), nullptr);
       break;
@@ -130,7 +140,9 @@ void ObjectCopyRequest<I>::send_read_object() {
   }
 
   if (!read_required) {
+
     // nothing written to this object for this snapshot (must be trunc/remove)
+
     send_write_object();
     return;
   }
@@ -218,6 +230,7 @@ void ObjectCopyRequest<I>::handle_write_object(int r) {
   if (r == -ENOENT) {
     r = 0;
   }
+
   if (r < 0) {
     derr << ": failed to write to local object: " << cpp_strerror(r)
          << dendl;
@@ -231,6 +244,7 @@ void ObjectCopyRequest<I>::handle_write_object(int r) {
     return;
   }
 
+  // update each snap object's state
   send_update_object_map();
 }
 
@@ -264,9 +278,11 @@ void ObjectCopyRequest<I>::send_update_object_map() {
            << dendl;
 
   RWLock::WLocker object_map_locker(m_local_image_ctx->object_map_lock);
+
   Context *ctx = create_context_callback<
     ObjectCopyRequest<I>, &ObjectCopyRequest<I>::handle_update_object_map>(
       this);
+
   m_local_image_ctx->object_map->aio_update(snap_object_state.first,
                                             m_object_number,
                                             m_object_number + 1,
@@ -282,6 +298,9 @@ void ObjectCopyRequest<I>::handle_update_object_map(int r) {
   assert(r == 0);
 
   if (!m_snap_object_states.empty()) {
+
+    //
+
     send_update_object_map();
     return;
   }
@@ -308,6 +327,7 @@ void ObjectCopyRequest<I>::compute_diffs() {
     uint64_t end_size;
     bool exists;
 
+    // m_snap_set was got in ObjectCopyRequest<I>::send_list_snaps
     calc_snap_set_diff(cct, m_snap_set, start_remote_snap_id,
                        end_remote_snap_id, &diff, &end_size, &exists);
 
@@ -335,6 +355,7 @@ void ObjectCopyRequest<I>::compute_diffs() {
       {
         RWLock::RLocker snap_locker(m_local_image_ctx->snap_lock);
         uint8_t object_state = OBJECT_EXISTS;
+
         if (m_local_image_ctx->test_features(RBD_FEATURE_FAST_DIFF,
                                              m_local_image_ctx->snap_lock) &&
             diff.empty() && end_size == prev_end_size) {
