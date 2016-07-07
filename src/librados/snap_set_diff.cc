@@ -26,18 +26,25 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
 
   bool saw_start = false;
   uint64_t start_size = 0;
+
   diff->clear();
   *end_size = 0;
   *end_exists = false;
 
+  // snap_set::clones in ascending order
   for (vector<librados::clone_info_t>::const_iterator r = snap_set.clones.begin();
        r != snap_set.clones.end();
        ) {
+
     // make an interval, and hide the fact that the HEAD doesn't
     // include itself in the snaps list
+
     librados::snap_t a, b;
 
     if (r->cloneid == librados::SNAP_HEAD) {
+
+      // i.e., CEPH_NOSNAP
+
       // head is valid starting from right after the last seen seq
       a = snap_set.seq + 1;
       b = librados::SNAP_HEAD;
@@ -52,22 +59,29 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
 		   << " size " << r->size << " overlap to next " << r->overlap << dendl;
 
     if (b < start) {
-      // this is before start
+      // this is before start, skip those snapshots before start
       ++r;
       continue;
     }
 
     if (!saw_start) {
+
+      // the first time start <= b
+
       if (start < a) {
 	ldout(cct, 20) << "  start, after " << start << dendl;
+
 	// this means the object didn't exist at start
 	if (r->size)
 	  diff->insert(0, r->size);
+
 	start_size = 0;
       } else {
 	ldout(cct, 20) << "  start" << dendl;
+
 	start_size = r->size;
       }
+
       saw_start = true;
     }
 
@@ -78,6 +92,7 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
 
       *end_exists = false;
       diff->clear();
+
       if (start_size) {
 	diff->insert(0, start_size);
       }
@@ -95,9 +110,11 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
 
     // start with the max(this size, next size), and subtract off any
     // overlap
+
     const vector<pair<uint64_t, uint64_t> > *overlap = &r->overlap;
     interval_set<uint64_t> diff_to_next;
     uint64_t max_size = r->size;
+
     ++r;
     if (r != snap_set.clones.end()) {
       if (r->size > max_size)

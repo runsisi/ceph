@@ -58,6 +58,7 @@ SnapshotCopyRequest<I>::SnapshotCopyRequest(I *local_image_ctx,
     m_lock(unique_lock_name("SnapshotCopyRequest::m_lock", this)) {
   m_snap_map->clear();
 
+  // set<librados::snap_t> m_remote_snap_ids
   // snap ids ordered from oldest to newest
   m_remote_snap_ids.insert(remote_image_ctx->snaps.begin(),
                            remote_image_ctx->snaps.end());
@@ -350,6 +351,7 @@ void SnapshotCopyRequest<I>::send_snap_create() {
     snap_id_it = m_remote_snap_ids.upper_bound(m_prev_snap_id);
   }
 
+  // set<librados::snap_t> m_remote_snap_ids
   for (; snap_id_it != m_remote_snap_ids.end(); ++snap_id_it) {
     librados::snap_t remote_snap_id = *snap_id_it;
 
@@ -423,7 +425,8 @@ void SnapshotCopyRequest<I>::send_snap_create() {
     SnapshotCopyRequest<I>, &SnapshotCopyRequest<I>::handle_snap_create>(
       this);
 
-  // use the SnapshotCreateRequest under rbd_mirror/image_sync/
+  // use the SnapshotCreateRequest under rbd_mirror/image_sync/, craete
+  // a local snapshot which has the same name as the remote peer
   SnapshotCreateRequest<I> *req = SnapshotCreateRequest<I>::create(
     m_local_image_ctx, m_snap_name, size, parent_spec, parent_overlap, ctx);
 
@@ -448,8 +451,10 @@ void SnapshotCopyRequest<I>::handle_snap_create(int r) {
 
   assert(m_prev_snap_id != CEPH_NOSNAP);
 
+  // get the local snapshot id of the local snapshot name
   auto snap_it = m_local_image_ctx->snap_ids.find(m_snap_name);
   assert(snap_it != m_local_image_ctx->snap_ids.end());
+
   librados::snap_t local_snap_id = snap_it->second;
 
   dout(20) << ": mapping remote snap id " << m_prev_snap_id << " to "

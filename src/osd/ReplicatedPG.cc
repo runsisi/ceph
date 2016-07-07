@@ -1678,11 +1678,13 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 	     << *m << dendl;
     return;
   }
+
   if (!(m->get_source().is_mds()) && osd->check_failsafe_full() && write_ordered) {
     dout(10) << __func__ << " fail-safe full check failed, dropping request"
 	     << dendl;
     return;
   }
+
   int64_t poolid = get_pgid().pool();
   if (op->may_write()) {
 
@@ -1755,6 +1757,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
       op);
     return;
   }
+
   if (write_ordered && objects_blocked_on_cache_full.count(head)) {
     block_write_on_full_cache(head, op);
     return;
@@ -1846,15 +1849,22 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     if (is_primary() ||
 	(!(m->has_flag(CEPH_OSD_FLAG_BALANCE_READS)) &&
 	 !(m->has_flag(CEPH_OSD_FLAG_LOCALIZE_READS)))) {
+
+      // 1) we are primary or 2) the client did not want to read from
+      // any non-primary, so we need to wait
+
       // missing the specific snap we need; requeue and wait.
       assert(!op->may_write()); // only happens on a read/cache
+
       wait_for_unreadable_object(missing_oid, op);
+
       return;
     }
   } else if (r == 0) {
     if (is_unreadable_object(obc->obs.oi.soid)) {
       dout(10) << __func__ << ": clone " << obc->obs.oi.soid
 	       << " is unreadable, waiting" << dendl;
+
       wait_for_unreadable_object(obc->obs.oi.soid, op);
       return;
     }
@@ -1863,9 +1873,15 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     if (write_ordered &&
 	obc->obs.oi.soid.snap != CEPH_NOSNAP &&
 	is_degraded_or_backfilling_object(obc->obs.oi.soid)) {
+
+      // this is an op to snapshot object, note: the check for degradation of
+      // the HEAD/snapdir object have done at the begining of the function
+
       dout(10) << __func__ << ": clone " << obc->obs.oi.soid
 	       << " is degraded, waiting" << dendl;
+
       wait_for_degraded_object(obc->obs.oi.soid, op);
+
       return;
     }
   }
@@ -1915,6 +1931,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
       fill_in_copy_get_noent(op, oid, m->ops[0], classic);
       return;
     }
+
     dout(20) << __func__ << "find_object_context got error " << r << dendl;
     if (op->may_write() &&
 	get_osdmap()->test_flag(CEPH_OSDMAP_REQUIRE_KRAKEN)) {
@@ -1967,11 +1984,16 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 
     if (!ceph_osd_op_type_multi(osd_op.op.op))
       continue;
+
+    // multi op, must have src oid associated with it,
+
     if (osd_op.soid.oid.name.length()) {
       object_locator_t src_oloc;
       get_src_oloc(m->get_oid(), m->get_object_locator(), src_oloc);
+
       hobject_t src_oid(osd_op.soid, src_oloc.key, m->get_pg().ps(),
 			info.pgid.pool(), m->get_object_locator().nspace);
+
       if (!src_obc.count(src_oid)) {
 	ObjectContextRef sobc;
 	hobject_t wait_oid;
@@ -1995,6 +2017,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 		   sobc->obs.oi.soid.oid.name != obc->obs.oi.soid.get_key()) {
 	    dout(1) << " src_oid " << sobc->obs.oi.soid << " != "
 		  << obc->obs.oi.soid << dendl;
+
 	    osd->reply_op_error(op, -EINVAL);
 	  } else if (is_degraded_or_backfilling_object(sobc->obs.oi.soid) ||
 		   (check_src_targ(sobc->obs.oi.soid, obc->obs.oi.soid))) {
@@ -2004,25 +2027,33 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 	      waiting_for_degraded_object[sobc->obs.oi.soid].push_back(op);
 	      op->mark_delayed("waiting for degraded object");
 	    }
+
 	    dout(10) << " writes for " << obc->obs.oi.soid << " now blocked by "
 		     << sobc->obs.oi.soid << dendl;
+
 	    obc->blocked_by = sobc;
 	    sobc->blocking.insert(obc);
 	  } else {
 	    dout(10) << " src_oid " << src_oid << " obc " << src_obc << dendl;
+
 	    src_obc[src_oid] = sobc;
 	    continue;
 	  }
 	}
 	// Error cleanup below
       } else {
+
+        // ObjectContext for this src oid exists
+
 	continue;
       }
       // Error cleanup below
     } else {
       dout(10) << "no src oid specified for multi op " << osd_op << dendl;
+
       osd->reply_op_error(op, -EINVAL);
     }
+
     return;
   }
 

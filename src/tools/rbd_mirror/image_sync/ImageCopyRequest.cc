@@ -45,6 +45,10 @@ ImageCopyRequest<I>::ImageCopyRequest(I *local_image_ctx, I *remote_image_ctx,
 
 template <typename I>
 void ImageCopyRequest<I>::send() {
+
+  // calc map<remote snap id, vector<local snap id>> m_snap_map, which
+  // is used by object copy, and used by ObjectCopyRequest<I>::send_write_object
+  // eventually
   int r = compute_snap_map();
   if (r < 0) {
     finish(r);
@@ -231,6 +235,8 @@ void ImageCopyRequest<I>::send_next_object_copy() {
 
   Context *ctx = create_context_callback<
     ImageCopyRequest<I>, &ImageCopyRequest<I>::handle_object_copy>(this);
+
+  // m_snap_map calc'ed in ImageCopyRequest<I>::compute_snap_map
   ObjectCopyRequest<I> *req = ObjectCopyRequest<I>::create(
     m_local_image_ctx, m_remote_image_ctx, &m_snap_map, ono, ctx);
 
@@ -453,6 +459,7 @@ int ImageCopyRequest<I>::compute_snap_map() {
     RWLock::RLocker snap_locker(m_remote_image_ctx->snap_lock);
 
     snap_id_end = m_remote_image_ctx->get_snap_id(m_sync_point->snap_name);
+
     if (snap_id_end == CEPH_NOSNAP) {
       derr << ": failed to locate snapshot: "
            << m_sync_point->snap_name << dendl;
@@ -462,6 +469,7 @@ int ImageCopyRequest<I>::compute_snap_map() {
     if (!m_sync_point->from_snap_name.empty()) {
       snap_id_start = m_remote_image_ctx->get_snap_id(
         m_sync_point->from_snap_name);
+
       if (snap_id_start == CEPH_NOSNAP) {
         derr << ": failed to locate from snapshot: "
              << m_sync_point->from_snap_name << dendl;
@@ -470,13 +478,16 @@ int ImageCopyRequest<I>::compute_snap_map() {
     }
   }
 
+  // [from_snap_name, snap_name] -> [snap_id_start, snap_id_end]
+
   SnapIds snap_ids;
 
+  // snap_seqs is calc'ed by SnapshotCopyRequest<I>::handle_snap_create to
+  // denote the <remote snap id, local snap id> mapping
   for (auto it = m_client_meta->snap_seqs.begin();
        it != m_client_meta->snap_seqs.end(); ++it) {
 
-    // iterate all snapshots of local image, see SnapshotCopyRequest<I>::handle_snap_create
-
+    // push front, so from new -> old
     snap_ids.insert(snap_ids.begin(), it->second);
 
     if (it->first < snap_id_start) {
@@ -485,7 +496,8 @@ int ImageCopyRequest<I>::compute_snap_map() {
       break;
     }
 
-    // map<remote snap id, vector<local snap id>>
+    // map<remote snap id, vector<local snap id>>, which is used by
+    // ObjectCopyRequest<I>::compute_diffs
     m_snap_map[it->first] = snap_ids;
   }
 
