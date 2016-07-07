@@ -1476,10 +1476,12 @@ int librados::IoCtx::aio_operate(const std::string& oid, AioCompletion *c,
 				 snap_t snap_seq, std::vector<snap_t>& snaps)
 {
   object_t obj(oid);
+
   vector<snapid_t> snv;
   snv.resize(snaps.size());
   for (size_t i = 0; i < snaps.size(); ++i)
     snv[i] = snaps[i];
+
   SnapContext snapc(snap_seq, snv);
   return io_ctx_impl->aio_operate(obj, &o->impl->o, c->pc,
 				  snapc, 0);
