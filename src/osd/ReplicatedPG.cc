@@ -1837,6 +1837,20 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     return;
   }
 
+  /*
+   * If we return -EAGAIN, we will always set *pmissing to the missing
+   * object to wait for.
+   *
+   * If we return -ENOENT, and set *pmissing, then promoting that
+   * object may help.
+   *
+   * If we return -ENOENT but do not set *pmissing, then we know the
+   * object does not exist.
+   *
+   */
+
+  // only returns 0/-EAGAIN/-ENOENT
+  // missing_oid may set to: oid, head, snap_oid
   int r = find_object_context(
     oid, &obc, can_create,
     m->has_flag(CEPH_OSD_FLAG_MAP_SNAP_CLONE),
@@ -9144,22 +9158,28 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
 				      hobject_t *pmissing)
 {
   assert(oid.pool == static_cast<int64_t>(info.pgid.pool()));
+
   // want the head?
   if (oid.snap == CEPH_NOSNAP) {
     ObjectContextRef obc = get_object_context(oid, can_create);
     if (!obc) {
       if (pmissing)
         *pmissing = oid;
+
       return -ENOENT;
     }
+
     dout(10) << "find_object_context " << oid
        << " @" << oid.snap
        << " oi=" << obc->obs.oi
        << dendl;
+
     *pobc = obc;
 
     return 0;
   }
+
+  // non-HEAD object
 
   hobject_t head = oid.get_head();
 
@@ -9168,68 +9188,90 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
     // return head or snapdir, whichever exists.
     ObjectContextRef headobc = get_object_context(head, can_create);
     ObjectContextRef obc = headobc;
+
     if (!obc || !obc->obs.exists)
       obc = get_object_context(oid, can_create);
+
     if (!obc || !obc->obs.exists) {
       // if we have neither, we would want to promote the head.
       if (pmissing)
 	*pmissing = head;
+
       if (pobc)
 	*pobc = headobc; // may be null
+
       return -ENOENT;
     }
+
+    // obc && obc->obs.exists, either get from HEAD or SNAPDIR
+
     dout(10) << "find_object_context " << oid
 	     << " @" << oid.snap
 	     << " oi=" << obc->obs.oi
 	     << dendl;
+
     *pobc = obc;
 
     // always populate ssc for SNAPDIR...
     if (!obc->ssc)
-      obc->ssc = get_snapset_context(
-	oid, true);
+      obc->ssc = get_snapset_context(oid, true);
+
     return 0;
   }
 
   // we want a snap
   if (!map_snapid_to_clone && pool.info.is_removed_snap(oid.snap)) {
     dout(10) << __func__ << " snap " << oid.snap << " is removed" << dendl;
+
     return -ENOENT;
   }
 
   SnapSetContext *ssc = get_snapset_context(oid, can_create);
   if (!ssc || !(ssc->exists || can_create)) {
     dout(20) << __func__ << " " << oid << " no snapset" << dendl;
+
     if (pmissing)
       *pmissing = head;  // start by getting the head
+
     if (ssc)
       put_snapset_context(ssc);
+
     return -ENOENT;
   }
+
+  // ssc must not be null
 
   if (map_snapid_to_clone) {
     dout(10) << "find_object_context " << oid << " @" << oid.snap
 	     << " snapset " << ssc->snapset
 	     << " map_snapid_to_clone=true" << dendl;
+
     if (oid.snap > ssc->snapset.seq) {
       // already must be readable
       ObjectContextRef obc = get_object_context(head, false);
+
       dout(10) << "find_object_context " << oid << " @" << oid.snap
 	       << " snapset " << ssc->snapset
 	       << " maps to head" << dendl;
+
       *pobc = obc;
+
       put_snapset_context(ssc);
+
       return (obc && obc->obs.exists) ? 0 : -ENOENT;
     } else {
       vector<snapid_t>::const_iterator citer = std::find(
 	ssc->snapset.clones.begin(),
 	ssc->snapset.clones.end(),
 	oid.snap);
+
       if (citer == ssc->snapset.clones.end()) {
 	dout(10) << "find_object_context " << oid << " @" << oid.snap
 		 << " snapset " << ssc->snapset
 		 << " maps to nothing" << dendl;
+
 	put_snapset_context(ssc);
+
 	return -ENOENT;
       }
 
@@ -9238,34 +9280,53 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
 	       << " maps to " << oid << dendl;
 
       if (pg_log.get_missing().is_missing(oid)) {
+
+        // HEAD/SNAPDIR has checked the missing by is_unreadable_object
+
+        // pg_log.get_missing().missing.count(oid) != 0
+
 	dout(10) << "find_object_context " << oid << " @" << oid.snap
 		 << " snapset " << ssc->snapset
 		 << " " << oid << " is missing" << dendl;
+
 	if (pmissing)
 	  *pmissing = oid;
+
 	put_snapset_context(ssc);
+
 	return -EAGAIN;
       }
 
       ObjectContextRef obc = get_object_context(oid, false);
+
       if (!obc || !obc->obs.exists) {
 	dout(10) << "find_object_context " << oid << " @" << oid.snap
 		 << " snapset " << ssc->snapset
 		 << " " << oid << " is not present" << dendl;
+
 	if (pmissing)
 	  *pmissing = oid;
+
 	put_snapset_context(ssc);
+
 	return -ENOENT;
       }
+
       dout(10) << "find_object_context " << oid << " @" << oid.snap
 	       << " snapset " << ssc->snapset
 	       << " " << oid << " HIT" << dendl;
+
       *pobc = obc;
+
       put_snapset_context(ssc);
+
       return 0;
     }
+
     assert(0); //unreachable
   }
+
+  // ! map_snapid_to_clone
 
   dout(10) << "find_object_context " << oid << " @" << oid.snap
 	   << " snapset " << ssc->snapset << dendl;
@@ -9274,24 +9335,32 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
   if (oid.snap > ssc->snapset.seq) {
     if (ssc->snapset.head_exists) {
       ObjectContextRef obc = get_object_context(head, false);
+
       dout(10) << "find_object_context  " << head
 	       << " want " << oid.snap << " > snapset seq " << ssc->snapset.seq
 	       << " -- HIT " << obc->obs
 	       << dendl;
+
       if (!obc->ssc)
 	obc->ssc = ssc;
       else {
 	assert(ssc == obc->ssc);
+
 	put_snapset_context(ssc);
       }
+
       *pobc = obc;
+
       return 0;
     }
+
     dout(10) << "find_object_context  " << head
 	     << " want " << oid.snap << " > snapset seq " << ssc->snapset.seq
 	     << " but head dne -- DNE"
 	     << dendl;
+
     put_snapset_context(ssc);
+
     return -ENOENT;
   }
 
@@ -9300,30 +9369,46 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
   while (k < ssc->snapset.clones.size() &&
 	 ssc->snapset.clones[k] < oid.snap)
     k++;
+
   if (k == ssc->snapset.clones.size()) {
     dout(10) << "find_object_context  no clones with last >= oid.snap "
 	     << oid.snap << " -- DNE" << dendl;
+
     put_snapset_context(ssc);
+
     return -ENOENT;
   }
+
   hobject_t soid(oid.oid, oid.get_key(), ssc->snapset.clones[k], oid.get_hash(),
 		 info.pgid.pool(), oid.get_namespace());
 
   if (pg_log.get_missing().is_missing(soid)) {
+
+    // HEAD/SNAPDIR has checked the missing by is_unreadable_object
+
+    // pg_log.get_missing().missing.count(oid) != 0
+
     dout(20) << "find_object_context  " << soid << " missing, try again later"
 	     << dendl;
+
     if (pmissing)
       *pmissing = soid;
+
     put_snapset_context(ssc);
+
     return -EAGAIN;
   }
 
   ObjectContextRef obc = get_object_context(soid, false);
+
   if (!obc || !obc->obs.exists) {
     dout(20) << __func__ << " missing clone " << soid << dendl;
+
     if (pmissing)
       *pmissing = soid;
+
     put_snapset_context(ssc);
+
     return -ENOENT;
   }
 
@@ -9331,6 +9416,7 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
     obc->ssc = ssc;
   } else {
     assert(obc->ssc == ssc);
+
     put_snapset_context(ssc);
   }
   ssc = 0;
@@ -9338,16 +9424,21 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
   // clone
   dout(20) << "find_object_context  " << soid << " snaps " << obc->obs.oi.snaps
 	   << dendl;
+
   snapid_t first = obc->obs.oi.snaps[obc->obs.oi.snaps.size()-1];
   snapid_t last = obc->obs.oi.snaps[0];
+
   if (first <= oid.snap) {
     dout(20) << "find_object_context  " << soid << " [" << first << "," << last
 	     << "] contains " << oid.snap << " -- HIT " << obc->obs << dendl;
+
     *pobc = obc;
+
     return 0;
   } else {
     dout(20) << "find_object_context  " << soid << " [" << first << "," << last
 	     << "] does not contain " << oid.snap << " -- DNE" << dendl;
+
     return -ENOENT;
   }
 }
@@ -9436,9 +9527,11 @@ SnapSetContext *ReplicatedPG::get_snapset_context(
   bool oid_existed)
 {
   Mutex::Locker l(snapset_contexts_lock);
+
   SnapSetContext *ssc;
   map<hobject_t, SnapSetContext*, hobject_t::BitwiseComparator>::iterator p = snapset_contexts.find(
     oid.get_snapdir());
+
   if (p != snapset_contexts.end()) {
     if (can_create || p->second->exists) {
       ssc = p->second;
@@ -9447,23 +9540,32 @@ SnapSetContext *ReplicatedPG::get_snapset_context(
     }
   } else {
     bufferlist bv;
+
     if (!attrs) {
       int r = -ENOENT;
+
       if (!(oid.is_head() && !oid_existed))
 	r = pgbackend->objects_get_attr(oid.get_head(), SS_ATTR, &bv);
+
       if (r < 0) {
 	// try _snapset
       if (!(oid.is_snapdir() && !oid_existed))
 	r = pgbackend->objects_get_attr(oid.get_snapdir(), SS_ATTR, &bv);
+
       if (r < 0 && !can_create)
 	return NULL;
       }
     } else {
       assert(attrs->count(SS_ATTR));
+
       bv = attrs->find(SS_ATTR)->second;
     }
+
     ssc = new SnapSetContext(oid.get_snapdir());
+
+    // register ssc into ReplicatedPG::snapset_contexts
     _register_snapset_context(ssc);
+
     if (bv.length()) {
       bufferlist::iterator bvp = bv.begin();
       ssc->snapset.decode(bvp);
@@ -9472,8 +9574,11 @@ SnapSetContext *ReplicatedPG::get_snapset_context(
       ssc->exists = false;
     }
   }
+
   assert(ssc);
+
   ssc->ref++;
+
   return ssc;
 }
 
