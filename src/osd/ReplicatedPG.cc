@@ -9202,7 +9202,7 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
     return 0;
   }
 
-  // non-HEAD object
+  // non-HEAD object, SNAPDIR or snapshot object
 
   hobject_t head = oid.get_head();
 
@@ -9251,6 +9251,10 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
 
   SnapSetContext *ssc = get_snapset_context(oid, can_create);
   if (!ssc || !(ssc->exists || can_create)) {
+
+    // we want to read a snapshot object, but we can not get the ssc of the
+    // snapshot object, so the shapshot object does not exist
+
     dout(20) << __func__ << " " << oid << " no snapset" << dendl;
 
     if (pmissing)
@@ -9543,6 +9547,9 @@ void ReplicatedPG::kick_object_context_blocked(ObjectContextRef obc)
   }
 }
 
+// oid_existed default to true, and only set to false explicitly when
+// called by get_object_context when create ObjectContext for a non-existed
+// object
 SnapSetContext *ReplicatedPG::get_snapset_context(
   const hobject_t& oid,
   bool can_create,
@@ -9562,6 +9569,9 @@ SnapSetContext *ReplicatedPG::get_snapset_context(
       return NULL;
     }
   } else {
+
+    // not in cache, try to get it from the backend
+
     bufferlist bv;
 
     if (!attrs) {
@@ -9591,6 +9601,7 @@ SnapSetContext *ReplicatedPG::get_snapset_context(
 
     if (bv.length()) {
       bufferlist::iterator bvp = bv.begin();
+
       ssc->snapset.decode(bvp);
       ssc->exists = true;
     } else {
