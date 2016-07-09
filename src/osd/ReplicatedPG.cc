@@ -9021,16 +9021,21 @@ ObjectContextRef ReplicatedPG::create_object_context(const object_info_t& oi,
 						     SnapSetContext *ssc)
 {
   ObjectContextRef obc(object_contexts.lookup_or_create(oi.soid));
+
   assert(obc->destructor_callback == NULL);
+
   obc->destructor_callback = new C_PG_ObjectContext(this, obc.get());  
   obc->obs.oi = oi;
   obc->obs.exists = false;
   obc->ssc = ssc;
   if (ssc)
     register_snapset_context(ssc);
+
   dout(10) << "create_object_context " << (void*)obc.get() << " " << oi.soid << " " << dendl;
+
   if (is_active())
     populate_obc_watchers(obc);
+
   return obc;
 }
 
@@ -9044,42 +9049,59 @@ ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
     (pg_log.get_log().objects.count(soid) &&
       pg_log.get_log().objects.find(soid)->second->op ==
       pg_log_entry_t::LOST_REVERT));
+
   ObjectContextRef obc = object_contexts.lookup(soid);
   osd->logger->inc(l_osd_object_ctx_cache_total);
   if (obc) {
     osd->logger->inc(l_osd_object_ctx_cache_hit);
+
     dout(10) << __func__ << ": found obc in cache: " << obc
 	     << dendl;
   } else {
     dout(10) << __func__ << ": obc NOT found in cache: " << soid << dendl;
+
     // check disk
     bufferlist bv;
     if (attrs) {
       assert(attrs->count(OI_ATTR));
+
       bv = attrs->find(OI_ATTR)->second;
     } else {
+
+      // object attrs must get from backend
+
       int r = pgbackend->objects_get_attr(soid, OI_ATTR, &bv);
       if (r < 0) {
+
+        // object does not exist
+
 	if (!can_create) {
 	  dout(10) << __func__ << ": no obc for soid "
 		   << soid << " and !can_create"
 		   << dendl;
+
 	  return ObjectContextRef();   // -ENOENT!
 	}
+
+	// create a new object
 
 	dout(10) << __func__ << ": no obc for soid "
 		 << soid << " but can_create"
 		 << dendl;
+
 	// new object.
 	object_info_t oi(soid);
 	SnapSetContext *ssc = get_snapset_context(
 	  soid, true, 0, false);
+
 	obc = create_object_context(oi, ssc);
+
 	dout(10) << __func__ << ": " << obc << " " << soid
 		 << " " << obc->rwstate
 		 << " oi: " << obc->obs.oi
 		 << " ssc: " << obc->ssc
 		 << " snapset: " << obc->ssc->snapset << dendl;
+
 	return obc;
       }
     }
@@ -9104,9 +9126,11 @@ ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
       if (attrs) {
 	obc->attr_cache = *attrs;
       } else {
+        // attrs must get from backend
 	int r = pgbackend->objects_get_attrs(
 	  soid,
 	  &obc->attr_cache);
+
 	assert(r == 0);
       }
     }
