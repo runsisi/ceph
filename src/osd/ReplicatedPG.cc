@@ -2108,7 +2108,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 	    dout(10) << " writes for " << obc->obs.oi.soid << " now blocked by "
 		     << sobc->obs.oi.soid << dendl;
 
-	    // has pushed the op on to waiting queue
+	    // has pushed the op onto waiting queue
 	    obc->blocked_by = sobc;
 	    sobc->blocking.insert(obc);
 	  } else {
