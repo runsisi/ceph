@@ -371,12 +371,15 @@ void ReplicatedPG::maybe_kick_recovery(
     dout(7) << "object " << soid << " v " << v << ", is unfound." << dendl;
   } else {
     dout(7) << "object " << soid << " v " << v << ", recovering." << dendl;
+
     PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op();
+
     if (is_missing_object(soid)) {
       recover_missing(soid, v, cct->_conf->osd_client_op_priority, h);
     } else {
       prep_object_replica_pushes(soid, v, h);
     }
+
     pgbackend->run_recovery_op(h, cct->_conf->osd_client_op_priority);
   }
 }
@@ -387,13 +390,16 @@ void ReplicatedPG::wait_for_unreadable_object(
   assert(is_unreadable_object(soid));
 
   maybe_kick_recovery(soid);
+
   waiting_for_unreadable_object[soid].push_back(op);
+
   op->mark_delayed("waiting for missing object");
 }
 
 void ReplicatedPG::wait_for_all_missing(OpRequestRef op)
 {
   waiting_for_all_missing.push_back(op);
+
   op->mark_delayed("waiting for all missing");
 }
 
@@ -407,11 +413,14 @@ bool ReplicatedPG::is_degraded_or_backfilling_object(const hobject_t& soid)
     return true;
   if (pg_log.get_missing().get_items().count(soid))
     return true;
+
   assert(!actingbackfill.empty());
+
   for (set<pg_shard_t>::iterator i = actingbackfill.begin();
        i != actingbackfill.end();
        ++i) {
     if (*i == get_primary()) continue;
+
     pg_shard_t peer = *i;
     if (peer_missing.count(peer) &&
 	peer_missing[peer].get_items().count(soid))
@@ -425,6 +434,7 @@ bool ReplicatedPG::is_degraded_or_backfilling_object(const hobject_t& soid)
 	backfills_in_flight.count(soid))
       return true;
   }
+
   return false;
 }
 
@@ -433,7 +443,9 @@ void ReplicatedPG::wait_for_degraded_object(const hobject_t& soid, OpRequestRef 
   assert(is_degraded_or_backfilling_object(soid));
 
   maybe_kick_recovery(soid);
+
   waiting_for_degraded_object[soid].push_back(op);
+
   op->mark_delayed("waiting for degraded object");
 }
 
@@ -441,10 +453,13 @@ void ReplicatedPG::block_write_on_full_cache(
   const hobject_t& _oid, OpRequestRef op)
 {
   const hobject_t oid = _oid.get_head();
+
   dout(20) << __func__ << ": blocking object " << oid
 	   << " on full cache" << dendl;
+
   objects_blocked_on_cache_full.insert(oid);
   waiting_for_cache_not_full.push_back(op);
+
   op->mark_delayed("waiting for cache not full");
 }
 
@@ -453,10 +468,14 @@ void ReplicatedPG::block_write_on_snap_rollback(
 {
   dout(20) << __func__ << ": blocking object " << oid.get_head()
 	   << " on snap promotion " << obc->obs.oi.soid << dendl;
+
   // otherwise, we'd have blocked in do_op
   assert(oid.is_head());
   assert(objects_blocked_on_snap_promotion.count(oid) == 0);
+
   objects_blocked_on_snap_promotion[oid] = obc;
+
+  // push back of waiting_for_blocked_object
   wait_for_blocked_object(obc->obs.oi.soid, op);
 }
 
@@ -465,9 +484,12 @@ void ReplicatedPG::block_write_on_degraded_snap(
 {
   dout(20) << __func__ << ": blocking object " << snap.get_head()
 	   << " on degraded snap " << snap << dendl;
+
   // otherwise, we'd have blocked in do_op
   assert(objects_blocked_on_degraded_snap.count(snap.get_head()) == 0);
+
   objects_blocked_on_degraded_snap[snap.get_head()] = snap.snap;
+
   wait_for_degraded_object(snap, op);
 }
 
@@ -476,6 +498,7 @@ bool ReplicatedPG::maybe_await_blocked_snapset(
   OpRequestRef op)
 {
   ObjectContextRef obc;
+
   obc = object_contexts.lookup(hoid.get_head());
   if (obc) {
     if (obc->is_blocked()) {
@@ -485,6 +508,7 @@ bool ReplicatedPG::maybe_await_blocked_snapset(
       return false;
     }
   }
+
   obc = object_contexts.lookup(hoid.get_snapdir());
   if (obc) {
     if (obc->is_blocked()) {
@@ -500,7 +524,11 @@ bool ReplicatedPG::maybe_await_blocked_snapset(
 void ReplicatedPG::wait_for_blocked_object(const hobject_t& soid, OpRequestRef op)
 {
   dout(10) << __func__ << " " << soid << " " << op << dendl;
+
+  // erased by ReplicatedPG::finish_promote, ReplicatedPG::kick_object_context_blocked,
+  // ReplicatedPG::on_change
   waiting_for_blocked_object[soid].push_back(op);
+
   op->mark_delayed("waiting for blocked object");
 }
 
@@ -1542,6 +1570,7 @@ bool ReplicatedPG::check_src_targ(const hobject_t& soid, const hobject_t& toid) 
        i != actingbackfill.end();
        ++i) {
     if (*i == get_primary()) continue;
+
     pg_shard_t bt = *i;
     map<pg_shard_t, pg_info_t>::const_iterator iter = peer_info.find(bt);
     assert(iter != peer_info.end());
@@ -1557,6 +1586,7 @@ bool ReplicatedPG::check_src_targ(const hobject_t& soid, const hobject_t& toid) 
 	cmp(soid, max, get_sort_bitwise()) > 0)
       return true;
   }
+
   return false;
 }
 
@@ -1748,6 +1778,8 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   map<hobject_t, snapid_t>::iterator blocked_iter =
     objects_blocked_on_degraded_snap.find(head);
 
+  // objects_blocked_on_degraded_snap inserted by ReplicatedPG::block_write_on_degraded_snap
+  // and erased by ReplicatedPG::finish_degraded_object
   if (write_ordered && blocked_iter != objects_blocked_on_degraded_snap.end()) {
     hobject_t to_wait_on(head);
     to_wait_on.snap = blocked_iter->second;
@@ -1758,14 +1790,20 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   map<hobject_t, ObjectContextRef>::iterator blocked_snap_promote_iter =
     objects_blocked_on_snap_promotion.find(head);
 
+  // objects_blocked_on_snap_promotion inserted by ReplicatedPG::block_write_on_snap_rollback
+  // and erased by ReplicatedPG::kick_object_context_blocked
   if (write_ordered && 
       blocked_snap_promote_iter != objects_blocked_on_snap_promotion.end()) {
+    // push back of waiting_for_blocked_object
     wait_for_blocked_object(
       blocked_snap_promote_iter->second->obs.oi.soid,
       op);
     return;
   }
 
+  // objects_blocked_on_cache_full inserted by ReplicatedPG::block_write_on_full_cache
+  // and erased by ReplicatedPG::on_change, ReplicatedPG::on_pool_change and
+  // ReplicatedPG::agent_choose_mode
   if (write_ordered && objects_blocked_on_cache_full.count(head)) {
     block_write_on_full_cache(head, op);
     return;
@@ -2011,6 +2049,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     // ObjectContext::blocked set by ObjectContext::start_block and
     // unset by ObjectContext::stop_block, which is cache op
 
+    // push back of waiting_for_blocked_object
     wait_for_blocked_object(obc->obs.oi.soid, op);
     return;
   }
@@ -2098,12 +2137,17 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 	  } else if (is_degraded_or_backfilling_object(sobc->obs.oi.soid) ||
 		   (check_src_targ(sobc->obs.oi.soid, obc->obs.oi.soid))) {
 	    if (is_degraded_or_backfilling_object(sobc->obs.oi.soid)) {
+
+	      // kick for recovery and push back of waiting_for_degraded_object
+
 	      wait_for_degraded_object(sobc->obs.oi.soid, op);
 	    } else {
 	      waiting_for_degraded_object[sobc->obs.oi.soid].push_back(op);
 
 	      op->mark_delayed("waiting for degraded object");
 	    }
+
+	    // the src oid is not available now, so the target oid is blocked
 
 	    dout(10) << " writes for " << obc->obs.oi.soid << " now blocked by "
 		     << sobc->obs.oi.soid << dendl;
@@ -2136,7 +2180,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     }
 
     return;
-  }
+  } // for_each m->ops
 
   // any SNAPDIR op needs to have all clones present.  treat them as
   // src_obc's so that we track references properly and clean up later.
@@ -2144,24 +2188,35 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     for (vector<snapid_t>::iterator p = obc->ssc->snapset.clones.begin();
 	 p != obc->ssc->snapset.clones.end();
 	 ++p) {
+
+      // iterate each clone object and get its ObjectContext and store in src_obc[] as
+      // the src oids
+
       hobject_t clone_oid = obc->obs.oi.soid;
       clone_oid.snap = *p;
+
       if (!src_obc.count(clone_oid)) {
 	if (is_unreadable_object(clone_oid)) {
 	  wait_for_unreadable_object(clone_oid, op);
 	  return;
 	}
 
+	// try to get the obc of the clone object from cache and backend
 	ObjectContextRef sobc = get_object_context(clone_oid, false);
 	if (!sobc) {
 	  if (!maybe_handle_cache(op, write_ordered, sobc, -ENOENT, clone_oid, true))
 	    osd->reply_op_error(op, -ENOENT);
 	  return;
 	} else {
+
+	  // got the obc of the clone object, try the next clone object
+
 	  dout(10) << " clone_oid " << clone_oid << " obc " << sobc << dendl;
+
 	  src_obc[clone_oid] = sobc;
 	  continue;
 	}
+
 	assert(0); // unreachable
       } else {
 	continue;
@@ -2169,9 +2224,12 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     }
   }
 
+  // Construct an OpContext instance to wrap the op, ops and obc
+
   OpContext *ctx = new OpContext(op, m->get_reqid(), m->ops, obc, this);
 
   if (!obc->obs.exists)
+    // newly create object by this op or previously has not completed create op
     ctx->snapset_obc = get_object_context(obc->obs.oi.soid.get_snapdir(), false);
 
   /* Due to obc caching, we might have a cached non-existent snapset_obc
@@ -2197,8 +2255,12 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     }
   } else if (!get_rw_locks(write_ordered, ctx)) {
     dout(20) << __func__ << " waiting for rw locks " << dendl;
+
     op->mark_delayed("waiting for rw locks");
+
+    //
     close_op_ctx(ctx);
+
     return;
   }
 
@@ -2992,6 +3054,7 @@ void ReplicatedPG::promote_object(ObjectContextRef obc,
   assert(obc->is_blocked());
 
   if (op)
+    // push back of waiting_for_blocked_object
     wait_for_blocked_object(obc->obs.oi.soid, op);
   info.stats.stats.sum.num_promote++;
 }
@@ -9111,7 +9174,7 @@ ObjectContextRef ReplicatedPG::create_object_context(const object_info_t& oi,
 
 // only ECBackend::handle_recovery_read_complete and
 // ReplicatedBackend::handle_pull_response will call ReplicatedPG::get_obc
-// with the third paramter attrs set to non-null
+// with the third parameter 'attrs' set to non-null
 ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
 						  bool can_create,
 						  map<string, bufferlist> *attrs)
@@ -9144,6 +9207,7 @@ ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
 
     // check disk
     bufferlist bv;
+
     if (attrs) {
       assert(attrs->count(OI_ATTR));
 
@@ -9318,11 +9382,17 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
 
   // want the snapdir?
   if (oid.snap == CEPH_SNAPDIR) {
+
     // return head or snapdir, whichever exists.
+
+    // try HEAD first
     ObjectContextRef headobc = get_object_context(head, can_create);
     ObjectContextRef obc = headobc;
 
     if (!obc || !obc->obs.exists)
+      // 1) OI_ATTR does not exist and can not create, or 2) found obc in cache, but this is a new
+      // object, i.e., a previous op has created the new object
+      // try SNAPDIR
       obc = get_object_context(oid, can_create);
 
     if (!obc || !obc->obs.exists) {
