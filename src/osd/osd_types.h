@@ -3514,6 +3514,7 @@ public:
 	recovery_read_marker(false),
 	snaptrimmer_write_marker(false)
     {}
+
     bool get_read(OpRequestRef op) {
       if (get_read_lock()) {
 	return true;
@@ -3521,6 +3522,7 @@ public:
       waiters.push_back(op);
       return false;
     }
+
     /// this function adjusts the counts if necessary
     bool get_read_lock() {
       // don't starve anybody!
@@ -3549,10 +3551,13 @@ public:
       if (get_write_lock(greedy)) {
 	return true;
       } // else
+
       if (op)
 	waiters.push_back(op);
+
       return false;
     }
+
     bool get_write_lock(bool greedy=false) {
       if (!greedy) {
 	// don't starve anybody!
@@ -3561,6 +3566,7 @@ public:
 	  return false;
 	}
       }
+
       switch (state) {
       case RWNONE:
 	assert(count == 0);
@@ -3578,6 +3584,7 @@ public:
 	return false;
       }
     }
+
     bool get_excl_lock() {
       switch (state) {
       case RWNONE:
@@ -3596,6 +3603,7 @@ public:
 	return false;
       }
     }
+
     bool get_excl(OpRequestRef op) {
       if (get_excl_lock()) {
 	return true;
@@ -3604,6 +3612,7 @@ public:
 	waiters.push_back(op);
       return false;
     }
+
     /// same as get_write_lock, but ignore starvation
     bool take_write_lock() {
       if (state == RWWRITE) {
@@ -3612,6 +3621,7 @@ public:
       }
       return get_write_lock();
     }
+
     void dec(list<OpRequestRef> *requeue) {
       assert(count > 0);
       assert(requeue);
@@ -3838,12 +3848,14 @@ public:
   bool empty() const {
     return locks.empty();
   }
+
   bool get_lock_type(
     ObjectContext::RWState::State type,
     const hobject_t &hoid,
     ObjectContextRef obc,
     OpRequestRef op) {
     assert(locks.find(hoid) == locks.end());
+
     if (obc->get_lock_type(op, type)) {
       locks.insert(make_pair(hoid, ObjectLockState(obc, type)));
       return true;
@@ -3851,11 +3863,13 @@ public:
       return false;
     }
   }
+
   /// Get write lock, ignore starvation
   bool take_write_lock(
     const hobject_t &hoid,
     ObjectContextRef obc) {
     assert(locks.find(hoid) == locks.end());
+
     if (obc->rwstate.take_write_lock()) {
       locks.insert(
 	make_pair(
@@ -3865,6 +3879,7 @@ public:
       return false;
     }
   }
+
   /// Get write lock for snap trim
   bool get_snaptrimmer_write(
     const hobject_t &hoid,
