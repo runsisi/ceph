@@ -672,13 +672,17 @@ public:
       async_read_result(0),
       inflightreads(0),
       lock_type(ObjectContext::RWState::RWNONE) {}
+
     void reset_obs(ObjectContextRef obc) {
       new_obs = ObjectState(obc->obs.oi, obc->obs.exists);
+
+      // TODO: obc->ssc always be non-null, see get_object_context ???
       if (obc->ssc) {
 	new_snapset = obc->ssc->snapset;
 	snapset = &obc->ssc->snapset;
       }
     }
+
     ~OpContext() {
       assert(!op_t);
       if (reply)
@@ -691,6 +695,7 @@ public:
 	delete i->second.second;
       }
     }
+
     uint64_t get_features() {
       if (op && op->get_req()) {
         return op->get_req()->get_connection()->get_features();
@@ -698,6 +703,7 @@ public:
       return -1ll;
     }
   };
+
   using OpContextUPtr = std::unique_ptr<OpContext>;
   friend struct OpContext;
 

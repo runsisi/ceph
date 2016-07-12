@@ -2002,6 +2002,8 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     // 1) r == -EAGAIN, i.e., the target oid is missing and read balance
     // and we are replica pg, or 2) r == -ENOENT and !obc, i.e., promote
     // does not help
+    // if r == -ENOENT, for SNAPDIR the obc may or may not be nulL,
+    // see find_object_context
 
     // copy the reqids for copy get on ENOENT
     if (r == -ENOENT &&
@@ -2030,6 +2032,9 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     }
     return;
   }
+
+  // r == 0 or (r == -ENOENT && obc), the later condition is only
+  // possible for SNAPDIR
 
   // ok, we have got the obc for the target object
 
@@ -2230,7 +2235,13 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   OpContext *ctx = new OpContext(op, m->get_reqid(), m->ops, obc, this);
 
   if (!obc->obs.exists)
-    // newly create object by this op or previously has not completed create op
+
+    // obc can not be SNAPDIR, becoz we always return -ENOENT for SNAPDIR
+    // when !obc || !obc.obs.exists
+
+    // newly create object by this op or previously has not completed
+    // create op, only get the obc of SNAPDIR when the target object
+    // does not exist in backend
     ctx->snapset_obc = get_object_context(obc->obs.oi.soid.get_snapdir(), false);
 
   /* Due to obc caching, we might have a cached non-existent snapset_obc
@@ -2239,6 +2250,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
    * populated.
    */
   if (ctx->snapset_obc && !ctx->snapset_obc->obs.exists)
+    // a previous SNAPDIR op may have cached the obc of the SNAPDIR
     ctx->snapset_obc = ObjectContextRef();
 
   if (m->has_flag(CEPH_OSD_FLAG_SKIPRWLOCKS)) {
@@ -2251,22 +2263,31 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     map<hobject_t,FlushOpRef, hobject_t::BitwiseComparator>::iterator p = flush_ops.find(obc->obs.oi.soid);
     if (p == flush_ops.end()) {
       dout(10) << __func__ << " no flush in progress, aborting" << dendl;
+
       reply_ctx(ctx, -EINVAL);
       return;
     }
   } else if (!get_rw_locks(write_ordered, ctx)) {
+
+    // get lock of obc failed, the op is queued on ctx->obc->rwstate.waiters,
+    // if succeeded, the <oid, <obc, lock type>> was inserted into ctx->lock_manager.locks
+
     dout(20) << __func__ << " waiting for rw locks " << dendl;
 
     op->mark_delayed("waiting for rw locks");
 
-    //
+    // reset ctx->op_t, finish all ctx->on_finish callbacks and finally delete ctx
     close_op_ctx(ctx);
 
     return;
   }
 
+  // if we got ENOENT and an obc, we need to check the locks
+  // Otherwise, we might return ENOENT out of order
+  // see 721c87837c754dc0 for why we do not move this check forward
   if (r) {
     dout(20) << __func__ << " returned an error: " << r << dendl;
+
     close_op_ctx(ctx);
     if (op->may_write() &&
 	get_osdmap()->test_flag(CEPH_OSDMAP_REQUIRE_KRAKEN)) {
@@ -2282,12 +2303,16 @@ void ReplicatedPG::do_op(OpRequestRef& op)
   }
 
   if ((op->may_read()) && (obc->obs.oi.is_lost())) {
+
     // This object is lost. Reading from it returns an error.
+
     dout(20) << __func__ << ": object " << obc->obs.oi.soid
 	     << " is lost" << dendl;
+
     reply_ctx(ctx, -ENFILE);
     return;
   }
+
   if (!op->may_write() &&
       !op->may_cache() &&
       (!obc->obs.exists ||
@@ -2297,23 +2322,31 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     if (m->ops[0].op.op == CEPH_OSD_OP_COPY_GET_CLASSIC ||
 	m->ops[0].op.op == CEPH_OSD_OP_COPY_GET) {
       bool classic = false;
+
       if (m->ops[0].op.op == CEPH_OSD_OP_COPY_GET_CLASSIC) {
 	classic = true;
       }
+
       fill_in_copy_get_noent(op, oid, m->ops[0], classic);
+
       close_op_ctx(ctx);
       return;
     }
+
     reply_ctx(ctx, -ENOENT);
     return;
   }
 
   op->mark_started();
+
   ctx->src_obc.swap(src_obc);
 
   execute_ctx(ctx);
+
+  // latency from dequeued from the op_wq to sent to backend
   utime_t prepare_latency = ceph_clock_now(cct);
   prepare_latency -= op->get_dequeued_time();
+
   osd->logger->tinc(l_osd_op_prepare_lat, prepare_latency);
   if (op->may_read() && op->may_write()) {
     osd->logger->tinc(l_osd_op_rw_prepare_lat, prepare_latency);
@@ -3060,11 +3093,16 @@ void ReplicatedPG::promote_object(ObjectContextRef obc,
   info.stats.stats.sum.num_promote++;
 }
 
+// called by ReplicatedPG::do_op
 void ReplicatedPG::execute_ctx(OpContext *ctx)
 {
   dout(10) << __func__ << " " << ctx << dendl;
+
+  // set new_obs, new_snapset and snapset
   ctx->reset_obs(ctx->obc);
+
   ctx->update_log_only = false; // reset in case finish_copyfrom() is re-running execute_ctx
+
   OpRequestRef op = ctx->op;
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
   ObjectContextRef obc = ctx->obc;
@@ -3073,9 +3111,14 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
 
   // this method must be idempotent since we may call it several times
   // before we finally apply the resulting transaction.
+
+  // alloc RPGTransaction/ECTransaction
   ctx->op_t.reset(pgbackend->get_transaction());
 
   if (op->may_write() || op->may_cache()) {
+
+    // for write op, we need to get snapc, for read op we need to get snapid
+
     // snap
     if (!(m->has_flag(CEPH_OSD_FLAG_ENFORCE_SNAPC)) &&
 	pool.info.is_pool_snaps_mode()) {
@@ -3086,17 +3129,23 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
       ctx->snapc.seq = m->get_snap_seq();
       ctx->snapc.snaps = m->get_snaps();
     }
+
     if ((m->has_flag(CEPH_OSD_FLAG_ORDERSNAP)) &&
 	ctx->snapc.seq < obc->ssc->snapset.seq) {
+
       dout(10) << " ORDERSNAP flag set and snapc seq " << ctx->snapc.seq
 	       << " < snapset seq " << obc->ssc->snapset.seq
 	       << " on " << obc->obs.oi.soid << dendl;
+
       reply_ctx(ctx, -EOLDSNAPC);
+
       return;
     }
 
     // version
+    // <epoch, pg_log.get_head().version + 1>
     ctx->at_version = get_next_version();
+
     ctx->mtime = m->get_mtime();
 
     dout(10) << "do_op " << soid << " " << ctx->ops
@@ -3112,14 +3161,18 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
 
   if (!ctx->user_at_version)
     ctx->user_at_version = obc->obs.oi.user_version;
+
   dout(30) << __func__ << " user_at_version " << ctx->user_at_version << dendl;
 
   if (op->may_read()) {
     dout(10) << " taking ondisk_read_lock" << dendl;
+
     obc->ondisk_read_lock();
   }
+
   for (map<hobject_t,ObjectContextRef, hobject_t::BitwiseComparator>::iterator p = src_obc.begin(); p != src_obc.end(); ++p) {
     dout(10) << " taking ondisk_read_lock for src " << p->first << dendl;
+
     p->second->ondisk_read_lock();
   }
 
@@ -3143,10 +3196,13 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
 
   if (op->may_read()) {
     dout(10) << " dropping ondisk_read_lock" << dendl;
+
     obc->ondisk_read_unlock();
   }
+
   for (map<hobject_t,ObjectContextRef, hobject_t::BitwiseComparator>::iterator p = src_obc.begin(); p != src_obc.end(); ++p) {
     dout(10) << " dropping ondisk_read_lock for src " << p->first << dendl;
+
     p->second->ondisk_read_unlock();
   }
 
@@ -3161,7 +3217,9 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
     return;
   }
 
+  // whether or not to clear m->ops[*].op.payload_len and m->ops[*].outdata
   bool successful_write = !ctx->op_t->empty() && op->may_write() && result >= 0;
+
   // prepare the reply
   ctx->reply = new MOSDOpReply(m, 0, get_osdmap()->get_epoch(), 0,
 			       successful_write);
@@ -3176,8 +3234,10 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
   if (successful_write) {
     // write.  normalize the result code.
     dout(20) << " zeroing write result code " << result << dendl;
+
     result = 0;
   }
+
   ctx->reply->set_result(result);
 
   // read or error?
@@ -3190,35 +3250,49 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
       complete_read_ctx(result, ctx);
     } else {
       in_progress_async_reads.push_back(make_pair(op, ctx));
+
       ctx->start_async_reads(this);
     }
 
     return;
   }
 
+  // write op, proceed
+
   ctx->reply->set_reply_versions(ctx->at_version, ctx->user_at_version);
 
   assert(op->may_write() || op->may_cache());
 
   // trim log?
+  // update pg_trim_to
   calc_trim_to();
 
   // verify that we are doing this in order?
   if (cct->_conf->osd_debug_op_order && m->get_source().is_client() &&
       !pool.info.is_tier() && !pool.info.has_tiers()) {
+    // map<hobject_t, map<client_t,ceph_tid_t>>
     map<client_t,ceph_tid_t>& cm = debug_op_order[obc->obs.oi.soid];
+
     ceph_tid_t t = m->get_tid();
     client_t n = m->get_source().num();
+
     map<client_t,ceph_tid_t>::iterator p = cm.find(n);
+
     if (p == cm.end()) {
       dout(20) << " op order client." << n << " tid " << t << " (first)" << dendl;
+
       cm[n] = t;
     } else {
       dout(20) << " op order client." << n << " tid " << t << " last was " << p->second << dendl;
+
       if (p->second > t) {
+
+        // the later processed op must have bigger tid
+
 	derr << "bad op order, already applied " << p->second << " > this " << t << dendl;
 	assert(0 == "out of order op");
       }
+
       p->second = t;
     }
   }
@@ -3242,6 +3316,9 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
     record_write_error(op, soid, reply, result);
     return;
   }
+
+  // register callback:
+  // ctx->on_applied, ctx->on_committed, ctx->on_success, ctx->on_finish
 
   // no need to capture PG ref, repop cancel will handle that
   // Can capture the ctx by pointer, it's owned by the repop
@@ -3308,10 +3385,15 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
   // issue replica writes
   ceph_tid_t rep_tid = osd->get_tid();
 
+  // alloc a RepGather and push back of repop_queue
   RepGather *repop = new_repop(ctx, obc, rep_tid);
 
+  // pgbackend->submit_transaction
   issue_repop(repop, ctx);
+
+  // check if the repop has committed, applied, -> success -> finish
   eval_repop(repop);
+
   repop->put();
 }
 
@@ -6517,10 +6599,12 @@ void ReplicatedPG::_make_clone(
 void ReplicatedPG::make_writeable(OpContext *ctx)
 {
   const hobject_t& soid = ctx->obs->oi.soid;
+
   SnapContext& snapc = ctx->snapc;
 
   // clone?
   assert(soid.snap == CEPH_NOSNAP);
+
   dout(20) << "make_writeable " << soid << " snapset=" << ctx->snapset
 	   << "  snapc=" << snapc << dendl;
   
@@ -6835,6 +6919,8 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
   const hobject_t& soid = ctx->obs->oi.soid;
 
   // valid snap context?
+  // ctx->snapc.snaps[] must in descending order and ctx->snapc.seq >= ctx->snapc.snaps[0]
+  // TODO: we can simplify the validation check logic ???
   if (!ctx->snapc.is_valid()) {
     dout(10) << " invalid snapc " << ctx->snapc << dendl;
     return -EINVAL;
@@ -6854,6 +6940,9 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
 
   // read-op?  done?
   if (ctx->op_t->empty() && !ctx->modify) {
+
+    // ctx->modify indicates force modification even if op_t is empty
+
     unstable_stats.add(ctx->delta_stats);
     return result;
   }
@@ -6863,7 +6952,11 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
        ctx->delta_stats.num_objects > 0) &&  // FIXME: keys?
       (pool.info.has_flag(pg_pool_t::FLAG_FULL) ||
        get_osdmap()->test_flag(CEPH_OSDMAP_FULL))) {
+
+    // pool full or osd full
+
     MOSDOp *m = static_cast<MOSDOp*>(ctx->op->get_req());
+
     if (ctx->reqid.name.is_mds() ||   // FIXME: ignore MDS for now
 	m->has_flag(CEPH_OSD_FLAG_FULL_FORCE)) {
       dout(20) << __func__ << " full, but proceeding due to FULL_FORCE or MDS"
@@ -6871,18 +6964,22 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
     } else if (m->has_flag(CEPH_OSD_FLAG_FULL_TRY)) {
       // they tried, they failed.
       dout(20) << __func__ << " full, replying to FULL_TRY op" << dendl;
+
       return pool.info.has_flag(pg_pool_t::FLAG_FULL) ? -EDQUOT : -ENOSPC;
     } else {
       // drop request
       dout(20) << __func__ << " full, dropping request (bad client)" << dendl;
+
       return -EAGAIN;
     }
   }
 
   // clone, if necessary
   if (soid.snap == CEPH_NOSNAP)
+    // COW if the HEAD does not exist or op with a bigger snap_seq
     make_writeable(ctx);
 
+  // store OI_ATTR and SS_ATTR, populate pg log entry
   finish_ctx(ctx,
 	     ctx->new_obs.exists ? pg_log_entry_t::MODIFY :
 	     pg_log_entry_t::DELETE);
@@ -6890,30 +6987,48 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
   return result;
 }
 
+// the third parameter default to true, the forth parameter default to false
 void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc,
 			      bool scrub_ok)
 {
   const hobject_t& soid = ctx->obs->oi.soid;
+
   dout(20) << __func__ << " " << soid << " " << ctx
 	   << " op " << pg_log_entry_t::get_op_name(log_op_type)
 	   << dendl;
+
   utime_t now = ceph_clock_now(cct);
 
   // snapset
   bufferlist bss;
 
   if (soid.snap == CEPH_NOSNAP && maintain_ssc) {
+
+    // if we are to create/delete the HEAD, try to store ssc in
+    // proper place, either SNAPDIR or HEAD
+
     ::encode(ctx->new_snapset, bss);
+
     assert(ctx->new_obs.exists == ctx->new_snapset.head_exists);
 
     if (ctx->new_obs.exists) {
       if (!ctx->obs->exists) {
+
+        // HEAD should be created, check if the SNAPDIR exists
+
+        // TODO: the second condition can be eliminated ???
 	if (ctx->snapset_obc && ctx->snapset_obc->obs.exists) {
+
+	  // SNAPDIR exists, remove it
+
 	  hobject_t snapoid = soid.get_snapdir();
+
+	  // we are to create the HEAD, so delete the SNAPDIR
 	  ctx->log.push_back(pg_log_entry_t(pg_log_entry_t::DELETE, snapoid,
 	      ctx->at_version,
 	      ctx->snapset_obc->obs.oi.version,
 	      0, osd_reqid_t(), ctx->mtime, 0));
+
 	  if (pool.info.require_rollback()) {
 	    if (ctx->log.back().mod_desc.rmobject(ctx->at_version.version)) {
 	      ctx->op_t->stash(snapoid, ctx->at_version.version);
@@ -6924,6 +7039,7 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
 	    ctx->op_t->remove(snapoid);
 	    ctx->log.back().mod_desc.mark_unrollbackable();
 	  }
+
 	  dout(10) << " removing old " << snapoid << dendl;
 
 	  ctx->at_version.version++;
@@ -6934,11 +7050,17 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     } else if (ctx->new_snapset.clones.size() &&
 	       !ctx->cache_evict &&
 	       (!ctx->snapset_obc || !ctx->snapset_obc->obs.exists)) {
+
+      // HEAD should be deleted, while SNAPDIR does not exist,
+      // create SNAPDIR and store the snapset in SNAPDIR
+
       // save snapset on _snap
       hobject_t snapoid(soid.oid, soid.get_key(), CEPH_SNAPDIR, soid.get_hash(),
 			info.pgid.pool(), soid.get_namespace());
+
       dout(10) << " final snapset " << ctx->new_snapset
 	       << " in " << snapoid << dendl;
+
       ctx->log.push_back(pg_log_entry_t(pg_log_entry_t::MODIFY, snapoid,
 					ctx->at_version,
 	                                eversion_t(),
@@ -6946,6 +7068,7 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
 
       if (!ctx->snapset_obc)
 	ctx->snapset_obc = get_object_context(snapoid, true);
+
       bool got = false;
       if (ctx->lock_type == ObjectContext::RWState::RWWRITE) {
 	got = ctx->lock_manager.get_write_greedy(
@@ -6954,19 +7077,24 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
 	  ctx->op);
       } else {
 	assert(ctx->lock_type == ObjectContext::RWState::RWEXCL);
+
 	got = ctx->lock_manager.get_lock_type(
 	  ObjectContext::RWState::RWEXCL,
 	  snapoid,
 	  ctx->snapset_obc,
 	  ctx->op);
       }
+
       assert(got);
+
       dout(20) << " got greedy write on snapset_obc " << *ctx->snapset_obc << dendl;
+
       if (pool.info.require_rollback() && !ctx->snapset_obc->obs.exists) {
 	ctx->log.back().mod_desc.create();
       } else if (!pool.info.require_rollback()) {
 	ctx->log.back().mod_desc.mark_unrollbackable();
       }
+
       ctx->snapset_obc->obs.exists = true;
       ctx->snapset_obc->obs.oi.version = ctx->at_version;
       ctx->snapset_obc->obs.oi.last_reqid = ctx->reqid;
@@ -6976,10 +7104,14 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
       map<string, bufferlist> attrs;
       bufferlist bv(sizeof(ctx->new_obs.oi));
       ::encode(ctx->snapset_obc->obs.oi, bv, get_osdmap()->get_up_osd_features());
+
       ctx->op_t->touch(snapoid);
+
       attrs[OI_ATTR].claim(bv);
       attrs[SS_ATTR].claim(bss);
+
       setattrs_maybe_cache(ctx->snapset_obc, ctx, ctx->op_t.get(), attrs);
+
       if (pool.info.require_rollback()) {
 	map<string, boost::optional<bufferlist> > to_set;
 	to_set[SS_ATTR];
@@ -6988,32 +7120,45 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
       } else {
 	ctx->log.back().mod_desc.mark_unrollbackable();
       }
+
       ctx->at_version.version++;
     }
   }
 
   // finish and log the op.
+
   if (ctx->user_modify) {
+
+    // CEPH_OSD_OP_MODE_WR and CLS_METHOD_WR are user visible ops
+
     // update the user_version for any modify ops, except for the watch op
     ctx->user_at_version = MAX(info.last_user_version, ctx->new_obs.oi.user_version) + 1;
+
     /* In order for new clients and old clients to interoperate properly
      * when exchanging versions, we need to lower bound the user_version
      * (which our new clients pay proper attention to)
      * by the at_version (which is all the old clients can ever see). */
     if (ctx->at_version.version > ctx->user_at_version)
       ctx->user_at_version = ctx->at_version.version;
+
     ctx->new_obs.oi.user_version = ctx->user_at_version;
   }
+
   ctx->bytes_written = ctx->op_t->get_bytes_written();
  
   if (ctx->new_obs.exists) {
+
+    // target object exists, update target object info, i.e., version, mtime, etc.
+
     // on the head object
     ctx->new_obs.oi.version = ctx->at_version;
     ctx->new_obs.oi.prior_version = ctx->obs->oi.version;
     ctx->new_obs.oi.last_reqid = ctx->reqid;
     if (ctx->mtime != utime_t()) {
       ctx->new_obs.oi.mtime = ctx->mtime;
+
       dout(10) << " set mtime to " << ctx->new_obs.oi.mtime << dendl;
+
       ctx->new_obs.oi.local_mtime = now;
     } else {
       dout(10) << " mtime unchanged at " << ctx->new_obs.oi.mtime << dendl;
@@ -7022,22 +7167,30 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     map <string, bufferlist> attrs;
     bufferlist bv(sizeof(ctx->new_obs.oi));
     ::encode(ctx->new_obs.oi, bv, get_osdmap()->get_up_osd_features());
+
     attrs[OI_ATTR].claim(bv);
 
     if (soid.snap == CEPH_NOSNAP) {
+
+      // store ssc in HEAD
+
       dout(10) << " final snapset " << ctx->new_snapset
 	       << " in " << soid << dendl;
+
       attrs[SS_ATTR].claim(bss);
     } else {
       dout(10) << " no snapset (this is a clone)" << dendl;
     }
+
     setattrs_maybe_cache(ctx->obc, ctx, ctx->op_t.get(), attrs);
 
     if (pool.info.require_rollback()) {
       set<string> changing;
+
       changing.insert(OI_ATTR);
       if (!soid.is_snap())
 	changing.insert(SS_ATTR);
+
       ctx->obc->fill_in_setattrs(changing, &(ctx->mod_desc));
     } else {
       // replicated pools are never rollbackable in this case
@@ -7052,13 +7205,18 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
 				    ctx->obs->oi.version,
 				    ctx->user_at_version, ctx->reqid,
 				    ctx->mtime, 0));
+
   if (soid.snap < CEPH_NOSNAP) {
+
+    // snap object
+
     switch (log_op_type) {
     case pg_log_entry_t::MODIFY:
     case pg_log_entry_t::PROMOTE:
     case pg_log_entry_t::CLEAN:
       dout(20) << __func__ << " encoding snaps " << ctx->new_obs.oi.snaps
 	       << dendl;
+
       ::encode(ctx->new_obs.oi.snaps, ctx->log.back().snaps);
       break;
     default:
@@ -7067,8 +7225,10 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
   }
 
   ctx->log.back().mod_desc.claim(ctx->mod_desc);
+
   if (!ctx->extra_reqids.empty()) {
     dout(20) << __func__ << "  extra_reqids " << ctx->extra_reqids << dendl;
+
     ctx->log.back().extra_reqids.swap(ctx->extra_reqids);
   }
 
@@ -8712,26 +8872,33 @@ void ReplicatedPG::eval_repop(RepGather *repop)
 void ReplicatedPG::issue_repop(RepGather *repop, OpContext *ctx)
 {
   const hobject_t& soid = ctx->obs->oi.soid;
+
   dout(7) << "issue_repop rep_tid " << repop->rep_tid
           << " o " << soid
           << dendl;
 
   repop->v = ctx->at_version;
+
   if (ctx->at_version > eversion_t()) {
     for (set<pg_shard_t>::iterator i = actingbackfill.begin();
 	 i != actingbackfill.end();
 	 ++i) {
       if (*i == get_primary()) continue;
+
       pg_info_t &pinfo = peer_info[*i];
+
       // keep peer_info up to date
       if (pinfo.last_complete == pinfo.last_update)
 	pinfo.last_complete = ctx->at_version;
+
       pinfo.last_update = ctx->at_version;
     }
   }
 
   ctx->obc->ondisk_write_lock();
+
   if (ctx->clone_obc)
+    // created by ReplicatedPG::make_writeable
     ctx->clone_obc->ondisk_write_lock();
 
   bool unlock_snapset_obc = false;
@@ -8758,6 +8925,7 @@ void ReplicatedPG::issue_repop(RepGather *repop, OpContext *ctx)
     ctx->obc,
     ctx->clone_obc,
     unlock_snapset_obc ? ctx->snapset_obc : ObjectContextRef());
+
   pgbackend->submit_transaction(
     soid,
     ctx->at_version,
