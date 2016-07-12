@@ -3225,6 +3225,7 @@ void PG::filter_snapc(vector<snapid_t> &snaps)
 
   bool filtering = false;
   vector<snapid_t> newsnaps;
+
   for (vector<snapid_t>::iterator p = snaps.begin();
        p != snaps.end();
        ++p) {
@@ -3232,17 +3233,21 @@ void PG::filter_snapc(vector<snapid_t> &snaps)
       if (!filtering) {
 	// start building a new vector with what we've seen so far
 	dout(10) << "filter_snapc filtering " << snaps << dendl;
+
 	newsnaps.insert(newsnaps.begin(), snaps.begin(), p);
 	filtering = true;
       }
+
       dout(20) << "filter_snapc  removing trimq|purged snap " << *p << dendl;
     } else {
       if (filtering)
 	newsnaps.push_back(*p);  // continue building new vector
     }
   }
+
   if (filtering) {
     snaps.swap(newsnaps);
+
     dout(10) << "filter_snapc  result " << snaps << dendl;
   }
 }
