@@ -3498,6 +3498,10 @@ WRITE_CLASS_ENCODER(interval_set<uint64_t>)
 struct SnapSet {
   snapid_t seq;
   bool head_exists;
+
+  // snaps     -> all snapshots have been taken so far, descending order
+  // clones    -> all clone objects have been created by COW, ascending order
+
   vector<snapid_t> snaps;    // descending
   vector<snapid_t> clones;   // ascending
   map<snapid_t, interval_set<uint64_t> > clone_overlap;  // overlap w/ next newest
