@@ -2222,6 +2222,7 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 	  dout(10) << " clone_oid " << clone_oid << " obc " << sobc << dendl;
 
 	  src_obc[clone_oid] = sobc;
+
 	  continue;
 	}
 
@@ -5125,6 +5126,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
       ++ctx->num_read;
       {
 	tracepoint(osd, do_osd_op_pre_list_snaps, soid.oid.name.c_str(), soid.snap.val);
+
         obj_list_snap_response_t resp;
 
         if (!ssc) {
@@ -5135,25 +5137,39 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
         int clonecount = ssc->snapset.clones.size();
         if (ssc->snapset.head_exists)
           clonecount++;
+        // clone objects + maybe HEAD
         resp.clones.reserve(clonecount);
+
         for (vector<snapid_t>::const_iterator clone_iter = ssc->snapset.clones.begin();
 	     clone_iter != ssc->snapset.clones.end(); ++clone_iter) {
+
+          // iterate each clone object to get the clone info
+
           clone_info ci;
           ci.cloneid = *clone_iter;
 
 	  hobject_t clone_oid = soid;
 	  clone_oid.snap = *clone_iter;
+
+	  // for CEPH_OSD_OP_LIST_SNAPS, all ObjectContext of the clone objects has been
+	  // got in ReplicatedPG::do_op
 	  ObjectContextRef clone_obc = ctx->src_obc[clone_oid];
           assert(clone_obc);
+
 	  for (vector<snapid_t>::reverse_iterator p = clone_obc->obs.oi.snaps.rbegin();
 	       p != clone_obc->obs.oi.snaps.rend();
 	       ++p) {
+	    // snapshots that the clone object can be used to rollback to
+
+	    // change from descending order to ascending order
 	    ci.snaps.push_back(*p);
 	  }
 
           dout(20) << " clone " << *clone_iter << " snaps " << ci.snaps << dendl;
 
           map<snapid_t, interval_set<uint64_t> >::const_iterator coi;
+
+          // every clone object has an overlap, see ReplicatedPG::make_writeable
           coi = ssc->snapset.clone_overlap.find(ci.cloneid);
           if (coi == ssc->snapset.clone_overlap.end()) {
             osd->clog->error() << "osd." << osd->whoami << ": inconsistent clone_overlap found for oid "
@@ -5161,14 +5177,20 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
             result = -EINVAL;
             break;
           }
+
           const interval_set<uint64_t> &o = coi->second;
+
           ci.overlap.reserve(o.num_intervals());
           for (interval_set<uint64_t>::const_iterator r = o.begin();
                r != o.end(); ++r) {
+
+            // from interval_set to map<uint64_t, uint64_t>
+
             ci.overlap.push_back(pair<uint64_t,uint64_t>(r.get_start(), r.get_len()));
           }
 
           map<snapid_t, uint64_t>::const_iterator si;
+
           si = ssc->snapset.clone_size.find(ci.cloneid);
           if (si == ssc->snapset.clone_size.end()) {
             osd->clog->error() << "osd." << osd->whoami << ": inconsistent clone_size found for oid "
@@ -5176,27 +5198,35 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
             result = -EINVAL;
             break;
           }
+
           ci.size = si->second;
 
           resp.clones.push_back(ci);
         }
+
 	if (result < 0) {
 	  break;
 	}	  
+
+	// the HEAD
         if (ssc->snapset.head_exists &&
 	    !ctx->obc->obs.oi.is_whiteout()) {
           assert(obs.exists);
+
           clone_info ci;
           ci.cloneid = CEPH_NOSNAP;
 
           //Size for HEAD is oi.size
           ci.size = oi.size;
 
+          // ascending order
           resp.clones.push_back(ci);
         }
+
 	resp.seq = ssc->snapset.seq;
 
         resp.encode(osd_op.outdata);
+
         result = 0;
 
         ctx->delta_stats.num_rd++;
@@ -6404,6 +6434,7 @@ inline int ReplicatedPG::_delete_oid(OpContext *ctx, bool no_whiteout)
 
   if (oi.size > 0) {
     interval_set<uint64_t> ch;
+
     ch.insert(0, oi.size);
     ctx->modified_ranges.union_of(ch);
   }
@@ -6598,14 +6629,16 @@ int ReplicatedPG::_rollback_to(OpContext *ctx, ceph_osd_op& op)
 	}
       }
 
-      // 2) clone the target clone object to HEAD
       ctx->mod_desc.create();
+
+      // 2) clone the target clone object to HEAD
       t->clone(rollback_to_sobject, soid);
 
       snapset.head_exists = true;
 
       map<snapid_t, interval_set<uint64_t> >::iterator iter =
 	snapset.clone_overlap.lower_bound(snapid);
+
       interval_set<uint64_t> overlaps = iter->second;
       assert(iter != snapset.clone_overlap.end());
 
@@ -6809,7 +6842,7 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
     snap_oi->prior_version = ctx->obs->oi.version;
     snap_oi->copy_user_bits(ctx->obs->oi);
 
-    // snapshots that the clone object can rollback to
+    // snapshots that the clone object can be used to rollback to
     snap_oi->snaps = snaps;
 
     // prepend transaction to op_t
@@ -6863,8 +6896,12 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
 
   // update most recent clone_overlap and usage stats
   if (ctx->new_snapset.clones.size() > 0) {
+
+    // there is at least one clone object
+
     /* we need to check whether the most recent clone exists, if it's been evicted,
      * it's not included in the stats */
+
     hobject_t last_clone_oid = soid;
     last_clone_oid.snap = ctx->new_snapset.clone_overlap.rbegin()->first;
 
@@ -6874,6 +6911,7 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
       ctx->modified_ranges.intersection_of(newest_overlap);
 
       // modified_ranges is still in use by the clone
+      // iterate ctx->modified_ranges to add each lenght to ctx->delta_stats
       add_interval_usage(ctx->modified_ranges, ctx->delta_stats);
 
       newest_overlap.subtract(ctx->modified_ranges);
@@ -6914,6 +6952,9 @@ void ReplicatedPG::write_update_size_and_usage(object_stat_sum_t& delta_stats, o
 void ReplicatedPG::add_interval_usage(interval_set<uint64_t>& s, object_stat_sum_t& delta_stats)
 {
   for (interval_set<uint64_t>::const_iterator p = s.begin(); p != s.end(); ++p) {
+
+    // iterate interval_set
+
     delta_stats.num_bytes += p.get_len();
   }
 }
@@ -8825,8 +8866,10 @@ bool ReplicatedPG::is_present_clone(hobject_t coid)
 {
   if (!pool.info.allow_incomplete_clones())
     return true;
+
   if (is_missing_object(coid))
     return true;
+
   ObjectContextRef obc = get_object_context(coid, false);
   return obc && obc->obs.exists;
 }
