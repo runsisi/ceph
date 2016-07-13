@@ -237,10 +237,13 @@ static const char *decode_out_escaped(const char *in, string *out)
 
 ostream& operator<<(ostream& out, const hobject_t& o)
 {
+  // e.g., 0:c280c79e:::rbd_data.112774b0dc51.00000000000000ff:head
+
   if (o == hobject_t())
     return out << "MIN";
   if (o.is_max())
     return out << "MAX";
+
   out << o.pool << ':';
   out << std::hex;
   out.width(8);
