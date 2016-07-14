@@ -997,6 +997,7 @@ void Operations<I>::execute_snap_remove(const std::string &snap_name,
     new operation::SnapshotRemoveRequest<I>(
       m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), snap_name,
       snap_id);
+
   req->send();
 }
 

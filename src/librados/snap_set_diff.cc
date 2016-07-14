@@ -61,6 +61,9 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
       b = r->snaps[r->snaps.size()-1];
     }
 
+    // [a, b]: at snapid a we created a clone object, the HEAD were changing until
+    // snapid b, at snapid b a new clone object was created
+
     ldout(cct, 20) << " clone " << r->cloneid << " snaps " << r->snaps
 		   << " -> [" << a << "," << b << "]"
 		   << " size " << r->size << " overlap to next " << r->overlap << dendl;

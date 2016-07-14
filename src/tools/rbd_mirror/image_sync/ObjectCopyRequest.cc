@@ -117,7 +117,7 @@ void ObjectCopyRequest<I>::send_read_object() {
   // map the sync op start snap id back to the necessary read snap id
   librados::snap_t remote_snap_seq = m_snap_sync_ops.begin()->first;
 
-  // set IoCtxImpl::snap_seq
+  // set IoCtxImpl::snap_seq, see IoCtxImpl::aio_operate_read
   m_remote_io_ctx.snap_set_read(remote_snap_seq);
 
   bool read_required = false;
@@ -374,6 +374,8 @@ void ObjectCopyRequest<I>::compute_diffs() {
              << "exists=" << exists << dendl;
 
     if (exists) {
+
+      // clone object exists at snapid end_remote_snap_id
 
       // clip diff to size of object (in case it was truncated)
 

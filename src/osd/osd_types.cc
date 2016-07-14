@@ -1261,6 +1261,7 @@ bool pg_pool_t::is_removed_snap(snapid_t s) const
  * build set of known-removed sets from either pool snaps or
  * explicit removed_snaps set.
  */
+// called by PGPool::update
 void pg_pool_t::build_removed_snaps(interval_set<snapid_t>& rs) const
 {
   if (is_pool_snaps_mode()) {
