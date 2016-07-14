@@ -36,6 +36,8 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
        r != snap_set.clones.end();
        ) {
 
+    // iterate each clone object
+
     // make an interval, and hide the fact that the HEAD doesn't
     // include itself in the snaps list
 
@@ -47,9 +49,14 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
 
       // head is valid starting from right after the last seen seq
       a = snap_set.seq + 1;
+
       b = librados::SNAP_HEAD;
     } else {
+      // obc->obs.oi.snaps is in descending order, but got the ascending
+      // order returned in handling CEPH_OSD_OP_LIST_SNAPS
+
       a = r->snaps[0];
+
       // note: b might be < r->cloneid if a snap has been trimmed.
       b = r->snaps[r->snaps.size()-1];
     }
@@ -58,17 +65,24 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
 		   << " -> [" << a << "," << b << "]"
 		   << " size " << r->size << " overlap to next " << r->overlap << dendl;
 
+    // filter those clone objects that their snapshots, i.e., [a, b], have
+    // overlap with the [start, end]
+
     if (b < start) {
       // this is before start, skip those snapshots before start
+
       ++r;
       continue;
     }
 
+    // [start, b]
+
     if (!saw_start) {
 
-      // the first time start <= b
-
       if (start < a) {
+
+        // [start, a, b]
+
 	ldout(cct, 20) << "  start, after " << start << dendl;
 
 	// this means the object didn't exist at start
@@ -77,6 +91,9 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
 
 	start_size = 0;
       } else {
+
+        // [a, start, b], snapid start in [a, b], so the clone object exists at snapid start
+
 	ldout(cct, 20) << "  start" << dendl;
 
 	start_size = r->size;
@@ -88,12 +105,18 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
     *end_size = r->size;
 
     if (end < a) {
+
+      // [start, end, a, b]
+
       ldout(cct, 20) << " past end " << end << ", end object does not exist" << dendl;
 
       *end_exists = false;
       diff->clear();
 
       if (start_size) {
+
+        // the clone object exists at snapid start
+
 	diff->insert(0, start_size);
       }
 
@@ -101,12 +124,17 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
     }
 
     if (end <= b) {
+
+      // [a, end, b], snapid end in [a, b], so the clone object exists at snapid end
+
       ldout(cct, 20) << " end" << dendl;
 
       *end_exists = true;
 
       break;
     }
+
+    // [start, a, b, end] or [a, start, b, end] or [start, a, b, end]
 
     // start with the max(this size, next size), and subtract off any
     // overlap
@@ -127,6 +155,7 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
     for (vector<pair<uint64_t, uint64_t> >::const_iterator p = overlap->begin();
 	 p != overlap->end();
 	 ++p) {
+      // erase the overlapped area
       diff_to_next.erase(p->first, p->second);
     }
 
