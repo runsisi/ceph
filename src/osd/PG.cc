@@ -155,6 +155,7 @@ void PG::dump_live_ids()
 }
 #endif
 
+// called by PG::handle_advance_map
 void PGPool::update(OSDMapRef map)
 {
   const pg_pool_t *pi = map->get_pg_pool(id);
@@ -163,27 +164,38 @@ void PGPool::update(OSDMapRef map)
   auid = pi->auid;
   name = map->get_pool_name(id);
   bool updated = false;
+
   if ((map->get_epoch() == cached_epoch + 1) &&
       (pi->get_snap_epoch() == map->get_epoch())) {
     updated = true;
+
     pi->build_removed_snaps(newly_removed_snaps);
+
     interval_set<snapid_t> intersection;
     intersection.intersection_of(newly_removed_snaps, cached_removed_snaps);
+
     if (intersection == cached_removed_snaps) {
         newly_removed_snaps.subtract(cached_removed_snaps);
+
+        // will be used in PG::activate
         cached_removed_snaps.union_of(newly_removed_snaps);
     } else {
         lgeneric_subdout(g_ceph_context, osd, 0) << __func__
           << " cached_removed_snaps shrank from " << cached_removed_snaps
           << " to " << newly_removed_snaps << dendl;
+
         cached_removed_snaps = newly_removed_snaps;
         newly_removed_snaps.clear();
     }
+
+    // used for pool snaps mode to set ctx->snapc only, see ReplicatedPG::execute_ctx
     snapc = pi->get_snap_context();
   } else {
     newly_removed_snaps.clear();
   }
+
   cached_epoch = map->get_epoch();
+
   lgeneric_subdout(g_ceph_context, osd, 20)
     << "PGPool::update cached_removed_snaps "
     << cached_removed_snaps
