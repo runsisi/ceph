@@ -57,7 +57,7 @@ void ObjectCopyRequest<I>::send_list_snaps() {
   // CEPH_OSD_OP_LIST_SNAPS, <vector<clone_info_t>, seq>
   op.list_snaps(&m_snap_set, &m_snap_ret);
 
-  // m->get_snapid() must return CEPH_SNAPDIR for CEPH_OSD_OP_LIST_SNAPS,
+  // CEPH_OSD_OP_LIST_SNAPS op must operate on CEPH_SNAPDIR oid,
   // see ReplicatedPG::do_op
   m_remote_io_ctx.snap_set_read(CEPH_SNAPDIR);
   int r = m_remote_io_ctx.aio_operate(m_remote_oid, rados_completion, &op,
@@ -75,6 +75,9 @@ void ObjectCopyRequest<I>::handle_list_snaps(int r) {
   dout(20) << ": r=" << r << dendl;
 
   if (r == -ENOENT) {
+
+    // can not find obc of HEAD/SNAPDIR
+
     finish(0);
     return;
   }
@@ -341,15 +344,17 @@ void ObjectCopyRequest<I>::compute_diffs() {
   librados::snap_t start_remote_snap_id = 0;
 
   // map<remote snap id, vector<local snap id>>, see ImageCopyRequest<I>::compute_snap_map,
-  // the local snap id vector is in decreasing order
+  // the local snap id vector is in descending order
   for (auto &pair : *m_snap_map) {
+
+    // iterate all remote image snapshots
+
     assert(!pair.second.empty());
 
     librados::snap_t end_remote_snap_id = pair.first;
 
-    // local snap id vector is in decreasing order so the first item is
-    // corresponding to the remote snap id, i.e., <pair.first, pair.second.front()>
-    // is a pair of m_client_meta->snap_seqs
+    // local snap id vector is in descending order so <pair.first, pair.second.front()>
+    // is a pair of <remote snap id, local snap id>, i.e., an item of m_client_meta->snap_seqs
     librados::snap_t end_local_snap_id = pair.second.front();
 
     interval_set<uint64_t> diff;
@@ -369,7 +374,9 @@ void ObjectCopyRequest<I>::compute_diffs() {
              << "exists=" << exists << dendl;
 
     if (exists) {
+
       // clip diff to size of object (in case it was truncated)
+
       if (end_size < prev_end_size) {
         interval_set<uint64_t> trunc;
 

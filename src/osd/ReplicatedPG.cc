@@ -1997,15 +1997,17 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 			 in_hit_set))
     return;
 
+  // handle cache did nothing
+
   if (r && (r != -ENOENT || !obc)) {
 
     // try to handle the result of find_object_context + promote
 
-    // 1) r == -EAGAIN, i.e., the target oid is missing and read balance
+    // 1) r == -EAGAIN, i.e., the target oid is missing and read balance enabled
     // and we are replica pg, or 2) r == -ENOENT and !obc, i.e., promote
     // does not help
-    // if r == -ENOENT, for SNAPDIR the obc may or may not be nulL,
-    // see find_object_context
+    // 2) r == -ENOENT && !obc, for SNAPDIR the obc may or may not be null
+    // when r == -ENOENT, see find_object_context
 
     // copy the reqids for copy get on ENOENT
     if (r == -ENOENT &&
@@ -2026,16 +2028,18 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     }
 
     dout(20) << __func__ << "find_object_context got error " << r << dendl;
+
     if (op->may_write() &&
 	get_osdmap()->test_flag(CEPH_OSDMAP_REQUIRE_KRAKEN)) {
       record_write_error(op, oid, nullptr, r);
     } else {
       osd->reply_op_error(op, r);
     }
+
     return;
   }
 
-  // r == 0 or (r == -ENOENT && obc), the later condition is only
+  // ok, now r == 0 or (r == -ENOENT && obc), the later condition is only
   // possible for SNAPDIR
 
   // ok, we have got the obc for the target object
@@ -5140,6 +5144,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
         // clone objects + maybe HEAD
         resp.clones.reserve(clonecount);
 
+        // ssc->snapset.clones in ascending order
         for (vector<snapid_t>::const_iterator clone_iter = ssc->snapset.clones.begin();
 	     clone_iter != ssc->snapset.clones.end(); ++clone_iter) {
 
@@ -6877,6 +6882,8 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
     // (an empty interval_set if there is no overlap)
     ctx->new_snapset.clone_overlap[coid.snap];
     if (ctx->obs->oi.size)
+      // the original overlap size is the clone object size, we will update
+      // this overlap with substracting ctx->modified_ranges
       ctx->new_snapset.clone_overlap[coid.snap].insert(0, ctx->obs->oi.size);
     
     // log clone
@@ -6897,7 +6904,9 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
   // update most recent clone_overlap and usage stats
   if (ctx->new_snapset.clones.size() > 0) {
 
-    // there is at least one clone object
+    // there is at least one clone object, we may have not created a new
+    // clone object during this function call, but for every HEAD write op
+    // we always try to update the l
 
     /* we need to check whether the most recent clone exists, if it's been evicted,
      * it's not included in the stats */
@@ -6908,12 +6917,16 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
     if (is_present_clone(last_clone_oid)) {
       interval_set<uint64_t> &newest_overlap = ctx->new_snapset.clone_overlap.rbegin()->second;
 
+      // the ctx->modified_ranges is created by
+      // wirte/zero/truncate/clonerange/delete/rollback, etc., ops
       ctx->modified_ranges.intersection_of(newest_overlap);
 
       // modified_ranges is still in use by the clone
       // iterate ctx->modified_ranges to add each lenght to ctx->delta_stats
       add_interval_usage(ctx->modified_ranges, ctx->delta_stats);
 
+      // the overlapped intervals is area when compared with the clone object
+      // that has never touched by the modification op on the HEAD
       newest_overlap.subtract(ctx->modified_ranges);
     }
   }

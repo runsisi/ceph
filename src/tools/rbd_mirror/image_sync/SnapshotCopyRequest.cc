@@ -366,7 +366,7 @@ void SnapshotCopyRequest<I>::send_snap_create() {
 
   if (snap_id_it == m_remote_snap_ids.end()) {
 
-    // no remote snapshots to create
+    // no more corresponding local snapshots to create
 
     m_prev_snap_id = CEPH_NOSNAP;
 
