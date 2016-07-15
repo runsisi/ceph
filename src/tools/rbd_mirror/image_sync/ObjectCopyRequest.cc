@@ -137,6 +137,7 @@ void ObjectCopyRequest<I>::send_read_object() {
       // offset, len, bl
       op.read(std::get<1>(sync_op), std::get<2>(sync_op),
               &std::get<3>(sync_op), nullptr);
+
       break;
     default:
       break;
@@ -188,7 +189,10 @@ void ObjectCopyRequest<I>::send_write_object() {
     // write snapshot context should be before actual snapshot
     if (snap_map_it != m_snap_map->begin()) {
       --snap_map_it;
+
       assert(!snap_map_it->second.empty());
+
+      // used to construct IoCtxImpl::snapc of the write op
       local_snap_seq = snap_map_it->second.front();
       local_snap_ids = snap_map_it->second;
     }
@@ -341,6 +345,12 @@ void ObjectCopyRequest<I>::compute_diffs() {
   uint64_t prev_end_size = 0;
   bool prev_exists = false;
 
+  // the first [start, end] pair is [0, end_remote_snap_id], so we always
+  // get the first diff == <0, the first clone object size>, see
+  // calc_snap_set_diff, so we always need to read the first clone object,
+  // and then for the following clone objects we only need to read the
+  // diff areas, and then we use the COW and updated snapc to write the
+  // diff areas
   librados::snap_t start_remote_snap_id = 0;
 
   // map<remote snap id, vector<local snap id>>, see ImageCopyRequest<I>::compute_snap_map,
@@ -425,6 +435,9 @@ void ObjectCopyRequest<I>::compute_diffs() {
                                                          bufferlist());
       }
     } else {
+
+      // clone object does not exist at snapid end_remote_snap_id
+
       if (prev_exists) {
         // object remove
 

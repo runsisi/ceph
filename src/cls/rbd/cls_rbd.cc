@@ -2210,6 +2210,7 @@ int object_map_read(cls_method_context_t hctx, BitVector<2> &object_map)
   if (r < 0) {
     return r;
   }
+
   if (size == 0) {
     return -ENOENT;
   }
@@ -2227,6 +2228,7 @@ int object_map_read(cls_method_context_t hctx, BitVector<2> &object_map)
     CLS_ERR("failed to decode object map: %s", err.what());
     return -EINVAL;
   }
+
   return 0;
 }
 
@@ -2249,7 +2251,9 @@ int object_map_load(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   }
 
   object_map.set_crc_enabled(false);
+
   ::encode(object_map, *out);
+
   return 0;
 }
 
@@ -2276,8 +2280,10 @@ int object_map_save(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 
   bufferlist bl;
   ::encode(object_map, bl);
+
   CLS_LOG(20, "object_map_save: object size=%" PRIu64 ", byte size=%u",
 	  object_map.size(), bl.length());
+
   return cls_cxx_write_full(hctx, &bl);
 }
 

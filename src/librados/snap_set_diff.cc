@@ -140,14 +140,18 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
     // [start, a, b, end] or [a, start, b, end] or [start, a, b, end]
 
     // start with the max(this size, next size), and subtract off any
-    // overlap
+    // overlap between the current clone object and the next clone object
 
     const vector<pair<uint64_t, uint64_t> > *overlap = &r->overlap;
     interval_set<uint64_t> diff_to_next;
     uint64_t max_size = r->size;
 
+    // point to the next clone object
     ++r;
     if (r != snap_set.clones.end()) {
+
+      // the next clone object exists
+
       if (r->size > max_size)
 	max_size = r->size;
     }
@@ -158,7 +162,10 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
     for (vector<pair<uint64_t, uint64_t> >::const_iterator p = overlap->begin();
 	 p != overlap->end();
 	 ++p) {
-      // erase the overlapped area
+
+      // erase the overlapped area, so we get the diff area between the current
+      // clone object and the next clone object
+
       diff_to_next.erase(p->first, p->second);
     }
 
@@ -167,5 +174,5 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
     diff->union_of(diff_to_next);
 
     ldout(cct, 20) << "  diff now " << *diff << dendl;
-  }
+  } // for each clone objects
 }

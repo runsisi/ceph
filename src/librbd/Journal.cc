@@ -601,7 +601,8 @@ int Journal<I>::get_tag_owner(IoCtx& io_ctx, std::string& image_id,
   // <mirror uuid, pre mirror uuid, bool pre commit valid, pre tag id, pre entry id>
   journal::TagData tag_data;
 
-  // init Journaler and get the last tag of the client
+  // init Journaler and get the last tag of the client, i.e., the last
+  // exclusive lock owner
   int r = open_journaler(cct, &journaler, &client, &client_meta, &tag_data);
   if (r >= 0) {
     *mirror_uuid = tag_data.mirror_uuid;
