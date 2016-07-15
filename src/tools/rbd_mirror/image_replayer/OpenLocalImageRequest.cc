@@ -82,9 +82,11 @@ void OpenLocalImageRequest<I>::send_open_image() {
 
   *m_local_image_ctx = I::create(m_local_image_name, m_local_image_id, nullptr,
                                  m_local_io_ctx, false);
+
   {
     RWLock::WLocker owner_locker((*m_local_image_ctx)->owner_lock);
     RWLock::WLocker snap_locker((*m_local_image_ctx)->snap_lock);
+
     (*m_local_image_ctx)->set_exclusive_lock_policy(
       new MirrorExclusiveLockPolicy());
     (*m_local_image_ctx)->set_journal_policy(
@@ -94,6 +96,7 @@ void OpenLocalImageRequest<I>::send_open_image() {
   Context *ctx = create_context_callback<
     OpenLocalImageRequest<I>, &OpenLocalImageRequest<I>::handle_open_image>(
       this);
+
   (*m_local_image_ctx)->state->open(ctx);
 }
 
@@ -119,6 +122,7 @@ void OpenLocalImageRequest<I>::send_lock_image() {
   dout(20) << dendl;
 
   RWLock::RLocker owner_locker((*m_local_image_ctx)->owner_lock);
+
   if ((*m_local_image_ctx)->exclusive_lock == nullptr) {
     derr << ": image does not support exclusive lock" << dendl;
     send_close_image(false, -EINVAL);
