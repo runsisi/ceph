@@ -49,12 +49,15 @@ struct C_GetClient : public Context {
     ldout(cct, 20) << "C_GetClient: " << __func__ << dendl;
 
     librados::ObjectReadOperation op;
+
+    // get from omap "client_" + client id
     client::get_client_start(&op, client_id);
 
     librados::AioCompletion *comp = librados::Rados::aio_create_completion(
       this, nullptr, &utils::rados_state_callback<
         C_GetClient, &C_GetClient::handle_get_client>);
 
+    // access journal metadata object
     int r = ioctx.aio_operate(oid, comp, &op, &out_bl);
     assert(r == 0);
     comp->release();
@@ -65,8 +68,11 @@ struct C_GetClient : public Context {
 
     if (r == 0) {
       bufferlist::iterator it = out_bl.begin();
+
+      // decode and get the cls::journal::Client instance
       r = client::get_client_finish(&it, client);
     }
+
     complete(r);
   }
 
@@ -592,8 +598,11 @@ void JournalMetadata::allocate_tag(uint64_t tag_class, const bufferlist &data,
 void JournalMetadata::get_client(const std::string &client_id,
                                  cls::journal::Client *client,
                                  Context *on_finish) {
+  // access journal metadata object, i.e., "journal." + local image id
+  // to get omap "client_" + client id
   C_GetClient *ctx = new C_GetClient(m_cct, m_ioctx, m_oid, m_async_op_tracker,
                                      client_id, client, on_finish);
+
   ctx->send();
 }
 

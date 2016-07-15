@@ -328,6 +328,7 @@ void ImageSync<I>::send_refresh_object_map() {
   Context *ctx = create_context_callback<
     ImageSync<I>, &ImageSync<I>::handle_refresh_object_map>(this);
 
+  // alloc an ObjectMap instance
   m_object_map = m_local_image_ctx->create_object_map(CEPH_NOSNAP);
 
   m_object_map->open(ctx);

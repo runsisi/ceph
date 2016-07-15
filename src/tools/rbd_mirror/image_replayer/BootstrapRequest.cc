@@ -97,6 +97,8 @@ void BootstrapRequest<I>::get_local_image_id() {
   // try to check if the local pool has the image mirror enabled,
   // see cls_rbd::mirror_image_set
   librados::ObjectReadOperation op;
+
+  // try to get local image id by global image id
   librbd::cls_client::mirror_image_get_image_id_start(&op, m_global_image_id);
 
   librados::AioCompletion *aio_comp = create_rados_ack_callback<
@@ -130,6 +132,7 @@ void BootstrapRequest<I>::handle_get_local_image_id(int r) {
     return;
   }
 
+  // r == -ENOENT, the local image has not been created
   get_remote_tag_class();
 }
 
@@ -216,6 +219,8 @@ void BootstrapRequest<I>::handle_get_client(int r) {
     return;
   }
 
+  // r == -ENOENT, the client identified by the m_local_mirror_uuid does
+  // not exist, so register it
   register_client();
 }
 
@@ -237,7 +242,8 @@ void BootstrapRequest<I>::register_client() {
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_register_client>(
       this);
 
-  // register a mirror peer client(Journal<I>::handle_initialized) of the Journaler
+  // register a mirror peer client(Journal<I>::handle_initialized) of
+  // the remote Journaler, the client id is m_local_mirror_uuid
   m_journaler->register_client(client_data_bl, ctx);
 }
 
@@ -289,6 +295,8 @@ void BootstrapRequest<I>::handle_open_remote_image(int r) {
     return;
   }
 
+  // open remote image succeeded
+
   // TODO: make async
   bool tag_owner;
   r = Journal::is_tag_owner(m_remote_image_ctx, &tag_owner);
@@ -301,6 +309,10 @@ void BootstrapRequest<I>::handle_open_remote_image(int r) {
   }
 
   if (!tag_owner) {
+
+    // the last exclusive lock owner of the remote image is not the
+    // master image client
+
     dout(5) << ": remote image is not primary -- skipping image replay"
             << dendl;
 
@@ -309,6 +321,8 @@ void BootstrapRequest<I>::handle_open_remote_image(int r) {
     close_remote_image();
     return;
   }
+
+  // ok, the remote image is primary
 
   // default local image name to the remote image name if not provided
   if (m_local_image_name.empty()) {

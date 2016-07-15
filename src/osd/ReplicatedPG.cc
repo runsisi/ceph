@@ -5336,7 +5336,9 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
       ++ctx->num_write;
       { // write
         __u32 seq = oi.truncate_seq;
+
 	tracepoint(osd, do_osd_op_pre_write, soid.oid.name.c_str(), soid.snap.val, oi.size, seq, op.extent.offset, op.extent.length, op.extent.truncate_size, op.extent.truncate_seq);
+
 	if (op.extent.length != osd_op.indata.length()) {
 	  result = -EINVAL;
 	  break;
@@ -5356,11 +5358,13 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	    result = -EOPNOTSUPP;
 	    break;
 	  }
+
 	  ctx->mod_desc.create();
 	} else if (op.extent.offset == oi.size) {
 	  ctx->mod_desc.append(oi.size);
 	} else {
 	  ctx->mod_desc.mark_unrollbackable();
+
 	  if (pool.info.require_rollback()) {
 	    result = -EOPNOTSUPP;
 	    break;
@@ -5371,18 +5375,23 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
             (op.extent.offset + op.extent.length > oi.size)) {
 	  // old write, arrived after trimtrunc
 	  op.extent.length = (op.extent.offset > oi.size ? 0 : oi.size - op.extent.offset);
+
 	  dout(10) << " old truncate_seq " << op.extent.truncate_seq << " < current " << seq
 		   << ", adjusting write length to " << op.extent.length << dendl;
+
 	  bufferlist t;
 	  t.substr_of(osd_op.indata, 0, op.extent.length);
 	  osd_op.indata.swap(t);
         }
+
 	if (op.extent.truncate_seq > seq) {
 	  // write arrives before trimtrunc
 	  if (obs.exists && !oi.is_whiteout()) {
 	    dout(10) << " truncate_seq " << op.extent.truncate_seq << " > current " << seq
 		     << ", truncating to " << op.extent.truncate_size << dendl;
+
 	    t->truncate(soid, op.extent.truncate_size);
+
 	    oi.truncate_seq = op.extent.truncate_seq;
 	    oi.truncate_size = op.extent.truncate_size;
 	    if (op.extent.truncate_size != oi.size) {
@@ -5393,13 +5402,16 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  } else {
 	    dout(10) << " truncate_seq " << op.extent.truncate_seq << " > current " << seq
 		     << ", but object is new" << dendl;
+
 	    oi.truncate_seq = op.extent.truncate_seq;
 	    oi.truncate_size = op.extent.truncate_size;
 	  }
 	}
+
 	result = check_offset_and_length(op.extent.offset, op.extent.length, cct->_conf->osd_max_object_size);
 	if (result < 0)
 	  break;
+
 	if (pool.info.require_rollback()) {
 	  t->append(soid, op.extent.offset, op.extent.length, osd_op.indata, op.flags);
 	} else {
@@ -5407,12 +5419,14 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	}
 
 	maybe_create_new_object(ctx);
+
 	if (op.extent.offset == 0 && op.extent.length >= oi.size)
 	  obs.oi.set_data_digest(osd_op.indata.crc32c(-1));
 	else if (op.extent.offset == oi.size && obs.oi.is_data_digest())
 	  obs.oi.set_data_digest(osd_op.indata.crc32c(obs.oi.data_digest));
 	else
 	  obs.oi.clear_data_digest();
+
 	write_update_size_and_usage(ctx->delta_stats, oi, ctx->modified_ranges,
 				    op.extent.offset, op.extent.length, true);
 
@@ -5421,6 +5435,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
       
     case CEPH_OSD_OP_WRITEFULL:
       ++ctx->num_write;
+
       { // write full object
 	tracepoint(osd, do_osd_op_pre_writefull, soid.oid.name.c_str(), soid.snap.val, oi.size, 0, op.extent.length);
 
@@ -5428,6 +5443,8 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  result = -EINVAL;
 	  break;
 	}
+
+	// default 100G
 	result = check_offset_and_length(0, op.extent.length, cct->_conf->osd_max_object_size);
 	if (result < 0)
 	  break;
@@ -5444,7 +5461,9 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	    }
 	  }
 	  ctx->mod_desc.create();
+
 	  t->append(soid, 0, op.extent.length, osd_op.indata, op.flags);
+
 	  if (obs.exists) {
 	    map<string, bufferlist> to_set = ctx->obc->attr_cache;
 	    map<string, boost::optional<bufferlist> > &overlay =
@@ -5463,12 +5482,17 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  }
 	} else {
 	  ctx->mod_desc.mark_unrollbackable();
+
 	  t->write(soid, 0, op.extent.length, osd_op.indata, op.flags);
+
 	  if (obs.exists && op.extent.length < oi.size) {
 	    t->truncate(soid, op.extent.length);
 	  }
 	}
+
+	// update ctx->new_obs.exists
 	maybe_create_new_object(ctx);
+
 	obs.oi.set_data_digest(osd_op.indata.crc32c(-1));
 
 	write_update_size_and_usage(ctx->delta_stats, oi, ctx->modified_ranges,
@@ -5556,12 +5580,15 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 
     case CEPH_OSD_OP_TRUNCATE:
       tracepoint(osd, do_osd_op_pre_truncate, soid.oid.name.c_str(), soid.snap.val, oi.size, oi.truncate_seq, op.extent.offset, op.extent.length, op.extent.truncate_size, op.extent.truncate_seq);
+
       if (pool.info.require_rollback()) {
 	result = -EOPNOTSUPP;
 	break;
       }
+
       ++ctx->num_write;
       ctx->mod_desc.mark_unrollbackable();
+
       {
 	// truncate
 	if (!obs.exists || oi.is_whiteout()) {
@@ -5576,29 +5603,38 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 
 	if (op.extent.truncate_seq) {
 	  assert(op.extent.offset == op.extent.truncate_size);
+
 	  if (op.extent.truncate_seq <= oi.truncate_seq) {
 	    dout(10) << " truncate seq " << op.extent.truncate_seq << " <= current " << oi.truncate_seq
 		     << ", no-op" << dendl;
 	    break; // old
 	  }
+
 	  dout(10) << " truncate seq " << op.extent.truncate_seq << " > current " << oi.truncate_seq
 		   << ", truncating" << dendl;
+
 	  oi.truncate_seq = op.extent.truncate_seq;
 	  oi.truncate_size = op.extent.truncate_size;
 	}
 
 	t->truncate(soid, op.extent.offset);
+
 	if (oi.size > op.extent.offset) {
 	  interval_set<uint64_t> trim;
+
 	  trim.insert(op.extent.offset, oi.size-op.extent.offset);
 	  ctx->modified_ranges.union_of(trim);
 	}
+
 	if (op.extent.offset != oi.size) {
 	  ctx->delta_stats.num_bytes -= oi.size;
 	  ctx->delta_stats.num_bytes += op.extent.offset;
+
 	  oi.size = op.extent.offset;
 	}
+
 	ctx->delta_stats.num_wr++;
+
 	// do no set exists, or we will break above DELETE -> TRUNCATE munging.
 
 	oi.clear_data_digest();
@@ -6906,7 +6942,9 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
 
     // there is at least one clone object, we may have not created a new
     // clone object during this function call, but for every HEAD write op
-    // we always try to update the l
+    // we always update the overlap area between our latest clone object
+    // and the current HEAD, so if a new clone object got created, the
+    // overlap will be the overlap between the two clone objects
 
     /* we need to check whether the most recent clone exists, if it's been evicted,
      * it's not included in the stats */
