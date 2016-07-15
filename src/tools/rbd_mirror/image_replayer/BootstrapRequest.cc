@@ -439,6 +439,7 @@ void BootstrapRequest<I>::create_local_image() {
 
   // create a local mirror image, if the remote image is a clone then
   // we need to mirror the remote parent image first
+  // the created image is auto mirror enabled, see librbd::create_v2
   request->send();
 }
 

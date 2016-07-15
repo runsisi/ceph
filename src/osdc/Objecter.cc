@@ -3839,10 +3839,13 @@ int Objecter::delete_selfmanaged_snap(int64_t pool, snapid_t snap,
 				      Context *onfinish)
 {
   unique_lock wl(rwlock);
+
   ldout(cct, 10) << "delete_selfmanaged_snap; pool: " << pool << "; snap: "
 		 << snap << dendl;
+
   PoolOp *op = new PoolOp;
   if (!op) return -ENOMEM;
+
   op->tid = last_tid.inc();
   op->pool = pool;
   op->onfinish = onfinish;
@@ -3952,6 +3955,7 @@ void Objecter::pool_op_submit(PoolOp *op)
 				    [this, op]() {
 				      pool_op_cancel(op->tid, -ETIMEDOUT); });
   }
+
   _pool_op_submit(op);
 }
 
@@ -3960,12 +3964,16 @@ void Objecter::_pool_op_submit(PoolOp *op)
   // rwlock is locked unique
 
   ldout(cct, 10) << "pool_op_submit " << op->tid << dendl;
+
   MPoolOp *m = new MPoolOp(monc->get_fsid(), op->tid, op->pool,
 			   op->name, op->pool_op,
 			   op->auid, last_seen_osdmap_version);
+
   if (op->snapid) m->snapid = op->snapid;
   if (op->crush_rule) m->crush_rule = op->crush_rule;
+
   monc->send_mon_message(m);
+
   op->last_submit = ceph::mono_clock::now();
 
   logger->inc(l_osdc_poolop_send);
