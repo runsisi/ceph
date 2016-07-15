@@ -409,6 +409,8 @@ void ImageReplayer<I>::bootstrap() {
     Mutex::Locker locker(m_lock);
 
     request->get();
+
+    // used for manual stop
     m_bootstrap_request = request;
   }
 

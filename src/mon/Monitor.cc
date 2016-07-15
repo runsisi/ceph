@@ -4259,6 +4259,7 @@ void Monitor::handle_timecheck(MonOpRequestRef op)
 void Monitor::handle_subscribe(MonOpRequestRef op)
 {
   MMonSubscribe *m = static_cast<MMonSubscribe*>(op->get_req());
+
   dout(10) << "handle_subscribe " << *m << dendl;
   
   bool reply = false;
@@ -4291,6 +4292,7 @@ void Monitor::handle_subscribe(MonOpRequestRef op)
 
     if (p->first.compare(0, 6, "mdsmap") == 0 || p->first.compare(0, 5, "fsmap") == 0) {
       dout(10) << __func__ << ": MDS sub '" << p->first << "'" << dendl;
+
       if ((int)s->is_capable("mds", MON_CAP_R)) {
         Subscription *sub = s->sub_map[p->first];
         assert(sub != nullptr);
@@ -4401,12 +4403,16 @@ bool Monitor::ms_handle_reset(Connection *con)
 void Monitor::check_subs()
 {
   string type = "monmap";
+
   if (session_map.subs.count(type) == 0)
     return;
+
   xlist<Subscription*>::iterator p = session_map.subs[type]->begin();
   while (!p.end()) {
     Subscription *sub = *p;
+
     ++p;
+
     check_sub(sub);
   }
 }
@@ -4414,8 +4420,10 @@ void Monitor::check_subs()
 void Monitor::check_sub(Subscription *sub)
 {
   dout(10) << "check_sub monmap next " << sub->next << " have " << monmap->get_epoch() << dendl;
+
   if (sub->next <= monmap->get_epoch()) {
     send_latest_monmap(sub->session->con.get());
+
     if (sub->onetime)
       session_map.remove_sub(sub);
     else

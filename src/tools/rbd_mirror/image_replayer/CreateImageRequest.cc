@@ -75,6 +75,7 @@ void CreateImageRequest<I>::create_image() {
   Context *ctx = new FunctionContext([this](int r) {
       // TODO: rbd-mirror should offer a feature mask capability
       RWLock::RLocker snap_locker(m_remote_image_ctx->snap_lock);
+
       int order = m_remote_image_ctx->order;
 
       CephContext *cct = reinterpret_cast<CephContext*>(m_local_io_ctx.cct());
@@ -96,6 +97,7 @@ void CreateImageRequest<I>::create_image() {
                               journal_order, journal_splay_width,
                               journal_pool, m_global_image_id,
                               m_remote_mirror_uuid);
+
       handle_create_image(r);
     });
 
@@ -105,6 +107,7 @@ void CreateImageRequest<I>::create_image() {
 template <typename I>
 void CreateImageRequest<I>::handle_create_image(int r) {
   dout(20) << ": r=" << r << dendl;
+
   if (r < 0) {
     derr << ": failed to create local image: " << cpp_strerror(r) << dendl;
     finish(r);
