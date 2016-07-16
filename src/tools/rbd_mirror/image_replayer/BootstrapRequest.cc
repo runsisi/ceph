@@ -544,6 +544,7 @@ void BootstrapRequest<I>::get_remote_tags() {
   Context *ctx = create_context_callback<
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_get_remote_tags>(this);
 
+  // the remote tag class was got by BootstrapRequest<I>::get_remote_tag_class
   m_journaler->get_tags(m_remote_tag_class, &m_remote_tags, ctx);
 }
 
@@ -603,6 +604,7 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
       return;
     }
 
+    // local_image_ctx->journal has been opened by BootstrapRequest<I>::open_local_image
     librbd::journal::TagData tag_data =
       local_image_ctx->journal->get_tag_data();
 
