@@ -3290,6 +3290,11 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       lderr(cct) << "image is already primary" << dendl;
       return -EINVAL;
     } else if (mirror_uuid != Journal<>::ORPHAN_MIRROR_UUID && !force) {
+
+      // see Journal<I>::demote
+      // TODO: the newly created local mirror image should have mirror_uuid set to
+      // primary mirror uuid, see Journal<I>::create ???
+
       lderr(cct) << "image is still primary within a remote cluster" << dendl;
       return -EBUSY;
     }
@@ -3370,6 +3375,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       lderr(cct) << "journal is not active" << dendl;
       return -EINVAL;
     } else if (!ictx->journal->is_tag_owner()) {
+
+      // TODO: see AcquireRequest<I>::send_allocate_journal_tag, we should be tag owner ???
+
       lderr(cct) << "image is not currently the primary" << dendl;
       return -EINVAL;
     }
