@@ -1066,6 +1066,7 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
   int tag_pass = (minimum_tag_tid == std::numeric_limits<uint64_t>::max() ?
     TAG_PASS_LIST : TAG_PASS_CALCULATE_MINIMUMS);
 
+  // "tag_"
   std::string last_read = HEADER_KEY_TAG_PREFIX;
 
   do {

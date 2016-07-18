@@ -290,6 +290,8 @@ struct C_GetTags : public Context {
   void send_tag_list() {
     librados::ObjectReadOperation op;
 
+    // the client id is used to exclude the tags that their tids less
+    // than the minimum committed tags, see journal_tag_list
     client::tag_list_start(&op, start_after_tag_tid, MAX_RETURN, client_id,
                            tag_class);
 
@@ -307,19 +309,25 @@ struct C_GetTags : public Context {
     if (r == 0) {
       std::set<cls::journal::Tag> journal_tags;
       bufferlist::iterator iter = out_bl.begin();
+
       r = client::tag_list_finish(&iter, &journal_tags);
       if (r == 0) {
         for (auto &journal_tag : journal_tags) {
+          // list<Tag>
           tags->push_back(journal_tag);
           start_after_tag_tid = journal_tag.tid;
         }
 
         if (journal_tags.size() == MAX_RETURN) {
+
+          // not finished yet, continue to read the next batch
+
           send_tag_list();
           return;
         }
       }
     }
+
     complete(r);
   }
 
@@ -617,6 +625,7 @@ void JournalMetadata::get_tags(const boost::optional<uint64_t> &tag_class,
   C_GetTags *ctx = new C_GetTags(m_cct, m_ioctx, m_oid, m_client_id,
                                  m_async_op_tracker, tag_class,
                                  tags, on_finish);
+
   ctx->send();
 }
 

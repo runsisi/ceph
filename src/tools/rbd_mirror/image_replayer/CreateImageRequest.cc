@@ -421,6 +421,7 @@ void CreateImageRequest<I>::finish(int r) {
   dout(20) << ": r=" << r << dendl;
 
   m_on_finish->complete(r);
+
   delete this;
 }
 
