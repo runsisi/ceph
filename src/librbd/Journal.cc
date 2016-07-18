@@ -422,6 +422,10 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
 
   assert(non_primary ^ primary_mirror_uuid.empty());
 
+  // for local created mirror image, primary_mirror_uuid is set to remote mirror uuid,
+  // see BootstrapRequest<I>::create_local_image and
+  // CreateImageRequest<I>::create_image
+
   // tag owner
   std::string mirror_uuid = (non_primary ? primary_mirror_uuid :
                                            LOCAL_MIRROR_UUID);
@@ -885,6 +889,7 @@ void Journal<I>::allocate_local_tag(Context *on_finish) {
     // position
     assert(m_tag_data.mirror_uuid == LOCAL_MIRROR_UUID);
 
+    // new -> order
     if (!client.commit_position.object_positions.empty()) {
       auto position = client.commit_position.object_positions.front();
 
