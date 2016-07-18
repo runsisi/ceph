@@ -73,6 +73,10 @@ BootstrapRequest<I>::~BootstrapRequest() {
 
 template <typename I>
 void BootstrapRequest<I>::send() {
+
+  // try to get local image id by remote image's global id, so we can know
+  // if the local pool has created the local mirror image of the remote image
+
   get_local_image_id();
 }
 
@@ -133,7 +137,7 @@ void BootstrapRequest<I>::handle_get_local_image_id(int r) {
     return;
   }
 
-  // r == -ENOENT, the local image has not been created
+  // r == -ENOENT/0, the local image may have not been created
   get_remote_tag_class();
 }
 
@@ -148,6 +152,9 @@ void BootstrapRequest<I>::get_remote_tag_class() {
       this);
 
   // get local, i.e., master, client of remote journal
+  // note: m_journaler::m_client_id is m_local_mirror_uuid, see
+  // ImageReplayer<I>::start, but we can still get other client info
+  // of the journaler
   m_journaler->get_client(librbd::Journal<>::IMAGE_CLIENT_ID, &m_client, ctx);
 }
 
@@ -546,6 +553,7 @@ void BootstrapRequest<I>::get_remote_tags() {
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_get_remote_tags>(this);
 
   // the remote tag class was got by BootstrapRequest<I>::get_remote_tag_class
+  // get the tags of mirror peer client of the remote journaler
   m_journaler->get_tags(m_remote_tag_class, &m_remote_tags, ctx);
 }
 
@@ -605,7 +613,8 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
       return;
     }
 
-    // local_image_ctx->journal has been opened by BootstrapRequest<I>::open_local_image
+    // return Journal::m_tag_data, local_image_ctx->journal has
+    // been opened by BootstrapRequest<I>::open_local_image
     librbd::journal::TagData tag_data =
       local_image_ctx->journal->get_tag_data();
 
