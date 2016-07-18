@@ -1019,6 +1019,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       return 0;
 
     image_info.clear();
+
     // search all pools for children depending on this snapshot
     Rados rados(ictx->md_ctx);
     std::list<std::pair<int64_t, string> > pools;
@@ -1064,6 +1065,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 		   << dendl;
 	return r;
       }
+
       image_info.insert(make_pair(make_pair(it->first, it->second), image_ids));
     }
 
@@ -2310,6 +2312,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 	    lderr(cct) << "cannot obtain exclusive lock - not removing" << dendl;
 
 	    ictx->owner_lock.put_read();
+
 	    ictx->state->close();
 
             return -EBUSY;
@@ -2367,6 +2370,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       }
 
       ictx->owner_lock.put_read();
+
       ictx->state->close();
 
       ldout(cct, 2) << "removing header..." << dendl;
@@ -2409,6 +2413,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
       if (!id.empty()) {
         ldout(cct, 10) << "removing journal..." << dendl;
+
         r = Journal<>::remove(io_ctx, id);
         if (r < 0 && r != -ENOENT) {
           lderr(cct) << "error removing image journal" << dendl;
@@ -2416,6 +2421,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
         }
 
         ldout(cct, 10) << "removing object map..." << dendl;
+
         r = ObjectMap::remove(io_ctx, id);
         if (r < 0 && r != -ENOENT) {
           lderr(cct) << "error removing image object map" << dendl;
@@ -2424,6 +2430,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
         ldout(cct, 10) << "removing image from rbd_mirroring object..."
                        << dendl;
+
         r = cls_client::mirror_image_remove(&io_ctx, id);
         if (r < 0 && r != -ENOENT && r != -EOPNOTSUPP) {
           lderr(cct) << "failed to remove image from mirroring directory: "
@@ -3219,6 +3226,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       lderr(cct) << "failed to retrieve mirror image metadata: " << cpp_strerror(r) << dendl;
       return r;
     }
+
     mirror_image_internal.state = cls::rbd::MIRROR_IMAGE_STATE_DISABLING;
     r = cls_client::mirror_image_set(&ictx->md_ctx, ictx->id, mirror_image_internal);
     if (r < 0) {
@@ -3230,6 +3238,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
         if (rollback) {
           CephContext *cct = ictx->cct;
           cls::rbd::MirrorImage mirror_image_internal;
+
           mirror_image_internal.state = cls::rbd::MIRROR_IMAGE_STATE_ENABLED;
           int r = cls_client::mirror_image_set(&ictx->md_ctx, ictx->id, mirror_image_internal);
           if (r < 0) {
@@ -3239,21 +3248,29 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
         }
       };
 
+      // check if any child image has mirroring enabled
+
       RWLock::RLocker l(ictx->snap_lock);
+
       map<librados::snap_t, SnapInfo> snap_info = ictx->snap_info;
       for (auto &info : snap_info) {
+        // <pool id, image id, snap id>
         librbd::parent_spec parent_spec(ictx->md_ctx.get_id(), ictx->id, info.first);
         map< pair<int64_t, string>, set<string> > image_info;
 
+        // iterate all pools to get the child images by parent spec
         r = list_children_info(ictx, parent_spec, image_info);
         if (r < 0) {
           rollback = true;
           return r;
         }
+
         if (image_info.empty())
           continue;
 
         Rados rados(ictx->md_ctx);
+
+        // map< <pool id, pool name>, set<child image id> >
         for (auto &info: image_info) {
           IoCtx ioctx;
           r = rados.ioctx_create2(info.first.first, ioctx);
@@ -3262,11 +3279,16 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
             lderr(cct) << "Error accessing child image pool " << info.first.second  << dendl; 
             return r;
           }
+
           for (auto &id_it : info.second) {
+
+            // iterate child image ids
+
             cls::rbd::MirrorImage mirror_image_internal;
             r = cls_client::mirror_image_get(&ioctx, id_it, &mirror_image_internal);
             if (r != -ENOENT) {
               rollback = true;
+
               lderr(cct) << "mirroring is enabled on one or more children " << dendl;
               return -EBUSY;
             }
@@ -3331,6 +3353,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
   int mirror_image_demote(ImageCtx *ictx) {
     CephContext *cct = ictx->cct;
+
     ldout(cct, 20) << __func__ << ": ictx=" << ictx << dendl;
 
     int r = ictx->state->refresh_if_required();
@@ -3345,6 +3368,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     bool is_primary;
 
+    // test if the last exclusive lock owner is the local master client
     r = Journal<>::is_tag_owner(ictx, &is_primary);
     if (r < 0) {
       lderr(cct) << "failed to determine tag ownership: " << cpp_strerror(r)

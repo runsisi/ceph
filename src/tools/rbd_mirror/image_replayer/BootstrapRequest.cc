@@ -445,8 +445,8 @@ void BootstrapRequest<I>::create_local_image() {
     m_local_io_ctx, m_work_queue, m_global_image_id, m_remote_mirror_uuid,
     m_local_image_name, m_remote_image_ctx, ctx);
 
-  // create a local mirror image, if the remote image is a clone then
-  // we need to mirror the remote parent image first
+  // create a local mirror image allocate tag with tag.mirror_uuid set to m_remote_mirror_uuid,
+  // if the remote image is a clone then we need to mirror the remote parent image first
   // the created image is auto mirror enabled, see librbd::create_v2
   request->send();
 }
@@ -591,6 +591,9 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
 
     dout(10) << ": decoded remote tag: " << remote_tag_data << dendl;
 
+    // tag_data.predecessor_mirror_uuid is set by prev_tag_data.mirror_uuid while
+    // tag_data.mirror_uuid is set by caller provided mirror_uuid, see allocate_journaler_tag
+
     if (remote_tag_data.mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID &&
         remote_tag_data.predecessor_mirror_uuid == m_local_mirror_uuid) {
       // remote tag is chained off a local tag demotion
@@ -613,8 +616,9 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
       return;
     }
 
-    // return Journal::m_tag_data, local_image_ctx->journal has
-    // been opened by BootstrapRequest<I>::open_local_image
+    // return Journal::m_tag_data, note: local_image_ctx->journal has
+    // been opened by BootstrapRequest<I>::open_local_image, the Journal::m_client_id
+    // is IMAGE_CLIENT_ID, see Journal<I>::create_journaler
     librbd::journal::TagData tag_data =
       local_image_ctx->journal->get_tag_data();
 
@@ -623,9 +627,16 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
     if (tag_data.mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID &&
 	remote_tag_data.mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID &&
 	remote_tag_data.predecessor_mirror_uuid == m_local_mirror_uuid) {
+
+      // remote image: secondary -> (promoted) -> primary -> (demoted) -> secondary
+      // local image: primary -> (demoted) -> secondary
+
       dout(20) << ": local image was demoted" << dendl;
     } else if (tag_data.mirror_uuid == m_remote_mirror_uuid &&
 	       m_client_meta->state == librbd::journal::MIRROR_PEER_STATE_REPLAYING) {
+
+      // image sync has finished
+
       dout(20) << ": local image is in clean replay state" << dendl;
     } else if (m_client_meta->state == librbd::journal::MIRROR_PEER_STATE_SYNCING) {
       dout(20) << ": previous sync was canceled" << dendl;

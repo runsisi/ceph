@@ -1211,6 +1211,7 @@ static int decode_parent_and_child(bufferlist *in, uint64_t *pool_id,
   int r = decode_parent_common(it, pool_id, image_id, snap_id);
   if (r < 0)
     return r;
+
   try {
     ::decode(*c_image_id, it);
   } catch (const buffer::error &err) {
@@ -1275,6 +1276,7 @@ int add_child(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     CLS_LOG(20, "add_child: child already exists: %s", c_image_id.c_str());
     return -EEXIST;
   }
+
   // add new child
   children.insert(c_image_id);
 
@@ -1385,6 +1387,7 @@ int get_children(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
       CLS_LOG(20, "get_children: read omap failed: %s", cpp_strerror(r).c_str());
     return r;
   }
+
   ::encode(children, *out);
   return 0;
 }
