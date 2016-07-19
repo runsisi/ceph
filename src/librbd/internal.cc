@@ -1152,8 +1152,11 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     CephContext *cct = (CephContext *)io_ctx.cct();
 
     file_layout_t layout;
+
+    // when global image id is given, we know we are creating a mirror image
     bool force_non_primary = !non_primary_global_image_id.empty();
 
+    // force selfmanaged snaps mode if this is a pool with no images
     int r = validate_pool(io_ctx, cct);
     if (r < 0) {
       return r;
