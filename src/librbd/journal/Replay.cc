@@ -198,10 +198,16 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
 
     // safely commit any remaining AIO modify operations
     if ((m_in_flight_aio_flush + m_in_flight_aio_modify) != 0) {
+
+      // has inflight aio events
+
       flush_comp = create_aio_flush_completion(nullptr);
     }
 
     for (auto &op_event_pair : m_op_events) {
+
+      // iterate unordered_map<uint64_t, OpEvent>
+
       OpEvent &op_event = op_event_pair.second;
 
       if (cancel_ops) {
@@ -210,12 +216,14 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
         if (op_event.on_start_ready == nullptr &&
             op_event.on_op_finish_event != nullptr) {
           Context *on_op_finish_event = nullptr;
+
           std::swap(on_op_finish_event, op_event.on_op_finish_event);
           m_image_ctx.op_work_queue->queue(on_op_finish_event, -ERESTART);
         }
       } else if (op_event.on_op_finish_event != nullptr) {
         // start ops waiting for OpFinishEvent
         Context *on_op_finish_event = nullptr;
+
         std::swap(on_op_finish_event, op_event.on_op_finish_event);
         m_image_ctx.op_work_queue->queue(on_op_finish_event, 0);
       } else if (op_event.on_start_ready != nullptr) {
@@ -225,19 +233,29 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
     }
 
     assert(m_flush_ctx == nullptr);
+
     if (m_in_flight_op_events > 0 || flush_comp != nullptr) {
+
+      // has inflight op events or inflight aio events
+
       std::swap(m_flush_ctx, on_finish);
     }
   }
 
   // execute the following outside of lock scope
   if (flush_comp != nullptr) {
+
+    // has inflight aio events
+
     RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
 
     AioImageRequest<I>::aio_flush(&m_image_ctx, flush_comp);
   }
 
   if (on_finish != nullptr) {
+
+    // no inflight op events or inflight aio events, finish the callback
+
     on_finish->complete(0);
   }
 }
@@ -252,6 +270,7 @@ void Replay<I>::flush(Context *on_finish) {
   }
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   AioImageRequest<I>::aio_flush(&m_image_ctx, aio_comp);
 }
 
@@ -839,6 +858,7 @@ Context *Replay<I>::create_op_context_callback(uint64_t op_tid,
   }
 
   ++m_in_flight_op_events;
+
   *op_event = &m_op_events[op_tid];
 
   (*op_event)->on_start_safe = on_safe;

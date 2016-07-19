@@ -680,7 +680,7 @@ int Journal<I>::promote(I *image_ctx) {
 
   cls::journal::Tag new_tag;
 
-  // allocate a new tag with owner set to
+  // allocate a new tag with owner set to local master client
   r = allocate_journaler_tag(cct, &journaler, client, client_meta.tag_class,
                              tag_data, LOCAL_MIRROR_UUID, &new_tag);
   if (r < 0) {
@@ -851,6 +851,8 @@ int Journal<I>::demote() {
   return 0;
 }
 
+// ImageReplayer has an interface with the same name, i.e.,
+// ImageReplayer<I>::allocate_local_tag
 // called by librbd::journal::StandardPolicy::allocate_tag_on_lock
 // ImageCtx has two policy instances: 1) librbd/exclusive_lock/StandardPolicy
 // and 2) librbd/journal/StandardPolicy
@@ -869,6 +871,7 @@ void Journal<I>::allocate_local_tag(Context *on_finish) {
     assert(m_journaler != nullptr && is_tag_owner());
 
     cls::journal::Client client;
+
     int r = m_journaler->get_cached_client(IMAGE_CLIENT_ID, &client);
     if (r < 0) {
       lderr(cct) << this << " " << __func__ << ": "
@@ -1249,8 +1252,13 @@ typename Journal<I>::Future Journal<I>::wait_event(Mutex &lock, uint64_t tid,
   return event.futures.back();
 }
 
-// called by ImageReplayer<I>::start_replay, pay attention to the difference
-// between this and Journaler::start_replay
+// start_external_replay: STATE_READY -> STATE_REPLAYING
+// stop_external_replay: STATE_REPLAYING -> STATE_READY
+
+// STATE_READY -> STATE_REPLAYING
+
+// called by ImageReplayer<I>::start_replay or ImageReplayer<I>::replay_flush
+// pay attention to the difference between this and Journaler::start_replay
 template <typename I>
 void Journal<I>::start_external_replay(journal::Replay<I> **journal_replay,
                                        Context *on_start,
@@ -1323,10 +1331,13 @@ void Journal<I>::handle_start_external_replay(int r,
   on_finish->complete(0);
 }
 
+// STATE_REPLAYING -> STATE_READY
+
 // called by ImageReplayer<I>::replay_flush, ImageReplayer<I>::shut_down
 template <typename I>
 void Journal<I>::stop_external_replay() {
   Mutex::Locker locker(m_lock);
+
   assert(m_journal_replay != nullptr);
   assert(m_state == STATE_REPLAYING);
 
@@ -1343,7 +1354,8 @@ void Journal<I>::stop_external_replay() {
     return;
   }
 
-  // call m_journaler->start_append and transit into STATE_READY
+  // call m_journaler->start_append to alloc JournalRecorder instance
+  // and transit us into STATE_READY
   start_append();
 }
 

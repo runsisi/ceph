@@ -148,6 +148,7 @@ int Journaler::init_complete() {
 		     << dendl;
 
     librados::Rados rados(m_header_ioctx);
+
     int r = rados.ioctx_create2(pool_id, m_data_ioctx);
     if (r < 0) {
       if (r == -ENOENT) {
@@ -358,7 +359,8 @@ void Journaler::start_replay(ReplayHandler *replay_handler) {
 
 void Journaler::start_live_replay(ReplayHandler *replay_handler,
                                   double interval) {
-  create_player(replay_handler);
+  create_player(replay_handler); // m_player = new JournalPlayer
+
   m_player->prefetch_and_watch(interval);
 }
 
@@ -368,6 +370,7 @@ bool Journaler::try_pop_front(ReplayEntry *replay_entry,
 
   Entry entry;
   uint64_t commit_tid;
+
   if (!m_player->try_pop_front(&entry, &commit_tid)) {
     return false;
   }
@@ -376,6 +379,7 @@ bool Journaler::try_pop_front(ReplayEntry *replay_entry,
   if (tag_tid != nullptr) {
     *tag_tid = entry.get_tag_tid();
   }
+
   return true;
 }
 
