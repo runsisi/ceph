@@ -376,6 +376,7 @@ bool Journal<I>::is_journal_supported(I &image_ctx) {
 }
 
 // static
+// called by Journal<I>::reset and librbd::create_v2
 template <typename I>
 int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
 		       uint8_t order, uint8_t splay_width,
@@ -420,6 +421,8 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
   cls::journal::Tag tag;
   journal::TagData tag_data;
 
+  // if we are primary then the provided mirror uuid must be ""
+  // if we are mirror image then the provided mirror uuid must be the current primary image
   assert(non_primary ^ primary_mirror_uuid.empty());
 
   // for local created mirror image, primary_mirror_uuid is set to remote mirror uuid,
@@ -433,6 +436,11 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
   // allocate a tag with owner set to 'mirror_uuid', because we have
   // created a new journal metadata object, so tag id and tag class
   // both start from 0
+  // allocate_journaler_tag(cct, journaler, client, tag_class, prev_tag_data, mirror_uuid, *new_tag)
+  // client is used to get the latest commit position to set tag_data.prev tag tid and tag_data.prev entry id
+  // tag_class is part of Tag
+  // pre_tag_data is used to set tag_data.prev mirror uuid
+  // mirror_uuid is used to set tag_data.mirror uuid
   r = allocate_journaler_tag(cct, &journaler, client,
                              cls::journal::Tag::TAG_CLASS_NEW,
                              tag_data, mirror_uuid, &tag);
@@ -513,6 +521,7 @@ int Journal<I>::reset(librados::IoCtx &io_ctx, const std::string &image_id) {
                       cct->_conf->rbd_journal_commit_age);
 
   C_SaferCond cond;
+
   journaler.init(&cond);
   BOOST_SCOPE_EXIT_ALL(&journaler) {
     journaler.shut_down();
@@ -555,6 +564,7 @@ int Journal<I>::reset(librados::IoCtx &io_ctx, const std::string &image_id) {
                << "failed to create journal: " << cpp_strerror(r) << dendl;
     return r;
   }
+
   return 0;
 }
 
@@ -689,6 +699,11 @@ int Journal<I>::promote(I *image_ctx) {
   cls::journal::Tag new_tag;
 
   // allocate a new tag with owner set to local master client
+  // allocate_journaler_tag(cct, journaler, client, tag_class, prev_tag_data, mirror_uuid, *new_tag)
+  // client is used to get the latest commit position to set tag_data.prev tag tid and tag_data.prev entry id
+  // tag_class is part of Tag
+  // pre_tag_data is used to set tag_data.prev mirror uuid
+  // mirror_uuid is used to set tag_data.mirror uuid
   r = allocate_journaler_tag(cct, &journaler, client, client_meta.tag_class,
                              tag_data, LOCAL_MIRROR_UUID, &new_tag);
   if (r < 0) {
@@ -813,12 +828,18 @@ int Journal<I>::demote() {
 
   // allocate a new tag with owner set to orphan, so neither the local (master)
   // client nor the remote (mirror peer) client owns the exclusive lock
+  // allocate_journaler_tag(cct, journaler, client, tag_class, prev_tag_data, mirror_uuid, *new_tag)
+  // client is used to get the latest commit position to set tag_data.prev tag tid and tag_data.prev entry id
+  // tag_class is part of Tag
+  // pre_tag_data is used to set tag_data.prev mirror uuid
+  // mirror_uuid is used to set tag_data.mirror uuid
   r = allocate_journaler_tag(cct, m_journaler, client, m_tag_class,
                              m_tag_data, ORPHAN_MIRROR_UUID, &new_tag);
   if (r < 0) {
     return r;
   }
 
+  // update m_tag_data to the newly created tag.tag_data
   bufferlist::iterator tag_data_bl_it = new_tag.data.begin();
   r = C_DecodeTag::decode(&tag_data_bl_it, &m_tag_data);
   if (r < 0) {
@@ -860,7 +881,8 @@ int Journal<I>::demote() {
 }
 
 // ImageReplayer has an interface with the same name, i.e.,
-// ImageReplayer<I>::allocate_local_tag
+// ImageReplayer<I>::allocate_local_tag to mirror the tag of remote journal
+
 // called by librbd::journal::StandardPolicy::allocate_tag_on_lock
 // ImageCtx has two policy instances: 1) librbd/exclusive_lock/StandardPolicy
 // and 2) librbd/journal/StandardPolicy
@@ -908,6 +930,7 @@ void Journal<I>::allocate_local_tag(Context *on_finish) {
                predecessor_tag_tid, predecessor_entry_tid, on_finish);
 }
 
+// called by Journal<I>::allocate_local_tag and ImageReplayer<I>::allocate_local_tag
 template <typename I>
 void Journal<I>::allocate_tag(const std::string &mirror_uuid,
                               const std::string &predecessor_mirror_uuid,
@@ -934,6 +957,7 @@ void Journal<I>::allocate_tag(const std::string &mirror_uuid,
   bufferlist tag_bl;
   ::encode(tag_data, tag_bl);
 
+  // once the new tag got created, then update the m_tag_data
   C_DecodeTag *decode_tag_ctx = new C_DecodeTag(cct, &m_lock, &m_tag_tid,
                                                 &m_tag_data, on_finish);
 

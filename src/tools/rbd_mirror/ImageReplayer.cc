@@ -797,7 +797,8 @@ void ImageReplayer<I>::handle_replay_ready()
 
   // got a new journal entry
 
-  // m_replay_tag_valid and m_replay_tag are got from ImageReplayer<I>::get_remote_tag
+  // m_replay_tag_valid and m_replay_tag are got from ImageReplayer<I>::get_remote_tag,
+  // m_replay_tag_valid is set until ImageReplayer<I>::handle_get_remote_tag
   if (m_replay_tag_valid && m_replay_tag.tid == m_replay_tag_tid) {
 
     // let m_local_replay to process the journal entry
