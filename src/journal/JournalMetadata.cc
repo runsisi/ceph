@@ -232,6 +232,8 @@ struct C_GetTag : public Context {
 
   void send_get_tag() {
     librados::ObjectReadOperation op;
+
+    // get tag from omap of key "tag_" + tag_tid
     client::get_tag_start(&op, tag_tid);
 
     librados::AioCompletion *comp = librados::Rados::aio_create_completion(
@@ -248,6 +250,7 @@ struct C_GetTag : public Context {
       bufferlist::iterator iter = out_bl.begin();
       r = client::get_tag_finish(&iter, tag);
     }
+
     complete(r);
   }
 
@@ -617,6 +620,7 @@ void JournalMetadata::get_client(const std::string &client_id,
 void JournalMetadata::get_tag(uint64_t tag_tid, Tag *tag, Context *on_finish) {
   C_GetTag *ctx = new C_GetTag(m_cct, m_ioctx, m_oid, m_async_op_tracker,
                                tag_tid, tag, on_finish);
+
   ctx->send();
 }
 

@@ -232,6 +232,7 @@ Context *AcquireRequest<I>::handle_open_journal(int *ret_val) {
   }
 
   send_allocate_journal_tag();
+
   return nullptr;
 }
 
@@ -241,6 +242,7 @@ void AcquireRequest<I>::send_allocate_journal_tag() {
   ldout(cct, 10) << __func__ << dendl;
 
   RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
   using klass = AcquireRequest<I>;
   Context *ctx = create_context_callback<
     klass, &klass::handle_allocate_journal_tag>(this);

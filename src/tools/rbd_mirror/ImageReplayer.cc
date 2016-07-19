@@ -417,6 +417,10 @@ void ImageReplayer<I>::bootstrap() {
   reschedule_update_status_task(10);
 
   // bootstrap will do image sync
+  // note: Journaler::init has not been called, so the journal metadata
+  // obejct has not been watched, immutable and mutable metadata have
+  // not been fetched, see ImageReplayer<I>::handle_bootstrap
+  // and Journaler::init
   request->send();
 }
 
@@ -492,6 +496,8 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
 
   update_mirror_image_status(false, boost::none);
 
+  // call m_remote_journaler->init to watch journal metadata object and
+  // get immutable and mutable metadata
   init_remote_journaler();
 }
 
@@ -538,7 +544,13 @@ void ImageReplayer<I>::start_replay() {
       Context *stop_ctx = create_context_callback<
         ImageReplayer, &ImageReplayer<I>::handle_stop_replay_request>(this);
 
-      // m_journaler->stop_append
+      // 1) call m_journaler->stop_append to flush all inflight appends and
+      // delete m_journaler->m_recorder, the m_journaler->m_recorder will be
+      // recreated by Journal<I>::stop_external_replay which called by
+      // ImageReplayer<I>::replay_flush
+      // 2) create Journal::m_journal_replay and assign to m_local_replay,
+      // 3) call start_ctx, i.e., ImageReplayer<I>::handle_start_replay to
+      // start live replay
       m_local_journal->start_external_replay(&m_local_replay, start_ctx,
                                              stop_ctx);
       return;
@@ -548,6 +560,7 @@ void ImageReplayer<I>::start_replay() {
   on_start_fail(-EINVAL, "error starting journal replay");
 }
 
+// STATE_STARTING -> STATE_REPLAYING
 template <typename I>
 void ImageReplayer<I>::handle_start_replay(int r) {
   dout(20) << "r=" << r << dendl;
@@ -568,6 +581,7 @@ void ImageReplayer<I>::handle_start_replay(int r) {
 
     assert(m_state == STATE_STARTING);
     m_state = STATE_REPLAYING;
+
     std::swap(m_on_start_finish, on_finish);
   }
 
@@ -594,7 +608,14 @@ void ImageReplayer<I>::handle_start_replay(int r) {
   {
     Mutex::Locker locker(m_lock);
 
+    // ReplayHandler::handle_entries_available -> ImageReplayer<I>::handle_replay_ready
+    // ReplayHandler::handle_complete -> ImageReplayer<I>::handle_replay_complete
     m_replay_handler = new ReplayHandler<I>(this);
+
+    // create Journaler::m_player to fetch and watch, the Journaler::m_player
+    // will only be deleted by ImageReplayer<I>::shut_down
+    // note: Journaler only has two interfaces for replay, i.e.,
+    // Journaler::start_replay and Journaler::start_live_replay
     m_remote_journaler->start_live_replay(m_replay_handler,
                                           1 /* TODO: configurable */);
 
@@ -760,6 +781,7 @@ void ImageReplayer<I>::close_local_image(Context *on_finish)
   m_local_image_ctx->state->close(on_finish);
 }
 
+// try to get a replay entry and process it
 template <typename I>
 void ImageReplayer<I>::handle_replay_ready()
 {
@@ -773,11 +795,25 @@ void ImageReplayer<I>::handle_replay_ready()
     return;
   }
 
+  // got a new journal entry
+
+  // m_replay_tag_valid and m_replay_tag are got from ImageReplayer<I>::get_remote_tag
   if (m_replay_tag_valid && m_replay_tag.tid == m_replay_tag_tid) {
+
+    // let m_local_replay to process the journal entry
+
     preprocess_entry();
+
     return;
   }
 
+  // the new journal entry has a new tag tid, so we need to mirror the
+  // new tag in our local mirror journal before processing the journal entry
+
+  // shutdown replaying temporarily to flush inflight op/aio events and
+  // restart it shortly
+  // STATE_REPLAYING -> STATE_REPLAY_FLUSHING, see ImageReplayer<I>::handle_start_replay
+  // will STATE_REPLAY_FLUSHING -> STATE_REPLAYING, see ImageReplayer<I>::handle_replay_flush
   replay_flush();
 }
 
@@ -789,6 +825,7 @@ void ImageReplayer<I>::restart(Context *on_finish)
       if (r < 0) {
 	// Try start anyway.
       }
+
       start(on_finish, true);
     });
 
@@ -803,6 +840,7 @@ void ImageReplayer<I>::flush(Context *on_finish)
 
   {
     Mutex::Locker locker(m_lock);
+
     if (m_state == STATE_REPLAYING) {
       Context *ctx = new FunctionContext(
         [on_finish](int r) {
@@ -878,6 +916,7 @@ template <typename I>
 bool ImageReplayer<I>::on_replay_interrupted()
 {
   bool shut_down;
+
   {
     Mutex::Locker locker(m_lock);
     shut_down = m_stop_requested;
@@ -886,6 +925,7 @@ bool ImageReplayer<I>::on_replay_interrupted()
   if (shut_down) {
     on_stop_journal_replay();
   }
+
   return shut_down;
 }
 
@@ -937,8 +977,14 @@ void ImageReplayer<I>::replay_flush() {
   // replayer to handle the new tag epoch
   Context *ctx = create_context_callback<
     ImageReplayer<I>, &ImageReplayer<I>::handle_replay_flush>(this);
+
   ctx = new FunctionContext([this, ctx](int r) {
+
+      // delete Journal::m_journal_replay, i.e., m_local_replay and call
+      // m_journaler->start_append to recreate JournalRecorder instance,
+      // i.e.,  m_journaler->m_recorder
       m_local_image_ctx->journal->stop_external_replay();
+
       m_local_replay = nullptr;
 
       if (r < 0) {
@@ -948,18 +994,28 @@ void ImageReplayer<I>::replay_flush() {
 
       Context *stop_ctx = create_context_callback<
         ImageReplayer, &ImageReplayer<I>::handle_stop_replay_request>(this);
+
+      // 1) call m_journaler->stop_append to flush all inflight appends and
+      // delete m_journaler->m_recorder, the m_journaler->m_recorder will be
+      // recreated by Journal<I>::stop_external_replay called above
+      // 2) create Journal::m_journal_replay and assign to m_local_replay,
+      // 3) call ctx, i.e., ImageReplayer<I>::handle_replay_flush
+      // see ImageReplayer<I>::start_replay, it has started the live
+      // replay immediately after init the remote journaler
       m_local_journal->start_external_replay(&m_local_replay, ctx, stop_ctx);
     });
 
   m_local_replay->shut_down(true, ctx);
 }
 
+// STATE_REPLAY_FLUSHING -> STATE_REPLAYING
 template <typename I>
 void ImageReplayer<I>::handle_replay_flush(int r) {
   dout(20) << "r=" << r << dendl;
 
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_state == STATE_REPLAY_FLUSHING);
     m_state = STATE_REPLAYING;
   }
@@ -972,6 +1028,10 @@ void ImageReplayer<I>::handle_replay_flush(int r) {
     return;
   }
 
+  // get the remote tag identified by m_replay_tag_tid got from
+  // ImageReplayer<I>::handle_replay_ready, and alloc a tag
+  // in our local mirror journaler then continue to process the
+  // popped journal entry, see ImageReplayer<I>::handle_allocate_local_tag
   get_remote_tag();
 }
 
@@ -981,6 +1041,9 @@ void ImageReplayer<I>::get_remote_tag() {
 
   Context *ctx = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_get_remote_tag>(this);
+
+  // get tag from journal metadata object omap by the specified tag tid,
+  // m_replay_tag_tid was got by ImageReplayer<I>::handle_replay_ready
   m_remote_journaler->get_tag(m_replay_tag_tid, &m_replay_tag, ctx);
 }
 
@@ -1005,23 +1068,33 @@ void ImageReplayer<I>::handle_get_remote_tag(int r) {
   }
 
   m_replay_tag_valid = true;
+
   dout(20) << "decoded remote tag " << m_replay_tag_tid << ": "
            << m_replay_tag_data << dendl;
 
+  // we have got a tag from the remote journaler, so we have to create
+  // the same tag in the local journaler
   allocate_local_tag();
 }
 
+// Journal has an interface with the same name, i.e.,
+// Journal<I>::allocate_local_tag(Context *on_finish)
 template <typename I>
 void ImageReplayer<I>::allocate_local_tag() {
   dout(20) << dendl;
 
   std::string mirror_uuid = m_replay_tag_data.mirror_uuid;
+
   if (mirror_uuid == librbd::Journal<>::LOCAL_MIRROR_UUID ||
       mirror_uuid == m_local_mirror_uuid) {
     mirror_uuid = m_remote_mirror_uuid;
   } else if (mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID) {
     dout(5) << "encountered image demotion: stopping" << dendl;
+
     Mutex::Locker locker(m_lock);
+
+    // handle_replay_ready called by ImageReplayer<I>::handle_process_entry_ready
+    // will stop and not try to pop the next journal entry
     m_stop_requested = true;
   }
 
@@ -1054,6 +1127,9 @@ void ImageReplayer<I>::handle_allocate_local_tag(int r) {
     handle_replay_complete(r, "failed to allocate journal tag");
     return;
   }
+
+  // the m_repaly_entry was popped by ImageReplayer<I>::handle_replay_ready,
+  // and we have mirrored the remote tag, now process the journal entry
 
   preprocess_entry();
 }
@@ -1103,7 +1179,10 @@ void ImageReplayer<I>::process_entry() {
   Context *on_ready = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_process_entry_ready>(this);
 
+  // ImageReplayer<I>::handle_process_entry_safe
   Context *on_commit = new C_ReplayCommitted(this, std::move(m_replay_entry));
+
+  // m_local_replay was created by m_local_journal->start_external_replay
 
   m_local_replay->process(m_event_entry, on_ready, on_commit);
   m_event_entry = {};
@@ -1114,7 +1193,7 @@ void ImageReplayer<I>::handle_process_entry_ready(int r) {
   dout(20) << dendl;
   assert(r == 0);
 
-  // attempt to process the next event
+  // attempt to process the next aio/op event
   handle_replay_ready();
 }
 
