@@ -169,6 +169,7 @@ public:
   }
 };
 
+// called by Journal<I>::get_tag_owner, Journal<I>::request_resyn, Journal<I>::promote
 template <typename J>
 int open_journaler(CephContext *cct, J *journaler,
                    cls::journal::Client *client,
@@ -185,7 +186,12 @@ int open_journaler(CephContext *cct, J *journaler,
     return r;
   }
 
-  // get registered local client
+  // get all registered clients and filter by the specified client id
+  // note: every newly created primary image registered a master client with client
+  // id set to IMAGE_CLIENT_ID and allocated an initial tag with tag.mirror uuid
+  // set to LOCAL_MIRROR_UUID, every newly created secondary image also registered
+  // a master client with client id set to IMAGE_CLIENT_ID while allocated an initial
+  // tag with tag.mirror uuid set to remote mirror uuid, see Journal<I>::create
   r = journaler->get_cached_client(Journal<ImageCtx>::IMAGE_CLIENT_ID, client);
   if (r < 0) {
     return r;
@@ -875,7 +881,11 @@ int Journal<I>::demote() {
 }
 
 // ImageReplayer has an interface with the same name, i.e.,
-// ImageReplayer<I>::allocate_local_tag to mirror the tag of remote journal
+// ImageReplayer<I>::allocate_local_tag to mirror the tag of remote journal tag, but
+// it has to modify the tag.mirror_uuid and tag.prev mirror uuid before allocate the
+// local tag
+// in this interface we allocate a tag with tag.mirror uuid and tag.prev mirror uuid
+// both set to LOCAL_MIRROR_UUID blindly
 
 // called by librbd::journal::StandardPolicy::allocate_tag_on_lock
 // ImageCtx has two policy instances: 1) librbd/exclusive_lock/StandardPolicy

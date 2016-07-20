@@ -58,16 +58,19 @@ std::string to_hex(uint64_t value) {
 }
 
 std::string key_from_client_id(const std::string &client_id) {
+  // "client_"
   return HEADER_KEY_CLIENT_PREFIX + client_id;
 }
 
 std::string key_from_tag_tid(uint64_t tag_tid) {
+  // "tag_"
   return HEADER_KEY_TAG_PREFIX + to_hex(tag_tid);
 }
 
 uint64_t tag_tid_from_key(const std::string &key) {
   std::istringstream iss(key);
   uint64_t id;
+  // "tag_"
   iss.ignore(HEADER_KEY_TAG_PREFIX.size()) >> std::hex >> id;
   return id;
 }
@@ -1046,6 +1049,8 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
   // calculate the minimum tag within client's commit position
   uint64_t minimum_tag_tid = std::numeric_limits<uint64_t>::max();
   cls::journal::Client client;
+
+  // "client_"
   int r = read_key(hctx, key_from_client_id(client_id), &client);
   if (r < 0) {
     return r;
@@ -1105,6 +1110,9 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
 
         if (tag.tid >= minimum_tag_class_to_tids[tag.tag_class] &&
             (!tag_class || *tag_class == tag.tag_class)) {
+
+          // filter those tags with tid >= the min committed tid
+
           tags.insert(tag);
         }
 

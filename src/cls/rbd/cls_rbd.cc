@@ -3221,7 +3221,10 @@ int image_set(cls_method_context_t hctx, const string &image_id,
   // we can only 1) add a new mirror image or 2) update the image mirror state
 
   if (r == -ENOENT) {
+
     // make sure global id doesn't already exist
+
+    // "global_"
     std::string global_id_key = global_key(mirror_image.global_image_id);
     std::string image_id;
 
@@ -3233,6 +3236,8 @@ int image_set(cls_method_context_t hctx, const string &image_id,
               cpp_strerror(r).c_str());
       return r;
     }
+
+    // r == -ENOENT
 
     // make sure this was not a race for disabling
     if (mirror_image.state == cls::rbd::MIRROR_IMAGE_STATE_DISABLING) {
@@ -3287,6 +3292,7 @@ int image_remove(cls_method_context_t hctx, const string &image_id) {
     return -EBUSY;
   }
 
+  // "image_"
   r = cls_cxx_map_remove_key(hctx, image_key(image_id));
   if (r < 0) {
     CLS_ERR("error removing mirrored image '%s': %s", image_id.c_str(),
@@ -3294,6 +3300,7 @@ int image_remove(cls_method_context_t hctx, const string &image_id) {
     return r;
   }
 
+  // "global_"
   r = cls_cxx_map_remove_key(hctx, global_key(mirror_image.global_image_id));
   if (r < 0 && r != -ENOENT) {
     CLS_ERR("error removing global id for image '%s': %s", image_id.c_str(),
@@ -4147,6 +4154,7 @@ int mirror_image_remove(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
+  // image mirror state must already in MIRROR_IMAGE_STATE_DISABLING
   int r = mirror::image_remove(hctx, image_id);
   if (r < 0) {
     return r;

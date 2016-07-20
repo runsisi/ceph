@@ -301,7 +301,9 @@ int mirror_image_enable_internal(ImageCtx *ictx) {
   return 0;
 }
 
-// called by update_features, remove, mirror_image_disable
+// called by update_features(false, false), remove(force, !force), mirror_image_disable(force, true)
+// force means even if the image is not primary we still to set the mirror state to MIRROR_IMAGE_STATE_DISABLING
+// remove means remove image mirror state omap key, so the mirroring is disabled definitely
 int mirror_image_disable_internal(ImageCtx *ictx, bool force,
                                   bool remove=true) {
   CephContext *cct = ictx->cct;
@@ -357,10 +359,15 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
                << dendl;
   }
 
+  // "journal."
   header_oid = ::journal::Journaler::header_oid(ictx->id);
 
   while(true) {
+
+    // unregister all mirror peer clients of this image
+
     clients.clear();
+
     r = cls::journal::client::client_list(ictx->md_ctx, header_oid, &clients);
     if (r < 0) {
       lderr(cct) << "cannot disable mirroring: " << cpp_strerror(r) << dendl;
@@ -377,6 +384,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     for (auto client : clients) {
       journal::ClientData client_data;
       bufferlist::iterator bl = client.data.begin();
+
       ::decode(client_data, bl);
 
       journal::ClientMetaType type = client_data.get_client_meta_type();
@@ -412,7 +420,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
   if (remove) {
 
-    // unregister this image from RBD_MIRRORING object
+    // unregister this image from RBD_MIRRORING object, i.e., remove "image_" and "global_" omap
+
     r = cls_client::mirror_image_remove(&ictx->md_ctx, ictx->id);
     if (r < 0 && r != -ENOENT) {
       lderr(cct) << "failed to remove image from mirroring directory: "
@@ -1137,6 +1146,10 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     return 0;
   }
 
+  // if non_primary_global_image_id is not empty then we are creating a mirror image,
+  // it is the global image id of the remote image and is used to automatically enable
+  // the mirroring of the local created mirror image if we are in pool mirror mode
+  // primary_mirror_uuid is used to set tag.mirror_uuid of the newly create tag
   int create_v2(IoCtx& io_ctx, const char *imgname, uint64_t bid, uint64_t size,
 		int order, uint64_t features, uint64_t stripe_unit,
 		uint64_t stripe_count, uint8_t journal_order,
@@ -1266,7 +1279,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       }
 
       // create journal metadata object associated with the image and
-      // allocate a tag
+      // allocate a tag, if force_non_primary is true then primary_mirror_uuid
+      // is used to set the tag.mirror_uuid of the newly create tag
       r = Journal<>::create(io_ctx, id, journal_order, journal_splay_width,
 			    journal_pool, force_non_primary,
                             primary_mirror_uuid);
@@ -3302,6 +3316,10 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       }
     }
 
+    // force means even if the image is not primary we still to set the mirror state to MIRROR_IMAGE_STATE_DISABLING
+    // remove means remove image mirror state omap key, so the mirroring is disabled definitely
+    // note: the third parameter 'remove' is default to true, so the mirroring info
+    // of this image is removed from the RBD_MIRRORING object
     r = mirror_image_disable_internal(ictx, force);
     if (r < 0) {
       return r;

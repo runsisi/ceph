@@ -88,6 +88,9 @@ void CreateImageRequest<I>::create_image() {
       librados::Rados rados(m_local_io_ctx);
       uint64_t bid = rados.get_instance_id();
 
+      // m_global_image_id is used to enable mirroring of the newly created local mirror
+      // image if the mirror mode is pool mode, the newly create tag.mirror_uuid is set
+      // to m_remote_mirror_uuid
       r = utils::create_image(m_local_io_ctx, m_remote_image_ctx,
                               m_local_image_name.c_str(), bid,
                               m_remote_image_ctx->size, order,
