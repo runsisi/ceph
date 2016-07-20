@@ -478,6 +478,9 @@ void BootstrapRequest<I>::create_local_image() {
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_create_local_image>(
       this);
 
+  // m_global_image_id is used to enable mirroring of the newly created local mirror
+  // image if the mirror mode is pool mode, the newly create tag.mirror_uuid is set
+  // to m_remote_mirror_uuid
   CreateImageRequest<I> *request = CreateImageRequest<I>::create(
     m_local_io_ctx, m_work_queue, m_global_image_id, m_remote_mirror_uuid,
     m_local_image_name, m_remote_image_ctx, ctx);
@@ -592,6 +595,8 @@ void BootstrapRequest<I>::get_remote_tags() {
 
   // the remote tag class was got by BootstrapRequest<I>::get_remote_tag_class
   // get the tags of mirror peer client of the remote journaler
+  // m_journler->m_client_id is initialized to ImageReplayer::m_local_mirror_uuid, see
+  // ImageReplayer<I>::start
   m_journaler->get_tags(m_remote_tag_class, &m_remote_tags, ctx);
 }
 
@@ -680,8 +685,8 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
     } else if (tag_data.mirror_uuid == m_remote_mirror_uuid &&
 	       m_client_meta->state == librbd::journal::MIRROR_PEER_STATE_REPLAYING) {
 
-      // image sync has finished, no image sync needed, see
-      // BootstrapRequest<I>::image_sync
+      // image sync has finished
+      //
 
       dout(20) << ": local image is in clean replay state" << dendl;
     } else if (m_client_meta->state == librbd::journal::MIRROR_PEER_STATE_SYNCING) {

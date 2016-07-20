@@ -612,9 +612,13 @@ void JournalMetadata::allocate_tag(uint64_t tag_class, const bufferlist &data,
                                          m_async_op_tracker, tag_class,
                                          data, tag, on_finish);
 
+  // get the next tag_tid then encode tag_class, tag_tid and data to allocate
+  // a tag on the journal metadata object
   ctx->send();
 }
 
+// we do not want this interface can only be used to get the client of
+// JournalMetadata::m_client_id, but can used for any client
 void JournalMetadata::get_client(const std::string &client_id,
                                  cls::journal::Client *client,
                                  Context *on_finish) {
@@ -630,6 +634,7 @@ void JournalMetadata::get_tag(uint64_t tag_tid, Tag *tag, Context *on_finish) {
   C_GetTag *ctx = new C_GetTag(m_cct, m_ioctx, m_oid, m_async_op_tracker,
                                tag_tid, tag, on_finish);
 
+  // get the tag_tid specified tag
   ctx->send();
 }
 
@@ -639,6 +644,7 @@ void JournalMetadata::get_tags(const boost::optional<uint64_t> &tag_class,
                                  m_async_op_tracker, tag_class,
                                  tags, on_finish);
 
+  // m_client_id is used to filter out the committed tags of this client
   ctx->send();
 }
 

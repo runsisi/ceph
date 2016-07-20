@@ -265,7 +265,10 @@ ImageReplayer<I>::ImageReplayer(Threads *threads,
   m_image_sync_throttler(image_sync_throttler),
   m_local(local),
   m_remote(remote),
+  // used by ImageReplayer<I>::allocate_local_tag and as m_client_id of the remote journaler
   m_local_mirror_uuid(local_mirror_uuid),
+  // used by ImageReplayer<I>::allocate_local_tag and set tag.mirror_uuid of the
+  // newly created local mirror image
   m_remote_mirror_uuid(remote_mirror_uuid),
   m_remote_pool_id(remote_pool_id),
   m_local_pool_id(local_pool_id),
@@ -596,6 +599,7 @@ void ImageReplayer<I>::handle_start_replay(int r) {
   m_event_preprocessor = EventPreprocessor<I>::create(
     *m_local_image_ctx, *m_remote_journaler, m_local_mirror_uuid,
     &m_client_meta, m_threads->work_queue);
+
   m_replay_status_formatter =
     ReplayStatusFormatter<I>::create(m_remote_journaler, m_local_mirror_uuid);
 
@@ -1138,6 +1142,8 @@ void ImageReplayer<I>::allocate_local_tag() {
   Context *ctx = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_allocate_local_tag>(this);
 
+  // allocate a tag on our journal metadata object to mirror the new tag of the
+  // remote image
   m_local_journal->allocate_tag(
     mirror_uuid, predecessor_mirror_uuid,
     m_replay_tag_data.predecessor_commit_valid,
@@ -1177,12 +1183,15 @@ void ImageReplayer<I>::preprocess_entry() {
   }
 
   if (!m_event_preprocessor->is_required(m_event_entry)) {
+
     process_entry();
+
     return;
   }
 
   Context *ctx = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_preprocess_entry>(this);
+
   m_event_preprocessor->preprocess(&m_event_entry, ctx);
 }
 

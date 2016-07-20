@@ -247,7 +247,9 @@ void AcquireRequest<I>::send_allocate_journal_tag() {
   Context *ctx = create_context_callback<
     klass, &klass::handle_allocate_journal_tag>(this);
 
-  // m_image_ctx->journal->allocate_local_tag
+  // call m_image_ctx->journal->allocate_local_tag to allocate a tag with
+  // tag.mirror_uuid and tag.prev mirror uuid both set to LOCAL_MIRROR_UUID
+  // only call it if the image is the primary, i.e., the tag owner
   m_image_ctx.get_journal_policy()->allocate_tag_on_lock(ctx);
 }
 
