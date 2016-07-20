@@ -84,7 +84,10 @@ struct C_GetClient : public Context {
 struct C_AllocateTag : public Context {
   CephContext *cct;
   librados::IoCtx &ioctx;
+
+  // journal metadata object id associated with each image
   const std::string &oid;
+
   AsyncOpTracker &async_op_tracker;
   uint64_t tag_class;
   Tag *tag;
@@ -101,6 +104,7 @@ struct C_AllocateTag : public Context {
     async_op_tracker.start_op();
     tag->data = data;
   }
+
   virtual ~C_AllocateTag() {
     async_op_tracker.finish_op();
   }
@@ -136,6 +140,7 @@ struct C_AllocateTag : public Context {
       complete(r);
       return;
     }
+
     send_tag_create();
   }
 
@@ -143,6 +148,7 @@ struct C_AllocateTag : public Context {
     ldout(cct, 20) << "C_AllocateTag: " << __func__ << dendl;
 
     librados::ObjectWriteOperation op;
+
     client::tag_create(&op, tag->tid, tag_class, tag->data);
 
     librados::AioCompletion *comp = librados::Rados::aio_create_completion(
@@ -318,6 +324,8 @@ struct C_GetTags : public Context {
         for (auto &journal_tag : journal_tags) {
           // list<Tag>
           tags->push_back(journal_tag);
+
+          // update the next tag tid to start
           start_after_tag_tid = journal_tag.tid;
         }
 
@@ -603,6 +611,7 @@ void JournalMetadata::allocate_tag(uint64_t tag_class, const bufferlist &data,
   C_AllocateTag *ctx = new C_AllocateTag(m_cct, m_ioctx, m_oid,
                                          m_async_op_tracker, tag_class,
                                          data, tag, on_finish);
+
   ctx->send();
 }
 

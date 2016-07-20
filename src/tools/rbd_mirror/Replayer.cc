@@ -803,6 +803,7 @@ void Replayer::start_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer
                                     const boost::optional<std::string>& image_name)
 {
   assert(m_lock.is_locked());
+
   dout(20) << "global_image_id=" << image_replayer->get_global_image_id()
            << dendl;
 
@@ -812,12 +813,14 @@ void Replayer::start_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer
     return;
   } else if (image_replayer->is_blacklisted()) {
     derr << "blacklisted detected during image replay" << dendl;
+
     m_blacklisted = true;
     m_stopping.set(1);
+
     return;
   }
 
-  // now m_state == STATE_STOPPED
+  // now m_state == STATE_STOPPED, try to start the replay for this remote image
 
   if (image_name) {
     FunctionContext *ctx = new FunctionContext(
@@ -827,6 +830,7 @@ void Replayer::start_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer
           }
 
           Mutex::Locker locker(m_lock);
+
           auto it = m_image_replayers.find(image_id);
           if (it == m_image_replayers.end()) {
             return;

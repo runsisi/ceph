@@ -1189,6 +1189,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
         goto err_remove_object_map;
       }
 
+      // create journal metadata object associated with the image and
+      // allocate a tag
       r = Journal<>::create(io_ctx, id, journal_order, journal_splay_width,
 			    journal_pool, force_non_primary,
                             primary_mirror_uuid);

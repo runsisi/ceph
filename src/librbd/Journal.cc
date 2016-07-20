@@ -833,6 +833,8 @@ int Journal<I>::demote() {
   // tag_class is part of Tag
   // pre_tag_data is used to set tag_data.prev mirror uuid
   // mirror_uuid is used to set tag_data.mirror uuid
+
+  // m_tag_class was got in Journal<I>::handle_initialized
   r = allocate_journaler_tag(cct, m_journaler, client, m_tag_class,
                              m_tag_data, ORPHAN_MIRROR_UUID, &new_tag);
   if (r < 0) {
@@ -961,7 +963,7 @@ void Journal<I>::allocate_tag(const std::string &mirror_uuid,
   C_DecodeTag *decode_tag_ctx = new C_DecodeTag(cct, &m_lock, &m_tag_tid,
                                                 &m_tag_data, on_finish);
 
-  // m_tag_class was set in Journal<I>::handle_initialized
+  // m_tag_class was got in Journal<I>::handle_initialized
   m_journaler->allocate_tag(m_tag_class, tag_bl, &decode_tag_ctx->tag,
                             decode_tag_ctx);
 }
@@ -1566,7 +1568,9 @@ void Journal<I>::handle_initialized(int r) {
     return;
   }
 
+  // used to create new tag, see Journal<I>::demote and Journal<I>::allocate_tag
   m_tag_class = image_client_meta->tag_class;
+
   ldout(cct, 20) << this << " " << __func__ << ": "
                  << "client: " << client << ", "
                  << "image meta: " << *image_client_meta << dendl;

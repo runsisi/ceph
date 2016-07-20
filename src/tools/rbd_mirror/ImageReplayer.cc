@@ -323,6 +323,7 @@ void ImageReplayer<I>::set_state_description(int r, const std::string &desc) {
   m_state_desc = desc;
 }
 
+// called by Replayer::start_image_replayer and ImageReplayer<I>::restart
 template <typename I>
 void ImageReplayer<I>::start(Context *on_finish, bool manual)
 {
@@ -459,6 +460,7 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
                                     m_resync_listener);
 
     bool do_resync = false;
+
     r = m_local_image_ctx->journal->check_resync_requested(&do_resync);
     if (r < 0) {
       derr << "failed to check if a resync was requested" << dendl;
@@ -474,6 +476,8 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
           resync_image(on_finish);
         });
 
+      // will be called right before starting image live replay, see
+      // ImageReplayer<I>::start_replay
       m_on_start_finish = ctx;
     }
 
@@ -488,6 +492,7 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
 	m_asok_hook = nullptr;
       }
     }
+
     if (!m_asok_hook) {
       m_asok_hook = new ImageReplayerAdminSocketHook<I>(g_ceph_context, m_name,
                                                         this);
@@ -582,6 +587,9 @@ void ImageReplayer<I>::handle_start_replay(int r) {
     assert(m_state == STATE_STARTING);
     m_state = STATE_REPLAYING;
 
+    // m_on_start_finish is a user callback, see ImageReplayer<I>::start,
+    // or a resync callback wrapped on the user callback, see
+    // ImageReplayer<I>::handle_bootstrap
     std::swap(m_on_start_finish, on_finish);
   }
 
@@ -597,13 +605,20 @@ void ImageReplayer<I>::handle_start_replay(int r) {
   dout(20) << "start succeeded" << dendl;
 
   if (on_finish != nullptr) {
+
+    // finish user callback or the resync wrapper, i.e., resync and then
+    // finish user callback
+
     dout(20) << "on finish complete, r=" << r << dendl;
+
     on_finish->complete(r);
   }
 
   if (on_replay_interrupted()) {
     return;
   }
+
+  // ok, have bootstrapped, we are to do live replay
 
   {
     Mutex::Locker locker(m_lock);
@@ -647,19 +662,26 @@ void ImageReplayer<I>::on_start_fail(int r, const std::string &desc)
       Context *on_start_finish(nullptr);
       {
         Mutex::Locker locker(m_lock);
+
         m_state = STATE_STOPPING;
+
         if (r < 0 && r != -ECANCELED) {
           derr << "start failed: " << cpp_strerror(r) << dendl;
         } else {
           dout(20) << "start canceled" << dendl;
         }
 
+        // m_on_start_finish is a user callback, see ImageReplayer<I>::start,
+        // or a resync callback wrapped on the user callback, see
+        // ImageReplayer<I>::handle_bootstrap
         std::swap(m_on_start_finish, on_start_finish);
       }
 
       set_state_description(r, desc);
       update_mirror_image_status(false, boost::none);
+
       reschedule_update_status_task(-1);
+
       shut_down(r, on_start_finish);
     });
 
@@ -676,9 +698,11 @@ bool ImageReplayer<I>::on_start_interrupted()
   }
 
   on_start_fail(-ECANCELED);
+
   return true;
 }
 
+// called by ImageReplayer<I>::restart and ImageReplayer<I>::resync_image
 template <typename I>
 void ImageReplayer<I>::stop(Context *on_finish, bool manual)
 {
@@ -714,8 +738,10 @@ void ImageReplayer<I>::stop(Context *on_finish, bool manual)
 
         // ImageReplayer::handle_shut_down will execute this callback
         assert(m_on_stop_finish == nullptr);
+
         std::swap(m_on_stop_finish, on_finish);
         m_stop_requested = true;
+
         // Replayer::stop is called by admin socket, so it's a manual op,
         // while Replayer::stop_image_replayer and Replayer::restart is
         // not, we do not start the image replayer process automatically
@@ -735,6 +761,7 @@ void ImageReplayer<I>::stop(Context *on_finish, bool manual)
     if (on_finish) {
       on_finish->complete(-EINVAL);
     }
+
     return;
   }
 
