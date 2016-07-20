@@ -130,6 +130,10 @@ void BootstrapRequest<I>::handle_get_local_image_id(int r) {
   }
 
   if (r == -ENOENT) {
+
+    // the global image id does not have a corresponding local image id
+    // registered in local pool's RBD_MIRRORING object
+
     dout(10) << ": image not registered locally" << dendl;
   } else if (r < 0) {
     derr << ": failed to retrieve local image id: " << cpp_strerror(r) << dendl;
@@ -207,7 +211,9 @@ void BootstrapRequest<I>::get_client() {
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_get_client>(
       this);
 
-  // get mirror peer client of remote journal
+  // get mirror peer client of the remote journal
+  // note: BootstrapRequest<I>::get_remote_tag_class also calls this
+  // to get the master client
   m_journaler->get_client(m_local_mirror_uuid, &m_client, ctx);
 }
 
@@ -222,6 +228,10 @@ void BootstrapRequest<I>::handle_get_client(int r) {
     finish(r);
     return;
   } else if (decode_client_meta()) {
+
+    // if our mirror peer client has registered with the remote journal,
+    // then we will decode m_local_image_id from the MirrorPeerClientMeta
+
     // skip registration if it already exists
     open_remote_image();
     return;
@@ -303,7 +313,7 @@ void BootstrapRequest<I>::handle_open_remote_image(int r) {
     return;
   }
 
-  // open remote image succeeded
+  // open remote image succeeded, check if the remote image is primary
 
   // TODO: make async
   bool tag_owner;
@@ -337,16 +347,21 @@ void BootstrapRequest<I>::handle_open_remote_image(int r) {
     m_local_image_name = m_remote_image_ctx->name;
   }
 
+  // TODO: BootstrapRequest<I>::decode_client_meta always update the m_local_image_id ???
+
   if (m_local_image_id.empty()) {
 
-    // local mirror image does not exist, create it now
+    // local mirror image has not been registered as a mirror image of
+    // the remote primary image, try to create it
 
     create_local_image();
 
     return;
   }
 
-  // the local mirror image has exists, see BootstrapRequest<I>::get_local_image_id
+  // 1) the local mirror image exists, see BootstrapRequest<I>::get_local_image_id
+  // or 2) we have registered a mirror peer client, see BootstrapRequest<I>::decode_client_meta
+  // called by BootstrapRequest<I>::handle_get_client
   open_local_image();
 }
 
@@ -360,11 +375,17 @@ void BootstrapRequest<I>::open_local_image() {
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_open_local_image>(
       this);
 
+  // if m_local_image_id is empty, means this is a newly created local
+  // mirror image, see BootstrapRequest<I>::create_local_image
+
   OpenLocalImageRequest<I> *request = OpenLocalImageRequest<I>::create(
     m_local_io_ctx, m_local_image_ctx,
     (!m_local_image_id.empty() ? std::string() : m_local_image_name),
     m_local_image_id, m_work_queue, ctx);
 
+  // OpenLocalImageRequest will open the local mirror image and check
+  // the tag owner, if the local mirror image is not primary then we
+  // will try to get the exclusive lock and return
   request->send();
 }
 
@@ -373,6 +394,13 @@ void BootstrapRequest<I>::handle_open_local_image(int r) {
   dout(20) << ": r=" << r << dendl;
 
   if (r == -ENOENT) {
+
+    // if we mirrored a remote image before and then we deleted the local
+    // mirror image manually, then we may got a stale, i.e., non-existing,
+    // m_local_image_id in BootstrapRequest<I>::handle_get_client, so we
+    // need to create a local mirror image with the same name as the remote
+    // primary image
+
     assert(*m_local_image_ctx == nullptr);
 
     dout(10) << ": local image missing" << dendl;
@@ -381,6 +409,12 @@ void BootstrapRequest<I>::handle_open_local_image(int r) {
 
     return;
   } else if (r == -EREMOTEIO) {
+
+    // local image is primary too, maybe we have promoted this local mirror
+    // image to primary manually, this is not permitted for mirroring,
+    // only if the remote image is primary and the local image is secondary
+    // then we can start the mirror process
+
     assert(*m_local_image_ctx == nullptr);
 
     dout(10) << "local image is primary -- skipping image replay" << dendl;
@@ -433,6 +467,10 @@ void BootstrapRequest<I>::create_local_image() {
   // to create, will be set after the local mirror image has been
   // opened, see BootstrapRequest<I>::update_client
 
+  // we need to reset m_local_image_id in case BootstrapRequest<I>::decode_client_meta
+  // set a non-exsisting local image id, so open_local_image called later
+  // will not open the newly created local mirror image with image id but
+  // image name
   m_local_image_id = "";
 
   update_progress("CREATE_LOCAL_IMAGE");
@@ -476,7 +514,8 @@ void BootstrapRequest<I>::update_client() {
 
   if (m_client_meta->image_id == (*m_local_image_ctx)->id) {
 
-    // already registered local image with remote journal
+    // this is
+    // already registered local mirror peer client with the remote journal
 
     get_remote_tags();
 
@@ -578,9 +617,14 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
   // decode the remote tags
   librbd::journal::TagData remote_tag_data;
 
+  // list<cls::journal::Tag>
   for (auto &tag : m_remote_tags) {
+
+    // iterate remote tags
+
     try {
       bufferlist::iterator it = tag.data.begin();
+
       ::decode(remote_tag_data, it);
     } catch (const buffer::error &err) {
       derr << ": failed to decode remote tag: " << err.what() << dendl;
@@ -596,7 +640,9 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
 
     if (remote_tag_data.mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID &&
         remote_tag_data.predecessor_mirror_uuid == m_local_mirror_uuid) {
+
       // remote tag is chained off a local tag demotion
+
       break;
     }
   }
@@ -635,14 +681,20 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
     } else if (tag_data.mirror_uuid == m_remote_mirror_uuid &&
 	       m_client_meta->state == librbd::journal::MIRROR_PEER_STATE_REPLAYING) {
 
-      // image sync has finished
+      // image sync has finished, no image sync needed, see
+      // BootstrapRequest<I>::image_sync
 
       dout(20) << ": local image is in clean replay state" << dendl;
     } else if (m_client_meta->state == librbd::journal::MIRROR_PEER_STATE_SYNCING) {
+
+      // previous image sync has not finished
+
       dout(20) << ": previous sync was canceled" << dendl;
     } else {
       derr << ": split-brain detected -- skipping image replay" << dendl;
+
       m_ret_val = -EEXIST;
+
       close_local_image();
       return;
     }
@@ -763,6 +815,7 @@ bool BootstrapRequest<I>::decode_client_meta() {
   dout(20) << dendl;
 
   librbd::journal::ClientData client_data;
+
   bufferlist::iterator it = m_client.data.begin();
   try {
     ::decode(client_data, it);
@@ -773,6 +826,7 @@ bool BootstrapRequest<I>::decode_client_meta() {
 
   librbd::journal::MirrorPeerClientMeta *client_meta =
     boost::get<librbd::journal::MirrorPeerClientMeta>(&client_data.client_meta);
+
   if (client_meta == nullptr) {
     derr << ": unknown peer registration" << dendl;
     return true;
@@ -785,6 +839,7 @@ bool BootstrapRequest<I>::decode_client_meta() {
 
   dout(20) << ": client found: image_id=" << m_local_image_id
 	   << ", client_meta=" << *m_client_meta << dendl;
+
   return true;
 }
 
