@@ -856,13 +856,17 @@ int Journal<I>::demote() {
     return r;
   }
 
+  // append the demote event to the journal
+
   journal::EventEntry event_entry{journal::DemoteEvent{}};
   bufferlist event_entry_bl;
   ::encode(event_entry, event_entry_bl);
 
   m_tag_tid = new_tag.tid;
   Future future = m_journaler->append(m_tag_tid, event_entry_bl);
+
   C_SaferCond ctx;
+
   future.flush(&ctx);
 
   r = ctx.wait();
@@ -874,7 +878,9 @@ int Journal<I>::demote() {
   }
 
   m_journaler->committed(future);
+
   C_SaferCond flush_ctx;
+
   m_journaler->flush_commit_position(&flush_ctx);
 
   r = flush_ctx.wait();
@@ -1403,6 +1409,7 @@ void Journal<I>::stop_external_replay() {
   start_append();
 }
 
+// called by Journal<I>::open and Journal<I>::handle_journal_destroyed
 template <typename I>
 void Journal<I>::create_journaler() {
   CephContext *cct = m_image_ctx.cct;

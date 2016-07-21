@@ -170,6 +170,7 @@ struct C_InvokeAsyncRequest : public Context {
   void send_acquire_exclusive_lock() {
     // context can complete before owner_lock is unlocked
     RWLock &owner_lock(image_ctx.owner_lock);
+
     owner_lock.get_read();
 
     image_ctx.snap_lock.get_read();
@@ -1321,13 +1322,17 @@ int Operations<I>::prepare_image_update() {
   int r = 0;
   bool trying_lock = false;
   C_SaferCond ctx;
+
   m_image_ctx.owner_lock.put_read();
+
   {
     RWLock::WLocker owner_locker(m_image_ctx.owner_lock);
+
     if (m_image_ctx.exclusive_lock != nullptr &&
         (!m_image_ctx.exclusive_lock->is_lock_owner() ||
          !m_image_ctx.exclusive_lock->accept_requests(&r))) {
       m_image_ctx.exclusive_lock->try_lock(&ctx);
+
       trying_lock = true;
     }
   }
@@ -1335,6 +1340,7 @@ int Operations<I>::prepare_image_update() {
   if (trying_lock) {
     r = ctx.wait();
   }
+
   m_image_ctx.owner_lock.get_read();
 
   return r;

@@ -80,6 +80,7 @@ namespace librbd {
   void AioCompletion::complete() {
     assert(lock.is_locked());
     assert(ictx != nullptr);
+
     CephContext *cct = ictx->cct;
 
     tracepoint(librbd, aio_complete_enter, this, rval);
@@ -160,6 +161,7 @@ namespace librbd {
   void AioCompletion::fail(int r)
   {
     lock.Lock();
+
     assert(ictx != nullptr);
     CephContext *cct = ictx->cct;
 
@@ -170,7 +172,9 @@ namespace librbd {
 
     rval = r;
 
+    // call AioCompletion::complete_cb, i.e., the user provided callback
     complete();
+
     put_unlock();
   }
 

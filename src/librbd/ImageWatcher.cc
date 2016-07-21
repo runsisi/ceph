@@ -319,15 +319,21 @@ void ImageWatcher::notify_rename(const std::string &image_name,
   notify_lock_owner(std::move(bl), on_finish);
 }
 
+// called by ImageCtx::notify_update(Context *on_finish), which called by
+// Operations.cc:C_NotifyUpdate::complete
 void ImageWatcher::notify_header_update(Context *on_finish) {
   ldout(m_image_ctx.cct, 10) << this << ": " << __func__ << dendl;
 
   // supports legacy (empty buffer) clients
   bufferlist bl;
   ::encode(NotifyMessage(HeaderUpdatePayload()), bl);
+
   m_notifier.notify(bl, nullptr, on_finish);
 }
 
+// static
+// called by ImageCtx::notify_update(), which called by
+// librbd::update_features, librbd::lock, librbd::unlock, librbd::break_lock
 void ImageWatcher::notify_header_update(librados::IoCtx &io_ctx,
 				        const std::string &oid) {
   // supports legacy (empty buffer) clients
@@ -588,6 +594,7 @@ bool ImageWatcher::handle_payload(const HeaderUpdatePayload &payload,
     m_image_ctx.state->flush_update_watchers(new C_ResponseMessage(ack_ctx));
     return false;
   }
+
   return true;
 }
 

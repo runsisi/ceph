@@ -3206,6 +3206,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     // TODO: need interlock with local rbd-mirror daemon to ensure it has stopped
     //       replay
 
+    // allocate a tag with tag.mirror uuid set to LOCAL_MIRROR_UUID
     r = Journal<>::promote(ictx);
     if (r < 0) {
       lderr(cct) << "failed to promote image: " << cpp_strerror(r)
@@ -3254,6 +3255,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     C_SaferCond lock_ctx;
+
     ictx->exclusive_lock->request_lock(&lock_ctx);
 
     // don't block holding lock since refresh might be required
@@ -3277,10 +3279,14 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     RWLock::RLocker snap_locker(ictx->snap_lock);
+
     if (ictx->journal == nullptr) {
       lderr(cct) << "journal is not active" << dendl;
       return -EINVAL;
     } else if (!ictx->journal->is_tag_owner()) {
+
+      // we may have called Journal<I>::demote to demote the image at the same time, and
+      // we are no longer the tag owner
 
       // TODO: see AcquireRequest<I>::send_allocate_journal_tag, we should be tag owner ???
 
@@ -3288,6 +3294,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       return -EINVAL;
     }
 
+    // allocate a new tag with tag.mirror uuid set to ORPHAN_MIRROR_UUID
     r = ictx->journal->demote();
     if (r < 0) {
       lderr(cct) << "failed to demote image: " << cpp_strerror(r)

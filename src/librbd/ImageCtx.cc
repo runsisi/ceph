@@ -1040,7 +1040,7 @@ struct C_InvalidateCache : public Context {
     ImageWatcher::notify_header_update(md_ctx, header_oid);
   }
 
-  // called by C_NotifyUpdate::complete
+  // called by Operations.cc:C_NotifyUpdate::complete
   void ImageCtx::notify_update(Context *on_finish) {
     // ++m_refresh_seq
     state->handle_update_notification();
