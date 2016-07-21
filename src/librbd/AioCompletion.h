@@ -84,19 +84,43 @@ namespace librbd {
       comp->release();
     }
 
+    // called by RBD::AioCompletion::AioCompletion
     static AioCompletion *create(void *cb_arg, callback_t cb_complete,
                                  rbd_completion_t rbd_comp) {
       AioCompletion *comp = new AioCompletion();
+
+      // comp->complete_arg = cb_arg
+      // comp->complete_cb = cb_complete
       comp->set_complete_cb(cb_arg, cb_complete);
+
+      // complete_cb(rbd_comp, complete_arg), rbd_comp is used to get the
+      // return value, i.e., rval, see AioCompletion::complete
       comp->rbd_comp = (rbd_comp != nullptr ? rbd_comp : comp);
+
       return comp;
     }
 
+    // called by:
+    // AioImageRequestWQ::read
+    // AioImageRequestWQ::write
+    // AioImageRequestWQ::discard
+    // AioObjectRead::read_from_parent
+    // CopyupRequest::send
+    // C_CopyRead::finish, used by librbd::copy
+    // librbd::copy
+    // librbd::read_iterate
     template <typename T, void (T::*MF)(int) = &T::complete>
     static AioCompletion *create(T *obj) {
       AioCompletion *comp = new AioCompletion();
+
+      // comp->complete_arg = obj
+      // comp->complete_cb = &callback_adapter<T, MF>
       comp->set_complete_cb(obj, &callback_adapter<T, MF>);
+
+      // complete_cb(rbd_comp, complete_arg), rbd_comp is used to get the
+      // return value, i.e., rval, see AioCompletion::complete
       comp->rbd_comp = comp;
+
       return comp;
     }
 

@@ -74,7 +74,10 @@ bool ExclusiveLock<I>::is_lock_owner() const {
   return lock_owner;
 }
 
-// called in ImageWatcher::handle_payload and send_acquire_exclusive_lock
+// called by:
+// ImageWatcher::handle_payload
+// C_InvokeAsyncRequest::send_acquire_exclusive_lock
+// Operations<I>::prepare_image_update
 template <typename I>
 bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
   Mutex::Locker locker(m_lock);
@@ -90,22 +93,30 @@ bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
   return accept_requests;
 }
 
+// called by:
+// librbd::update_features
+// OpenLocalImageRequest<I>::send_lock_image
 template <typename I>
 void ExclusiveLock<I>::block_requests(int r) {
   Mutex::Locker locker(m_lock);
 
   assert(!m_request_blocked);
   m_request_blocked = true;
+
   m_request_blocked_ret_val = r;
 
   ldout(m_image_ctx.cct, 20) << this << " " << __func__ << dendl;
 }
 
+// called by:
+// librbd::update_features
 template <typename I>
 void ExclusiveLock<I>::unblock_requests() {
   Mutex::Locker locker(m_lock);
+
   assert(m_request_blocked);
   m_request_blocked = false;
+
   m_request_blocked_ret_val = 0;
 
   ldout(m_image_ctx.cct, 20) << this << " " << __func__ << dendl;
@@ -148,6 +159,9 @@ void ExclusiveLock<I>::shut_down(Context *on_shut_down) {
   handle_lock_released();
 }
 
+// called by:
+// C_InvokeAsyncRequest::send_acquire_exclusive_lock
+// Operations<I>::prepare_image_update
 template <typename I>
 void ExclusiveLock<I>::try_lock(Context *on_tried_lock) {
   int r = 0;
@@ -169,6 +183,12 @@ void ExclusiveLock<I>::try_lock(Context *on_tried_lock) {
   on_tried_lock->complete(r);
 }
 
+// called by:
+// AioImageRequestWQ::queue, AioImageRequestWQ::handle_refreshed
+// ExclusiveLock<I>::handle_release_lock
+// librbd::update_features, librbd::mirror_image_demote
+// Operations<I>::snap_set_limit
+// OpenLocalImageRequest<I>::send_lock_image
 template <typename I>
 void ExclusiveLock<I>::request_lock(Context *on_locked) {
   int r = 0;
