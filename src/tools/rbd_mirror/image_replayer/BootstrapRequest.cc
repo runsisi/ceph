@@ -759,6 +759,8 @@ void BootstrapRequest<I>::handle_image_sync(int r) {
     m_ret_val = r;
   }
 
+  // we will open remote journal and do external replay, so no need to
+  // keep opening the remote image anymore
   close_remote_image();
 }
 

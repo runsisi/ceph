@@ -139,6 +139,8 @@ void AioImageRequest<I>::send() {
 template <typename I>
 void AioImageRequest<I>::fail(int r) {
   m_aio_comp->get();
+
+  // set AioCompletion::rval and call AioCompletion::complete to complete
   m_aio_comp->fail(r);
 }
 

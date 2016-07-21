@@ -574,7 +574,7 @@ Context *RefreshRequest<I>::handle_v2_open_journal(int *result) {
     save_result(result);
   }
 
-  // journal opened
+  // journal opened, will not block writes becoz we are not to disable journaling
 
   send_v2_block_writes();
 
@@ -649,13 +649,13 @@ void RefreshRequest<I>::send_v2_open_object_map() {
         m_image_ctx.exclusive_lock == nullptr ||
         !m_image_ctx.exclusive_lock->is_lock_owner()))) {
 
-    // object map disabled or not null, or: HEAD image and not lock owner
+    // object map disabled or not null, or: HEAD image and not own exclusive lock
 
     send_v2_open_journal();
     return;
   }
 
-  // object map enabled and is null, and we are the exclusive lock owner
+  // object map enabled and is null, and we own the exclusive lock
 
   // implies object map dynamically enabled or image open in-progress
   // since SetSnapRequest loads the object map for a snapshot and
