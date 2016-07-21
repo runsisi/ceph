@@ -226,7 +226,9 @@ Context *AcquireRequest<I>::handle_open_journal(int *ret_val) {
 
   if (*ret_val < 0) {
     lderr(cct) << "failed to open journal: " << cpp_strerror(*ret_val) << dendl;
+
     m_error_result = *ret_val;
+
     send_close_journal();
     return nullptr;
   }
@@ -261,7 +263,9 @@ Context *AcquireRequest<I>::handle_allocate_journal_tag(int *ret_val) {
   if (*ret_val < 0) {
     lderr(cct) << "failed to allocate journal tag: " << cpp_strerror(*ret_val)
                << dendl;
+
     m_error_result = *ret_val;
+
     send_close_journal();
     return nullptr;
   }
@@ -388,7 +392,10 @@ Context *AcquireRequest<I>::handle_unlock(int *ret_val) {
     lderr(cct) << "failed to unlock image: " << cpp_strerror(*ret_val) << dendl;
   }
 
-  // reset ImageCtx::object_map and ImageCtx::journal to nullptr
+  // reset ImageCtx::object_map and ImageCtx::journal to nullptr and
+  // delete AcquireRequest<I>::m_object_map and AcquireRequest<I>::m_journal,
+  // set ret_val to m_error_result so m_on_finish can pass this error code
+  // out
   revert(ret_val);
 
   return m_on_finish;
@@ -620,6 +627,7 @@ void AcquireRequest<I>::revert(int *ret_val) {
   delete m_journal;
 
   assert(m_error_result < 0);
+
   *ret_val = m_error_result;
 }
 

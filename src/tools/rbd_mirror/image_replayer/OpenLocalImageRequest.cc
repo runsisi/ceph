@@ -125,16 +125,21 @@ void OpenLocalImageRequest<I>::send_lock_image() {
 
   if ((*m_local_image_ctx)->exclusive_lock == nullptr) {
     derr << ": image does not support exclusive lock" << dendl;
+
     send_close_image(false, -EINVAL);
+
     return;
   }
 
   // TODO: make an async version
   bool tag_owner;
+
   int r = Journal::is_tag_owner(*m_local_image_ctx, &tag_owner);
   if (r < 0) {
     derr << ": failed to query journal: " << cpp_strerror(r) << dendl;
+
     send_close_image(false, r);
+
     return;
   }
 
@@ -142,7 +147,9 @@ void OpenLocalImageRequest<I>::send_lock_image() {
   // we aren't going to mirror peer data into this image anyway
   if (tag_owner) {
     dout(10) << ": local image is primary -- skipping image replay" << dendl;
+
     send_close_image(false, -EREMOTEIO);
+
     return;
   }
 
@@ -163,12 +170,16 @@ void OpenLocalImageRequest<I>::handle_lock_image(int r) {
   if (r < 0) {
     derr << ": failed to lock image '" << m_local_image_id << "': "
        << cpp_strerror(r) << dendl;
+
     send_close_image(false, r);
+
     return;
   } else if ((*m_local_image_ctx)->exclusive_lock == nullptr ||
              !(*m_local_image_ctx)->exclusive_lock->is_lock_owner()) {
     derr << ": image is not locked" << dendl;
+
     send_close_image(false, -EBUSY);
+
     return;
   }
 
@@ -188,6 +199,7 @@ void OpenLocalImageRequest<I>::send_close_image(bool destroy_only, int r) {
       this);
   CloseImageRequest<I> *request = CloseImageRequest<I>::create(
     m_local_image_ctx, m_work_queue, destroy_only, ctx);
+
   request->send();
 }
 
@@ -196,6 +208,7 @@ void OpenLocalImageRequest<I>::handle_close_image(int r) {
   dout(20) << dendl;
 
   assert(r == 0);
+
   finish(m_ret_val);
 }
 
@@ -204,6 +217,7 @@ void OpenLocalImageRequest<I>::finish(int r) {
   dout(20) << ": r=" << r << dendl;
 
   m_on_finish->complete(r);
+
   delete this;
 }
 

@@ -438,7 +438,8 @@ void BootstrapRequest<I>::handle_open_local_image(int r) {
 
   // local mirror image opened, update the MirrorPeerClientMeta of the
   // remote image journal in case this is a newly created local mirror
-  // image
+  // image, becoz in BootstrapRequest<I>::register_client we registered
+  // a place holder mirror peer client
   update_client();
 }
 
@@ -470,7 +471,7 @@ void BootstrapRequest<I>::create_local_image() {
   // we need to reset m_local_image_id in case BootstrapRequest<I>::decode_client_meta
   // set a non-exsisting local image id, so open_local_image called later
   // will not open the newly created local mirror image with image id but
-  // image name
+  // with image name
   m_local_image_id = "";
 
   update_progress("CREATE_LOCAL_IMAGE");

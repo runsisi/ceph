@@ -134,6 +134,7 @@ int execute_peer_add(const po::variables_map &vm) {
 
   std::string remote_client_name = g_ceph_context->_conf->name.to_str();
   std::string remote_cluster;
+
   int r = get_remote_cluster_spec(
     vm, utils::get_positional_argument(vm, arg_index),
     &remote_client_name, &remote_cluster);
