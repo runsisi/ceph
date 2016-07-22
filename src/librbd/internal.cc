@@ -1279,8 +1279,14 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       }
 
       // create journal metadata object associated with the image and
-      // allocate a tag, if force_non_primary is true then primary_mirror_uuid
-      // is used to set the tag.mirror_uuid of the newly create tag
+      // allocate a tag with owner set to the remote mirror uuid or
+      // LOCAL_MIRROR_UUID, then register the master client
+      // 1) if creating a primary image, then force_non_primary is true
+      // and primary_mirror_uuid is used to set the tag owner, i.e.,
+      // tag.mirror uuid
+      // 2) if creating a mirror image, then force_non_primary is false
+      // and LOCAL_MIRROR_UUID is used to set the tag owner, i.e.,
+      // tag.mirror uuid
       r = Journal<>::create(io_ctx, id, journal_order, journal_splay_width,
 			    journal_pool, force_non_primary,
                             primary_mirror_uuid);

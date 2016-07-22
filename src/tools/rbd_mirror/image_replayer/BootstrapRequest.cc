@@ -242,6 +242,8 @@ void BootstrapRequest<I>::handle_get_client(int r) {
   register_client();
 }
 
+// m_journaler->m_client_id is m_local_mirror_uuid, we are to register
+// a mirror peer client of the remote journal
 template <typename I>
 void BootstrapRequest<I>::register_client() {
   dout(20) << dendl;

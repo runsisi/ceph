@@ -449,13 +449,17 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
                              cls::journal::Tag::TAG_CLASS_NEW,
                              tag_data, mirror_uuid, &tag);
 
+  // journaler.m_client_id is IMAGE_CLIENT_ID, so we are registering a
+  // master client
+
   bufferlist client_data;
   ::encode(journal::ClientData{journal::ImageClientMeta{tag.tag_class}},
            client_data);
 
-  // register local, i.e., master, client, i.e., IMAGE_CLIENT_ID,
-  // rbd-mirror daemon will register a mirror peer client, see
-  // BootstrapRequest<I>::register_client
+  // register the local, i.e., master, client, i.e., journaler.m_client_id
+  // is IMAGE_CLIENT_ID,
+  // note: rbd-mirror daemon will register a mirror peer client on remote
+  // journal, see BootstrapRequest<I>::register_client
   r = journaler.register_client(client_data);
   if (r < 0) {
     lderr(cct) << __func__ << ": "
@@ -678,6 +682,7 @@ int Journal<I>::promote(I *image_ctx) {
   CephContext *cct = image_ctx->cct;
   ldout(cct, 20) << __func__ << dendl;
 
+  // journaler.m_client_id is IMAGE_CLIENT_ID
   Journaler journaler(image_ctx->md_ctx, image_ctx->id, IMAGE_CLIENT_ID, {});
 
   cls::journal::Client client;
@@ -693,6 +698,9 @@ int Journal<I>::promote(I *image_ctx) {
   if (r < 0) {
     return r;
   }
+
+  // allocate a tag with owner, i.e., tag.mirror uuid, set to LOCAL_MIRROR_UUID,
+  // so we can acquire the exclusive lock and accept aio request
 
   cls::journal::Tag new_tag;
 
