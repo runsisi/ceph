@@ -233,6 +233,10 @@ Context *AcquireRequest<I>::handle_open_journal(int *ret_val) {
     return nullptr;
   }
 
+  // we do a lot of things, like refresh image, open object map, open journal,
+  // now do the final step, but sadly we may fail if we are not the tag owner,
+  // we can only allocate the local tag if we are already the tag owner,
+  // otherwise we fail and we need to do all these cleanups
   send_allocate_journal_tag();
 
   return nullptr;

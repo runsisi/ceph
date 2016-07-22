@@ -462,6 +462,8 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
   {
     Mutex::Locker locker(m_lock);
 
+    // journal registered its own listener in Journal<I>::handle_initialized,
+    // and if it is notified, then it will notify us, i.e., m_resync_listener
     m_local_image_ctx->journal->add_listener(
                                     librbd::journal::ListenerType::RESYNC,
                                     m_resync_listener);
@@ -625,6 +627,12 @@ void ImageReplayer<I>::handle_start_replay(int r) {
   if (on_replay_interrupted()) {
     return;
   }
+
+  // ok, bootstrap finished, we are to do the remote live replay, this mirrors the
+  // journal replay when opening the local journal, see Journal<I>::handle_get_tags
+  // when doing journal opening replay, m_journal_replay is created in
+  // Journal<I>::handle_get_tags, while here, we create the m_local_replay
+  // in m_local_journal->start_external_replay called by ImageReplayer<I>::start_replay
 
   {
     CephContext *cct = static_cast<CephContext *>(m_local->cct());
@@ -989,6 +997,7 @@ template <typename I>
 void ImageReplayer<I>::handle_replay_complete(int r, const std::string &error_desc)
 {
   dout(20) << "r=" << r << dendl;
+
   if (r < 0) {
     derr << "replay encountered an error: " << cpp_strerror(r) << dendl;
     set_state_description(r, error_desc);
@@ -998,6 +1007,7 @@ void ImageReplayer<I>::handle_replay_complete(int r, const std::string &error_de
     Mutex::Locker locker(m_lock);
     m_stop_requested = true;
   }
+
   on_replay_interrupted();
 }
 
@@ -1126,6 +1136,9 @@ void ImageReplayer<I>::allocate_local_tag() {
       mirror_uuid == m_local_mirror_uuid) {
     mirror_uuid = m_remote_mirror_uuid;
   } else if (mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID) {
+
+    // remote image demoted, see Journal<I>::demote
+
     dout(5) << "encountered image demotion: stopping" << dendl;
 
     Mutex::Locker locker(m_lock);

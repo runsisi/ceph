@@ -677,6 +677,7 @@ int Journal<I>::request_resync(I *image_ctx) {
 }
 
 // static
+// tag owner: last tag.mirror uuid(maybe m_remote_mirror_uuid) -> LOCAL_MIRROR_UUID
 template <typename I>
 int Journal<I>::promote(I *image_ctx) {
   CephContext *cct = image_ctx->cct;
@@ -812,6 +813,7 @@ journal::TagData Journal<I>::get_tag_data() const {
   return m_tag_data;
 }
 
+// tag owner: LOCAL_MIRROR_UUID -> ORPHAN_MIRROR_UUID
 template <typename I>
 int Journal<I>::demote() {
   CephContext *cct = m_image_ctx.cct;
@@ -822,7 +824,7 @@ int Journal<I>::demote() {
 
   cls::journal::Client client;
 
-  // get master client of the journal
+  // get master client of the journal to get the prev tag tid and entry id
   int r = m_journaler->get_cached_client(IMAGE_CLIENT_ID, &client);
   if (r < 0) {
     lderr(cct) << this << " " << __func__ << ": "
@@ -1600,6 +1602,7 @@ void Journal<I>::handle_initialized(int r) {
 
   m_journaler->get_tags(m_tag_class, &tags_ctx->tags, tags_ctx);
 
+  // will call journal->handle_metadata_updated if notified
   m_journaler->add_listener(&m_metadata_listener);
 }
 
@@ -2159,6 +2162,7 @@ int Journal<I>::check_resync_requested_internal(bool *do_resync) {
   return 0;
 }
 
+// called by MetadataListener::handle_update
 template <typename I>
 void Journal<I>::handle_metadata_updated() {
   CephContext *cct = m_image_ctx.cct;
@@ -2183,10 +2187,14 @@ void Journal<I>::handle_metadata_updated() {
     }
 
     if (do_resync) {
+
+      // map<journal::ListenerType, list<journal::JournalListenerPtr> >
+      // currently we only have one type, i.e., RESYNC
       for (const auto& listener :
                               m_listener_map[journal::ListenerType::RESYNC]) {
         journal::ResyncListener *rsync_listener =
                         boost::get<journal::ResyncListener *>(listener);
+
         resync_private_list.push_back(rsync_listener);
       }
     }
@@ -2197,6 +2205,7 @@ void Journal<I>::handle_metadata_updated() {
   }
 }
 
+// called by ImageReplayer<I>::handle_bootstrap
 template <typename I>
 void Journal<I>::add_listener(journal::ListenerType type,
                               journal::JournalListenerPtr listener) {

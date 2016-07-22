@@ -644,10 +644,14 @@ void JournalMetadata::get_tags(const boost::optional<uint64_t> &tag_class,
                                  m_async_op_tracker, tag_class,
                                  tags, on_finish);
 
-  // m_client_id is used to filter out the committed tags of this client
+  // m_client_id is used to filter the committed tags of this client
   ctx->send();
 }
 
+// called by:
+// Journaler::add_listener
+// JournalRecorder::JournalRecorder
+// JournalTrimmer::JournalTrimmer
 void JournalMetadata::add_listener(JournalMetadataListener *listener) {
   Mutex::Locker locker(m_lock);
   while (m_update_notifications > 0) {

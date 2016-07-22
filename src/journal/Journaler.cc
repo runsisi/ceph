@@ -269,6 +269,7 @@ void Journaler::flush_commit_position(Context *on_safe) {
   m_metadata->flush_commit_position(on_safe);
 }
 
+// called by Journal<I>::handle_initialized
 void Journaler::add_listener(JournalMetadataListener *listener) {
   m_metadata->add_listener(listener);
 }

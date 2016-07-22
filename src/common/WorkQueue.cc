@@ -122,6 +122,9 @@ void ThreadPool::worker(WorkThread *wt)
       bool did = false;
 
       while (tries--) {
+
+        // try to
+
 	last_work_queue++;
 	last_work_queue %= work_queues.size();
 
@@ -158,12 +161,20 @@ void ThreadPool::worker(WorkThread *wt)
 
 	  did = true;
 
+	  // after process an item from this specific queue, we always
+	  // try to check if we need to pause
 	  break;
 	}
-      }
+
+	// no item on this queue, try the next queue
+
+      } // while (tries--)
 
       if (did)
+        // processed at least one item from any queue, need to check pause
 	continue;
+
+      // no item in any queue, so wait for a second
     }
 
     ldout(cct,20) << "worker waiting" << dendl;
@@ -176,7 +187,7 @@ void ThreadPool::worker(WorkThread *wt)
     _cond.WaitInterval(cct, _lock,
       utime_t(
 	cct->_conf->threadpool_empty_queue_max_wait, 0));
-  }
+  } // while (!_stop)
 
   ldout(cct,1) << "worker finish" << dendl;
 

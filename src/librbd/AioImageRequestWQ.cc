@@ -367,6 +367,16 @@ void *AioImageRequestWQ::_void_dequeue() {
       // AioImageWrite, AioImageDiscard, AioImageFlush
 
       if (m_write_blockers > 0) {
+
+        // does not own the exclusive lock or other maint op is in progress,
+        // e.g., Refresh, SnapSet, Resize, SnapshotCreate, SnapshotRollback
+
+        // TODO: only another AioImageRequestWQ::queue will drive us to request
+        // the exclusive lock again, the read op has the same situation, so
+        // if the image to r/w is not the tag owner, then the request of
+        // exclusive lock should never be succeeded, our r/w will never
+        // return, see AcquireRequest<I>::send_allocate_journal_tag ???
+
         return nullptr;
       }
 
@@ -387,6 +397,11 @@ void *AioImageRequestWQ::_void_dequeue() {
   assert(peek_item == item);
 
   if (refresh_required) {
+
+    // our refresh may fail, so we need an item, i.e., aio request, to
+    // pass out the error result, i.e., by completint the AioCompletion
+    // to notify the user
+
     ldout(m_image_ctx.cct, 15) << "image refresh required: delaying IO " << item
                                << dendl;
 
@@ -395,7 +410,8 @@ void *AioImageRequestWQ::_void_dequeue() {
 
     get_pool_lock().Unlock();
 
-    // aio_work_queue->handle_refreshed, requeue item
+    // aio_work_queue->handle_refreshed, requeue the item, and request
+    // exclusive lock if needed
     m_image_ctx.state->refresh(new C_RefreshFinish(this, item));
 
     get_pool_lock().Lock();
@@ -517,6 +533,9 @@ void AioImageRequestWQ::queue(AioImageRequest<> *req) {
 
   if ((write_op && is_lock_required()) ||
       (!write_op && m_require_lock_on_read)) {
+
+    // does not own the exclusive lock
+
     m_image_ctx.exclusive_lock->request_lock(nullptr);
   }
 }
