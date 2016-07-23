@@ -682,7 +682,7 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
 	remote_tag_data.mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID &&
 	remote_tag_data.predecessor_mirror_uuid == m_local_mirror_uuid) {
 
-      // remote image: secondary -> (promoted) -> primary -> (demoted) -> secondary
+      // remote image: secondary -> (promoted) -> primary
       // local image: primary -> (demoted) -> secondary
 
       dout(20) << ": local image was demoted" << dendl;

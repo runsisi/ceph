@@ -1130,6 +1130,8 @@ template <typename I>
 void ImageReplayer<I>::allocate_local_tag() {
   dout(20) << dendl;
 
+  // LOCAL_MIRROR_UUID / ORPHAN_MIRROR_UUID
+  // m_local_mirror_uuid / m_remote_mirror_uuid / other_cluster_mirror_uuid
   std::string mirror_uuid = m_replay_tag_data.mirror_uuid;
 
   if (mirror_uuid == librbd::Journal<>::LOCAL_MIRROR_UUID ||
@@ -1148,6 +1150,8 @@ void ImageReplayer<I>::allocate_local_tag() {
     m_stop_requested = true;
   }
 
+  // LOCAL_MIRROR_UUID / ORPHAN_MIRROR_UUID
+  // m_local_mirror_uuid / m_remote_mirror_uuid / other_cluster_mirror_uuid
   std::string predecessor_mirror_uuid =
     m_replay_tag_data.predecessor_mirror_uuid;
 
