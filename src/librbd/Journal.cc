@@ -792,6 +792,9 @@ void Journal<I>::close(Context *on_finish) {
 
   // interrupt external replay if active
   if (m_on_replay_close_request != nullptr) {
+
+    // set by Journal<I>::start_external_replay
+
     m_on_replay_close_request->complete(0);
     m_on_replay_close_request = nullptr;
   }
@@ -1358,6 +1361,9 @@ void Journal<I>::handle_start_external_replay(int r,
     *journal_replay = nullptr;
 
     if (m_on_replay_close_request != nullptr) {
+
+      // set by Journal<I>::start_external_replay
+
       m_on_replay_close_request->complete(r);
       m_on_replay_close_request = nullptr;
     }
@@ -1394,6 +1400,9 @@ void Journal<I>::stop_external_replay() {
   assert(m_state == STATE_REPLAYING);
 
   if (m_on_replay_close_request != nullptr) {
+
+    // set by Journal<I>::start_external_replay
+
     m_on_replay_close_request->complete(-ECANCELED);
     m_on_replay_close_request = nullptr;
   }
@@ -1402,6 +1411,9 @@ void Journal<I>::stop_external_replay() {
   m_journal_replay = nullptr;
 
   if (m_close_pending) {
+
+    // set by Journal<I>::close
+
     destroy_journaler(0);
     return;
   }
@@ -1629,6 +1641,9 @@ void Journal<I>::handle_get_tags(int r) {
   m_journaler->start_replay(&m_replay_handler);
 }
 
+// called by:
+// ReplayHandler::handle_entries_available
+// Journal<I>::handle_replay_process_ready
 template <typename I>
 void Journal<I>::handle_replay_ready() {
   CephContext *cct = m_image_ctx.cct;
@@ -1684,6 +1699,7 @@ void Journal<I>::handle_replay_ready() {
   m_journal_replay->process(event_entry, on_ready, on_commit);
 }
 
+// only called by ReplayHandler::handle_complete
 template <typename I>
 void Journal<I>::handle_replay_complete(int r) {
 
@@ -1860,7 +1876,7 @@ void Journal<I>::handle_flushing_restart(int r) {
 
   if (m_close_pending) {
 
-    // we are to close, see Journal<I>::close
+    // we are to close, set by Journal<I>::close
 
     destroy_journaler(r);
     return;
@@ -1881,7 +1897,7 @@ void Journal<I>::handle_flushing_replay() {
 
   if (m_close_pending) {
 
-    // we are to close, see Journal<I>::close
+    // we are to close, set by Journal<I>::close
 
     // will shutdown Journaler and delete it, see Journal::handle_journal_destroyed
     destroy_journaler(0);

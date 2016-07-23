@@ -158,7 +158,9 @@ void BootstrapRequest<I>::get_remote_tag_class() {
   // get local, i.e., master, client of remote journal
   // note: m_journaler::m_client_id is m_local_mirror_uuid, see
   // ImageReplayer<I>::start, but we can still get other client info
-  // of the journaler
+  // of the journaler, every image, either primary or secondary must
+  // register a image master client, i.e., whose client id is IMAGE_CLIENT_ID,
+  // see Journal<I>::create
   m_journaler->get_client(librbd::Journal<>::IMAGE_CLIENT_ID, &m_client, ctx);
 }
 
@@ -628,7 +630,8 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
   // list<cls::journal::Tag>
   for (auto &tag : m_remote_tags) {
 
-    // iterate remote tags
+    // iterate remote tags to check if we can find the remote mirrored
+    // local demotion tag
 
     try {
       bufferlist::iterator it = tag.data.begin();
@@ -707,6 +710,8 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
       return;
     }
   }
+
+  // no split-brain detected
 
   image_sync();
 }
