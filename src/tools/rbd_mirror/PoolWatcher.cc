@@ -59,26 +59,35 @@ const PoolWatcher::ImageIds& PoolWatcher::get_images() const
   return m_images;
 }
 
+// reschedule default to true
 void PoolWatcher::refresh_images(bool reschedule)
 {
   ImageIds image_ids;
+
+  // get all mirroring enabled images of this local pool
   int r = refresh(&image_ids);
 
   Mutex::Locker l(m_lock);
+
   if (r >= 0) {
     m_images = std::move(image_ids);
   } else if (r == -EBLACKLISTED) {
     derr << "blacklisted during image refresh" << dendl;
+
     m_blacklisted = true;
   }
 
   if (!m_stopping && reschedule) {
+
+    // refresh local pool to
+
     FunctionContext *ctx = new FunctionContext(
       boost::bind(&PoolWatcher::refresh_images, this, true));
 
     m_timer.add_event_after(m_interval, ctx);
   }
 
+  // signal replayer thread
   m_refresh_cond.Signal();
   // TODO: perhaps use a workqueue instead, once we get notifications
   // about new/removed mirrored images

@@ -297,6 +297,7 @@ int Replayer::init()
          << ": " << cpp_strerror(r) << dendl;
     return r;
   }
+
   m_remote_pool_id = m_remote_io_ctx.get_id();
 
   dout(20) << "connected to " << m_peer << dendl;
@@ -306,8 +307,11 @@ int Replayer::init()
 
   // TODO: make interval configurable
   m_pool_watcher.reset(new PoolWatcher(m_remote_io_ctx, 30, m_lock, m_cond));
+
+  // start periodic timer to get mirroring enabled images and signal the replayer thread
   m_pool_watcher->refresh_images();
 
+  // run Replayer::run
   m_replayer_thread.create("replayer");
 
   return 0;
@@ -385,8 +389,11 @@ int Replayer::init_rados(const std::string &cluster_name,
   return 0;
 }
 
+// called by Replayer::init
 void Replayer::init_local_mirroring_images() {
   rbd_mirror_mode_t mirror_mode;
+
+  // PoolWatcher::refresh also check the mirroring mode of the pool
   int r = librbd::mirror_mode_get(m_local_io_ctx, &mirror_mode);
   if (r < 0) {
     derr << "could not tell whether mirroring was enabled for "
@@ -467,7 +474,11 @@ void Replayer::run()
     }
 
     Mutex::Locker locker(m_lock);
+
     if (m_pool_watcher->is_blacklisted()) {
+
+      // stop Replayer thread for this <pool, peer> pair
+
       m_blacklisted = true;
       m_stopping.set(1);
     } else if (!m_manual_stop) {
@@ -490,6 +501,7 @@ void Replayer::run()
   ImageIds empty_sources;
   while (true) {
     Mutex::Locker l(m_lock);
+
     set_sources(empty_sources);
 
     if (m_image_replayers.empty()) {
@@ -541,6 +553,8 @@ void Replayer::start()
 
   for (auto &kv : m_image_replayers) {
     auto &image_replayer = kv.second;
+
+    // bootstrap and loop (replaying + replaying flush)
     image_replayer->start(nullptr, true);
   }
 }

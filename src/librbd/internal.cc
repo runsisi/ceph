@@ -1175,6 +1175,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       return r;
     }
 
+    // "rbd_id." + imgname
     id_obj = util::id_obj_name(imgname);
 
     r = io_ctx.create(id_obj, true);
@@ -1195,6 +1196,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     ldout(cct, 2) << "adding rbd image to directory..." << dendl;
 
+    // imgname -> id
+    // id -> imgname
     r = cls_client::dir_add_image(&io_ctx, RBD_DIRECTORY, imgname, id);
     if (r < 0) {
       lderr(cct) << "error adding image to directory: " << cpp_strerror(r)
@@ -1202,8 +1205,13 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       goto err_remove_id;
     }
 
+    // "rbd_data."
     oss << RBD_DATA_PREFIX << id;
+
+    // "rbd_header." + id
     header_oid = util::header_name(id);
+
+    // register metadata on rbd header object
     r = cls_client::create_image(&io_ctx, header_oid, size, order,
 				 features, oss.str());
     if (r < 0) {
