@@ -646,9 +646,6 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
 
     dout(10) << ": decoded remote tag: " << remote_tag_data << dendl;
 
-    // tag_data.predecessor_mirror_uuid is set by prev_tag_data.mirror_uuid while
-    // tag_data.mirror_uuid is set by caller provided mirror_uuid, see allocate_journaler_tag
-
     if (remote_tag_data.mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID &&
         remote_tag_data.predecessor_mirror_uuid == m_local_mirror_uuid) {
 
@@ -692,13 +689,14 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
     } else if (tag_data.mirror_uuid == m_remote_mirror_uuid &&
 	       m_client_meta->state == librbd::journal::MIRROR_PEER_STATE_REPLAYING) {
 
-      // image sync has finished
-      //
+      // image sync has finished, continue to replay the remote image
+      // MIRROR_PEER_STATE_REPLAYING was set by SyncPointPruneRequest<I>::send_update_client
 
       dout(20) << ": local image is in clean replay state" << dendl;
     } else if (m_client_meta->state == librbd::journal::MIRROR_PEER_STATE_SYNCING) {
 
-      // previous image sync has not finished
+      // previous image sync has not finished, continue to sync the remote image
+      // MIRROR_PEER_STATE_SYNCING was set by BootstrapRequest<I>::register_client
 
       dout(20) << ": previous sync was canceled" << dendl;
     } else {

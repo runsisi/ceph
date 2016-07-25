@@ -470,6 +470,7 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
 
     bool do_resync = false;
 
+    // check ImageClientMeta::resync_requested
     r = m_local_image_ctx->journal->check_resync_requested(&do_resync);
     if (r < 0) {
       derr << "failed to check if a resync was requested" << dendl;
@@ -590,6 +591,8 @@ void ImageReplayer<I>::handle_start_replay(int r) {
     on_start_fail(r, "error starting replay on local image");
     return;
   }
+
+  // start replaying succeeded, STATE_STARTING -> STATE_REPLAYING
 
   Context *on_finish(nullptr);
 
@@ -852,6 +855,9 @@ void ImageReplayer<I>::handle_replay_ready()
   dout(20) << "enter" << dendl;
 
   if (on_replay_interrupted()) {
+
+    // check m_stop_requested
+
     return;
   }
 
@@ -872,8 +878,8 @@ void ImageReplayer<I>::handle_replay_ready()
     return;
   }
 
-  // the new journal entry has a new tag tid, so we need to mirror the
-  // new tag in our local mirror journal before processing the journal entry
+  // the first or a new tag appeared, allocate the tag on local journal
+  // metadata object
 
   // shutdown replaying temporarily to flush inflight op/aio events and
   // restart it shortly
@@ -1138,6 +1144,7 @@ void ImageReplayer<I>::handle_get_remote_tag(int r) {
     return;
   }
 
+  // m_replay_tag has valid content
   m_replay_tag_valid = true;
 
   dout(20) << "decoded remote tag " << m_replay_tag_tid << ": "
@@ -1175,7 +1182,7 @@ void ImageReplayer<I>::allocate_local_tag() {
   }
 
   // LOCAL_MIRROR_UUID / ORPHAN_MIRROR_UUID
-  // m_local_mirror_uuid / m_remote_mirror_uuid / other_cluster_mirror_uuid
+  // m_remote_mirror_uuid / other_cluster_mirror_uuid
   std::string predecessor_mirror_uuid =
     m_replay_tag_data.predecessor_mirror_uuid;
 
@@ -1221,6 +1228,7 @@ void ImageReplayer<I>::preprocess_entry() {
 
   bufferlist data = m_replay_entry.get_data();
   bufferlist::iterator it = data.begin();
+
   int r = m_local_replay->decode(&it, &m_event_entry);
   if (r < 0) {
     derr << "failed to decode journal event" << dendl;

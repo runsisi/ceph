@@ -654,6 +654,7 @@ void JournalMetadata::get_tags(const boost::optional<uint64_t> &tag_class,
 // JournalTrimmer::JournalTrimmer
 void JournalMetadata::add_listener(JournalMetadataListener *listener) {
   Mutex::Locker locker(m_lock);
+
   while (m_update_notifications > 0) {
     m_update_cond.Wait(m_lock);
   }
@@ -663,6 +664,7 @@ void JournalMetadata::add_listener(JournalMetadataListener *listener) {
 
 void JournalMetadata::remove_listener(JournalMetadataListener *listener) {
   Mutex::Locker locker(m_lock);
+
   while (m_update_notifications > 0) {
     m_update_cond.Wait(m_lock);
   }
@@ -983,6 +985,7 @@ uint64_t JournalMetadata::allocate_commit_tid(uint64_t object_num,
                                               uint64_t tag_tid,
                                               uint64_t entry_tid) {
   Mutex::Locker locker(m_lock);
+
   uint64_t commit_tid = ++m_commit_tid;
 
   m_pending_commit_tids[commit_tid] = CommitEntry(object_num, tag_tid,
@@ -993,6 +996,7 @@ uint64_t JournalMetadata::allocate_commit_tid(uint64_t object_num,
                    << "tag_tid=" << tag_tid << ", "
                    << "entry_tid=" << entry_tid << "]"
                    << dendl;
+
   return commit_tid;
 }
 
@@ -1008,6 +1012,7 @@ void JournalMetadata::overflow_commit_tid(uint64_t commit_tid,
                    << "commit_tid=" << commit_tid << ", "
                    << "old_object_num=" << it->second.object_num << ", "
                    << "new_object_num=" << object_num << dendl;
+
   it->second.object_num = object_num;
 }
 
@@ -1029,6 +1034,7 @@ void JournalMetadata::committed(uint64_t commit_tid,
   ldout(m_cct, 20) << "committed tid=" << commit_tid << dendl;
 
   ObjectSetPosition commit_position;
+
   Context *stale_ctx = nullptr;
 
   {
@@ -1105,6 +1111,7 @@ void JournalMetadata::committed(uint64_t commit_tid,
     }
 
     stale_ctx = m_commit_position_ctx;
+
     m_commit_position_ctx = create_context();
     m_commit_position = commit_position;
     m_commit_position_tid = commit_tid;

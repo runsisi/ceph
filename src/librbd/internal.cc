@@ -3494,6 +3494,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     // flag the journal indicating that we want to rebuild the local image
+    // set ImageClientMeta::resync_requested
     r = Journal<>::request_resync(ictx);
     if (r < 0) {
       lderr(cct) << "failed to request resync: " << cpp_strerror(r) << dendl;

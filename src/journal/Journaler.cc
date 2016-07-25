@@ -214,6 +214,7 @@ void Journaler::get_mutable_metadata(uint64_t *minimum_set,
   m_metadata->get_mutable_metadata(minimum_set, active_set, clients, on_finish);
 }
 
+// called by Journal<I>::create
 int Journaler::create(uint8_t order, uint8_t splay_width, int64_t pool_id) {
   if (order > 64 || order < 12) {
     lderr(m_cct) << "order must be in the range [12, 64]" << dendl;

@@ -648,6 +648,7 @@ int Journal<I>::request_resync(I *image_ctx) {
   cls::journal::Client client;
   journal::ImageClientMeta client_meta;
   journal::TagData tag_data;
+
   int r = open_journaler(image_ctx->cct, &journaler, &client, &client_meta,
                          &tag_data);
   BOOST_SCOPE_EXIT_ALL(&journaler) {
@@ -665,6 +666,7 @@ int Journal<I>::request_resync(I *image_ctx) {
   ::encode(client_data, client_data_bl);
 
   C_SaferCond update_client_ctx;
+
   journaler.update_client(client_data_bl, &update_client_ctx);
 
   r = update_client_ctx.wait();
@@ -2136,6 +2138,7 @@ void Journal<I>::wait_for_steady_state(Context *on_state) {
 template <typename I>
 int Journal<I>::check_resync_requested(bool *do_resync) {
   Mutex::Locker l(m_lock);
+
   return check_resync_requested_internal(do_resync);
 }
 
