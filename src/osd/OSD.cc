@@ -5957,11 +5957,14 @@ void OSD::ms_fast_dispatch(Message *m)
   }
 
   OSDMapRef nextmap = service.get_nextmap_reserved();
+
   Session *session = static_cast<Session*>(m->get_connection()->get_priv());
   if (session) {
     {
       Mutex::Locker l(session->session_dispatch_lock);
+
       update_waiting_for_pg(session, nextmap);
+
       session->waiting_on_map.push_back(op);
       dispatch_session_waiting(session, nextmap);
     }
@@ -6195,6 +6198,7 @@ bool OSD::dispatch_op_fast(OpRequestRef& op, OSDMapRef& osdmap)
   }
 
   epoch_t msg_epoch(op_required_epoch(op));
+
   if (msg_epoch > osdmap->get_epoch()) {
     Session *s = static_cast<Session*>(op->get_req()->
 				       get_connection()->get_priv());
@@ -8536,7 +8540,9 @@ struct send_map_on_destruct {
 void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 {
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
+
   assert(m->get_type() == CEPH_MSG_OSD_OP);
+
   if (op_is_discardable(m)) {
     dout(10) << " discardable " << *m << dendl;
     return;
@@ -8544,6 +8550,7 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 
   // set up a map send if the Op gets blocked for some reason
   send_map_on_destruct share_map(this, m, osdmap, m->get_map_epoch());
+
   Session *client_session =
       static_cast<Session*>(m->get_connection()->get_priv());
   epoch_t last_sent_epoch;
@@ -8552,9 +8559,11 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
     last_sent_epoch = client_session->last_sent_epoch;
     client_session->sent_epoch_lock.unlock();
   }
+
   share_map.should_send = service.should_share_map(
       m->get_source(), m->get_connection().get(), m->get_map_epoch(),
       osdmap, client_session ? &last_sent_epoch : NULL);
+
   if (client_session) {
     client_session->put();
   }
@@ -8583,10 +8592,14 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 
   PG *pg = get_pg_or_queue_for_pg(pgid, op);
   if (pg) {
+    // OSD::dequeue_op will check this and share map if needed
     op->send_map_update = share_map.should_send;
     op->sent_epoch = m->get_map_epoch();
+
     enqueue_op(pg, op);
+
     share_map.should_send = false;
+
     return;
   }
 
@@ -8671,6 +8684,7 @@ void OSD::handle_replica_op(OpRequestRef& op, OSDMapRef& osdmap)
 
   PG *pg = get_pg_or_queue_for_pg(m->pgid, op);
   if (pg) {
+    // OSD::dequeue_op will check this and share map if needed
     op->send_map_update = should_share_map;
     op->sent_epoch = m->map_epoch;
     enqueue_op(pg, op);
@@ -8799,8 +8813,10 @@ void OSD::ShardedOpWQ::_enqueue(pair<PGRef, PGQueueable> item) {
 
   ShardData* sdata = shard_list[shard_index];
   assert (NULL != sdata);
+
   unsigned priority = item.second.get_priority();
   unsigned cost = item.second.get_cost();
+
   sdata->sdata_op_ordering_lock.Lock();
  
   if (priority >= osd->op_prio_cutoff)
@@ -8810,6 +8826,7 @@ void OSD::ShardedOpWQ::_enqueue(pair<PGRef, PGQueueable> item) {
     sdata->pqueue->enqueue(
       item.second.get_owner(),
       priority, cost, item);
+
   sdata->sdata_op_ordering_lock.Unlock();
 
   sdata->sdata_lock.Lock();
@@ -8867,6 +8884,9 @@ void OSD::dequeue_op(
 
   // share our map with sender, if they're old
   if (op->send_map_update) {
+
+    // set by OSD::handle_op or OSD::handle_replica_op
+
     Message *m = op->get_req();
     Session *session = static_cast<Session *>(m->get_connection()->get_priv());
     epoch_t last_sent_epoch;

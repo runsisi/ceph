@@ -1912,19 +1912,25 @@ void PG::take_op_map_waiters()
 void PG::queue_op(OpRequestRef& op)
 {
   Mutex::Locker l(map_lock);
+
   if (!waiting_for_map.empty()) {
     // preserve ordering
     waiting_for_map.push_back(op);
     op->mark_delayed("waiting_for_map not empty");
     return;
   }
+
   if (op_must_wait_for_map(get_osdmap_with_maplock()->get_epoch(), op)) {
     waiting_for_map.push_back(op);
     op->mark_delayed("op must wait for map");
     return;
   }
+
   op->mark_queued_for_pg();
+
+  // OSD::ShardedOpWQ::_enqueue
   osd->op_wq.queue(make_pair(PGRef(this), op));
+
   {
     // after queue() to include any locking costs
 #ifdef WITH_LTTNG
