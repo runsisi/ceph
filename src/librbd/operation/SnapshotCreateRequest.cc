@@ -355,6 +355,8 @@ void SnapshotCreateRequest<I>::update_snap_context() {
 
   image_ctx.snapc.seq = m_snap_id;
   image_ctx.snapc.snaps.swap(snaps);
+
+  // set IoCtxImpl::snapc
   image_ctx.data_ctx.selfmanaged_snap_set_write_ctx(
     image_ctx.snapc.seq, image_ctx.snaps);
 }

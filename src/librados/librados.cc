@@ -1532,10 +1532,12 @@ void librados::IoCtx::snap_set_read(snap_t seq)
 
 int librados::IoCtx::selfmanaged_snap_set_write_ctx(snap_t seq, vector<snap_t>& snaps)
 {
+  // vector<snap_t> -> vector<snapid_t>
   vector<snapid_t> snv;
   snv.resize(snaps.size());
   for (unsigned i=0; i<snaps.size(); i++)
     snv[i] = snaps[i];
+
   return io_ctx_impl->set_snap_write_context(seq, snv);
 }
 

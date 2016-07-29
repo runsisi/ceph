@@ -2189,9 +2189,11 @@ void Objecter::resend_mon_ops()
 void Objecter::op_submit(Op *op, ceph_tid_t *ptid, int *ctx_budget)
 {
   shunique_lock rl(rwlock, ceph::acquire_shared);
+
   ceph_tid_t tid = 0;
   if (!ptid)
     ptid = &tid;
+
   _op_submit_with_budget(op, rl, ptid, ctx_budget);
 }
 
