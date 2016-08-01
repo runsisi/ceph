@@ -1439,7 +1439,8 @@ void OSDService::handle_misdirected_op(PG *pg, OpRequestRef op)
   reply_op_error(op, -ENXIO);
 }
 
-
+// called by ReplicatedPG::on_shutdown with the second parameter set to 0
+// PG::split_ops with the second parameter set to non-null
 void OSDService::dequeue_pg(PG *pg, list<OpRequestRef> *dequeued)
 {
   if (dequeued)
@@ -8857,6 +8858,7 @@ void OSD::ShardedOpWQ::_enqueue_front(pair<PGRef, PGQueueable> item) {
 /*
  * NOTE: dequeue called in worker thread, with pg lock
  */
+// called by PGQueueable::RunVis::operator()
 void OSD::dequeue_op(
   PGRef pg, OpRequestRef op,
   ThreadPool::TPHandle &handle)
@@ -8864,6 +8866,7 @@ void OSD::dequeue_op(
   utime_t now = ceph_clock_now(cct);
   op->set_dequeued_time(now);
   utime_t latency = now - op->get_req()->get_recv_stamp();
+
   dout(10) << "dequeue_op " << op << " prio " << op->get_req()->get_priority()
 	   << " cost " << op->get_req()->get_cost()
 	   << " latency " << latency
@@ -8883,6 +8886,7 @@ void OSD::dequeue_op(
       last_sent_epoch = session->last_sent_epoch;
       session->sent_epoch_lock.unlock();
     }
+
     service.share_map(
         m->get_source(),
         m->get_connection().get(),
