@@ -8697,6 +8697,7 @@ bool OSD::op_is_discardable(MOSDOp *op)
   return false;
 }
 
+// called by OSD::handle_op and OSD::handle_replica_op
 void OSD::enqueue_op(PGRef pg, OpRequestRef& op)
 {
   utime_t latency = ceph_clock_now(cct) - op->get_req()->get_recv_stamp();
@@ -8704,6 +8705,10 @@ void OSD::enqueue_op(PGRef pg, OpRequestRef& op)
 	   << " cost " << op->get_req()->get_cost()
 	   << " latency " << latency
 	   << " " << *(op->get_req()) << dendl;
+
+  // the opposite of pg->do_request(op), see OSD::dequeue_op
+  // maybe push back of PG::waiting_for_map list to preserve ordering, if no need
+  // to wait, then osd->op_wq.queue(op)
   pg->queue_op(op);
 }
 
@@ -8736,25 +8741,45 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
     }
   }
 
+  // dequeue an Op to process
   pair<PGRef, PGQueueable> item = sdata->pqueue->dequeue();
+
+  // stash the dequeued Op
   sdata->pg_for_processing[&*(item.first)].push_back(item.second);
+
   sdata->sdata_op_ordering_lock.Unlock();
+
   ThreadPool::TPHandle tp_handle(osd->cct, hb, timeout_interval,
     suicide_interval);
 
+  // lock the PG so no other worker thread of this shard will ever come in
+  // and take an Op to process, so the ordering is preserved
   (item.first)->lock_suspend_timeout(tp_handle);
 
   boost::optional<PGQueueable> op;
   {
     Mutex::Locker l(sdata->sdata_op_ordering_lock);
+
     if (!sdata->pg_for_processing.count(&*(item.first))) {
+
+      // may have been popped by other worder thread after we released the
+      // sdata->sdata_op_ordering_lock lock
+
       (item.first)->unlock();
       return;
     }
+
+    // pop the stashed Op to process
     assert(sdata->pg_for_processing[&*(item.first)].size());
     op = sdata->pg_for_processing[&*(item.first)].front();
     sdata->pg_for_processing[&*(item.first)].pop_front();
+
     if (!(sdata->pg_for_processing[&*(item.first)].size()))
+
+      // all previously stashed Ops of this PG have been processed
+      // note: when we are processing the Op, other worker threads can dequeue
+      // Ops of this PG and stash to back of sdata->pg_for_processing[PG]
+
       sdata->pg_for_processing.erase(&*(item.first));
   }
 
@@ -8780,6 +8805,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
   delete f;
   *_dout << dendl;
 
+  // OSD::dequeue_op for OpRequestRef, i.e., PG::do_request(Op)
   op->run(osd, item.first, tp_handle);
 
   {
@@ -8858,7 +8884,8 @@ void OSD::ShardedOpWQ::_enqueue_front(pair<PGRef, PGQueueable> item) {
 /*
  * NOTE: dequeue called in worker thread, with pg lock
  */
-// called by PGQueueable::RunVis::operator()
+// called by PGQueueable::RunVis::operator() when dequeued from ShardedOpWQ
+// see OSD::ShardedOpWQ::_process
 void OSD::dequeue_op(
   PGRef pg, OpRequestRef op,
   ThreadPool::TPHandle &handle)
