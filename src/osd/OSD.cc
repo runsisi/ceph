@@ -159,6 +159,17 @@ static ostream& _prefix(std::ostream* _dout, int whoami, epoch_t epoch) {
   return *_dout << "osd." << whoami << " " << epoch << " ";
 }
 
+/*
+  class PGQueueable {
+    typedef boost::variant<
+    OpRequestRef,
+    PGSnapTrim,
+    PGScrub,
+    PGRecovery
+    > QVariant;
+  };
+ */
+// called when the PGQueueable op is dequeued from the OSD::ShardedOpWQ
 void PGQueueable::RunVis::operator()(const OpRequestRef &op) {
   return osd->dequeue_op(pg, op, handle);
 }
@@ -8357,18 +8368,22 @@ bool OSDService::_recover_now(uint64_t *available_pushes)
   return true;
 }
 
+// called by PGQueueable::RunVis::operator()(PGRecovery &op)
 void OSD::do_recovery(
   PG *pg, epoch_t queued, uint64_t reserved_pushes,
   ThreadPool::TPHandle &handle)
 {
   uint64_t started = 0;
+
   if (g_conf->osd_recovery_sleep > 0) {
     handle.suspend_tp_timeout();
     pg->unlock();
+
     utime_t t;
     t.set_from_double(g_conf->osd_recovery_sleep);
     t.sleep();
     dout(20) << __func__ << " slept for " << t << dendl;
+
     pg->lock();
     handle.reset_tp_timeout();
   }
@@ -8382,6 +8397,8 @@ void OSD::do_recovery(
     assert(pg->is_peered() && pg->is_primary());
 
     assert(pg->recovery_queued);
+
+    // set by PG::queue_recovery
     pg->recovery_queued = false;
 
     dout(10) << "do_recovery starting " << reserved_pushes << " " << *pg << dendl;
@@ -8389,7 +8406,10 @@ void OSD::do_recovery(
     dout(20) << "  active was " << service.recovery_oids[pg->info.pgid] << dendl;
 #endif
 
+    // only when pg state is PG_STATE_RECOVERING or PG_STATE_BACKFILL we
+    // will recover_primary, recover_replicas or recover_backfill
     bool more = pg->start_recovery_ops(reserved_pushes, handle, &started);
+
     dout(10) << "do_recovery started " << started << "/" << reserved_pushes 
 	     << " on " << *pg << dendl;
 
@@ -8399,6 +8419,7 @@ void OSD::do_recovery(
     }
 
     PG::RecoveryCtx rctx = create_context();
+
     rctx.handle = &handle;
 
     /*
@@ -8409,15 +8430,19 @@ void OSD::do_recovery(
      */
     if (!more && pg->have_unfound()) {
       pg->discover_all_missing(*rctx.query_map);
+
       if (rctx.query_map->empty()) {
 	dout(10) << "do_recovery  no luck, giving up on this pg for now" << dendl;
       } else {
 	dout(10) << "do_recovery  no luck, giving up on this pg for now" << dendl;
+
+	// requeue
 	pg->queue_recovery();
       }
     }
 
     pg->write_if_dirty(*rctx.transaction);
+
     OSDMapRef curmap = pg->get_osdmap();
     dispatch_context(rctx, pg, curmap);
   }

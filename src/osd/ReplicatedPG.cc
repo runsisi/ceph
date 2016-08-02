@@ -1455,10 +1455,15 @@ void ReplicatedPG::do_request(
   OpRequestRef& op,
   ThreadPool::TPHandle &handle)
 {
+  // see PG::queue_op which called by OSD::enqueue_op, if the Op
+  // need to wait for map, it must have been pushed back of
+  // PG::waiting_for_map and never been enqueued into OSD::OpShardedWQ
   assert(!op_must_wait_for_map(get_osdmap()->get_epoch(), op));
+
   if (can_discard_request(op)) {
     return;
   }
+
   if (flushes_in_progress > 0) {
     dout(20) << flushes_in_progress
 	     << " flushes_in_progress pending "
@@ -1482,7 +1487,15 @@ void ReplicatedPG::do_request(
   }
 
   assert(is_peered() && flushes_in_progress == 0);
+
+  // let PG backend to handle the replica/sub op, for sub op, it can
+  // only handle CEPH_OSD_OP_PULL and CEPH_OSD_OP_PUSH so we still need
+  // to handle other sub ops later, i.e., CEPH_OSD_OP_DELETE, CEPH_OSD_OP_SCRUB_XXX
   if (pgbackend->handle_message(op))
+    // MSG_OSD_PG_PUSH, MSG_OSD_PG_PULL, MSG_OSD_PG_PUSH_REPLY
+    // MSG_OSD_REPOP, MSG_OSD_REPOPREPLY
+    // MSG_OSD_SUBOP: CEPH_OSD_OP_PULL, CEPH_OSD_OP_PUSH
+    // MSG_OSD_SUBOPREPLY: CEPH_OSD_OP_PUSH
     return;
 
   switch (op->get_req()->get_type()) {
@@ -1509,10 +1522,13 @@ void ReplicatedPG::do_request(
     break;
 
   case MSG_OSD_SUBOP:
+    // CEPH_OSD_OP_DELETE
+    // CEPH_OSD_OP_SCRUB_RESERVER, CEPH_OSD_OP_SCRUB_UNRESERVE, CEPH_OSD_OP_SCRUB_MAP
     do_sub_op(op);
     break;
 
   case MSG_OSD_SUBOPREPLY:
+    // CEPH_OSD_OP_SCRUB_RESERVE
     do_sub_op_reply(op);
     break;
 
@@ -7220,6 +7236,7 @@ int ReplicatedPG::prepare_transaction(OpContext *ctx)
   return result;
 }
 
+// called by ReplicatedPG::prepare_transaction
 // the third parameter default to true, the forth parameter default to false
 void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc,
 			      bool scrub_ok)
@@ -9163,6 +9180,9 @@ void ReplicatedPG::issue_repop(RepGather *repop, OpContext *ctx)
     ctx->clone_obc,
     unlock_snapset_obc ? ctx->snapset_obc : ObjectContextRef());
 
+  // 1. call ReplicatedBackend::issue_op to send MOSDRepOp to other replicas
+  // 2. update local pg log with new log entries and update the local txn
+  // 3. call ObjectStore to queue the local txn
   pgbackend->submit_transaction(
     soid,
     ctx->at_version,
@@ -11143,7 +11163,9 @@ void PG::MissingLoc::check_recovery_sources(const OSDMapRef osdmap)
   }
 }
   
-
+// called by ReplicatedPG::do_recovery which called by PGQueueable::RunVis::operator()
+// when the PGRecovery op is dequeued from the OSD::ShardedOpWQ
+// the PGRecovery op is enqueued by ReplicatedPG::_queue_for_recovery
 bool ReplicatedPG::start_recovery_ops(
   uint64_t max,
   ThreadPool::TPHandle &handle,
@@ -11446,6 +11468,8 @@ uint64_t ReplicatedPG::recover_primary(uint64_t max, ThreadPool::TPHandle &handl
   return started;
 }
 
+// called by ReplicatedPG::maybe_kick_recovery and
+// ReplicatedPG::recover_replicas which called by ReplicatedPG::start_recovery_ops
 int ReplicatedPG::prep_object_replica_pushes(
   const hobject_t& soid, eversion_t v,
   PGBackend::RecoveryHandle *h)
@@ -11455,15 +11479,25 @@ int ReplicatedPG::prep_object_replica_pushes(
 
   // NOTE: we know we will get a valid oloc off of disk here.
   ObjectContextRef obc = get_object_context(soid, false);
+
   if (!obc) {
+
+    // can not find the object from the object store
+
     pg_log.missing_add(soid, v, eversion_t());
     missing_loc.remove_location(soid, pg_whoami);
+
     bool uhoh = true;
+
     assert(!actingbackfill.empty());
     for (set<pg_shard_t>::iterator i = actingbackfill.begin();
 	 i != actingbackfill.end();
 	 ++i) {
+
+      // to find if we can get the object from any replica PGs
+
       if (*i == get_primary()) continue;
+
       pg_shard_t peer = *i;
       if (!peer_missing[peer].is_missing(soid, v)) {
 	missing_loc.add_location(soid, peer);
@@ -11472,6 +11506,7 @@ int ReplicatedPG::prep_object_replica_pushes(
 	uhoh = false;
       }
     }
+
     if (uhoh)
       osd->clog->error() << info.pgid << " missing primary copy of " << soid << ", unfound\n";
     else
@@ -11491,6 +11526,7 @@ int ReplicatedPG::prep_object_replica_pushes(
   }
 
   start_recovery_op(soid);
+
   assert(!recovering.count(soid));
   recovering.insert(make_pair(soid, obc));
 
@@ -11500,16 +11536,19 @@ int ReplicatedPG::prep_object_replica_pushes(
    * In almost all cases, therefore, this lock should be uncontended.
    */
   obc->ondisk_read_lock();
+
   pgbackend->recover_object(
     soid,
     v,
     ObjectContextRef(),
     obc, // has snapset context
     h);
+
   obc->ondisk_read_unlock();
   return 1;
 }
 
+// called by ReplicatedPG::start_recovery_ops
 uint64_t ReplicatedPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &handle)
 {
   dout(10) << __func__ << "(" << max << ")" << dendl;
@@ -11523,6 +11562,7 @@ uint64_t ReplicatedPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
        i != actingbackfill.end();
        ++i) {
     if (*i == get_primary()) continue;
+
     pg_shard_t peer = *i;
     map<pg_shard_t, pg_missing_t>::const_iterator pm = peer_missing.find(peer);
     assert(pm != peer_missing.end());
@@ -11585,6 +11625,7 @@ uint64_t ReplicatedPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
   }
 
   pgbackend->run_recovery_op(h, get_recovery_op_priority());
+
   return started;
 }
 

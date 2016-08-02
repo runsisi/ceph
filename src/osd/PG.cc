@@ -2068,15 +2068,25 @@ bool PG::requeue_scrub()
   }
 }
 
+// front default to false
 void PG::queue_recovery(bool front)
 {
   if (!is_primary() || !is_peered()) {
+
+    // queue this PG onto OSD::ShardedOpWQ only when the PG is primary
+    // and has been peered
+
     dout(10) << "queue_recovery -- not primary or not peered " << dendl;
+
     assert(!recovery_queued);
   } else if (recovery_queued) {
+
+    // cleared by OSD::do_recovery and ReplicatedPG::on_change
+
     dout(10) << "queue_recovery -- already queued" << dendl;
   } else {
     dout(10) << "queue_recovery -- queuing" << dendl;
+
     recovery_queued = true;
     osd->queue_for_recovery(this, front);
   }
