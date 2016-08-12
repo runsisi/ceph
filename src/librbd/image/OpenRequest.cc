@@ -286,6 +286,7 @@ void OpenRequest<I>::send_v2_apply_metadata() {
                  << "start_key=" << m_last_metadata_key << dendl;
 
   librados::ObjectReadOperation op;
+  // list key with prefix "metadata_"
   cls_client::metadata_list_start(&op, m_last_metadata_key, MAX_METADATA_ITEMS);
 
   using klass = OpenRequest<I>;

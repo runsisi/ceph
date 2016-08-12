@@ -2610,11 +2610,15 @@ int metadata_list(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   }
 
   map<string, bufferlist> data;
+
+  // "metadata_" + name
   string last_read = metadata_key_for_name(start_after);
   int max_read = max_return ? MIN(RBD_MAX_KEYS_READ, max_return) : RBD_MAX_KEYS_READ;
 
   do {
     map<string, bufferlist> raw_data;
+
+    // "metadata_"
     int r = cls_cxx_map_get_vals(hctx, last_read, RBD_METADATA_KEY_PREFIX,
                              max_read, &raw_data);
     if (r < 0) {
@@ -2662,6 +2666,8 @@ int metadata_set(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
        it != data.end(); ++it) {
     CLS_LOG(20, "metdata_set key=%s value=%.*s", it->first.c_str(),
 	    it->second.length(), it->second.c_str());
+
+    // "metadata_" + name
     raw_data[metadata_key_for_name(it->first)].swap(it->second);
   }
   int r = cls_cxx_map_set_vals(hctx, &raw_data);
