@@ -2630,6 +2630,7 @@ int metadata_list(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 
     map<string, bufferlist>::iterator it = raw_data.begin();
     for (; it != raw_data.end(); ++it)
+      // "metadata_" is stripped
       data[metadata_name_from_key(it->first)].swap(it->second);
 
     if (r < max_read)

@@ -931,6 +931,7 @@ struct C_InvalidateCache : public Context {
 
   void ImageCtx::apply_metadata(const std::map<std::string, bufferlist> &meta) {
     ldout(cct, 20) << __func__ << dendl;
+
     std::map<string, bool> configs = boost::assign::map_list_of(
         "rbd_non_blocking_aio", false)(
         "rbd_cache", false)(
@@ -965,9 +966,13 @@ struct C_InvalidateCache : public Context {
     md_config_t local_config_t;
     std::map<std::string, bufferlist> res;
 
+    // "conf_"
     _filter_metadata_confs(METADATA_CONF_PREFIX, configs, meta, &res);
+
     for (auto it : res) {
       std::string val(it.second.c_str(), it.second.length());
+
+      // set <opt, val> in local config
       int j = local_config_t.set_val(it.first.c_str(), val);
       if (j < 0) {
         lderr(cct) << __func__ << " failed to set config " << it.first
@@ -986,6 +991,8 @@ struct C_InvalidateCache : public Context {
         config = cct->_conf->rbd_##config;                                     \
     } while (0);
 
+    // set ImageCtx::config from local config or global config, local
+    // config has the high priority
     ASSIGN_OPTION(non_blocking_aio);
     ASSIGN_OPTION(cache);
     ASSIGN_OPTION(cache_writethrough_until_flush);

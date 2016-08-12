@@ -2973,10 +2973,14 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
   int metadata_set(ImageCtx *ictx, const string &key, const string &value)
   {
     CephContext *cct = ictx->cct;
+    // "conf_"
     string start = ictx->METADATA_CONF_PREFIX;
     size_t conf_prefix_len = start.size();
 
     if(key.size() > conf_prefix_len && !key.compare(0,conf_prefix_len,start)) {
+
+      // conf_xxx
+
       string subkey = key.substr(conf_prefix_len, key.size()-conf_prefix_len);
       int r = cct->_conf->set_val(subkey.c_str(), value);
       if (r < 0)
@@ -2991,6 +2995,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     map<string, bufferlist> data;
     data[key].append(value);
+
+    // ioctx->exec which is sync
     return cls_client::metadata_set(&ictx->md_ctx, ictx->header_oid, data);
   }
 

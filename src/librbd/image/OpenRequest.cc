@@ -286,7 +286,7 @@ void OpenRequest<I>::send_v2_apply_metadata() {
                  << "start_key=" << m_last_metadata_key << dendl;
 
   librados::ObjectReadOperation op;
-  // list key with prefix "metadata_"
+  // list key with prefix "metadata_", list from key "metadata_conf_"
   cls_client::metadata_list_start(&op, m_last_metadata_key, MAX_METADATA_ITEMS);
 
   using klass = OpenRequest<I>;
@@ -306,6 +306,7 @@ Context *OpenRequest<I>::handle_v2_apply_metadata(int *result) {
   std::map<std::string, bufferlist> metadata;
   if (*result == 0) {
     bufferlist::iterator it = m_out_bl.begin();
+    // decode <key, value> pairs which has key with prefix of "metadata_"
     *result = cls_client::metadata_list_finish(&it, &metadata);
   }
 
@@ -321,7 +322,9 @@ Context *OpenRequest<I>::handle_v2_apply_metadata(int *result) {
   if (!metadata.empty()) {
     m_metadata.insert(metadata.begin(), metadata.end());
 
+    // the key is stripped with the prefix "metadata_"
     m_last_metadata_key = metadata.rbegin()->first;
+    // "conf_"
     if (boost::starts_with(m_last_metadata_key,
                            ImageCtx::METADATA_CONF_PREFIX)) {
       // continue
