@@ -912,7 +912,11 @@ struct C_InvalidateCache : public Context {
     size_t conf_prefix_len = prefix.size();
 
     string start = prefix;
+
     for (auto it : pairs) {
+
+      // iterate metadata pairs to find if it is a config item
+
       if (it.first.compare(0, MIN(conf_prefix_len, it.first.size()), prefix) > 0)
         return false;
 
@@ -920,12 +924,18 @@ struct C_InvalidateCache : public Context {
         continue;
 
       string key = it.first.substr(conf_prefix_len, it.first.size() - conf_prefix_len);
+
       auto cit = configs.find(key);
       if (cit != configs.end()) {
+
+        // this metadata is a config item
+
+        // use local config value
         cit->second = true;
         res->insert(make_pair(key, it.second));
       }
     }
+
     return true;
   }
 
@@ -966,13 +976,13 @@ struct C_InvalidateCache : public Context {
     md_config_t local_config_t;
     std::map<std::string, bufferlist> res;
 
-    // "conf_"
+    // "conf_", get image specific config parameters
     _filter_metadata_confs(METADATA_CONF_PREFIX, configs, meta, &res);
 
     for (auto it : res) {
       std::string val(it.second.c_str(), it.second.length());
 
-      // set <opt, val> in local config
+      // stash <opt, val> in local config
       int j = local_config_t.set_val(it.first.c_str(), val);
       if (j < 0) {
         lderr(cct) << __func__ << " failed to set config " << it.first
