@@ -932,6 +932,8 @@ struct C_InvalidateCache : public Context {
 
         // use local config value
         cit->second = true;
+
+        // <key, value>
         res->insert(make_pair(key, it.second));
       }
     }
@@ -976,15 +978,22 @@ struct C_InvalidateCache : public Context {
     md_config_t local_config_t;
     std::map<std::string, bufferlist> res;
 
-    // "conf_", get image specific config parameters
+    // "conf_", get image specific config parameters from image metadata
     _filter_metadata_confs(METADATA_CONF_PREFIX, configs, meta, &res);
 
     for (auto it : res) {
+
+      // iterate local <key, value> pairs and stash
+
       std::string val(it.second.c_str(), it.second.length());
 
       // stash <opt, val> in local config
       int j = local_config_t.set_val(it.first.c_str(), val);
       if (j < 0) {
+
+        // every md_config_t object has all default config <key, value> pairs,
+        // os even if we fails here, we still get a default value
+
         lderr(cct) << __func__ << " failed to set config " << it.first
                    << " with value " << it.second.c_str() << ": " << j
                    << dendl;
