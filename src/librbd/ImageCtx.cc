@@ -911,6 +911,7 @@ struct C_InvalidateCache : public Context {
                                         map<string, bufferlist> *res) {
     size_t conf_prefix_len = prefix.size();
 
+    // "conf_"
     string start = prefix;
 
     for (auto it : pairs) {
@@ -978,12 +979,15 @@ struct C_InvalidateCache : public Context {
     md_config_t local_config_t;
     std::map<std::string, bufferlist> res;
 
-    // "conf_", get image specific config parameters from image metadata
+    // "conf_", get image specific config parameters from image metadata,
+    // there may be many kind of metadata, the config parameter is only
+    // one kind of the metadata
     _filter_metadata_confs(METADATA_CONF_PREFIX, configs, meta, &res);
 
     for (auto it : res) {
 
-      // iterate local <key, value> pairs and stash
+      // iterate local <key, value> config parameter pairs and stash
+      // in local config object
 
       std::string val(it.second.c_str(), it.second.length());
 
@@ -999,6 +1003,9 @@ struct C_InvalidateCache : public Context {
                    << dendl;
       }
     }
+
+    // configs knows whether we will use the local config object or
+    // the global config object
 
 #define ASSIGN_OPTION(config)                                                  \
     do {                                                                       \

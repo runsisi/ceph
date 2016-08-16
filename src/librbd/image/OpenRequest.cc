@@ -286,7 +286,11 @@ void OpenRequest<I>::send_v2_apply_metadata() {
                  << "start_key=" << m_last_metadata_key << dendl;
 
   librados::ObjectReadOperation op;
-  // list key with prefix "metadata_", list from key "metadata_conf_"
+  // list omap key with prefix "metadata_"
+  // note: we start with the first <key, value> pair whose omap key is
+  // "metadata_conf_", in cls_rbd.cc we use "metadata_" + m_last_metadata_key
+  // as the first key to list, but we do not use it as the prefix to filter,
+  // so we may get metadata pairs with key as "metadata_xxx" during the last try
   cls_client::metadata_list_start(&op, m_last_metadata_key, MAX_METADATA_ITEMS);
 
   using klass = OpenRequest<I>;
@@ -306,7 +310,7 @@ Context *OpenRequest<I>::handle_v2_apply_metadata(int *result) {
   std::map<std::string, bufferlist> metadata;
   if (*result == 0) {
     bufferlist::iterator it = m_out_bl.begin();
-    // decode <key, value> pairs which has key with prefix of "metadata_"
+    // decode returned <key, value> pairs which has key with prefix of "conf_"
     *result = cls_client::metadata_list_finish(&it, &metadata);
   }
 
@@ -322,18 +326,19 @@ Context *OpenRequest<I>::handle_v2_apply_metadata(int *result) {
   if (!metadata.empty()) {
     m_metadata.insert(metadata.begin(), metadata.end());
 
-    // the key is stripped with the prefix "metadata_"
+    // the returned key is stripped with the prefix "metadata_"
     m_last_metadata_key = metadata.rbegin()->first;
     // "conf_"
     if (boost::starts_with(m_last_metadata_key,
                            ImageCtx::METADATA_CONF_PREFIX)) {
-      // continue
+      // continue, still has metadata pairs with key starts with "metadata_conf_"
       send_v2_apply_metadata();
 
       return nullptr;
     }
   }
 
+  // apply the image specific config parameters from metadata
   m_image_ctx->apply_metadata(m_metadata);
 
   send_register_watch();
