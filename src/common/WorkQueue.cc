@@ -123,7 +123,8 @@ void ThreadPool::worker(WorkThread *wt)
 
       while (tries--) {
 
-        // try to
+        // if we did not dequeue any item from a queue, then we try the
+        // next queue, we try work_queues.size() times
 
 	last_work_queue++;
 	last_work_queue %= work_queues.size();

@@ -51,7 +51,9 @@ public:
     m_aio_comp->start_op();
   }
 
+  // create aio completion and call pure virtual method send_request
   void send();
+
   void fail(int r);
 
   void set_bypass_image_cache() {
@@ -93,6 +95,7 @@ public:
   }
 
 protected:
+  // create multiple AioObjectRead requests and send
   virtual void send_request() override;
   virtual void send_image_cache_request() override;
 
@@ -108,6 +111,10 @@ private:
   int m_op_flags;
 };
 
+// AioImageRequest <- AioImageRead
+// AioImageRequest <- AbstractAioImageWrite <- AioImageWrite, AioImageDiscard
+// AioImageRequest <- AioImageFlush
+
 template <typename ImageCtxT = ImageCtx>
 class AbstractAioImageWrite : public AioImageRequest<ImageCtxT> {
 public:
@@ -115,11 +122,13 @@ public:
     return true;
   }
 
+  // never used, m_synchronous should always be false
   inline void flag_synchronous() {
     m_synchronous = true;
   }
 
 protected:
+  // i.e., std::list<AioObjectRequestHandle *>
   using typename AioImageRequest<ImageCtxT>::AioObjectRequests;
   using typename AioImageRequest<ImageCtxT>::Extents;
 
@@ -131,6 +140,18 @@ protected:
       m_synchronous(false) {
   }
 
+  // clip_io(get_image_ctx(&image_ctx), m_off, &clip_len);
+  // Striper::file_to_extents(object_extents);
+  // prune_object_extents(object_extents);
+  // aio_comp->set_request_count(object_extents.size() + get_cache_request_count(journaling));
+  // AioObjectRequests requests;
+  // send_object_requests(object_extents, snapc, (journaling ? &requests : nullptr));
+  // if (journaling) {
+  //   journal_tid = append_journal_event(requests, m_synchronous);
+  // }
+  // if (image_ctx.object_cacher != NULL) {
+  //   send_cache_requests(object_extents, journal_tid);
+  // }
   virtual void send_request();
 
   virtual void prune_object_extents(ObjectExtents &object_extents) {
@@ -141,6 +162,9 @@ protected:
   virtual void send_object_cache_requests(const ObjectExtents &object_extents,
                                           uint64_t journal_tid) = 0;
 
+  // call create_object_request to create object requests and send them,
+  // only AioImageWrite overrides this if the object cacher is enabled, then
+  // do nothing, becoz its writeback handler will handle creating object requests
   virtual void send_object_requests(const ObjectExtents &object_extents,
                                     const ::SnapContext &snapc,
                                     AioObjectRequests *aio_object_requests);
@@ -175,7 +199,9 @@ public:
   }
 
 protected:
+  // i.e., std::list<AioObjectRequestHandle *>
   using typename AioImageRequest<ImageCtxT>::AioObjectRequests;
+  // i.e., std::vector<ObjectExtent>
   using typename AbstractAioImageWrite<ImageCtxT>::ObjectExtents;
 
   virtual aio_type_t get_aio_type() const {

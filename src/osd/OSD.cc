@@ -8830,7 +8830,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
   delete f;
   *_dout << dendl;
 
-  // OSD::dequeue_op for OpRequestRef, i.e., PG::do_request(Op)
+  // PG::do_request(Op)
   op->run(osd, item.first, tp_handle);
 
   {
@@ -8909,8 +8909,10 @@ void OSD::ShardedOpWQ::_enqueue_front(pair<PGRef, PGQueueable> item) {
 /*
  * NOTE: dequeue called in worker thread, with pg lock
  */
-// called by PGQueueable::RunVis::operator() when dequeued from ShardedOpWQ
+// called by PGQueueable::RunVis::operator() when dequeued an item from ShardedOpWQ
 // see OSD::ShardedOpWQ::_process
+// note: we do not dequeue in this method, we dequeue in OSD::ShardedOpWQ::_process
+// directly
 void OSD::dequeue_op(
   PGRef pg, OpRequestRef op,
   ThreadPool::TPHandle &handle)

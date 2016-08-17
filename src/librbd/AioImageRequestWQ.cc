@@ -125,6 +125,8 @@ void AioImageRequestWQ::aio_read(AioCompletion *c, uint64_t off, uint64_t len,
 
   if (m_image_ctx.non_blocking_aio || writes_blocked() || !writes_empty() ||
       lock_required) {
+    // the allocated request will be deleted when the request is dequeued
+    // and processed by the thread pool worker, see AioImageRequestWQ::process
     queue(new AioImageRead<>(m_image_ctx, c, {{off, len}}, buf, pbl, op_flags));
   } else {
     c->start_op();
@@ -416,12 +418,15 @@ void *AioImageRequestWQ::_void_dequeue() {
     return nullptr;
   }
 
-  // m_aio_comp->start_op, push AioCompletion::async_op back of ImageCtx::async_ops
+  // push the the aiocompletion associated with the request back of
+  // m_image_ctx->async_ops, when the aiocompletion completes, it will
+  // remove itself from m_image_ctx->async_ops, see AioCompletion::complete
   item->start_op();
 
   return item;
 }
 
+// ThreadPool::PointerWQ::_void_process calls this directly and do nothing else
 void AioImageRequestWQ::process(AioImageRequest<> *req) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << __func__ << ": ictx=" << &m_image_ctx << ", "
@@ -429,11 +434,14 @@ void AioImageRequestWQ::process(AioImageRequest<> *req) {
 
   req->send();
 
+  // update counter
   finish_queued_op(req);
+
   if (req->is_write_op()) {
     finish_in_progress_write();
   }
 
+  // AioImageRead, AioImageWrite, AioImageDiscard, AioImageFlush
   delete req;
 
   finish_in_flight_op();
