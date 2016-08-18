@@ -179,6 +179,7 @@ bool CopyupRequest::send_copyup() {
 void CopyupRequest::send()
 {
   m_state = STATE_READ_FROM_PARENT;
+
   AioCompletion *comp = AioCompletion::create_and_start(
     this, m_ictx, AIO_TYPE_READ);
 
@@ -207,9 +208,12 @@ bool CopyupRequest::should_complete(int r)
                  << ", r " << r << dendl;
 
   uint64_t pending_copyups;
+
   switch (m_state) {
   case STATE_READ_FROM_PARENT:
     ldout(cct, 20) << "READ_FROM_PARENT" << dendl;
+
+    // stashed by AioObjectRead<I>::send_copyup and AbstractAioObjectWrite::send_copyup
     remove_from_list();
     if (r >= 0 || r == -ENOENT) {
       return send_object_map();

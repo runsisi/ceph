@@ -148,6 +148,9 @@ AioObjectRead<I>::AioObjectRead(I *ictx, const std::string &oid,
                         snap_id, completion, false),
     m_buffer_extents(be), m_tried_parent(false), m_sparse(sparse),
     m_op_flags(op_flags), m_state(LIBRBD_AIO_READ_FLAT) {
+
+  // if we have parent, reset the initial state to LIBRBD_AIO_READ_FLAT
+  // else do nothing
   guard_read();
 }
 
@@ -208,10 +211,15 @@ bool AioObjectRead<I>::should_complete(int r)
 
         if (object_overlap > 0) {
           m_tried_parent = true;
+
           if (is_copy_on_read(image_ctx, this->m_snap_id)) {
+
+            // COR enabled
+
             m_state = LIBRBD_AIO_READ_COPYUP;
           }
 
+          // initiate AioImageRequest<>::aio_read to parent image
           read_from_parent(std::move(parent_extents));
           finished = false;
         }
@@ -226,6 +234,7 @@ bool AioObjectRead<I>::should_complete(int r)
     // by itself so state won't go back to LIBRBD_AIO_READ_GUARD.
 
     assert(m_tried_parent);
+
     if (r > 0) {
       // If read entire object from parent success and CoR is possible, kick
       // off a asynchronous copyup. This approach minimizes the latency
@@ -275,8 +284,12 @@ void AioObjectRead<I>::send() {
   }
   op.set_op_flags2(m_op_flags);
 
+  // AioObjectRequest<I>::complete which then calls virtual method
+  // AioObjectRequest<I>::should_complete to determine if we should
+  // complete the object request, coz we may need to rw from parent
   librados::AioCompletion *rados_completion =
     util::create_rados_ack_callback(this);
+
   int r = image_ctx->data_ctx.aio_operate(this->m_oid, rados_completion, &op,
                                           flags, nullptr);
   assert(r == 0);
@@ -299,6 +312,7 @@ void AioObjectRead<I>::send_copyup()
   }
 
   Mutex::Locker copyup_locker(image_ctx->copyup_list_lock);
+
   map<uint64_t, CopyupRequest*>::iterator it =
     image_ctx->copyup_list.find(this->m_object_no);
   if (it == image_ctx->copyup_list.end()) {
@@ -308,7 +322,9 @@ void AioObjectRead<I>::send_copyup()
       std::move(this->m_parent_extents));
     this->m_parent_extents.clear();
 
+    // will be erased by CopyupRequest::should_complete
     image_ctx->copyup_list[this->m_object_no] = new_req;
+
     new_req->send();
   }
 }
@@ -435,6 +451,7 @@ void AbstractAioObjectWrite::send() {
 
 void AbstractAioObjectWrite::send_pre() {
   bool write = false;
+
   {
     RWLock::RLocker snap_lock(m_ictx->snap_lock);
     if (m_ictx->object_map == nullptr) {
@@ -443,6 +460,7 @@ void AbstractAioObjectWrite::send_pre() {
     } else {
       // should have been flushed prior to releasing lock
       assert(m_ictx->exclusive_lock->is_lock_owner());
+
       m_object_exist = m_ictx->object_map->object_may_exist(m_object_no);
 
       uint8_t new_state;

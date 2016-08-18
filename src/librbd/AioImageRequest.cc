@@ -487,9 +487,11 @@ void AbstractAioImageWrite<I>::send_object_requests(
     AioObjectRequestHandle *request = create_object_request(*p, snapc,
                                                             req_comp);
 
-    // if journaling, stash the request for later; otherwise send
     if (request != NULL) {
       if (aio_object_requests != NULL) {
+
+        // journaling enabled, stash the requests
+
         aio_object_requests->push_back(request);
       } else {
         request->send();
