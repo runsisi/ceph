@@ -1798,6 +1798,7 @@ int copyup(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   // check for existence; if child object exists, just return success
   if (cls_cxx_stat(hctx, NULL, NULL) == 0)
     return 0;
+
   CLS_LOG(20, "copyup: writing length %d\n", in->length());
   return cls_cxx_write(hctx, 0, in->length(), in);
 }

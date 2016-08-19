@@ -92,11 +92,19 @@ CopyupRequest::~CopyupRequest() {
 
 void CopyupRequest::append_request(AioObjectRequest<> *req) {
   ldout(m_ictx->cct, 20) << __func__ << " " << this << ": " << req << dendl;
+
+  // pending object requests that are waiting for the copyup request
+
   m_pending_requests.push_back(req);
 }
 
 void CopyupRequest::complete_requests(int r) {
   while (!m_pending_requests.empty()) {
+
+    // only CoW has m_pending_requests associates all waiting object write
+    // requests, for CoW the write op has been submitted with the copyup
+    // request, so we can finish those object write requests at here
+
     vector<AioObjectRequest<> *>::iterator it = m_pending_requests.begin();
     AioObjectRequest<> *req = *it;
     ldout(m_ictx->cct, 20) << __func__ << " completing request " << req
@@ -107,8 +115,14 @@ void CopyupRequest::complete_requests(int r) {
 }
 
 bool CopyupRequest::send_copyup() {
+
+  // has read data from the parent object, need to send the copyup request
   bool add_copyup_op = !m_copyup_data.is_zero();
+
+  // CoR for object read request will not append the original object
+  // read request, see AioObjectRead<I>::send_copyup
   bool copy_on_read = m_pending_requests.empty();
+
   if (!add_copyup_op && copy_on_read) {
     // copyup empty object to prevent future CoR attempts
     m_copyup_data.clear();
@@ -135,6 +149,8 @@ bool CopyupRequest::send_copyup() {
     add_copyup_op = false;
 
     librados::ObjectWriteOperation copyup_op;
+    // if the child object does not exist, then write the data to the
+    // child object blindly
     copyup_op.exec("rbd", "copyup", m_copyup_data);
 
     // send only the copyup request with a blank snapshot context so that
@@ -145,6 +161,7 @@ bool CopyupRequest::send_copyup() {
 
     ldout(m_ictx->cct, 20) << __func__ << " " << this << " copyup with "
                            << "empty snapshot context" << dendl;
+
     librados::AioCompletion *comp = util::create_rados_safe_callback(this);
     r = m_ictx->md_ctx.aio_operate(m_oid, comp, &copyup_op, 0, snaps);
     assert(r == 0);
@@ -152,8 +169,15 @@ bool CopyupRequest::send_copyup() {
   }
 
   if (!copy_on_read) {
+
+    // CoW
+
     librados::ObjectWriteOperation write_op;
     if (add_copyup_op) {
+
+      // if we have done the copyup above, then add_copyup_op will be false,
+      // so we will not do the copyup twice
+
       // CoW did not need to handle existing snapshots
       write_op.exec("rbd", "copyup", m_copyup_data);
     }
@@ -165,6 +189,7 @@ bool CopyupRequest::send_copyup() {
                              << dendl;
       req->add_copyup_ops(&write_op);
     }
+
     assert(write_op.size() != 0);
 
     snaps.insert(snaps.end(), snapc.snaps.begin(), snapc.snaps.end());
@@ -173,6 +198,7 @@ bool CopyupRequest::send_copyup() {
     assert(r == 0);
     comp->release();
   }
+
   return false;
 }
 
@@ -188,6 +214,8 @@ void CopyupRequest::send()
                          << ", oid " << m_oid
                          << ", extents " << m_image_extents
                          << dendl;
+  // read overlapped data from the parent object and stash the data
+  // in m_copyup_data
   AioImageRequest<>::aio_read(m_ictx->parent, comp, std::move(m_image_extents),
                               nullptr, &m_copyup_data, 0);
 }
@@ -213,7 +241,8 @@ bool CopyupRequest::should_complete(int r)
   case STATE_READ_FROM_PARENT:
     ldout(cct, 20) << "READ_FROM_PARENT" << dendl;
 
-    // stashed by AioObjectRead<I>::send_copyup and AbstractAioObjectWrite::send_copyup
+    // remove this copyup request from m_ictx->copyup_list which stashed
+    // by AioObjectRead<I>::send_copyup and AbstractAioObjectWrite::send_copyup
     remove_from_list();
     if (r >= 0 || r == -ENOENT) {
       return send_object_map();
@@ -223,21 +252,32 @@ bool CopyupRequest::should_complete(int r)
   case STATE_OBJECT_MAP:
     ldout(cct, 20) << "OBJECT_MAP" << dendl;
     assert(r == 0);
+
     return send_copyup();
 
   case STATE_COPYUP:
     // invoked via a finisher in librados, so thread safe
+
+    // counter increased in send_copyup
     pending_copyups = m_pending_copyups.dec();
+
     ldout(cct, 20) << "COPYUP (" << pending_copyups << " pending)"
                    << dendl;
+
     if (r == -ENOENT) {
       // hide the -ENOENT error if this is the last op
       if (pending_copyups == 0) {
         complete_requests(0);
       }
     } else if (r < 0) {
+
+      // notify all waiting object requests the failure, but we still
+      // can not finish this copyup reeuest, becoz we still have inflight
+      // copyups
+
       complete_requests(r);
     }
+
     return (pending_copyups == 0);
 
   default:
@@ -245,6 +285,7 @@ bool CopyupRequest::should_complete(int r)
     assert(false);
     break;
   }
+
   return (r < 0);
 }
 
