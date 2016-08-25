@@ -6848,11 +6848,14 @@ void OSD::handle_osd_map(MOSDMap *m)
 
   // superblock and commit
   write_superblock(t);
+
+  // OSD::_committed_osd_maps
   store->queue_transaction(
     service.meta_osr.get(),
     std::move(t),
     new C_OnMapApply(&service, pinned_maps, last),
     new C_OnMapCommit(this, start, last, m), 0);
+
   service.publish_superblock(superblock);
 }
 
