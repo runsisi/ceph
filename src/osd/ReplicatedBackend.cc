@@ -1264,6 +1264,7 @@ void ReplicatedBackend::sub_op_modify(OpRequestRef op)
   // op is cleaned up by oncommit/onapply when both are executed
 }
 
+// called by C_OSD_RepModifyApply::finish
 void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
 {
   rm->op->mark_event("sub_op_applied");
@@ -1298,6 +1299,7 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
   // send ack to acker only if we haven't sent a commit already
   if (ack) {
     ack->set_priority(CEPH_MSG_PRIO_HIGH); // this better match commit priority!
+
     get_parent()->send_message_osd_cluster(
       rm->ackerosd, ack, get_osdmap()->get_epoch());
   }
@@ -1305,6 +1307,7 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
   parent->op_applied(version);
 }
 
+// called by C_OSD_RepModifyCommit::finish
 void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
 {
   rm->op->mark_commit_sent();
@@ -1316,6 +1319,7 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
 	   << dendl;
 
   assert(get_osdmap()->is_up(rm->ackerosd));
+
   get_parent()->update_last_complete_ondisk(rm->last_complete);
 
   Message *m = rm->op->get_req();
@@ -1341,6 +1345,7 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
   }
 
   commit->set_priority(CEPH_MSG_PRIO_HIGH); // this better match ack priority!
+
   get_parent()->send_message_osd_cluster(
     rm->ackerosd, commit, get_osdmap()->get_epoch());
 
