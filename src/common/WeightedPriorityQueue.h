@@ -130,6 +130,7 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
         return count;
       }
     };
+
     class SubQueue : public bi::set_base_hook<>
     {
       typedef bi::rbtree<Klass> Klasses;
@@ -156,14 +157,21 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
       bool empty() const {
         return klasses.empty();
       }
+
       void insert(K cl, unsigned cost, T& item, bool front = false) {
         typename Klasses::insert_commit_data insert_data;
+
+        // insert into klasses rbtree, ordered by entity_inst_t
       	std::pair<Kit, bool> ret =
           klasses.insert_unique_check(cl, MapKey<Klass, K>(), insert_data);
       	if (ret.second) {
+
+      	  // the entity_inst_t identified Klass list does not exist, create it
+
       	  ret.first = klasses.insert_unique_commit(*new Klass(cl), insert_data);
           check_end();
 	}
+
 	ret.first->insert(cost, item, front);
       }
       unsigned get_cost() const {
@@ -219,6 +227,7 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
         }
       }
     };
+
     class Queue {
       typedef bi::rbtree<SubQueue> SubQueues;
       typedef typename SubQueues::iterator Sit;
@@ -235,14 +244,26 @@ class WeightedPriorityQueue :  public OpQueue <T, K>
 	bool empty() const {
 	  return !size;
 	}
+
+	// T: pair<PGRef, PGQueueable>
+	// K: entity_inst_t
 	void insert(unsigned p, K cl, unsigned cost, T& item, bool front = false) {
 	  typename SubQueues::insert_commit_data insert_data;
+
       	  std::pair<typename SubQueues::iterator, bool> ret =
       	    queues.insert_unique_check(p, MapKey<SubQueue, unsigned>(), insert_data);
       	  if (ret.second) {
+
+      	    // the priority identified SubQueue rbtree does not exist, create it
+      	    // and insert it into the queue, ordered by priority
+
       	    ret.first = queues.insert_unique_commit(*new SubQueue(p), insert_data);
+
+      	    // when the SubQueue is removed, the total_prio will be substracted
 	    total_prio += p;
       	  }
+
+      	  // insert the item, i.e., pair<PGRef, PGQueueable>, into SubQueue
       	  ret.first->insert(cl, cost, item, front);
 	  if (cost > max_cost) {
 	    max_cost = cost;
