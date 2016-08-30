@@ -154,8 +154,10 @@ class BackoffThrottle {
 
   std::list<std::condition_variable*>::iterator _push_waiter() {
     unsigned next = next_cond++;
+    
     if (next_cond == conds.size())
       next_cond = 0;
+    
     return waiters.insert(waiters.end(), &(conds[next]));
   }
 

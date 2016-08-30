@@ -1959,6 +1959,7 @@ void FileStore::queue_op(OpSequencer *osr, Op *o)
 
 void FileStore::op_queue_reserve_throttle(Op *o)
 {
+  // BackoffThrottle
   throttle_ops.get();
   throttle_bytes.get(o->bytes);
 
@@ -2091,7 +2092,9 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
     if (handle)
       handle->suspend_tp_timeout();
 
+    // BackoffThrottle
     op_queue_reserve_throttle(o);
+    // JournalThrottle -> BackoffThrottle
     journal->reserve_throttle_and_backoff(tbl.length());
 
     if (handle)

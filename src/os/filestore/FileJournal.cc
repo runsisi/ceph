@@ -2057,6 +2057,7 @@ FileJournal::read_entry_result FileJournal::do_read_entry(
 
 void FileJournal::reserve_throttle_and_backoff(uint64_t count)
 {
+  // JournalThrottle -> BackoffThrottle
   throttle.get(count);
 }
 
