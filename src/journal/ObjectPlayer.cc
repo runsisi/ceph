@@ -57,6 +57,7 @@ void ObjectPlayer::fetch(Context *on_finish) {
   rados_completion->release();
 }
 
+// name it schedule_fetch should be better
 void ObjectPlayer::watch(Context *on_fetch, double interval) {
   ldout(m_cct, 20) << __func__ << ": " << m_oid << " watch" << dendl;
 
@@ -67,6 +68,7 @@ void ObjectPlayer::watch(Context *on_fetch, double interval) {
   assert(m_watch_ctx == nullptr);
   m_watch_ctx = on_fetch;
 
+  // add timer to start the fetch in the timer's callback
   schedule_watch();
 }
 
@@ -228,6 +230,7 @@ void ObjectPlayer::clear_invalid_range(uint32_t off, uint32_t len) {
   }
 }
 
+// maybe name it schedule_fetch should be better
 void ObjectPlayer::schedule_watch() {
   assert(m_timer_lock.is_locked());
   if (m_watch_ctx == NULL) {
@@ -235,7 +238,10 @@ void ObjectPlayer::schedule_watch() {
   }
 
   ldout(m_cct, 20) << __func__ << ": " << m_oid << " scheduling watch" << dendl;
+  
   assert(m_watch_task == NULL);
+
+  // handle_watch_task, all we want is to start a fetch in the timer's callback
   m_watch_task = new C_WatchTask(this);
   m_timer.add_event_after(m_watch_interval, m_watch_task);
 }
@@ -263,6 +269,7 @@ void ObjectPlayer::handle_watch_task() {
 
   m_watch_task = nullptr;
 
+  // handle_watch_fetched
   fetch(new C_WatchFetch(this));
 }
 
@@ -281,6 +288,7 @@ void ObjectPlayer::handle_watch_fetched(int r) {
     }
   }
 
+  // m_watch_ctx is JournalPlayer provided callback
   if (watch_ctx != nullptr) {
     watch_ctx->complete(r);
   }
