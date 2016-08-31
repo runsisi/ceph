@@ -788,6 +788,7 @@ void JournalPlayer::schedule_watch(bool immediate) {
     m_async_op_tracker.start_op();
 
     FunctionContext *ctx = new FunctionContext([this](int r) {
+        // will transit into WATCH_STEP_FETCH_CURRENT then reschedule into this again
         handle_watch_assert_active(r);
       });
 

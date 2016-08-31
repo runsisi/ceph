@@ -390,7 +390,7 @@ std::chrono::duration<double> BackoffThrottle::get(uint64_t c)
       // queue full, should throttle
       (*ticket)->wait(l);
     } else if (delay > std::chrono::duration<double>(0)) {
-      // delay
+      // queue reached delay
       (*ticket)->wait_for(l, delay);
     } else {
       // proceed
