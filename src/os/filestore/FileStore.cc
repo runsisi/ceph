@@ -2052,8 +2052,10 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
   Context *onreadable;
   Context *ondisk;
   Context *onreadable_sync;
+
   ObjectStore::Transaction::collect_contexts(
     tls, &onreadable, &ondisk, &onreadable_sync);
+
   if (g_conf->filestore_blackhole) {
     dout(0) << "queue_transactions filestore_blackhole = TRUE, dropping transaction" << dendl;
     delete ondisk;
@@ -2063,10 +2065,17 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
   }
 
   utime_t start = ceph_clock_now(g_ceph_context);
+
   // set up the sequencer
   OpSequencer *osr;
+
+  // PG Sequencer is constructed at PG ctor
   assert(posr);
+
   if (posr->p) {
+
+    // Sequencer_implRef is NULL when the PG Sequencer was constructed
+
     osr = static_cast<OpSequencer *>(posr->p.get());
     dout(5) << "queue_transactions existing " << osr << " " << *osr << dendl;
   } else {
@@ -2083,6 +2092,7 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
   }
 
   if (journal && journal->is_writeable() && !m_filestore_journal_trailing) {
+    // alloc an Op to wrap the tx list
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
 
     //prepare and encode transactions data out of lock
@@ -2100,7 +2110,9 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
     if (handle)
       handle->reset_tp_timeout();
 
+    // inc SubmitManager::op_seq
     uint64_t op_num = submit_manager.op_submit_start();
+
     o->op = op_num;
 
     if (m_filestore_do_dump)
@@ -2116,8 +2128,11 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
     } else if (m_filestore_journal_writeahead) {
       dout(5) << "queue_transactions (writeahead) " << o->op << " " << o->tls << dendl;
 
+      // push op seq back of OpSequencer::jq
       osr->queue_journal(o->op);
 
+      // journal->submit_entry, FileJournal::write_thread_entry will write the journal
+      // entries on FileJournal::writeq
       _op_journal_transactions(tbl, orig_len, o->op,
 			       new C_JournaledAhead(this, osr, o, ondisk),
 			       osd_op);
@@ -2125,7 +2140,9 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
       assert(0);
     }
 
+    // record SubmitManager::op_submitted to assert ooo op submit
     submit_manager.op_submit_finish(op_num);
+
     utime_t end = ceph_clock_now(g_ceph_context);
     logger->tinc(l_os_queue_lat, end - start);
     return 0;
@@ -2133,6 +2150,7 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
 
   if (!journal) {
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
+
     dout(5) << __func__ << " (no journal) " << o << " " << tls << dendl;
 
     if (handle)

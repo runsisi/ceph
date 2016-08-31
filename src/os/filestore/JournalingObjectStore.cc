@@ -260,6 +260,8 @@ void JournalingObjectStore::_op_journal_transactions(
     dout(10) << "op_journal_transactions " << op  << dendl;
 
   if (journal && journal->is_writeable()) {
+    // push onjournal callback back of FileJournal::completions and journal entry to write
+    // back of FileJournal::writeq
     journal->submit_entry(op, tbl, orig_len, onjournal, osd_op);
   } else if (onjournal) {
     apply_manager.add_waiter(op, onjournal);

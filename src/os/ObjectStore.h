@@ -602,14 +602,21 @@ public:
       assert(out_on_applied);
       assert(out_on_commit);
       assert(out_on_applied_sync);
+
       list<Context *> on_applied, on_commit, on_applied_sync;
+
       for (vector<Transaction>::iterator i = t.begin();
 	   i != t.end();
 	   ++i) {
+
+        // iterate tx list and splice all callbacks togather
+
 	on_applied.splice(on_applied.end(), (*i).on_applied);
 	on_commit.splice(on_commit.end(), (*i).on_commit);
 	on_applied_sync.splice(on_applied_sync.end(), (*i).on_applied_sync);
       }
+
+      // wrappered into one callback
       *out_on_applied = C_Contexts::list_to_context(on_applied);
       *out_on_commit = C_Contexts::list_to_context(on_commit);
       *out_on_applied_sync = C_Contexts::list_to_context(on_applied_sync);
@@ -1823,9 +1830,11 @@ public:
 			 TrackedOpRef op = TrackedOpRef(),
 			 ThreadPool::TPHandle *handle = NULL) {
     assert(!tls.empty());
+
     tls.back().register_on_applied(onreadable);
     tls.back().register_on_commit(ondisk);
     tls.back().register_on_applied_sync(onreadable_sync);
+
     return queue_transactions(osr, tls, op, handle);
   }
 

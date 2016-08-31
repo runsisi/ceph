@@ -132,6 +132,7 @@ inline void finish_contexts(CephContext *cct, std::vector<Context*>& finished,
 
   if (cct)
     mydout(cct,10) << ls.size() << " contexts to finish with " << result << dendl;
+
   for (std::vector<Context*>::iterator it = ls.begin(); 
        it != ls.end(); 
        it++) {

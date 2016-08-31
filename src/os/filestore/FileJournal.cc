@@ -1188,14 +1188,21 @@ void FileJournal::flush()
 void FileJournal::write_thread_entry()
 {
   dout(10) << "write_thread_entry start" << dendl;
+
   while (1) {
     {
       Mutex::Locker locker(writeq_lock);
       if (writeq.empty() && !must_write_header) {
 	if (write_stop)
 	  break;
+
 	dout(20) << "write_thread_entry going to sleep" << dendl;
+
+	// FileJournal::submit_entry which called by _op_journal_transactions
+	// will notify us
+
 	writeq_cond.Wait(writeq_lock);
+
 	dout(20) << "write_thread_entry woke up" << dendl;
 	continue;
       }
@@ -1219,15 +1226,20 @@ void FileJournal::write_thread_entry()
 	int exp = MIN(aio_num * 2, 24);
 	long unsigned min_new = 1ull << exp;
 	uint64_t cur = aio_write_queue_bytes;
+
 	dout(20) << "write_thread_entry aio throttle: aio num " << aio_num << " bytes " << aio_bytes
 		 << " ... exp " << exp << " min_new " << min_new
 		 << " ... pending " << cur << dendl;
+
 	if (cur >= min_new)
 	  break;
+
 	dout(20) << "write_thread_entry deferring until more aios complete: "
 		 << aio_num << " aios with " << aio_bytes << " bytes needs " << min_new
 		 << " bytes to start a new aio (currently " << cur << " pending)" << dendl;
+
 	aio_cond.Wait(aio_lock);
+
 	dout(20) << "write_thread_entry woke up" << dendl;
       }
     }
@@ -1244,19 +1256,27 @@ void FileJournal::write_thread_entry()
     if (r == -ENOSPC) {
       if (write_stop) {
 	dout(20) << "write_thread_entry full and stopping, throw out queue and finish up" << dendl;
+
 	while (!writeq_empty()) {
+	  // only a debug log
 	  complete_write(1, peek_write().orig_len);
+
 	  pop_write();
 	}
+
 	print_header(header);
 	r = 0;
       } else {
 	dout(20) << "write_thread_entry full, going to sleep (waiting for commit)" << dendl;
+
 	commit_cond.Wait(write_lock);
+
 	dout(20) << "write_thread_entry woke up" << dendl;
+
 	continue;
       }
     }
+
     assert(r == 0);
 
     if (logger) {
@@ -1272,6 +1292,8 @@ void FileJournal::write_thread_entry()
 #else
     do_write(bl);
 #endif
+
+    // only a debug log
     complete_write(orig_ops, orig_bytes);
   }
 
@@ -1622,8 +1644,10 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
     completions.push_back(
       completion_item(
 	seq, oncommit, ceph_clock_now(g_ceph_context), osd_op));
+
     if (writeq.empty())
       writeq_cond.Signal();
+
     writeq.push_back(write_item(seq, e, orig_len, osd_op));
   }
 }
