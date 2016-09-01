@@ -155,6 +155,8 @@ void JournalPlayer::prefetch_and_watch(double interval) {
     Mutex::Locker locker(m_lock);
     m_watch_enabled = true;
     m_watch_interval = interval;
+    
+    // fetch m_splay_offset
     m_watch_step = WATCH_STEP_FETCH_CURRENT;
   }
 
@@ -278,6 +280,7 @@ void JournalPlayer::process_state(uint64_t object_number, int r) {
       // at the same splay offset, only an object instead of a set
       // of objects in prefetch state
       ldout(m_cct, 10) << "PREFETCH" << dendl;
+      
       r = process_prefetch(object_number);
       break;
     case STATE_PLAYBACK:
@@ -320,6 +323,7 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   }
 
   bool prefetch_complete = false;
+  
   assert(m_object_players.count(splay_offset) == 1);
   ObjectPlayerPtr object_player = m_object_players[splay_offset];
 
@@ -366,7 +370,9 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
     if (object_player->empty() && object_player->refetch_required()) {
       ldout(m_cct, 10) << "refetching potentially partially decoded object"
                        << dendl;
+      
       object_player->set_refetch_state(ObjectPlayer::REFETCH_STATE_NONE);
+      
       fetch(object_player);
     } else if (!remove_empty_object_player(object_player)) {
       ldout(m_cct, 10) << "prefetch of object complete" << dendl;
@@ -384,6 +390,7 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   }
 
   ldout(m_cct, 10) << "switching to playback mode" << dendl;
+  
   m_state = STATE_PLAYBACK;
 
   // if we have a valid commit position, our read should start with
@@ -418,7 +425,7 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   return 0;
 }
 
-// called by JournalPlayer::process_state
+// called by JournalPlayer::process_state when we have fetched an object
 int JournalPlayer::process_playback(uint64_t object_number) {
   ldout(m_cct, 10) << __func__ << ": object_num=" << object_number << dendl;
 
@@ -431,8 +438,9 @@ int JournalPlayer::process_playback(uint64_t object_number) {
     notify_entries_available();
   } else if (is_object_set_ready()) {
   
-    // no has already scheduled or currently in-progress fetch
-    
+    // no already scheduled or currently in-progress fetch
+
+    // if not alive replay, may complete the replay phase
     refetch(false);
   }
 
@@ -461,13 +469,17 @@ bool JournalPlayer::verify_playback_ready() {
   while (true) {
 
     // prune_tag may create new object player, so need to test if every iteration
-    if (!is_object_set_ready()) { // fetch scheduled or object player fetch in progress
+    if (!is_object_set_ready()) {
+        
+      // still scheduled or in progress object player fetch
+      
       ldout(m_cct, 10) << __func__ << ": waiting for full object set" << dendl;
       return false;
     }
 
     // no fetch scheduled or in-progress
 
+    // get object player at position m_splay_offset
     ObjectPlayerPtr object_player = get_object_player();
     assert(object_player);
 
@@ -747,6 +759,7 @@ void JournalPlayer::fetch(const ObjectPlayerPtr &object_player) {
 
   ldout(m_cct, 10) << __func__ << ": " << oid << dendl;
 
+  // JournalPlayer::handle_fetched
   C_Fetch *fetch_ctx = new C_Fetch(this, object_num);
 
   object_player->fetch(fetch_ctx);
@@ -787,6 +800,7 @@ void JournalPlayer::handle_fetched(uint64_t object_num, int r) {
 void JournalPlayer::refetch(bool immediate) {
   ldout(m_cct, 10) << __func__ << dendl;
   assert(m_lock.is_locked());
+  
   m_handler_notified = false;
 
   // if watching the object, handle the periodic re-fetch
@@ -796,8 +810,13 @@ void JournalPlayer::refetch(bool immediate) {
   }
 
   ObjectPlayerPtr object_player = get_object_player();
+  
   if (object_player->refetch_required()) {
+
+    // ObjectPlayerPtr->m_refetch_state != REFETCH_STATE_NONE
+        
     object_player->set_refetch_state(ObjectPlayer::REFETCH_STATE_NONE);
+    
     fetch(object_player);
     return;
   }
@@ -832,6 +851,7 @@ void JournalPlayer::schedule_watch(bool immediate) {
         handle_watch_assert_active(r);
       });
 
+    // to detect if there is any tag newer than current m_active_tag_tid
     m_journal_metadata->assert_active_tag(*m_active_tag_tid, ctx);
 
     return;

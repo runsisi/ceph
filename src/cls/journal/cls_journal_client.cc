@@ -442,6 +442,7 @@ int tag_list(librados::IoCtx &ioctx, const std::string &oid,
              std::set<cls::journal::Tag> *tags) {
   tags->clear();
   uint64_t start_after_tag_tid = 0;
+
   while (true) {
     librados::ObjectReadOperation op;
     tag_list_start(&op, start_after_tag_tid, JOURNAL_MAX_RETURN, client_id,

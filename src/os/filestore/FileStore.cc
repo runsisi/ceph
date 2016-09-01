@@ -2131,8 +2131,9 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
       // push op seq back of OpSequencer::jq
       osr->queue_journal(o->op);
 
-      // journal->submit_entry, FileJournal::write_thread_entry will write the journal
-      // entries on FileJournal::writeq
+      // journal->submit_entry, push ondisk callback back of FileJournal::completions 
+      // and journal entry to write back of FileJournal::writeq
+      //FileJournal::write_thread_entry will write the journal entries on FileJournal::writeq
       _op_journal_transactions(tbl, orig_len, o->op,
 			       new C_JournaledAhead(this, osr, o, ondisk),
 			       osd_op);

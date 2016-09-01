@@ -1246,6 +1246,7 @@ void FileJournal::write_thread_entry()
 #endif
 
     Mutex::Locker locker(write_lock);
+
     uint64_t orig_ops = 0;
     uint64_t orig_bytes = 0;
 

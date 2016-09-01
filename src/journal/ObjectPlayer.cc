@@ -44,7 +44,9 @@ void ObjectPlayer::fetch(Context *on_finish) {
   assert(!m_fetch_in_progress);
   m_fetch_in_progress = true;
 
+  // ObjectPlayer::handle_fetch_complete
   C_Fetch *context = new C_Fetch(this, on_finish);
+  
   librados::ObjectReadOperation op;
   op.read(m_read_off, m_max_fetch_bytes, &context->read_bl, NULL);
   op.set_op_flags2(CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
@@ -113,6 +115,7 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
                    << bl.length() << dendl;
 
   *refetch = false;
+  
   if (r == -ENOENT) {
     return 0;
   } else if (r < 0) {
@@ -125,6 +128,7 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
   assert(m_fetch_in_progress);
   m_read_off += bl.length();
   m_read_bl.append(bl);
+  
   m_refetch_state = REFETCH_STATE_REQUIRED;
 
   bool full_fetch = (m_max_fetch_bytes == 2U << m_order);
@@ -133,15 +137,27 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
   uint32_t invalid_start_off = 0;
 
   clear_invalid_range(m_read_bl_off, m_read_bl.length());
+  
   bufferlist::iterator iter(&m_read_bl, 0);
+  
   while (!iter.end()) {
     uint32_t bytes_needed;
     uint32_t bl_off = iter.get_off();
+    
     if (!Entry::is_readable(iter, &bytes_needed)) {
+
+      // either partial read or corruptted data
+        
       if (bytes_needed != 0) {
+
+        // partial read
+        
         invalid_start_off = m_read_bl_off + bl_off;
         invalid = true;
+
+        // invalid entry because we need more data to parse
         partial_entry = true;
+        
         if (full_fetch) {
           lderr(m_cct) << ": partial record at offset " << invalid_start_off
                        << dendl;
@@ -149,21 +165,31 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
           ldout(m_cct, 20) << ": partial record detected, will re-fetch"
                            << dendl;
         }
+        
         break;
       }
+
+      // bytes_needed == 0, corruptted data
 
       if (!invalid) {
         invalid_start_off = m_read_bl_off + bl_off;
         invalid = true;
+        
         lderr(m_cct) << ": detected corrupt journal entry at offset "
                      << invalid_start_off << dendl;
       }
+      
       ++iter;
       continue;
     }
 
+    // the last read is 1) a complete entry or 2) corruptted entry + complete entry
+    // if our last read is a partial entry then we have break from this loop, there may be
+    // corruptted entries before the partial entry
+
     Entry entry;
     ::decode(entry, iter);
+    
     ldout(m_cct, 20) << ": " << entry << " decoded" << dendl;
 
     uint32_t entry_len = iter.get_off() - bl_off;
@@ -195,14 +221,16 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
 
     // advance the decoded entry offset
     m_read_bl_off += entry_len;
-  }
+  } // all m_read_bl parsed
 
   if (invalid) {
     uint32_t invalid_end_off = m_read_bl_off + m_read_bl.length();
+    
     if (!partial_entry) {
       lderr(m_cct) << ": corruption range [" << invalid_start_off
                    << ", " << invalid_end_off << ")" << dendl;
     }
+    
     m_invalid_ranges.insert(invalid_start_off,
                             invalid_end_off - invalid_start_off);
   }

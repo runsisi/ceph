@@ -391,6 +391,9 @@ struct C_AssertActiveTag : public Context {
     ldout(cct, 20) << "C_AssertActiveTag: " << __func__ << dendl;
 
     librados::ObjectReadOperation op;
+
+    // cls_journal::tag_list, we need to try to get 2 tags in case the tag_tid is 0, see 
+    // handle_send below
     client::tag_list_start(&op, tag_tid, 2, client_id, boost::none);
 
     librados::AioCompletion *comp = librados::Rados::aio_create_completion(
@@ -408,11 +411,15 @@ struct C_AssertActiveTag : public Context {
     std::set<cls::journal::Tag> tags;
     if (r == 0) {
       bufferlist::iterator it = out_bl.begin();
+
+      // decode to set<cls::journal::Tag>
       r = client::tag_list_finish(&it, &tags);
     }
 
     // NOTE: since 0 is treated as an uninitialized list filter, we need to
     // load to entries and look at the last tid
+    // if tag_tid is 0, and no other additional filters we will always get at least one tag whose
+    // tag_tid is 0, so here we need to try to get at list 2 tags, see journal_tag_list
     if (r == 0 && !tags.empty() && tags.rbegin()->tid > tag_tid) {
       r = -ESTALE;
     }

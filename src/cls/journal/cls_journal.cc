@@ -1056,7 +1056,7 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
     return r;
   }
 
-  // if has ever committed then calc the minimum tag id
+  // if the client has ever committed then calc the minimum tag id
   for (auto object_position : client.commit_position.object_positions) {
     minimum_tag_tid = MIN(minimum_tag_tid, object_position.tag_tid);
   }
@@ -1064,6 +1064,7 @@ int journal_tag_list(cls_method_context_t hctx, bufferlist *in,
   // compute minimum tags in use per-class
   std::set<cls::journal::Tag> tags;
   std::map<uint64_t, uint64_t> minimum_tag_class_to_tids;
+  
   typedef enum { TAG_PASS_CALCULATE_MINIMUMS,
                  TAG_PASS_LIST,
                  TAG_PASS_DONE } TagPass;
