@@ -125,8 +125,13 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
   }
 
   Mutex::Locker locker(m_lock);
+  
   assert(m_fetch_in_progress);
+
+  // set the next offset of the object to read, see ObjectPlayer::fetch
   m_read_off += bl.length();
+
+  // last fetch may results a partial entry, so append the current fetched buffer
   m_read_bl.append(bl);
   
   m_refetch_state = REFETCH_STATE_REQUIRED;
@@ -143,16 +148,18 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
   while (!iter.end()) {
     uint32_t bytes_needed;
     uint32_t bl_off = iter.get_off();
-    
+
+    // parse the entry header, to see if 
     if (!Entry::is_readable(iter, &bytes_needed)) {
 
-      // either partial read or corruptted data
+      // either partial entry or corruptted entry
         
       if (bytes_needed != 0) {
 
-        // partial read
+        // partial entry
         
         invalid_start_off = m_read_bl_off + bl_off;
+        
         invalid = true;
 
         // invalid entry because we need more data to parse
@@ -169,10 +176,11 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
         break;
       }
 
-      // bytes_needed == 0, corruptted data
+      // corruptted entry
 
       if (!invalid) {
         invalid_start_off = m_read_bl_off + bl_off;
+        
         invalid = true;
         
         lderr(m_cct) << ": detected corrupt journal entry at offset "
@@ -183,8 +191,11 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
       continue;
     }
 
-    // the last read is 1) a complete entry or 2) corruptted entry + complete entry
-    // if our last read is a partial entry then we have break from this loop, there may be
+    // read a complete entry
+
+    // the last read is 1) a complete entry or 2) corruptted entry(s) + complete entry
+    
+    // if our last read is a partial entry then we have break from this loop, but there may be
     // corruptted entries before the partial entry
 
     Entry entry;
@@ -193,18 +204,26 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
     ldout(m_cct, 20) << ": " << entry << " decoded" << dendl;
 
     uint32_t entry_len = iter.get_off() - bl_off;
+    
     if (invalid) {
+
+      // corruptted entry(s) + complete entry
+        
       // new corrupt region detected
       uint32_t invalid_end_off = m_read_bl_off + bl_off;
+      
       lderr(m_cct) << ": corruption range [" << invalid_start_off
                    << ", " << invalid_end_off << ")" << dendl;
+      
       m_invalid_ranges.insert(invalid_start_off,
                               invalid_end_off - invalid_start_off);
+      
       invalid = false;
     }
 
     EntryKey entry_key(std::make_pair(entry.get_tag_tid(),
                                       entry.get_entry_tid()));
+    
     if (m_entry_keys.find(entry_key) == m_entry_keys.end()) {
       m_entry_keys[entry_key] = m_entries.insert(m_entries.end(), entry);
     } else {
@@ -224,6 +243,11 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
   } // all m_read_bl parsed
 
   if (invalid) {
+
+    // corruptted entry(s) + complete entry is excluded in above while loop
+
+    // 1) partial entry or 2) corruptted entry(s) + partial entry or 3) corruptted entry(s)
+        
     uint32_t invalid_end_off = m_read_bl_off + m_read_bl.length();
     
     if (!partial_entry) {
