@@ -1683,6 +1683,7 @@ int FileStore::mount()
       if (m_filestore_journal_trailing)
 	dout(0) << "mount: TRAILING journal mode explicitly enabled in conf" << dendl;
     }
+
     if (m_filestore_journal_writeahead)
       journal->set_wait_on_full(true);
   } else {
@@ -1728,6 +1729,7 @@ int FileStore::mount()
       dout(0) << "mount INFO: O_DSYNC write is enabled" << dendl;
     }
   }
+
   sync_thread.create("filestore_sync");
 
   if (!(generic_flags & SKIP_JOURNAL_REPLAY)) {
@@ -1991,11 +1993,17 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
   }
 
   osr->apply_lock.Lock();
+
   Op *o = osr->peek_queue();
+
   apply_manager.op_apply_start(o->op);
+
   dout(5) << "_do_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " start" << dendl;
+
   int r = _do_transactions(o->tls, o->op, &handle);
+
   apply_manager.op_apply_finish(o->op);
+
   dout(10) << "_do_op " << o << " seq " << o->op << " r = " << r
 	   << ", finisher " << o->onreadable << " " << o->onreadable_sync << dendl;
 
@@ -2178,20 +2186,27 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
     return 0;
   }
 
+  // !journal->is_writeable() or m_filestore_journal_trailing
+
   assert(journal);
+
   //prepare and encode transactions data out of lock
   bufferlist tbl;
   int orig_len = -1;
+
   if (journal->is_writeable()) {
     orig_len = journal->prepare_entry(tls, &tbl);
   }
+
   uint64_t op = submit_manager.op_submit_start();
+
   dout(5) << "queue_transactions (trailing journal) " << op << " " << tls << dendl;
 
   if (m_filestore_do_dump)
     dump_transactions(tls, op, osr);
 
   apply_manager.op_apply_start(op);
+
   int r = do_transactions(tls, op);
 
   if (r >= 0) {
@@ -2205,9 +2220,11 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
   if (onreadable_sync) {
     onreadable_sync->complete(r);
   }
+
   apply_finishers[osr->id % m_apply_finisher_num]->queue(onreadable, r);
 
   submit_manager.op_submit_finish(op);
+
   apply_manager.op_apply_finish(op);
 
   utime_t end = ceph_clock_now(g_ceph_context);
@@ -3792,6 +3809,7 @@ private:
 void FileStore::sync_entry()
 {
   lock.Lock();
+
   while (!stop) {
     utime_t max_interval;
     max_interval.set_from_double(m_filestore_max_sync_interval);
@@ -3799,6 +3817,7 @@ void FileStore::sync_entry()
     min_interval.set_from_double(m_filestore_min_sync_interval);
 
     utime_t startwait = ceph_clock_now(g_ceph_context);
+
     if (!force_sync) {
       dout(20) << "sync_entry waiting for max_interval " << max_interval << dendl;
       sync_cond.WaitInterval(g_ceph_context, lock, max_interval);
@@ -3827,11 +3846,14 @@ void FileStore::sync_entry()
     }
 
     list<Context*> fin;
+
   again:
     fin.swap(sync_waiters);
+
     lock.Unlock();
 
     op_tp.pause();
+
     if (apply_manager.commit_start()) {
       utime_t start = ceph_clock_now(g_ceph_context);
       uint64_t cp = apply_manager.get_committing_seq();
@@ -3951,17 +3973,21 @@ void FileStore::sync_entry()
     }
 
     lock.Lock();
+
     finish_contexts(g_ceph_context, fin, 0);
     fin.clear();
+
     if (!sync_waiters.empty()) {
       dout(10) << "sync_entry more waiters, committing again" << dendl;
       goto again;
     }
+
     if (!stop && journal && journal->should_commit_now()) {
       dout(10) << "sync_entry journal says we should commit again (probably is/was full)" << dendl;
       goto again;
     }
   }
+
   stop = false;
   lock.Unlock();
 }

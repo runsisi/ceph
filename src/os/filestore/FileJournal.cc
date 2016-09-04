@@ -807,6 +807,7 @@ int FileJournal::check_for_full(uint64_t seq, off64_t pos, off64_t size)
   return -ENOSPC;
 }
 
+// called by FileJournal::write_thread_entry
 int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_t& orig_bytes)
 {
   // gather queued writes
@@ -820,10 +821,14 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
 
   while (!writeq_empty()) {
     list<write_item> items;
+
+    // swap FileJournal::writeq
     batch_pop_write(items);
+
     list<write_item>::iterator it = items.begin();
     while (it != items.end()) {
       uint64_t bytes = it->bl.length();
+
       int r = prepare_single_write(*it, bl, queue_pos, orig_ops, orig_bytes);
       if (r == 0) { // prepare ok, delete it
 	items.erase(it++);
@@ -837,15 +842,18 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
 	}
 #endif
       }
+
       if (r == -ENOSPC) {
         // the journal maybe full, insert the left item to writeq
         batch_unpop_write(items);
+
         if (orig_ops)
           goto out;         // commit what we have
 
         if (logger)
           logger->inc(l_os_j_full);
 
+        // set in FileStore::mount when the journal mode is m_filestore_journal_writeahead
         if (wait_on_full) {
           dout(20) << "prepare_multi_write full on first entry, need to wait" << dendl;
         } else {
@@ -854,14 +862,18 @@ int FileJournal::prepare_multi_write(bufferlist& bl, uint64_t& orig_ops, uint64_
           // throw out what we have so far
           full_state = FULL_FULL;
           while (!writeq_empty()) {
+            // only a debug log
             complete_write(1, peek_write().orig_len);
+
             pop_write();
           }
+
           print_header(header);
         }
         
         return -ENOSPC;  // hrm, full on first op
       }
+
       if (eleft) {
         if (--eleft == 0) {
           dout(20) << "prepare_multi_write hit max events per write " << g_conf->journal_max_write_entries << dendl;
@@ -1270,6 +1282,8 @@ void FileJournal::write_thread_entry()
       } else {
 	dout(20) << "write_thread_entry full, going to sleep (waiting for commit)" << dendl;
 
+	// FileJournal::committed_thru will notify us, if we are to stop FileJournal::stop_writer
+	// should also notify us
 	commit_cond.Wait(write_lock);
 
 	dout(20) << "write_thread_entry woke up" << dendl;
@@ -1606,6 +1620,7 @@ int FileJournal::prepare_entry(vector<ObjectStore::Transaction>& tls, bufferlist
   return h.len;
 }
 
+// called by JournalingObjectStore::_op_journal_transactions
 void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
 			       Context *oncommit, TrackedOpRef osd_op)
 {
@@ -1705,6 +1720,7 @@ void FileJournal::batch_unpop_write(list<write_item> &items)
   writeq.splice(writeq.begin(), items);
 }
 
+// called by JournalingObjectStore::ApplyManager::commit_start
 void FileJournal::commit_start(uint64_t seq)
 {
   dout(10) << "commit_start" << dendl;

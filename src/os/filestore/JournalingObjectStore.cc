@@ -35,6 +35,7 @@ void JournalingObjectStore::journal_write_close()
   apply_manager.reset();
 }
 
+// called by FileStore::mount
 int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
 {
   dout(10) << "journal_replay fs op_seq " << fs_op_seq << dendl;
@@ -42,6 +43,7 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
   if (g_conf->journal_replay_from) {
     dout(0) << "journal_replay forcing replay from " << g_conf->journal_replay_from
 	    << " instead of " << fs_op_seq << dendl;
+
     // the previous op is the last one committed
     fs_op_seq = g_conf->journal_replay_from - 1;
   }
@@ -115,28 +117,38 @@ int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
 
 // ------------------------------------
 
+// called by FileStore::_do_op, JournalingObjectStore::journal_replay or
+// FileStore::queue_transactions when journal is not writeable of in trailing journal mode
 uint64_t JournalingObjectStore::ApplyManager::op_apply_start(uint64_t op)
 {
   Mutex::Locker l(apply_lock);
+
   while (blocked) {
     // note: this only happens during journal replay
     dout(10) << "op_apply_start blocked, waiting" << dendl;
+
     blocked_cond.Wait(apply_lock);
   }
+
   dout(10) << "op_apply_start " << op << " open_ops " << open_ops << " -> " << (open_ops+1) << dendl;
+
   assert(!blocked);
   assert(op > committed_seq);
+
   open_ops++;
+
   return op;
 }
 
 void JournalingObjectStore::ApplyManager::op_apply_finish(uint64_t op)
 {
   Mutex::Locker l(apply_lock);
+
   dout(10) << "op_apply_finish " << op << " open_ops " << open_ops
 	   << " -> " << (open_ops-1)
 	   << ", max_applied_seq " << max_applied_seq << " -> " << MAX(op, max_applied_seq)
 	   << dendl;
+
   --open_ops;
   assert(open_ops >= 0);
 
@@ -155,20 +167,26 @@ void JournalingObjectStore::ApplyManager::op_apply_finish(uint64_t op)
 uint64_t JournalingObjectStore::SubmitManager::op_submit_start()
 {
   lock.Lock();
+
   uint64_t op = ++op_seq;
+
   dout(10) << "op_submit_start " << op << dendl;
+
   return op;
 }
 
 void JournalingObjectStore::SubmitManager::op_submit_finish(uint64_t op)
 {
   dout(10) << "op_submit_finish " << op << dendl;
+
   if (op != op_submitted + 1) {
     dout(0) << "op_submit_finish " << op << " expected " << (op_submitted + 1)
 	    << ", OUT OF ORDER" << dendl;
     assert(0 == "out of order op_submit_finish");
   }
+
   op_submitted = op;
+
   lock.Unlock();
 }
 
@@ -182,29 +200,43 @@ void JournalingObjectStore::ApplyManager::add_waiter(uint64_t op, Context *c)
   commit_waiters[op].push_back(c);
 }
 
+// called by FileStore::sync_entry
 bool JournalingObjectStore::ApplyManager::commit_start()
 {
   bool ret = false;
 
   uint64_t _committing_seq = 0;
+
   {
     Mutex::Locker l(apply_lock);
+
     dout(10) << "commit_start max_applied_seq " << max_applied_seq
 	     << ", open_ops " << open_ops
 	     << dendl;
+
     blocked = true;
+
+    // drain in-flight op apply, see JournalingObjectStore::ApplyManager::op_apply_start
     while (open_ops > 0) {
       dout(10) << "commit_start waiting for " << open_ops << " open ops to drain" << dendl;
+
       blocked_cond.Wait(apply_lock);
     }
+
     assert(open_ops == 0);
+
     dout(10) << "commit_start blocked, all open_ops have completed" << dendl;
+
     {
       Mutex::Locker l(com_lock);
+
       if (max_applied_seq == committed_seq) {
 	dout(10) << "commit_start nothing to do" << dendl;
+
 	blocked = false;
+
 	assert(commit_waiters.empty());
+
 	goto out;
       }
 
@@ -214,20 +246,25 @@ bool JournalingObjectStore::ApplyManager::commit_start()
 	       << ", still blocked" << dendl;
     }
   }
+
   ret = true;
 
  out:
   if (journal)
     journal->commit_start(_committing_seq);  // tell the journal too
+
   return ret;
 }
 
+// called by FileStore::sync_entry
 void JournalingObjectStore::ApplyManager::commit_started()
 {
   Mutex::Locker l(apply_lock);
   // allow new ops. (underlying fs should now be committing all prior ops)
   dout(10) << "commit_started committing " << committing_seq << ", unblocking" << dendl;
+
   blocked = false;
+
   blocked_cond.Signal();
 }
 
