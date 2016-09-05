@@ -6909,6 +6909,7 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
 	   << "  snapc=" << snapc << dendl;
   
   bool was_dirty = ctx->obc->obs.oi.is_dirty();
+  
   if (ctx->new_obs.exists) {
     // we will mark the object dirty
     if (ctx->undirty && was_dirty) {

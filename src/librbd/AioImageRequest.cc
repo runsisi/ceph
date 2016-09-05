@@ -627,11 +627,13 @@ template <typename I>
 void AioImageDiscard<I>::prune_object_extents(ObjectExtents &object_extents) {
   I &image_ctx = this->m_image_ctx;
   CephContext *cct = image_ctx.cct;
+  
   if (!cct->_conf->rbd_skip_partial_discard) {
     return;
   }
 
   for (auto p = object_extents.begin(); p != object_extents.end(); ) {
+    // do not zero the trailing part of the object
     if (p->offset + p->length < image_ctx.layout.object_size) {
       ldout(cct, 20) << " oid " << p->oid << " " << p->offset << "~"
 		     << p->length << " from " << p->buffer_extents

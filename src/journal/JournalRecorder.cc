@@ -88,9 +88,12 @@ Future JournalRecorder::append(uint64_t tag_tid,
 
   // entry id is tag specific, i.e., global to a specific tag, it determines
   // which ObjectRecorder this entry will be appended to
+  // i.e., entry_tid =  m_allocated_entry_tids[tag_tid]++
   uint64_t entry_tid = m_journal_metadata->allocate_entry_tid(tag_tid);
 
   uint8_t splay_width = m_journal_metadata->get_splay_width();
+
+  // determine which object to write
   uint8_t splay_offset = entry_tid % splay_width;
 
   // one ObjectRecorder at an offset
@@ -101,6 +104,9 @@ Future JournalRecorder::append(uint64_t tag_tid,
   // entry to be committed, see JournalMetadata::m_pending_commit_tids
 
   // construct an CommitEntry and register into m_pending_commit_tids
+  // i.e., JournalMetadata::
+  //   ++m_commit_tid
+  //   m_pending_commit_tids[commit_tid] = CommitEntry()
   uint64_t commit_tid = m_journal_metadata->allocate_commit_tid(
     object_ptr->get_object_number(), tag_tid, entry_tid);
 

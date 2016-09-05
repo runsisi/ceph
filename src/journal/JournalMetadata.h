@@ -136,6 +136,7 @@ public:
     Mutex::Locker locker(m_lock);
     return m_allocated_entry_tids[tag_tid]++;
   }
+  
   void reserve_entry_tid(uint64_t tag_tid, uint64_t entry_tid);
   bool get_last_allocated_entry_tid(uint64_t tag_tid, uint64_t *entry_tid) const;
 

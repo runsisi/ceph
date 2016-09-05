@@ -58,6 +58,7 @@ JournalPlayer::JournalPlayer(librados::IoCtx &ioctx,
   m_ioctx.dup(ioctx);
   m_cct = reinterpret_cast<CephContext *>(m_ioctx.cct());
 
+  // std::list<object_number, tag_tid, entry_tid>
   ObjectSetPosition commit_position;
 
   // a list of ObjectPosition, i.e., a splay width of <object_num, tag id, entry id>
@@ -77,6 +78,8 @@ JournalPlayer::JournalPlayer(librados::IoCtx &ioctx,
     m_commit_position_valid = true;
     m_commit_position = active_position;
     m_splay_offset = active_position.object_number % splay_width;
+
+    // std::list<object_number, tag_tid, entry_tid>
     for (auto &position : commit_position.object_positions) {
       uint8_t splay_offset = position.object_number % splay_width;
 
@@ -101,6 +104,7 @@ void JournalPlayer::prefetch() {
   Mutex::Locker locker(m_lock);
 
   assert(m_state == STATE_INIT);
+  
   m_state = STATE_PREFETCH;
 
   m_active_set = m_journal_metadata->get_active_set();
@@ -117,6 +121,7 @@ void JournalPlayer::prefetch() {
   // active set)
   std::map<uint8_t, uint64_t> splay_offset_to_objects;
 
+  // std::map<splay_offset, <object_number, tag_tid, entry_tid>>
   for (auto &position : m_commit_positions) {
     assert(splay_offset_to_objects.count(position.first) == 0);
 
@@ -136,6 +141,8 @@ void JournalPlayer::prefetch() {
       object_number = splay_offset_to_objects[splay_offset];
     }
 
+    // record objects to fetch, if the object at the splay offset has not committed yet, then
+    // insert the splay offset as the object number
     prefetch_object_numbers.insert(object_number);
   }
 
@@ -150,6 +157,7 @@ void JournalPlayer::prefetch() {
   }
 }
 
+// enable timer scheduled fetch then prefetch
 void JournalPlayer::prefetch_and_watch(double interval) {
   {
     Mutex::Locker locker(m_lock);
@@ -316,6 +324,7 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   uint8_t splay_width = m_journal_metadata->get_splay_width();
   uint8_t splay_offset = object_number % splay_width;
 
+  // inserted by JournalPlayer::prefetch
   PrefetchSplayOffsets::iterator it = m_prefetch_splay_offsets.find(
     splay_offset);
   if (it == m_prefetch_splay_offsets.end()) {
@@ -323,12 +332,20 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   }
 
   bool prefetch_complete = false;
-  
+
+  // JournalPlayer::m_object_players inserted by JournalPlayer::fetch
   assert(m_object_players.count(splay_offset) == 1);
+  
   ObjectPlayerPtr object_player = m_object_players[splay_offset];
 
+  // std::set<uint64_t>, JournalPlayer::m_fetch_object_numbers inserted by JournalPlayer::fetch
+  // and erased by JournalPlayer::handle_fetched
   // prefetch in-order since a newer splay object could prefetch first
   if (m_fetch_object_numbers.count(object_player->get_object_number()) == 0) {
+
+    // since object_player is got by splay_offset, in order to avoid a newer splay object prefetch 
+    // and be handled first, we need the condition here
+        
     // skip past known committed records
     if (m_commit_positions.count(splay_offset) != 0 &&
         !object_player->empty()) {
@@ -339,13 +356,23 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
 
       bool found_commit = false;
       Entry entry;
+      
       while (!object_player->empty()) {
+
+        // pop journal entries that before the last commit position
+        
         object_player->front(&entry);
 
         if (entry.get_tag_tid() == position.tag_tid &&
             entry.get_entry_tid() == position.entry_tid) {
+
+          // found the journal entry at the commit  position
+            
           found_commit = true;
         } else if (found_commit) {
+
+          // maybe move this test to the end of the while loop is more intuitive
+        
           ldout(m_cct, 10) << "located next uncommitted entry: " << entry
                            << dendl;
           break;
@@ -353,9 +380,12 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
 
         ldout(m_cct, 20) << "skipping committed entry: " << entry << dendl;
 
-        // update m_allocated_entry_tids[tag_tid] to entry.get_entry_tid() + 1
+        // update m_allocated_entry_tids[tag_tid] to entry.get_entry_tid() + 1, so
+        // JournalMetadata::allocate_entry_tid called by JournalRecorder::append will 
+        // get the correct entry tid
         m_journal_metadata->reserve_entry_tid(entry.get_tag_tid(),
                                               entry.get_entry_tid());
+        
         object_player->pop_front();
       }
 
@@ -368,6 +398,9 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
 
     // if the object is empty, pre-fetch the next splay object
     if (object_player->empty() && object_player->refetch_required()) {
+
+      // set to REFETCH_STATE_REQUIRED by ObjectPlayer::handle_fetch_complete
+      
       ldout(m_cct, 10) << "refetching potentially partially decoded object"
                        << dendl;
       
@@ -388,6 +421,8 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   if (!m_prefetch_splay_offsets.empty()) {
     return 0;
   }
+
+  // all in-progress objects prefetch has finished
 
   ldout(m_cct, 10) << "switching to playback mode" << dendl;
   
@@ -745,7 +780,9 @@ void JournalPlayer::fetch(uint64_t object_num) {
     m_journal_metadata->get_settings().max_fetch_bytes));
 
   uint8_t splay_width = m_journal_metadata->get_splay_width();
+  
   m_object_players[object_num % splay_width] = object_player;
+  
   fetch(object_player);
 }
 
@@ -753,7 +790,9 @@ void JournalPlayer::fetch(const ObjectPlayerPtr &object_player) {
   assert(m_lock.is_locked());
 
   uint64_t object_num = object_player->get_object_number();
+  
   std::string oid = utils::get_object_name(m_object_oid_prefix, object_num);
+  
   assert(m_fetch_object_numbers.count(object_num) == 0);
   m_fetch_object_numbers.insert(object_num);
 
@@ -838,6 +877,9 @@ void JournalPlayer::schedule_watch(bool immediate) {
   m_watch_scheduled = true;
 
   if (m_watch_step == WATCH_STEP_ASSERT_ACTIVE) {
+
+    // this state can only be set by JournalPlayer::handle_watch
+        
     // detect if a new tag has been created in case we are blocked
     // by an incomplete tag sequence
     ldout(m_cct, 20) << __func__ << ": asserting active tag="
@@ -868,6 +910,7 @@ void JournalPlayer::schedule_watch(bool immediate) {
       uint8_t splay_width = m_journal_metadata->get_splay_width();
       uint64_t active_set = m_journal_metadata->get_active_set();
       uint64_t object_set = object_player->get_object_number() / splay_width;
+      
       if (immediate ||
           (object_player->get_refetch_state() ==
              ObjectPlayer::REFETCH_STATE_IMMEDIATE) ||
@@ -875,13 +918,18 @@ void JournalPlayer::schedule_watch(bool immediate) {
         ldout(m_cct, 20) << __func__ << ": immediately refetching "
                          << object_player->get_oid()
                          << dendl;
+        
         object_player->set_refetch_state(ObjectPlayer::REFETCH_STATE_NONE);
         watch_interval = 0;
       }
     }
     break;
   case WATCH_STEP_FETCH_FIRST:
+        
+    // this state can only be set by JournalPlayer::handle_watch
+    
     object_player = m_object_players.begin()->second;
+    
     watch_interval = 0;
     break;
   default:
@@ -901,7 +949,7 @@ void JournalPlayer::schedule_watch(bool immediate) {
 }
 
 // called by C_Watch::finish, i.e., the scheduled fetch has finished, so name it 
-// handle_schedule_fetch should be better
+// handle_scheduled_fetch should be better
 void JournalPlayer::handle_watch(uint64_t object_num, int r) {
   ldout(m_cct, 10) << __func__ << ": r=" << r << dendl;
 

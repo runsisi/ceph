@@ -865,7 +865,7 @@ void Journal<I>::allocate_local_tag(Context *on_finish) {
     // position
     assert(m_tag_data.mirror_uuid == LOCAL_MIRROR_UUID);
 
-    // new -> order
+    // new -> older
     if (!client.commit_position.object_positions.empty()) {
       auto position = client.commit_position.object_positions.front();
       predecessor.commit_valid = true;
