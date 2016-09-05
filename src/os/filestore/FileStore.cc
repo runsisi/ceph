@@ -1956,6 +1956,7 @@ void FileStore::queue_op(OpSequencer *osr, Op *o)
 	  << " " << o->bytes << " bytes"
 	  << "   (queue has " << throttle_ops.get_current() << " ops and " << throttle_bytes.get_current() << " bytes)"
 	  << dendl;
+
   op_wq.queue(osr);
 }
 
@@ -1982,6 +1983,7 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
   if (!m_disable_wbthrottle) {
     wbthrottle.throttle();
   }
+
   // inject a stall?
   if (g_conf->filestore_inject_stall) {
     int orig = g_conf->filestore_inject_stall;
@@ -2105,6 +2107,7 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
 
     //prepare and encode transactions data out of lock
     bufferlist tbl;
+    // encode tx(s) into tbl
     int orig_len = journal->prepare_entry(o->tls, &tbl);
 
     if (handle)
@@ -2121,6 +2124,7 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
     // inc SubmitManager::op_seq
     uint64_t op_num = submit_manager.op_submit_start();
 
+    // the op_num is used as the seq by FileJournal
     o->op = op_num;
 
     if (m_filestore_do_dump)
@@ -2236,6 +2240,7 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
 {
   dout(5) << "_journaled_ahead " << o << " seq " << o->op << " " << *osr << " " << o->tls << dendl;
 
+  // queue the op on OpSequencer then queue the OpSequencer on FileStore::op_wq
   // this should queue in order because the journal does it's completions in order.
   queue_op(osr, o);
 
@@ -2248,6 +2253,7 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
     dout(10) << " queueing ondisk " << ondisk << dendl;
     ondisk_finishers[osr->id % m_ondisk_finisher_num]->queue(ondisk);
   }
+
   if (!to_queue.empty()) {
     ondisk_finishers[osr->id % m_ondisk_finisher_num]->queue(to_queue);
   }
@@ -2264,6 +2270,7 @@ int FileStore::_do_transactions(
        p != tls.end();
        ++p, trans_num++) {
     _do_transaction(*p, op_seq, trans_num, handle);
+
     if (handle)
       handle->reset_tp_timeout();
   }
@@ -2545,6 +2552,7 @@ void FileStore::_do_transaction(
   Transaction::iterator i = t.begin();
 
   SequencerPosition spos(op_seq, trans_num, 0);
+
   while (i.have_op()) {
     if (handle)
       handle->reset_tp_timeout();
@@ -3834,8 +3842,11 @@ void FileStore::sync_entry()
     } else {
       // wait for at least the min interval
       utime_t woke = ceph_clock_now(g_ceph_context);
+
       woke -= startwait;
+
       dout(20) << "sync_entry woke after " << woke << dendl;
+
       if (woke < min_interval) {
 	utime_t t = min_interval;
 	t -= woke;
@@ -3852,6 +3863,7 @@ void FileStore::sync_entry()
 
     lock.Unlock();
 
+    // pause the op apply threads
     op_tp.pause();
 
     if (apply_manager.commit_start()) {
