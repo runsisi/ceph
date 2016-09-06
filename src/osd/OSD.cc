@@ -8707,6 +8707,7 @@ void OSD::handle_replica_op(OpRequestRef& op, OSDMapRef& osdmap)
   assert(m->get_type() == MSGTYPE);
 
   dout(10) << __func__ << " " << *m << " epoch " << m->map_epoch << dendl;
+
   if (!require_self_aliveness(op->get_req(), m->map_epoch))
     return;
   if (!require_osd_peer(op->get_req()))
@@ -8728,10 +8729,12 @@ void OSD::handle_replica_op(OpRequestRef& op, OSDMapRef& osdmap)
     last_sent_epoch = peer_session->last_sent_epoch;
     peer_session->sent_epoch_lock.unlock();
   }
+
   should_share_map = service.should_share_map(
       m->get_source(), m->get_connection().get(), m->map_epoch,
       osdmap,
       peer_session ? &last_sent_epoch : NULL);
+
   if (peer_session) {
     peer_session->put();
   }

@@ -634,6 +634,7 @@ void ReplicatedBackend::submit_transaction(
   assert(t->get_temp_cleared().size() <= 1);
 
   assert(!in_progress_ops.count(tid));
+
   InProgressOp &op = in_progress_ops.insert(
     make_pair(
       tid,
@@ -681,9 +682,13 @@ void ReplicatedBackend::submit_transaction(
     op_t);
   
   op_t.register_on_applied_sync(on_local_applied_sync);
+
+  // ReplicatedBackend::op_applied
   op_t.register_on_applied(
     parent->bless_context(
       new C_OSD_OnOpApplied(this, &op)));
+
+  // ReplicatedBackend::op_commmit
   op_t.register_on_commit(
     parent->bless_context(
       new C_OSD_OnOpCommit(this, &op)));
@@ -699,16 +704,20 @@ void ReplicatedBackend::op_applied(
   InProgressOp *op)
 {
   dout(10) << __func__ << ": " << op->tid << dendl;
+
   if (op->op)
     op->op->mark_event("op_applied");
 
   op->waiting_for_applied.erase(get_parent()->whoami_shard());
+
+  // update PG::last_update_applied and queue/requeue scrub
   parent->op_applied(op->v);
 
   if (op->waiting_for_applied.empty()) {
     op->on_applied->complete(0);
     op->on_applied = 0;
   }
+
   if (op->done()) {
     assert(!op->on_commit && !op->on_applied);
     in_progress_ops.erase(op->tid);
@@ -719,6 +728,7 @@ void ReplicatedBackend::op_commit(
   InProgressOp *op)
 {
   dout(10) << __func__ << ": " << op->tid << dendl;
+
   if (op->op)
     op->op->mark_event("op_commit");
 
@@ -728,6 +738,7 @@ void ReplicatedBackend::op_commit(
     op->on_commit->complete(0);
     op->on_commit = 0;
   }
+
   if (op->done()) {
     assert(!op->on_commit && !op->on_applied);
     in_progress_ops.erase(op->tid);
@@ -738,6 +749,7 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
 {
   MOSDRepOpReply *r = static_cast<MOSDRepOpReply *>(op->get_req());
   r->finish_decode();
+
   assert(r->get_header().type == MSG_OSD_REPOPREPLY);
 
   op->mark_started();
@@ -749,6 +761,7 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
   if (in_progress_ops.count(rep_tid)) {
     map<ceph_tid_t, InProgressOp>::iterator iter =
       in_progress_ops.find(rep_tid);
+
     InProgressOp &ip_op = iter->second;
     MOSDOp *m = NULL;
     if (ip_op.op)
@@ -783,6 +796,7 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
 	ip_op.op->mark_event(ss.str());
       }
     }
+
     ip_op.waiting_for_applied.erase(from);
 
     parent->update_peer_last_complete_ondisk(
@@ -1320,6 +1334,7 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
 
   dout(10) << "sub_op_modify_applied on " << rm << " op "
 	   << *rm->op->get_req() << dendl;
+
   Message *m = rm->op->get_req();
 
   Message *ack = NULL;

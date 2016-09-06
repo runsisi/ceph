@@ -2064,6 +2064,7 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
   Context *ondisk;
   Context *onreadable_sync;
 
+  // Transaction::on_applied -> onreadable, on_commit -> ondisk, on_applied_sync -> onreadable_sync
   ObjectStore::Transaction::collect_contexts(
     tls, &onreadable, &ondisk, &onreadable_sync);
 
