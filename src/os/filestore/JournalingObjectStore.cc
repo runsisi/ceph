@@ -251,6 +251,7 @@ bool JournalingObjectStore::ApplyManager::commit_start()
 
  out:
   if (journal)
+    // for FileJournal and WAL, do nothing
     journal->commit_start(_committing_seq);  // tell the journal too
 
   return ret;
@@ -260,6 +261,7 @@ bool JournalingObjectStore::ApplyManager::commit_start()
 void JournalingObjectStore::ApplyManager::commit_started()
 {
   Mutex::Locker l(apply_lock);
+
   // allow new ops. (underlying fs should now be committing all prior ops)
   dout(10) << "commit_started committing " << committing_seq << ", unblocking" << dendl;
 

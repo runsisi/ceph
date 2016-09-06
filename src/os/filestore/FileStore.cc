@@ -2004,6 +2004,7 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
 
   int r = _do_transactions(o->tls, o->op, &handle);
 
+  // update ApplyManager::max_applied_seq
   apply_manager.op_apply_finish(o->op);
 
   dout(10) << "_do_op " << o << " seq " << o->op << " r = " << r
@@ -3865,17 +3866,27 @@ void FileStore::sync_entry()
 
     lock.Unlock();
 
-    // pause the op apply threads
+    // pause the op apply threads, i.e., stop writing to disk
     op_tp.pause();
 
     if (apply_manager.commit_start()) {
+
+      // ApplyManager::max_applied_seq > ApplyManager::committed_seq, which means
+      // some applied ops have not been synced to disk, so updating ApplyManager::committing_seq
+      // to ApplyManager::max_applied_seq
+      // JournalingObjectStore::ApplyManager::commit_finish will update ApplyManager::committed_seq
+      // to ApplyManager::committing_seq
+
       utime_t start = ceph_clock_now(g_ceph_context);
+
       uint64_t cp = apply_manager.get_committing_seq();
 
       sync_entry_timeo_lock.Lock();
+
       SyncEntryTimeout *sync_entry_timeo =
 	new SyncEntryTimeout(m_filestore_commit_timeout);
       timer.add_event_after(m_filestore_commit_timeout, sync_entry_timeo);
+
       sync_entry_timeo_lock.Unlock();
 
       logger->set(l_os_committing, 1);
@@ -3919,7 +3930,9 @@ void FileStore::sync_entry()
 	}
       } else
       {
+        // allow ApplyManager::op_apply_start to proceed which blocked by ApplyManager::commit_start
 	apply_manager.commit_started();
+
 	op_tp.unpause();
 
 	int err = object_map->sync();
@@ -3934,11 +3947,13 @@ void FileStore::sync_entry()
 	  assert(0 == "syncfs returned error");
 	}
 
+	// "/current/commit_op_seq"
 	err = write_op_seq(op_fd, cp);
 	if (err < 0) {
 	  derr << "Error during write_op_seq: " << cpp_strerror(err) << dendl;
 	  assert(0 == "error during write_op_seq");
 	}
+
 	err = ::fsync(op_fd);
 	if (err < 0) {
 	  derr << "Error during fsync of op_seq: " << cpp_strerror(err) << dendl;
@@ -3949,13 +3964,16 @@ void FileStore::sync_entry()
       utime_t done = ceph_clock_now(g_ceph_context);
       utime_t lat = done - start;
       utime_t dur = done - startwait;
+
       dout(10) << "sync_entry commit took " << lat << ", interval was " << dur << dendl;
 
       logger->inc(l_os_commit);
       logger->tinc(l_os_commit_lat, lat);
       logger->tinc(l_os_commit_len, dur);
 
+      // update committed_seq, journal->committed_thru
       apply_manager.commit_finish();
+
       if (!m_disable_wbthrottle) {
         wbthrottle.clear();
       }
@@ -3983,6 +4001,9 @@ void FileStore::sync_entry()
       timer.cancel_event(sync_entry_timeo);
       sync_entry_timeo_lock.Unlock();
     } else {
+
+      // no written op to sync
+
       op_tp.unpause();
     }
 
@@ -3997,6 +4018,9 @@ void FileStore::sync_entry()
     }
 
     if (!stop && journal && journal->should_commit_now()) {
+
+      // full_state != FULL_NOTFULL
+
       dout(10) << "sync_entry journal says we should commit again (probably is/was full)" << dendl;
       goto again;
     }

@@ -923,6 +923,7 @@ void FileJournal::queue_write_fin(uint64_t seq, Context *fin)
 }
 */
 
+// called by FileJournal::do_write and FileJournal::committed_thru
 void FileJournal::queue_completions_thru(uint64_t seq)
 {
   assert(finisher_lock.is_locked());
@@ -1724,11 +1725,14 @@ FileJournal::write_item &FileJournal::peek_write()
 void FileJournal::pop_write()
 {
   assert(write_lock.is_locked());
+
   Mutex::Locker locker(writeq_lock);
+
   if (logger) {
     logger->dec(l_os_jq_bytes, writeq.front().orig_len);
     logger->dec(l_os_jq_ops, 1);
   }
+
   writeq.pop_front();
 }
 
@@ -1815,6 +1819,7 @@ void FileJournal::committed_thru(uint64_t seq)
   Mutex::Locker locker(write_lock);
 
   auto released = throttle.flush(seq);
+
   if (logger) {
     logger->dec(l_os_j_ops, released.first);
     logger->dec(l_os_j_bytes, released.second);
@@ -1831,12 +1836,15 @@ void FileJournal::committed_thru(uint64_t seq)
   }
 
   dout(5) << "committed_thru " << seq << " (last_committed_seq " << last_committed_seq << ")" << dendl;
+
   last_committed_seq = seq;
 
   // completions!
   {
     Mutex::Locker locker(finisher_lock);
 
+    // finish FileJournal::completions until seq, should already finished by
+    // FileJournal::do_write ?
     queue_completions_thru(seq);
 
     if (plug_journal_completions && seq >= header.start_seq) {
@@ -1873,6 +1881,7 @@ void FileJournal::committed_thru(uint64_t seq)
   }
 
   must_write_header = true;
+
   print_header(header);
 
   // committed but unjournaled items
@@ -1880,7 +1889,11 @@ void FileJournal::committed_thru(uint64_t seq)
     dout(15) << " dropping committed but unwritten seq " << peek_write().seq
 	     << " len " << peek_write().bl.length()
 	     << dendl;
+
+    // only a debug log
     complete_write(1, peek_write().orig_len);
+
+    // pop front of FileJournal::writeq
     pop_write();
   }
 
