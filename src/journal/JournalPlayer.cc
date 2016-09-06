@@ -399,7 +399,10 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
     // if the object is empty, pre-fetch the next splay object
     if (object_player->empty() && object_player->refetch_required()) {
 
-      // set to REFETCH_STATE_REQUIRED by ObjectPlayer::handle_fetch_complete
+      // ObjectPlayer::m_refetch_state is not REFETCH_STATE_NONE which means
+      // we have finished the last fetch, we can start a second fetch to the same
+      // object, see ObjectPlayer::handle_fetch_complete, ObjectPlayer::m_refetch_state 
+      // has been set to REFETCH_STATE_REQUIRED by ObjectPlayer::handle_fetch_complete
       
       ldout(m_cct, 10) << "refetching potentially partially decoded object"
                        << dendl;
@@ -408,7 +411,11 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
       
       fetch(object_player);
     } else if (!remove_empty_object_player(object_player)) {
+
+      // no the next object at the same splay offset needed
+    
       ldout(m_cct, 10) << "prefetch of object complete" << dendl;
+      
       prefetch_complete = true;
     }
   }
@@ -750,10 +757,13 @@ bool JournalPlayer::remove_empty_object_player(const ObjectPlayerPtr &player) {
   } else if (m_active_set != active_set) {
     ldout(m_cct, 20) << __func__ << ": new active set detected, all players "
                      << "require refetch" << dendl;
+    
     m_active_set = active_set;
+    
     for (auto &pair : m_object_players) {
       pair.second->set_refetch_state(ObjectPlayer::REFETCH_STATE_IMMEDIATE);
     }
+    
     return false;
   }
 
@@ -767,7 +777,9 @@ bool JournalPlayer::remove_empty_object_player(const ObjectPlayerPtr &player) {
   m_watch_step = WATCH_STEP_FETCH_CURRENT;
 
   uint64_t next_object_num = player->get_object_number() + splay_width;
+  
   fetch(next_object_num);
+  
   return true;
 }
 
@@ -920,6 +932,7 @@ void JournalPlayer::schedule_watch(bool immediate) {
                          << dendl;
         
         object_player->set_refetch_state(ObjectPlayer::REFETCH_STATE_NONE);
+        
         watch_interval = 0;
       }
     }

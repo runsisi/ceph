@@ -41,6 +41,7 @@ void ObjectPlayer::fetch(Context *on_finish) {
   ldout(m_cct, 10) << __func__ << ": " << m_oid << dendl;
 
   Mutex::Locker locker(m_lock);
+  
   assert(!m_fetch_in_progress);
   m_fetch_in_progress = true;
 
@@ -295,6 +296,7 @@ void ObjectPlayer::schedule_watch() {
 
   // handle_watch_task, all we want is to start a fetch in the timer's callback
   m_watch_task = new C_WatchTask(this);
+  
   m_timer.add_event_after(m_watch_interval, m_watch_task);
 }
 
@@ -332,6 +334,7 @@ void ObjectPlayer::handle_watch_fetched(int r) {
   Context *watch_ctx = nullptr;
   {
     Mutex::Locker timer_locker(m_timer_lock);
+    
     std::swap(watch_ctx, m_watch_ctx);
 
     if (m_unwatched) {
@@ -348,19 +351,26 @@ void ObjectPlayer::handle_watch_fetched(int r) {
 
 void ObjectPlayer::C_Fetch::finish(int r) {
   bool refetch = false;
+  
   r = object_player->handle_fetch_complete(r, read_bl, &refetch);
 
   {
     Mutex::Locker locker(object_player->m_lock);
+    
     object_player->m_fetch_in_progress = false;
   }
 
   if (refetch) {
+
+    // read partial journal entry, fetch again
+        
     object_player->fetch(on_finish);
     return;
   }
 
   object_player.reset();
+
+  // JournalPlayer::handle_fetched
   on_finish->complete(r);
 }
 

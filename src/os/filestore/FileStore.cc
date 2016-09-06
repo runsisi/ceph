@@ -3367,6 +3367,7 @@ int FileStore::_touch(const coll_t& cid, const ghobject_t& oid)
   return r;
 }
 
+// called by FileStore::_do_transaction and FileStore::_zero
 int FileStore::_write(const coll_t& cid, const ghobject_t& oid,
                      uint64_t offset, size_t len,
                      const bufferlist& bl, uint32_t fadvise_flags)
@@ -3411,6 +3412,7 @@ int FileStore::_write(const coll_t& cid, const ghobject_t& oid,
   return r;
 }
 
+// called by FileStore::_do_transaction
 int FileStore::_zero(const coll_t& cid, const ghobject_t& oid, uint64_t offset, size_t len)
 {
   dout(15) << "zero " << cid << "/" << oid << " " << offset << "~" << len << dendl;
