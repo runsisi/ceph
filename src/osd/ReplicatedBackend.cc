@@ -587,6 +587,7 @@ PGBackend::PGTransaction *ReplicatedBackend::get_transaction()
   return new RPGTransaction(coll);
 }
 
+// ondisk/onjournal callback
 class C_OSD_OnOpCommit : public Context {
   ReplicatedBackend *pg;
   ReplicatedBackend::InProgressOp *op;
@@ -598,6 +599,7 @@ public:
   }
 };
 
+// onreadable callback
 class C_OSD_OnOpApplied : public Context {
   ReplicatedBackend *pg;
   ReplicatedBackend::InProgressOp *op;
@@ -635,6 +637,8 @@ void ReplicatedBackend::submit_transaction(
 
   assert(!in_progress_ops.count(tid));
 
+  // on_all_commit -> on_commit
+  // on_all_acked -> on_applied
   InProgressOp &op = in_progress_ops.insert(
     make_pair(
       tid,
@@ -700,6 +704,7 @@ void ReplicatedBackend::submit_transaction(
   parent->queue_transactions(tls, op.op);
 }
 
+// local txs has written and synced
 void ReplicatedBackend::op_applied(
   InProgressOp *op)
 {
@@ -714,7 +719,9 @@ void ReplicatedBackend::op_applied(
   parent->op_applied(op->v);
 
   if (op->waiting_for_applied.empty()) {
+    // submit_transaction(on_all_acked), i.e., all replicas written and synced
     op->on_applied->complete(0);
+
     op->on_applied = 0;
   }
 
@@ -724,6 +731,7 @@ void ReplicatedBackend::op_applied(
   }
 }
 
+// local txs has journaled
 void ReplicatedBackend::op_commit(
   InProgressOp *op)
 {
@@ -735,7 +743,9 @@ void ReplicatedBackend::op_commit(
   op->waiting_for_commit.erase(get_parent()->whoami_shard());
 
   if (op->waiting_for_commit.empty()) {
+    // submit_transaction(on_all_commit), i.e., all replicas journaled
     op->on_commit->complete(0);
+
     op->on_commit = 0;
   }
 
@@ -805,14 +815,17 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
 
     if (ip_op.waiting_for_applied.empty() &&
         ip_op.on_applied) {
+      // submit_transaction(on_all_acked), i.e., all replicas written and synced
       ip_op.on_applied->complete(0);
       ip_op.on_applied = 0;
     }
     if (ip_op.waiting_for_commit.empty() &&
         ip_op.on_commit) {
+      // submit_transaction(on_all_commit), i.e., all replicas journaled
       ip_op.on_commit->complete(0);
       ip_op.on_commit= 0;
     }
+
     if (ip_op.done()) {
       assert(!ip_op.on_commit && !ip_op.on_applied);
       in_progress_ops.erase(iter);
@@ -1326,7 +1339,7 @@ void ReplicatedBackend::sub_op_modify(OpRequestRef op)
   // op is cleaned up by oncommit/onapply when both are executed
 }
 
-// called by C_OSD_RepModifyApply::finish
+// called by C_OSD_RepModifyApply::finish which means local repop applied, i.e., onreadable
 void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
 {
   rm->op->mark_event("sub_op_applied");
@@ -1370,7 +1383,7 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
   parent->op_applied(version);
 }
 
-// called by C_OSD_RepModifyCommit::finish
+// called by C_OSD_RepModifyCommit::finish, which means local repop committed, i.e., ondisk
 void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
 {
   rm->op->mark_commit_sent();

@@ -320,6 +320,7 @@ void WBThrottle::clear_object(const ghobject_t &hoid)
   cond.Signal();
 }
 
+// called by FileStore::_do_op
 void WBThrottle::throttle()
 {
   Mutex::Locker l(lock);

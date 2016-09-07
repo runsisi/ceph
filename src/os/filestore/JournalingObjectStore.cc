@@ -270,12 +270,15 @@ void JournalingObjectStore::ApplyManager::commit_started()
   blocked_cond.Signal();
 }
 
+// called by FileStore::sync_entry
 void JournalingObjectStore::ApplyManager::commit_finish()
 {
   Mutex::Locker l(com_lock);
   dout(10) << "commit_finish thru " << committing_seq << dendl;
 
   if (journal)
+    // release journal throttle reserved by FileStore::queue_transactions and
+    // update FileJournal::last_committed_seq
     journal->committed_thru(committing_seq);
 
   committed_seq = committing_seq;

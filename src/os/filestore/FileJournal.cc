@@ -1814,10 +1814,13 @@ void FileJournal::do_discard(int64_t offset, int64_t end)
 	dout(1) << __func__ << "ioctl(BLKDISCARD) error:" << cpp_strerror(errno) << dendl;
 }
 
+// called by JournalingObjectStore::ApplyManager::commit_finish which called
+// by FileStore::sync_entry
 void FileJournal::committed_thru(uint64_t seq)
 {
   Mutex::Locker locker(write_lock);
 
+  // release throttle which reserved by FileStore::queue_transactions
   auto released = throttle.flush(seq);
 
   if (logger) {
@@ -1936,8 +1939,11 @@ int FileJournal::set_throttle_params()
 {
   stringstream ss;
   bool valid = throttle.set_params(
+    // default 0.6
     g_conf->journal_throttle_low_threshhold,
+    // default 0.9
     g_conf->journal_throttle_high_threshhold,
+    // default 200M/s
     g_conf->filestore_expected_throughput_bytes,
     g_conf->journal_throttle_high_multiple,
     g_conf->journal_throttle_max_multiple,
@@ -2153,6 +2159,7 @@ FileJournal::read_entry_result FileJournal::do_read_entry(
   return SUCCESS;
 }
 
+// called by FileStore::queue_transactions, will be released by FileJournal::committed_thru
 void FileJournal::reserve_throttle_and_backoff(uint64_t count)
 {
   // JournalThrottle -> BackoffThrottle

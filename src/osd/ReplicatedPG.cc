@@ -9124,6 +9124,7 @@ void ReplicatedPG::repop_all_committed(RepGather *repop)
   }
 }
 
+// called by ReplicatedBackend::sub_op_modify_applied and ReplicatedBackend::op_applied
 void ReplicatedPG::op_applied(const eversion_t &applied_version)
 {
   dout(10) << "op_applied version " << applied_version << dendl;

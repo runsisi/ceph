@@ -1759,6 +1759,7 @@ int FileStore::mount()
   journal_start();
 
   op_tp.start();
+
   for (vector<Finisher*>::iterator it = ondisk_finishers.begin(); it != ondisk_finishers.end(); ++it) {
     (*it)->start();
   }
@@ -1960,6 +1961,7 @@ void FileStore::queue_op(OpSequencer *osr, Op *o)
   op_wq.queue(osr);
 }
 
+// called by FileStore::queue_transactions
 void FileStore::op_queue_reserve_throttle(Op *o)
 {
   // BackoffThrottle
@@ -1970,10 +1972,12 @@ void FileStore::op_queue_reserve_throttle(Op *o)
   logger->set(l_os_oq_bytes, throttle_bytes.get_current());
 }
 
+// called by FileStore::_finish_op which called by FileStore::OpWQ::_finish_process
 void FileStore::op_queue_release_throttle(Op *o)
 {
   throttle_ops.put();
   throttle_bytes.put(o->bytes);
+
   logger->set(l_os_oq_ops, throttle_ops.get_current());
   logger->set(l_os_oq_bytes, throttle_bytes.get_current());
 }
@@ -2014,6 +2018,7 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
 
 }
 
+// called by FileStore::OpWQ::_finish_process
 void FileStore::_finish_op(OpSequencer *osr)
 {
   list<Context*> to_queue;
@@ -2026,6 +2031,7 @@ void FileStore::_finish_op(OpSequencer *osr)
   osr->apply_lock.Unlock();  // locked in _do_op
 
   // called with tp lock held
+  // release throttle reserved by FileStore::queue_transactions
   op_queue_release_throttle(o);
 
   logger->tinc(l_os_apply_lat, lat);
@@ -2115,9 +2121,11 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
     if (handle)
       handle->suspend_tp_timeout();
 
-    // BackoffThrottle
+    // BackoffThrottle, FileStore's throttle, will be released by FileStore::_finish_op
     op_queue_reserve_throttle(o);
-    // JournalThrottle -> BackoffThrottle
+
+    // JournalThrottle -> BackoffThrottle, FileJournal's throttle, will be
+    // released by FileJournal::committed_thru
     journal->reserve_throttle_and_backoff(tbl.length());
 
     if (handle)
@@ -3403,6 +3411,7 @@ int FileStore::_write(const coll_t& cid, const ghobject_t& oid,
 #endif
     }
   } else {
+    // inc counter and if exceed limits then notify WBThrottle to sync
     wbthrottle.queue_wb(fd, oid, offset, len,
         fadvise_flags & CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
   }
@@ -5655,24 +5664,31 @@ void FileStore::handle_conf_change(const struct md_config_t *conf,
   }
 }
 
+// called by FileStore::mount
 int FileStore::set_throttle_params()
 {
   stringstream ss;
   bool valid = throttle_bytes.set_params(
     g_conf->filestore_queue_low_threshhold,
     g_conf->filestore_queue_high_threshhold,
+    // default 200M/s
     g_conf->filestore_expected_throughput_bytes,
     g_conf->filestore_queue_high_delay_multiple,
     g_conf->filestore_queue_max_delay_multiple,
+    // default 100M
     g_conf->filestore_queue_max_bytes,
     &ss);
 
   valid &= throttle_ops.set_params(
+    // default 0.3
     g_conf->filestore_queue_low_threshhold,
+    // default 0.9
     g_conf->filestore_queue_high_threshhold,
+    // default 200/s
     g_conf->filestore_expected_throughput_ops,
     g_conf->filestore_queue_high_delay_multiple,
     g_conf->filestore_queue_max_delay_multiple,
+    // default 50
     g_conf->filestore_queue_max_ops,
     &ss);
 

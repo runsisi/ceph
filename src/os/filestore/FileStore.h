@@ -335,11 +335,13 @@ private:
   friend ostream& operator<<(ostream& out, const OpSequencer& s);
 
   FDCache fdcache;
+  // used by FileStore::_do_op
   WBThrottle wbthrottle;
 
   atomic_t next_osr_id;
   bool m_disable_wbthrottle;
   deque<OpSequencer*> op_queue;
+  // used by FileStore::queue_transactions
   BackoffThrottle throttle_ops, throttle_bytes;
   const int m_ondisk_finisher_num;
   const int m_apply_finisher_num;
