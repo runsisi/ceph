@@ -276,6 +276,8 @@ public:
     osd->store->queue_transaction(osr.get(), std::move(t), 0, 0, 0, op);
   }
 
+  // called by ReplicatedBackend::submit_transaction, ReplicatedBackend::sub_op_modify
+  // and ECBackend::handle_sub_write
   void queue_transactions(vector<ObjectStore::Transaction>& tls, OpRequestRef op) {
     // do not add additional onreadable, ondisk, onreadable_sync callback
     osd->store->queue_transactions(osr.get(), tls, 0, 0, 0, op, NULL);

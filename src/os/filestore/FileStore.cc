@@ -2045,6 +2045,7 @@ void FileStore::_finish_op(OpSequencer *osr)
   if (!to_queue.empty()) {
     apply_finishers[osr->id % m_apply_finisher_num]->queue(to_queue);
   }
+  
   delete o;
 }
 
@@ -2070,7 +2071,9 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
   Context *ondisk;
   Context *onreadable_sync;
 
-  // Transaction::on_applied -> onreadable, on_commit -> ondisk, on_applied_sync -> onreadable_sync
+  // ObjectStore::Transaction::on_applied -> onreadable, 
+  // ObjectStore::Transaction::on_commit -> ondisk, 
+  // ObjectStore::Transaction::on_applied_sync -> onreadable_sync
   ObjectStore::Transaction::collect_contexts(
     tls, &onreadable, &ondisk, &onreadable_sync);
 
@@ -2111,6 +2114,7 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
 
   if (journal && journal->is_writeable() && !m_filestore_journal_trailing) {
     // alloc an Op to wrap the tx list
+    // onreadable -> Op::onreadable, onreadable_sync -> Op::onreadable_sync
     Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
 
     //prepare and encode transactions data out of lock
@@ -3940,7 +3944,8 @@ void FileStore::sync_entry()
 	}
       } else
       {
-        // allow ApplyManager::op_apply_start to proceed which blocked by ApplyManager::commit_start
+        // set ApplyManager::blocked to false to allow ApplyManager::op_apply_start to 
+        // proceed which blocked by ApplyManager::commit_start
 	apply_manager.commit_started();
 
 	op_tp.unpause();

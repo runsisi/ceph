@@ -58,6 +58,7 @@ class PG_RecoveryQueueAsync : public Context {
 };
 }
 
+// replica PG write onreadable callback, see ReplicatedBackend::sub_op_modify
 struct ReplicatedBackend::C_OSD_RepModifyApply : public Context {
   ReplicatedBackend *pg;
   RepModifyRef rm;
@@ -68,6 +69,7 @@ struct ReplicatedBackend::C_OSD_RepModifyApply : public Context {
   }
 };
 
+// replica PG write ondisk callback, see ReplicatedBackend::sub_op_modify
 struct ReplicatedBackend::C_OSD_RepModifyCommit : public Context {
   ReplicatedBackend *pg;
   RepModifyRef rm;
@@ -587,7 +589,7 @@ PGBackend::PGTransaction *ReplicatedBackend::get_transaction()
   return new RPGTransaction(coll);
 }
 
-// ondisk/onjournal callback
+// primary PG local txs ondisk callback
 class C_OSD_OnOpCommit : public Context {
   ReplicatedBackend *pg;
   ReplicatedBackend::InProgressOp *op;
@@ -599,7 +601,7 @@ public:
   }
 };
 
-// onreadable callback
+// primary PG local txs onreadable callback
 class C_OSD_OnOpApplied : public Context {
   ReplicatedBackend *pg;
   ReplicatedBackend::InProgressOp *op;
@@ -620,9 +622,9 @@ void ReplicatedBackend::submit_transaction(
   const eversion_t &trim_rollback_to,
   const vector<pg_log_entry_t> &log_entries,
   boost::optional<pg_hit_set_history_t> &hset_history,
-  Context *on_local_applied_sync,
-  Context *on_all_acked,
-  Context *on_all_commit,
+  Context *on_local_applied_sync, // ReplicatedPG::issue_repop(onapplied_sync)
+  Context *on_all_acked, // ReplicatedPG::issue_repop(on_all_applied)
+  Context *on_all_commit, // ReplicatedPG::issue_repop(on_all_commit)
   ceph_tid_t tid,
   osd_reqid_t reqid,
   OpRequestRef orig_op)
@@ -684,15 +686,18 @@ void ReplicatedBackend::submit_transaction(
     trim_rollback_to,
     true,
     op_t);
-  
+
+  // ObjectStore::Transaction::on_applied_sync
   op_t.register_on_applied_sync(on_local_applied_sync);
 
-  // ReplicatedBackend::op_applied
+  //push back of ObjectStore::Transaction::on_applied
+  //callback ReplicatedBackend::op_applied will call on_all_acked if all replicas applied
   op_t.register_on_applied(
     parent->bless_context(
       new C_OSD_OnOpApplied(this, &op)));
 
-  // ReplicatedBackend::op_commmit
+  // push back of ObjectStore::Transaction::on_commit
+  // callback ReplicatedBackend::op_commit will call on_all_commit if all replicas committed
   op_t.register_on_commit(
     parent->bless_context(
       new C_OSD_OnOpCommit(this, &op)));
@@ -704,7 +709,7 @@ void ReplicatedBackend::submit_transaction(
   parent->queue_transactions(tls, op.op);
 }
 
-// local txs has written and synced
+// primary PG txs have been applied, called by C_OSD_OnOpApplied::finish
 void ReplicatedBackend::op_applied(
   InProgressOp *op)
 {
@@ -731,7 +736,7 @@ void ReplicatedBackend::op_applied(
   }
 }
 
-// local txs has journaled
+// primary PG txs committed, called by C_OSD_OnOpCommit::finish
 void ReplicatedBackend::op_commit(
   InProgressOp *op)
 {
@@ -755,6 +760,7 @@ void ReplicatedBackend::op_commit(
   }
 }
 
+// message from replicas
 void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
 {
   MOSDRepOpReply *r = static_cast<MOSDRepOpReply *>(op->get_req());
@@ -773,7 +779,9 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
       in_progress_ops.find(rep_tid);
 
     InProgressOp &ip_op = iter->second;
+    
     MOSDOp *m = NULL;
+    
     if (ip_op.op)
       m = static_cast<MOSDOp *>(ip_op.op->get_req());
 
@@ -791,15 +799,24 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
     // oh, good.
 
     if (r->ack_type & CEPH_OSD_FLAG_ONDISK) {
+
+      // repop localt committed
+        
       assert(ip_op.waiting_for_commit.count(from));
+      
       ip_op.waiting_for_commit.erase(from);
+      
       if (ip_op.op) {
         ostringstream ss;
         ss << "sub_op_commit_rec from " << from;
 	ip_op.op->mark_event(ss.str());
       }
     } else {
+
+      // repop op_t applied
+    
       assert(ip_op.waiting_for_applied.count(from));
+      
       if (ip_op.op) {
         ostringstream ss;
         ss << "sub_op_applied_rec from " << from;
@@ -807,6 +824,8 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
       }
     }
 
+    // if the repop op_t has been applied, then the ONDISK reply will never be sent, 
+    // see ReplicatedBackend::sub_op_modify_applied
     ip_op.waiting_for_applied.erase(from);
 
     parent->update_peer_last_complete_ondisk(
@@ -1306,6 +1325,7 @@ void ReplicatedBackend::sub_op_modify(OpRequestRef op)
 
   p = m->logbl.begin();
   ::decode(log, p);
+  
   rm->opt.set_fadvise_flag(CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
 
   bool update_snaps = false;
@@ -1316,7 +1336,9 @@ void ReplicatedBackend::sub_op_modify(OpRequestRef op)
     // collections now.  Otherwise, we do it later on push.
     update_snaps = true;
   }
+  
   parent->update_stats(m->pg_stats);
+  
   parent->log_operation(
     log,
     m->updated_hit_set_history,
@@ -1325,24 +1347,30 @@ void ReplicatedBackend::sub_op_modify(OpRequestRef op)
     update_snaps,
     rm->localt);
 
+  // ReplicatedBackend::sub_op_modify_commit
   rm->opt.register_on_commit(
     parent->bless_context(
       new C_OSD_RepModifyCommit(this, rm)));
+  
+  // ReplicatedBackend::sub_op_modify_applied
   rm->localt.register_on_applied(
     parent->bless_context(
       new C_OSD_RepModifyApply(this, rm)));
+  
   vector<ObjectStore::Transaction> tls;
   tls.reserve(2);
   tls.push_back(std::move(rm->localt));
   tls.push_back(std::move(rm->opt));
+  
   parent->queue_transactions(tls, op);
   // op is cleaned up by oncommit/onapply when both are executed
 }
 
-// called by C_OSD_RepModifyApply::finish which means local repop applied, i.e., onreadable
+// called by C_OSD_RepModifyApply::finish which means repop localt tx applied, i.e., onreadable
 void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
 {
   rm->op->mark_event("sub_op_applied");
+  
   rm->applied = true;
 
   dout(10) << "sub_op_modify_applied on " << rm << " op "
@@ -1383,10 +1411,11 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
   parent->op_applied(version);
 }
 
-// called by C_OSD_RepModifyCommit::finish, which means local repop committed, i.e., ondisk
+// called by C_OSD_RepModifyCommit::finish, which means repop op_t tx committed, i.e., ondisk
 void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
 {
   rm->op->mark_commit_sent();
+  
   rm->committed = true;
 
   // send commit.

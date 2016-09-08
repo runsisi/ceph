@@ -923,7 +923,7 @@ void FileJournal::queue_write_fin(uint64_t seq, Context *fin)
 }
 */
 
-// called by FileJournal::do_write and FileJournal::committed_thru
+// called by FileJournal::do_write, FileJournal::check_aio_completion and FileJournal::committed_thru
 void FileJournal::queue_completions_thru(uint64_t seq)
 {
   assert(finisher_lock.is_locked());
@@ -1206,6 +1206,10 @@ void FileJournal::do_write(bufferlist& bl)
 	       << ", full_commit_seq|full_restart_seq" << dendl;
     } else {
       if (plug_journal_completions) {
+
+        // only set by FileJournal::commit_start when FileJournal::full_state is FULL_WAIT
+        // and reset to false by FileJournal::committed_thru
+        
 	dout(20) << "do_write NOT queueing finishers through seq " << journaled_seq
 		 << " due to completion plug" << dendl;
       } else {
@@ -1586,7 +1590,9 @@ void FileJournal::check_aio_completion()
     // kick finisher?
     //  only if we haven't filled up recently!
     Mutex::Locker locker(finisher_lock);
+    
     journaled_seq = new_journaled_seq;
+    
     if (full_state != FULL_NOTFULL) {
       dout(10) << "check_aio_completion NOT queueing finisher seq " << journaled_seq
 	       << ", full_commit_seq|full_restart_seq" << dendl;
@@ -1596,6 +1602,7 @@ void FileJournal::check_aio_completion()
 		 << " due to completion plug" << dendl;
       } else {
 	dout(20) << "check_aio_completion queueing finishers through seq " << journaled_seq << dendl;
+        
 	queue_completions_thru(journaled_seq);
       }
     }
@@ -1695,8 +1702,9 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, uint32_t orig_len,
     aio_cond.Signal();
 #endif
 
-    // the oncommit(i.e., onjournal, ondisk) will be queued on finisher by
-    // FileJournal::queue_completions_thru
+    // the oncommit(i.e., onjournal, which wraps ondisk, see C_JournaledAhead) will be queued 
+    // on finisher by FileJournal::queue_completions_thru which called by FileJournal::do_write, 
+    // FileJournal::check_aio_completion and FileJournal::committed_thru
     completions.push_back(
       completion_item(
 	seq, oncommit, ceph_clock_now(g_ceph_context), osd_op));
@@ -1840,14 +1848,15 @@ void FileJournal::committed_thru(uint64_t seq)
 
   dout(5) << "committed_thru " << seq << " (last_committed_seq " << last_committed_seq << ")" << dendl;
 
+  // the seq is ApplyManager::committing_seq, i.e., the same as ApplyManager::committed_seq, 
+  // see JournalingObjectStore::ApplyManager::commit_finish
   last_committed_seq = seq;
 
   // completions!
   {
     Mutex::Locker locker(finisher_lock);
 
-    // finish FileJournal::completions until seq, should already finished by
-    // FileJournal::do_write ?
+    // finish FileJournal::completions up through seq
     queue_completions_thru(seq);
 
     if (plug_journal_completions && seq >= header.start_seq) {
@@ -1855,6 +1864,8 @@ void FileJournal::committed_thru(uint64_t seq)
 
       plug_journal_completions = false;
 
+      // FileJournal::journaled_seq was updated by FileJournal::open, FileJournal::do_write,
+      // FileJournal::check_aio_completion, FileJournal::read_entry
       queue_completions_thru(journaled_seq);
     }
   }

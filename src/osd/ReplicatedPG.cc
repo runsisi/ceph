@@ -3483,6 +3483,8 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
 
   // no need to capture PG ref, repop cancel will handle that
   // Can capture the ctx by pointer, it's owned by the repop
+  
+  // push back of OpContext::on_applied
   ctx->register_on_applied(
     [m, ctx, this](){
       if (m && m->wants_ack() && !ctx->sent_ack && !ctx->sent_disk) {
@@ -3508,6 +3510,8 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
       if (ctx->readable_stamp == utime_t())
 	ctx->readable_stamp = ceph_clock_now(cct);
     });
+
+  // push back of OpContext::on_committed
   ctx->register_on_commit(
     [m, ctx, this](){
       if (ctx->op)
@@ -3531,6 +3535,8 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
 	ctx->op->mark_commit_sent();
       }
     });
+
+  // push back of OpContext::on_success
   ctx->register_on_success(
     [ctx, this]() {
       do_osd_op_effects(
@@ -3538,6 +3544,8 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
 	ctx->op ? ctx->op->get_req()->get_connection() :
 	ConnectionRef());
     });
+
+  // push back of OpContext::on_finish
   ctx->register_on_finish(
     [ctx, this]() {
       delete ctx;
@@ -3546,7 +3554,7 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
   // issue replica writes
   ceph_tid_t rep_tid = osd->get_tid();
 
-  // alloc a RepGather and push back of repop_queue
+  // alloc a RepGather and push on back of repop_queue
   RepGather *repop = new_repop(ctx, obc, rep_tid);
 
   // pgbackend->submit_transaction
@@ -9092,7 +9100,9 @@ void ReplicatedPG::repop_all_applied(RepGather *repop)
 {
   dout(10) << __func__ << ": repop tid " << repop->rep_tid << " all applied "
 	   << dendl;
+  
   repop->all_applied = true;
+  
   if (!repop->rep_aborted) {
     eval_repop(repop);
   }
@@ -9113,6 +9123,7 @@ void ReplicatedPG::repop_all_committed(RepGather *repop)
 {
   dout(10) << __func__ << ": repop tid " << repop->rep_tid << " all committed "
 	   << dendl;
+  
   repop->all_committed = true;
 
   if (!repop->rep_aborted) {
@@ -9120,6 +9131,7 @@ void ReplicatedPG::repop_all_committed(RepGather *repop)
       last_update_ondisk = repop->v;
       last_complete_ondisk = repop->pg_local_last_complete;
     }
+    
     eval_repop(repop);
   }
 }
@@ -9181,14 +9193,17 @@ void ReplicatedPG::eval_repop(RepGather *repop)
   // ondisk?
   if (repop->all_committed) {
     dout(10) << " commit: " << *repop << dendl;
+    
     for (auto p = repop->on_committed.begin();
 	 p != repop->on_committed.end();
 	 repop->on_committed.erase(p++)) {
       (*p)();
     }
+         
     // send dup commits, in order
     if (waiting_for_ondisk.count(repop->v)) {
       assert(waiting_for_ondisk.begin()->first == repop->v);
+      
       for (list<pair<OpRequestRef, version_t> >::iterator i =
 	     waiting_for_ondisk[repop->v].begin();
 	   i != waiting_for_ondisk[repop->v].end();
@@ -9196,12 +9211,14 @@ void ReplicatedPG::eval_repop(RepGather *repop)
 	osd->reply_op_error(i->first, 0, repop->v,
 			    i->second);
       }
+           
       waiting_for_ondisk.erase(repop->v);
     }
 
     // clear out acks, we sent the commits above
     if (waiting_for_ack.count(repop->v)) {
       assert(waiting_for_ack.begin()->first == repop->v);
+      
       waiting_for_ack.erase(repop->v);
     }
 
@@ -9210,6 +9227,7 @@ void ReplicatedPG::eval_repop(RepGather *repop)
   // applied?
   if (repop->all_applied) {
     dout(10) << " applied: " << *repop << " " << dendl;
+    
     for (auto p = repop->on_applied.begin();
 	 p != repop->on_applied.end();
 	 repop->on_applied.erase(p++)) {
@@ -9219,6 +9237,7 @@ void ReplicatedPG::eval_repop(RepGather *repop)
     // send dup acks, in order
     if (waiting_for_ack.count(repop->v)) {
       assert(waiting_for_ack.begin()->first == repop->v);
+      
       for (list<pair<OpRequestRef, version_t> >::iterator i =
 	     waiting_for_ack[repop->v].begin();
 	   i != waiting_for_ack[repop->v].end();
@@ -9230,6 +9249,7 @@ void ReplicatedPG::eval_repop(RepGather *repop)
 	reply->add_flags(CEPH_OSD_FLAG_ACK);
 	osd->send_message_osd_client(reply, m->get_connection());
       }
+           
       waiting_for_ack.erase(repop->v);
     }
   }
@@ -9239,6 +9259,7 @@ void ReplicatedPG::eval_repop(RepGather *repop)
     repop->rep_done = true;
 
     publish_stats_to_osd();
+    
     calc_min_last_complete_ondisk();
 
     for (auto p = repop->on_success.begin();
@@ -9248,14 +9269,21 @@ void ReplicatedPG::eval_repop(RepGather *repop)
     }
 
     dout(10) << " removing " << *repop << dendl;
+    
     assert(!repop_queue.empty());
+    
     dout(20) << "   q front is " << *repop_queue.front() << dendl; 
+    
     if (repop_queue.front() != repop) {
       dout(0) << " removing " << *repop << dendl;
       dout(0) << "   q front is " << *repop_queue.front() << dendl; 
+      
       assert(repop_queue.front() == repop);
     }
+
+    // pushed on by ReplicatedPG::new_repop
     repop_queue.pop_front();
+    
     remove_repop(repop);
   }
 }
@@ -9310,8 +9338,11 @@ void ReplicatedPG::issue_repop(RepGather *repop, OpContext *ctx)
     }
   }
 
+  // ReplicatedPG::repop_all_committed
   Context *on_all_commit = new C_OSD_RepopCommit(this, repop);
+  // ReplicatedPG::repop_all_applied
   Context *on_all_applied = new C_OSD_RepopApplied(this, repop);
+  // obc->ondisk_write_unlock
   Context *onapplied_sync = new C_OSD_OndiskWriteUnlock(
     ctx->obc,
     ctx->clone_obc,
@@ -9345,11 +9376,14 @@ ReplicatedPG::RepGather *ReplicatedPG::new_repop(
   else
     dout(10) << "new_repop rep_tid " << rep_tid << " (no op)" << dendl;
 
+  // RepGather::on_applied, on_committed, on_success, on_finish are assigned from
+  // OpContext with the same name
   RepGather *repop = new RepGather(ctx, rep_tid, info.last_complete);
 
   repop->start = ceph_clock_now(cct);
 
   repop_queue.push_back(&repop->queue_item);
+  
   repop->get();
 
   osd->logger->inc(l_osd_op_wip);
