@@ -400,7 +400,7 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
     if (object_player->empty() && object_player->refetch_required()) {
 
       // ObjectPlayer::m_refetch_state is not REFETCH_STATE_NONE which means
-      // we have finished the last fetch, we can start a second fetch to the same
+      // we have finished the last fetch, we can start a second fetch on the same
       // object, see ObjectPlayer::handle_fetch_complete, ObjectPlayer::m_refetch_state 
       // has been set to REFETCH_STATE_REQUIRED by ObjectPlayer::handle_fetch_complete
       
@@ -412,7 +412,8 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
       fetch(object_player);
     } else if (!remove_empty_object_player(object_player)) {
 
-      // no the next object at the same splay offset needed
+      // remove failed, which means no need to fetch the next object at the same splay offset, 
+      // i.e., current object is not empty
     
       ldout(m_cct, 10) << "prefetch of object complete" << dendl;
       
@@ -438,11 +439,17 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   // if we have a valid commit position, our read should start with
   // the next consistent journal entry in the sequence
   if (m_commit_position_valid) {
+
+    // the latest commit position of the journal is valid
+        
     splay_offset = m_commit_position.object_number % splay_width;
     object_player = m_object_players[splay_offset];
 
     if (object_player->empty()) {
       if (!object_player->refetch_required()) {
+        
+        // ++m_splay_offset and reset m_watch_step to WATCH_STEP_FETCH_CURRENT
+        
         advance_splay_object();
       }
     } else {
@@ -456,11 +463,14 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
 
   if (verify_playback_ready()) {
 
-    // let rbd replay handler registered in Journal<I>::handle_get_tags,
+    // let rbd replay handler which registered in Journal<I>::handle_get_tags,
     // i.e., Journal::handle_replay_ready, to process entries
 
     notify_entries_available();
   } else if (is_object_set_ready()) {
+
+    // try to fetch object a m_splay_offset if refetch required, else notify the 
+  
     refetch(false);
   }
 
@@ -860,6 +870,7 @@ void JournalPlayer::refetch(bool immediate) {
     return;
   }
 
+  // get object at m_splay_offset
   ObjectPlayerPtr object_player = get_object_player();
   
   if (object_player->refetch_required()) {
@@ -872,6 +883,7 @@ void JournalPlayer::refetch(bool immediate) {
     return;
   }
 
+  // will call Journal::handle_replay_ready
   notify_complete(0);
 }
 
