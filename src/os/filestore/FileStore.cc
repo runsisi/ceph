@@ -2098,12 +2098,14 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
     // Sequencer_implRef is NULL when the PG Sequencer was constructed
 
     osr = static_cast<OpSequencer *>(posr->p.get());
+
     dout(5) << "queue_transactions existing " << osr << " " << *osr << dendl;
   } else {
     osr = new OpSequencer(next_osr_id.inc());
     osr->set_cct(g_ceph_context);
     osr->parent = posr;
     posr->p = osr;
+
     dout(5) << "queue_transactions new " << osr << " " << *osr << dendl;
   }
 
@@ -2197,8 +2199,11 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
     queue_op(osr, o);
 
     if (ondisk)
+      // will be finished by JournalingObjectStore::ApplyManager::commit_finish
       apply_manager.add_waiter(op_num, ondisk);
+
     submit_manager.op_submit_finish(op_num);
+
     utime_t end = ceph_clock_now(g_ceph_context);
     logger->tinc(l_os_queue_lat, end - start);
     return 0;

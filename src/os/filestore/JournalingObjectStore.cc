@@ -193,10 +193,13 @@ void JournalingObjectStore::SubmitManager::op_submit_finish(uint64_t op)
 
 // ------------------------------------------
 
+// called by FileStore::queue_transactions in non-journal mode
 void JournalingObjectStore::ApplyManager::add_waiter(uint64_t op, Context *c)
 {
   Mutex::Locker l(com_lock);
+
   assert(c);
+
   commit_waiters[op].push_back(c);
 }
 
@@ -286,7 +289,9 @@ void JournalingObjectStore::ApplyManager::commit_finish()
   map<version_t, vector<Context*> >::iterator p = commit_waiters.begin();
   while (p != commit_waiters.end() &&
     p->first <= committing_seq) {
+    // ondisk
     finisher.queue(p->second);
+
     commit_waiters.erase(p++);
   }
 }

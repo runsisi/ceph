@@ -1843,7 +1843,7 @@ public:
     TrackedOpRef op = TrackedOpRef(),
     ThreadPool::TPHandle *handle = NULL) = 0;
 
-
+  // call oncomplete when both onreadable and oncommit have been completed
   int queue_transactions(
     Sequencer *osr,
     vector<Transaction>& tls,
@@ -1853,6 +1853,7 @@ public:
     Context *oncomplete,
     TrackedOpRef op);
 
+  // called by OSD::RemoveWQ::_process
   int queue_transaction(
     Sequencer *osr,
     Transaction&& t,
