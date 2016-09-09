@@ -1077,6 +1077,7 @@ void JournalMetadata::committed(uint64_t commit_tid,
 
     bool update_commit_position = false;
 
+    // m_pending_commit_tids inserted by JournalMetadata::allocate_commit_tid
     while (!m_pending_commit_tids.empty()) {
       CommitTids::iterator it = m_pending_commit_tids.begin();
 

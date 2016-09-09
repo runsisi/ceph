@@ -403,12 +403,19 @@ void Journaler::stop_replay(Context *on_finish) {
   player->shut_down(on_finish);
 }
 
+// called by Journal<I>::handle_replay_process_safe
+// and ImageReplayer<I>::handle_process_entry_safe
 void Journaler::committed(const ReplayEntry &replay_entry) {
+  // call m_journal_metadata->committed
   m_trimmer->committed(replay_entry.get_commit_tid());
 }
 
+// called by Journal<I>::demote, Journal<I>::complete_event, Journal<I>::handle_io_event_safe
+// and Journal<I>::handle_op_event_safe
 void Journaler::committed(const Future &future) {
   FutureImplPtr future_impl = future.get_future_impl();
+
+  // call m_journal_metadata->committed
   m_trimmer->committed(future_impl->get_commit_tid());
 }
 
@@ -425,6 +432,7 @@ void Journaler::start_append(int flush_interval, uint64_t flush_bytes,
 
 void Journaler::stop_append(Context *on_safe) {
   JournalRecorder *recorder = nullptr;
+
   std::swap(recorder, m_recorder);
   assert(recorder != nullptr);
 

@@ -757,6 +757,7 @@ int Journal<I>::demote() {
   }
 
   assert(m_tag_data.mirror_uuid == LOCAL_MIRROR_UUID);
+
   journal::TagPredecessor predecessor;
   predecessor.mirror_uuid = LOCAL_MIRROR_UUID;
   if (!client.commit_position.object_positions.empty()) {
@@ -799,6 +800,7 @@ int Journal<I>::demote() {
   ::encode(event_entry, event_entry_bl);
 
   m_tag_tid = new_tag.tid;
+
   Future future = m_journaler->append(m_tag_tid, event_entry_bl);
 
   C_SaferCond ctx;
