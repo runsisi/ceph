@@ -1202,9 +1202,15 @@ void FileJournal::do_write(bufferlist& bl)
     // kick finisher?
     //  only if we haven't filled up recently!
     if (full_state != FULL_NOTFULL) {
+
+      // which means the journal is full
+
       dout(10) << "do_write NOT queueing finisher seq " << journaled_seq
 	       << ", full_commit_seq|full_restart_seq" << dendl;
     } else {
+
+      // journal is not full
+
       if (plug_journal_completions) {
 
         // only set by FileJournal::commit_start when FileJournal::full_state is FULL_WAIT
