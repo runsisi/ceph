@@ -136,6 +136,7 @@ void Journaler::init(Context *on_init) {
   // 1) watch the journal.xxx object, i.e., the journal metadata object
   // 2) get immutable and mutable metadata etc.
 
+  // journaler->init_complete
   m_metadata->init(new C_InitJournaler(this, on_init));
 }
 
@@ -162,6 +163,7 @@ int Journaler::init_complete() {
     }
   }
 
+  // used by Journaler::committed and Journaler::remove
   m_trimmer = new JournalTrimmer(m_data_ioctx, m_object_oid_prefix,
                                  m_metadata);
   return 0;

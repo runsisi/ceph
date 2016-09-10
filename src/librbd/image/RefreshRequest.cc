@@ -529,7 +529,9 @@ void RefreshRequest<I>::send_v2_open_journal() {
      m_image_ctx.journal != nullptr ||
      m_image_ctx.exclusive_lock == nullptr ||
      !m_image_ctx.exclusive_lock->is_lock_owner());
+
   bool journal_disabled_by_policy;
+
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     journal_disabled_by_policy = (
@@ -1040,6 +1042,7 @@ void RefreshRequest<I>::apply() {
       m_image_ctx.add_snap(m_snap_names[i], m_snapc.snaps[i].val,
                            m_snap_sizes[i], parent, protection_status, flags);
     }
+
     m_image_ctx.snapc = m_snapc;
 
     if (m_image_ctx.snap_id != CEPH_NOSNAP &&

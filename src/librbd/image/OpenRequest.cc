@@ -394,6 +394,8 @@ void OpenRequest<I>::send_refresh() {
 
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
+  // update snapc, snaps, exclusive_lock, object_map, journal
+
   using klass = OpenRequest<I>;
   RefreshRequest<I> *ctx = RefreshRequest<I>::create(
     *m_image_ctx, false,

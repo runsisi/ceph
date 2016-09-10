@@ -664,12 +664,16 @@ void Journal<I>::open(Context *on_finish) {
   on_finish = create_async_context_callback(m_image_ctx, on_finish);
 
   Mutex::Locker locker(m_lock);
+
   assert(m_state == STATE_UNINITIALIZED);
 
-  // called until STATE_READY or STATE_CLOSED
+  // called until STATE_READY or STATE_CLOSED, STATE_READY will be
+  // set by Journal<I>::start_append, which means the replaying has
+  // been completed
   wait_for_steady_state(on_finish);
 
   // new Journaler instance and init it, see also ImageReplayer<I>::init_remote_journaler
+  // after initialize journaler the do replaying
   // transit into STATE_INITIALIZING
   create_journaler();
 }
@@ -1330,6 +1334,7 @@ void Journal<I>::create_journaler() {
   assert(m_journaler == NULL);
 
   transition_state(STATE_INITIALIZING, 0);
+
   ::journal::Settings settings;
   settings.commit_interval = m_image_ctx.journal_commit_age;
   settings.max_payload_bytes = m_image_ctx.journal_max_payload_bytes;
@@ -1342,6 +1347,9 @@ void Journal<I>::create_journaler() {
   m_journaler = new Journaler(m_work_queue, m_timer, m_timer_lock,
 			      m_image_ctx.md_ctx, m_image_ctx.id,
 			      IMAGE_CLIENT_ID, settings);
+
+  // init Journaler::m_metadata and alloc Journaler::m_trimmer, after
+  // initialized the journaler then in the callback to do the replaying
   m_journaler->init(create_async_context_callback(
     m_image_ctx, create_context_callback<
       Journal<I>, &Journal<I>::handle_initialized>(this)));
@@ -1456,6 +1464,7 @@ void Journal<I>::handle_initialized(int r) {
   ldout(cct, 20) << this << " " << __func__ << ": r=" << r << dendl;
 
   Mutex::Locker locker(m_lock);
+
   assert(m_state == STATE_INITIALIZING);
 
   if (r < 0) {
@@ -1498,6 +1507,7 @@ void Journal<I>::handle_initialized(int r) {
 
   journal::ImageClientMeta *image_client_meta =
     boost::get<journal::ImageClientMeta>(&client_data.client_meta);
+
   if (image_client_meta == nullptr) {
     lderr(cct) << this << " " << __func__ << ": "
                << "failed to extract client meta data" << dendl;
@@ -1542,8 +1552,11 @@ void Journal<I>::handle_get_tags(int r) {
 
   m_journal_replay = journal::Replay<I>::create(m_image_ctx);
 
-  // create an JournalPlayer instance and register a rbd replay handler
-  // into it, then prefetch
+  // create an JournalPlayer instance and register a rbd replay handler,
+  // i.e., Journal::ReplayHandler instance, into it, then prefetch
+  // the ReplayHandler provides two interfaces, i.e., journal->handle_replay_ready
+  // and journal->handle_replay_complete, to notify us from the
+  // journaler inside
   m_journaler->start_replay(&m_replay_handler);
 }
 
@@ -1647,6 +1660,7 @@ void Journal<I>::handle_replay_complete(int r) {
                      << "handle shut down replay" << dendl;
 
       State state;
+
       {
         Mutex::Locker locker(m_lock);
 
