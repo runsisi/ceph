@@ -358,15 +358,19 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
 
   C_SaferCond cond;
   journal::TagData tag_data(LOCAL_MIRROR_UUID);
+
   ContextWQ op_work_queue("librbd::op_work_queue",
                           cct->_conf->rbd_op_thread_timeout,
                           ImageCtx::get_thread_pool_instance(cct));
+
   journal::CreateRequest<I> *req = journal::CreateRequest<I>::create(
     io_ctx, image_id, order, splay_width, object_pool, cls::journal::Tag::TAG_CLASS_NEW,
     tag_data, IMAGE_CLIENT_ID, &op_work_queue, &cond);
+
   req->send();
 
   int r = cond.wait();
+
   op_work_queue.drain();
 
   return r;
@@ -383,11 +387,14 @@ int Journal<I>::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
   ContextWQ op_work_queue("librbd::op_work_queue",
                           cct->_conf->rbd_op_thread_timeout,
                           ImageCtx::get_thread_pool_instance(cct));
+
   journal::RemoveRequest<I> *req = journal::RemoveRequest<I>::create(
     io_ctx, image_id, IMAGE_CLIENT_ID, &op_work_queue, &cond);
+
   req->send();
 
   int r = cond.wait();
+
   op_work_queue.drain();
 
   return r;
@@ -1123,6 +1130,7 @@ void Journal<I>::append_op_event(uint64_t op_tid,
                  << "event=" << event_entry.get_event_type() << dendl;
 }
 
+// called by operation/Request<I>::commit_op_event
 template <typename I>
 void Journal<I>::commit_op_event(uint64_t op_tid, int r, Context *on_safe) {
   CephContext *cct = m_image_ctx.cct;

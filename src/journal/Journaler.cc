@@ -135,8 +135,9 @@ void Journaler::init(Context *on_init) {
 
   // 1) watch the journal.xxx object, i.e., the journal metadata object
   // 2) get immutable and mutable metadata etc.
+  // 3) create JournalTrimmer instance
 
-  // journaler->init_complete
+  // call Journaler::init_complete to create JournalTrimmer instance
   m_metadata->init(new C_InitJournaler(this, on_init));
 }
 
@@ -175,6 +176,7 @@ void Journaler::shut_down() {
   ctx.wait();
 }
 
+// called by Journaler::shut_down, RemoveRequest<I>::shut_down_journaler
 void Journaler::shut_down(Context *on_finish) {
   assert(m_player == nullptr);
   assert(m_recorder == nullptr);
@@ -188,7 +190,9 @@ void Journaler::shut_down(Context *on_finish) {
       on_finish->complete(0);
     });
 
+  // m_trimmer was created during Journaler::init
   JournalTrimmer *trimmer = nullptr;
+
   std::swap(trimmer, m_trimmer);
   if (trimmer == nullptr) {
     metadata->shut_down(on_finish);
@@ -197,9 +201,13 @@ void Journaler::shut_down(Context *on_finish) {
 
   on_finish = new FunctionContext([trimmer, metadata, on_finish](int r) {
       delete trimmer;
+
+      // m_ioctx.aio_unwatch -> flush_commit_position -> rados.aio_watch_flush
       metadata->shut_down(on_finish);
     });
 
+  // m_journal_metadata->remove_listener and
+  // m_journal_metadata->flush_commit_position
   trimmer->shut_down(on_finish);
 }
 
@@ -239,6 +247,7 @@ void Journaler::create(uint8_t order, uint8_t splay_width,
 
   librados::AioCompletion *comp =
     librados::Rados::aio_create_completion(on_finish, nullptr, rados_ctx_callback);
+
   int r = m_header_ioctx.aio_operate(m_header_oid, comp, &op);
   assert(r == 0);
   comp->release();
@@ -249,12 +258,15 @@ void Journaler::remove(bool force, Context *on_finish) {
   on_finish = new FunctionContext([this, on_finish](int r) {
       librados::AioCompletion *comp = librados::Rados::aio_create_completion(
         on_finish, nullptr, utils::rados_ctx_callback);
+
+      // remove "journal.xxx' metadata object
       r = m_header_ioctx.aio_remove(m_header_oid, comp);
       assert(r == 0);
       comp->release();
     });
 
   on_finish = new FunctionContext([this, force, on_finish](int r) {
+      // remove journal objects
       m_trimmer->remove_objects(force, on_finish);
     });
 

@@ -46,6 +46,7 @@ void CreateRequest<I>::send() {
     complete(-EDOM);
     return;
   }
+
   if (m_splay_width == 0) {
     complete(-EINVAL);
     return;
@@ -74,7 +75,10 @@ void CreateRequest<I>::get_pool_id() {
     return;
   }
 
+  // if we did not provide the pool name, then the m_pool_id will has the
+  // default value -1
   m_pool_id = data_ioctx.get_id();
+
   create_journal();
 }
 
@@ -89,6 +93,8 @@ void CreateRequest<I>::create_journal() {
   using klass = CreateRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_create_journal>(this);
 
+  // register omaps, i.e., "order", "splay_width", etc., for "journal.xxx"
+  // metadata object
   m_journaler->create(m_order, m_splay_width, m_pool_id, ctx);
 }
 
@@ -113,7 +119,10 @@ void CreateRequest<I>::allocate_journal_tag() {
   using klass = CreateRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_journal_tag>(this);
 
+  // tag_data(LOCAL_MIRROR_UUID)
   ::encode(m_tag_data, m_bl);
+
+  // Tag::TAG_CLASS_NEW
   m_journaler->allocate_tag(m_tag_class, m_bl, &m_tag, ctx);
 }
 

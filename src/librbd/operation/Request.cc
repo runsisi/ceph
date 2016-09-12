@@ -41,7 +41,7 @@ void Request<I>::send() {
   }
 }
 
-// overrided from AsyncRequest::finish
+// called by: ResizeRequest, SnapshotCreateRequest, and SnapshotRollbackRequest
 template <typename I>
 Context *Request<I>::create_context_finisher(int r) {
   // automatically commit the event if required (delete after commit)
@@ -56,6 +56,7 @@ Context *Request<I>::create_context_finisher(int r) {
   return util::create_context_callback<Request<I>, &Request<I>::finish>(this);
 }
 
+// called by librbd/AsyncRequest::complete
 template <typename I>
 void Request<I>::finish_and_destroy(int r) {
   I &image_ctx = this->m_image_ctx;
@@ -111,6 +112,9 @@ bool Request<I>::append_op_event() {
   return false;
 }
 
+// called by
+// Request<I>::create_context_finisher,
+// Request<I>::finish_and_destroy,
 template <typename I>
 bool Request<I>::commit_op_event(int r) {
   I &image_ctx = this->m_image_ctx;

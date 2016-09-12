@@ -1005,6 +1005,7 @@ int journal_tag_create(cls_method_context_t hctx, bufferlist *in,
   }
 
   // write tag structure
+  // <tag_tid, tag_class, tag_data>
   cls::journal::Tag tag(tag_tid, tag_class, data);
   key = key_from_tag_tid(tag_tid);
   r = write_key(hctx, key, tag);
