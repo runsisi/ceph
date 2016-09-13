@@ -5661,20 +5661,25 @@ void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, buffe
     }
 
     utime_t start = ceph_clock_now(cct);
+
     for (int64_t pos = 0; pos < count; pos += bsize) {
       char nm[30];
       unsigned offset = 0;
+
       if (onum && osize) {
 	snprintf(nm, sizeof(nm), "disk_bw_test_%d", (int)(rand() % onum));
 	offset = rand() % (osize / bsize) * bsize;
       } else {
 	snprintf(nm, sizeof(nm), "disk_bw_test_%lld", (long long)pos);
       }
+
       object_t oid(nm);
       hobject_t soid(sobject_t(oid, 0));
       ObjectStore::Transaction t;
+
       t.write(coll_t::meta(), ghobject_t(soid), offset, bsize, bl);
       store->queue_transaction(osr.get(), std::move(t), NULL);
+
       if (!onum || !osize)
 	cleanupt.remove(coll_t::meta(), ghobject_t(soid));
     }
@@ -5685,6 +5690,7 @@ void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, buffe
 	waiter.wait();
       }
     }
+
     utime_t end = ceph_clock_now(cct);
 
     // clean up

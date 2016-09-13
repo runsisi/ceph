@@ -141,9 +141,12 @@ int FileStore::get_block_device_fsid(const string& path, uuid_d *fsid)
 void FileStore::FSPerfTracker::update_from_perfcounters(
   PerfCounters &logger)
 {
+  // last = cur, cur = next
   os_commit_latency.consume_next(
+    // next = <count, time in ms>
     logger.get_tavg_ms(
       l_os_j_lat));
+
   os_apply_latency.consume_next(
     logger.get_tavg_ms(
       l_os_apply_lat));
@@ -2028,12 +2031,14 @@ void FileStore::_finish_op(OpSequencer *osr)
   lat -= o->start;
 
   dout(10) << "_finish_op " << o << " seq " << o->op << " " << *osr << "/" << osr->parent << " lat " << lat << dendl;
+
   osr->apply_lock.Unlock();  // locked in _do_op
 
   // called with tp lock held
   // release throttle reserved by FileStore::queue_transactions
   op_queue_release_throttle(o);
 
+  // from FileStore::build_op to current now
   logger->tinc(l_os_apply_lat, lat);
 
   if (o->onreadable_sync) {

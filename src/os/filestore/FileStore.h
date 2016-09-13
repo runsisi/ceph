@@ -104,15 +104,20 @@ public:
 
     objectstore_perf_stat_t get_cur_stats() const {
       objectstore_perf_stat_t ret;
+
       ret.filestore_commit_latency = os_commit_latency.avg();
       ret.filestore_apply_latency = os_apply_latency.avg();
+
       return ret;
     }
 
     void update_from_perfcounters(PerfCounters &logger);
   } perf_tracker;
+
   objectstore_perf_stat_t get_cur_stats() {
+    // update os_commit_latency, os_commit_latency from <count, time in ms>
     perf_tracker.update_from_perfcounters(*logger);
+
     return perf_tracker.get_cur_stats();
   }
 

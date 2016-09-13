@@ -136,6 +136,7 @@ struct C_AllocateTag : public Context {
       bufferlist::iterator iter = out_bl.begin();
       r = client::get_next_tag_tid_finish(&iter, &tag->tid);
     }
+
     if (r < 0) {
       complete(r);
       return;
