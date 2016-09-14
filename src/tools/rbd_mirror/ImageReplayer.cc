@@ -958,6 +958,7 @@ void ImageReplayer<I>::on_flush_flush_commit_position_finish(Context *on_flush,
   on_flush->complete(r);
 }
 
+// return true means the replay stop has been requested
 template <typename I>
 bool ImageReplayer<I>::on_replay_interrupted()
 {
@@ -965,6 +966,7 @@ bool ImageReplayer<I>::on_replay_interrupted()
 
   {
     Mutex::Locker locker(m_lock);
+
     shut_down = m_stop_requested;
   }
 
@@ -1054,6 +1056,7 @@ void ImageReplayer<I>::replay_flush() {
       // replay immediately after init the remote journaler
       m_local_journal->start_external_replay(&m_local_replay, ctx);
     });
+
   m_local_replay->shut_down(false, ctx);
 }
 
@@ -1074,6 +1077,7 @@ void ImageReplayer<I>::handle_replay_flush(int r) {
     handle_replay_complete(r, "replay flush encountered an error");
     return;
   } else if (on_replay_interrupted()) {
+    // replay stop requested
     return;
   }
 
@@ -1127,8 +1131,9 @@ void ImageReplayer<I>::handle_get_remote_tag(int r) {
   allocate_local_tag();
 }
 
-// Journal has an interface with the same name, i.e.,
-// Journal<I>::allocate_local_tag(Context *on_finish)
+// note: Journal has an interface with the same name, i.e.,
+// Journal<I>::allocate_local_tag(Context *on_finish) which called when
+// we opened the journal succeeded
 template <typename I>
 void ImageReplayer<I>::allocate_local_tag() {
   dout(20) << dendl;
@@ -1164,11 +1169,14 @@ void ImageReplayer<I>::allocate_local_tag() {
            << "predecessor_mirror_uuid=" << predecessor.mirror_uuid << ", "
            << "replay_tag_tid=" << m_replay_tag_tid << ", "
            << "replay_tag_data=" << m_replay_tag_data << dendl;
+
   Context *ctx = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_allocate_local_tag>(this);
+
   m_local_journal->allocate_tag(mirror_uuid, predecessor, ctx);
 }
 
+// replicate primary tag finished
 template <typename I>
 void ImageReplayer<I>::handle_allocate_local_tag(int r) {
   dout(20) << "r=" << r << dendl;

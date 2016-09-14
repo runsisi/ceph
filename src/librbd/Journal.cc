@@ -215,7 +215,7 @@ int open_journaler(CephContext *cct, J *journaler,
   return 0;
 }
 
-// called by Journal::create, Journal::promote, Journal::demote
+// called by Journal::promote, Journal::demote
 template <typename J>
 int allocate_journaler_tag(CephContext *cct, J *journaler,
                            const cls::journal::Client &client,
@@ -562,6 +562,7 @@ int Journal<I>::request_resync(I *image_ctx) {
 }
 
 // static
+// called by librbd::mirror_image_promote
 // tag owner: last tag.mirror uuid(maybe m_remote_mirror_uuid) -> LOCAL_MIRROR_UUID
 template <typename I>
 int Journal<I>::promote(I *image_ctx) {
@@ -788,6 +789,9 @@ int Journal<I>::demote() {
   // pre_tag_data is used to set tag_data.prev mirror uuid
   // mirror_uuid is used to set tag_data.mirror uuid
 
+  // we can not call Journal<I>::allocate_tag here, becoz the m_lock mutex
+  // has been held by us, while Journal<I>::allocate_tag still try to
+  // lock the m_lock mutex
   // m_tag_class was got in Journal<I>::handle_initialized
   r = allocate_journaler_tag(cct, m_journaler, client, m_tag_class,
                              predecessor, ORPHAN_MIRROR_UUID, &new_tag);
@@ -850,9 +854,9 @@ int Journal<I>::demote() {
 // in this interface we allocate a tag with tag.mirror uuid and tag.prev mirror uuid
 // both set to LOCAL_MIRROR_UUID blindly
 
-// called by librbd::journal::StandardPolicy::allocate_tag_on_lock
-// ImageCtx has two policy instances: 1) librbd/exclusive_lock/StandardPolicy
-// and 2) librbd/journal/StandardPolicy
+// called by librbd::journal::StandardPolicy::allocate_tag_on_lock when
+// we succeeded opened the journal after acquired the exclusive lock
+// ImageCtx has two policy: 1) exclusive_lock policy and 2) journal policy
 template <typename I>
 void Journal<I>::allocate_local_tag(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;

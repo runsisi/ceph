@@ -205,6 +205,7 @@ struct C_InvalidateCache : public Context {
     memset(&header, 0, sizeof(header));
 
     ThreadPool *thread_pool_singleton = get_thread_pool_instance(cct);
+
     aio_work_queue = new AioImageRequestWQ(this, "librbd::aio_work_queue",
                                            cct->_conf->rbd_op_thread_timeout,
                                            thread_pool_singleton);
@@ -213,10 +214,14 @@ struct C_InvalidateCache : public Context {
                                   thread_pool_singleton);
 
     if (cct->_conf->rbd_auto_exclusive_lock_until_manual_request) {
+
+      // default true
+
       exclusive_lock_policy = new exclusive_lock::AutomaticPolicy(this);
     } else {
       exclusive_lock_policy = new exclusive_lock::StandardPolicy(this);
     }
+
     journal_policy = new journal::StandardPolicy(this);
   }
 

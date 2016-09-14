@@ -339,12 +339,17 @@ int Journaler::get_cached_client(const std::string &client_id,
   return 0;
 }
 
+// not used by anyone
 void Journaler::allocate_tag(const bufferlist &data, cls::journal::Tag *tag,
                              Context *on_finish) {
   m_metadata->allocate_tag(cls::journal::Tag::TAG_CLASS_NEW, data, tag,
                            on_finish);
 }
 
+// called by
+// StandardPolicy::allocate_tag_on_lock, ImageReplayer<I>::allocate_local_tag -> Journal<I>::allocate_tag
+// Journal<I>::promote, Journal<I>::demote -> allocate_journaler_tag,
+// Journal<I>::create -> CreateRequest<I>::allocate_journal_tag
 void Journaler::allocate_tag(uint64_t tag_class, const bufferlist &data,
                              cls::journal::Tag *tag, Context *on_finish) {
   // allocate a tag with specified tag class and tag data

@@ -13,6 +13,8 @@
 namespace librbd {
 namespace journal {
 
+// called by AcquireRequest<I>::send_allocate_journal_tag when acquired
+// exclusive lock
 void StandardPolicy::allocate_tag_on_lock(Context *on_finish) {
   assert(m_image_ctx->journal != nullptr);
 
