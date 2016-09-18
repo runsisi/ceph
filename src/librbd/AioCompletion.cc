@@ -175,6 +175,7 @@ void AioCompletion::set_request_count(uint32_t count) {
   unblock();
 }
 
+// called by C_AioRequest::finish
 // complete one object request
 void AioCompletion::complete_request(ssize_t r)
 {
@@ -188,6 +189,7 @@ void AioCompletion::complete_request(ssize_t r)
     else if (r > 0)
       rval += r;
   }
+
   assert(pending_count);
   int count = --pending_count;
 
@@ -203,6 +205,7 @@ void AioCompletion::complete_request(ssize_t r)
 
     complete();
   }
+
   put_unlock();
 }
 

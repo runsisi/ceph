@@ -92,10 +92,13 @@ void AioObjectRequest<I>::complete(int r)
 {
   if (should_complete(r)) {
     ldout(m_ictx->cct, 20) << "complete " << this << dendl;
+
     if (m_hide_enoent && r == -ENOENT) {
       r = 0;
     }
+
     m_completion->complete(r);
+
     delete this;
   }
 }
@@ -472,6 +475,7 @@ void AbstractAioObjectWrite::send() {
   ldout(m_ictx->cct, 20) << "send " << get_write_type() << " " << this <<" "
                          << m_oid << " " << m_object_off << "~"
                          << m_object_len << dendl;
+
   send_pre();
 }
 

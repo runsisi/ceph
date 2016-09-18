@@ -75,7 +75,9 @@ protected:
   }
 
   virtual int clip_request();
+  // bypass or without image cache
   virtual void send_request() = 0;
+  // with image cache
   virtual void send_image_cache_request() = 0;
 
   virtual aio_type_t get_aio_type() const = 0;

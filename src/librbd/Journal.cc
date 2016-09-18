@@ -933,6 +933,8 @@ void Journal<I>::flush_commit_position(Context *on_finish) {
   m_journaler->flush_commit_position(on_finish);
 }
 
+// called by AioImageWrite<I>::append_journal_event
+// for AioImageDiscard it calls image_ctx.journal->append_io_event directly
 template <typename I>
 uint64_t Journal<I>::append_write_event(uint64_t offset, size_t length,
                                         const bufferlist &bl,
@@ -985,6 +987,9 @@ uint64_t Journal<I>::append_io_event(journal::EventEntry &&event_entry,
                           length, flush_entry);
 }
 
+// interface between librbd and Journaler, called by
+// AioImageWrite<I>::append_journal_event and AioImageDiscard<I>::append_journal_event
+// indirectly
 template <typename I>
 uint64_t Journal<I>::append_io_events(journal::EventType event_type,
                                       const Bufferlists &bufferlists,
@@ -1036,6 +1041,7 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
   } else {
     futures.back().wait(on_safe);
   }
+
   return tid;
 }
 
@@ -1897,6 +1903,7 @@ void Journal<I>::handle_journal_destroyed(int r) {
   transition_state(STATE_CLOSED, r);
 }
 
+// called by C_IOEventSafe::finish
 // user io Event write to journal object returned
 template <typename I>
 void Journal<I>::handle_io_event_safe(int r, uint64_t tid) {
