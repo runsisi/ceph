@@ -251,7 +251,8 @@ Context *AcquireRequest<I>::send_open_journal() {
   // RefreshRequest<I>::send_v2_open_journal
   apply();
 
-  // the callback will be called until librbd::STATE_READY or librbd::STATE_CLOSED
+  // the callback will be called until Journal::STATE_READY or Journal::STATE_CLOSED
+  // i.e., the after the journal replaying finshed or failed
   m_journal->open(ctx);
 
   return nullptr;

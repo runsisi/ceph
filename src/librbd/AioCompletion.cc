@@ -129,6 +129,14 @@ void AioCompletion::complete() {
   tracepoint(librbd, aio_complete_exit);
 }
 
+// called by:
+// static AioCompletion::create_and_start
+// AioImageRequestWQ::aio_read
+// AioImageRequestWQ::aio_write
+// AioImageRequestWQ::aio_discard
+// AioImageRequestWQ::aio_flush
+// C_OpenComplete::C_OpenComplete
+// C_CloseComplete::C_CloseComplete
 void AioCompletion::init_time(ImageCtx *i, aio_type_t t) {
   Mutex::Locker locker(lock);
   if (ictx == nullptr) {

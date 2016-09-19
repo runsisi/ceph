@@ -681,7 +681,8 @@ void Journal<I>::open(Context *on_finish) {
   wait_for_steady_state(on_finish);
 
   // new Journaler instance and init it, see also ImageReplayer<I>::init_remote_journaler
-  // after initialize journaler the do replaying
+  // after Journaler initialized, the Journal<I>::handle_initialized callback
+  // will do journal replaying
   // transit into STATE_INITIALIZING
   create_journaler();
 }
@@ -743,6 +744,8 @@ uint64_t Journal<I>::get_tag_tid() const {
   return m_tag_tid;
 }
 
+// called by BootstrapRequest<I>::handle_get_remote_tags to get the tag data
+// of the local image
 template <typename I>
 journal::TagData Journal<I>::get_tag_data() const {
   Mutex::Locker locker(m_lock);
@@ -864,6 +867,7 @@ void Journal<I>::allocate_local_tag(Context *on_finish) {
 
   journal::TagPredecessor predecessor;
   predecessor.mirror_uuid = LOCAL_MIRROR_UUID;
+
   {
     Mutex::Locker locker(m_lock);
     assert(m_journaler != nullptr && is_tag_owner(m_lock));
@@ -878,13 +882,14 @@ void Journal<I>::allocate_local_tag(Context *on_finish) {
       return;
     }
 
-    // since we are primary, populate the predecessor with our known commit
-    // position
+    // we have just opened the journal, see AcquireRequest<I>::handle_open_journal
+    // m_tag_data was got by Journal<I>::handle_initialized
     assert(m_tag_data.mirror_uuid == LOCAL_MIRROR_UUID);
 
     // new -> older
     if (!client.commit_position.object_positions.empty()) {
       auto position = client.commit_position.object_positions.front();
+
       predecessor.commit_valid = true;
       predecessor.tag_tid = position.tag_tid;
       predecessor.entry_tid = position.entry_tid;
@@ -2061,6 +2066,7 @@ bool Journal<I>::is_steady_state() const {
 template <typename I>
 void Journal<I>::wait_for_steady_state(Context *on_state) {
   assert(m_lock.is_locked());
+
   assert(!is_steady_state());
 
   CephContext *cct = m_image_ctx.cct;
