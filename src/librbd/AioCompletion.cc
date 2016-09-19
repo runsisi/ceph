@@ -176,7 +176,7 @@ void AioCompletion::set_request_count(uint32_t count) {
 }
 
 // called by C_AioRequest::finish
-// complete one object request
+// complete image request, i.e., read, write, discard, flush
 void AioCompletion::complete_request(ssize_t r)
 {
   lock.Lock();
