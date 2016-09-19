@@ -3573,6 +3573,7 @@ void ReplicatedPG::reply_ctx(OpContext *ctx, int r)
   close_op_ctx(ctx);
 }
 
+// never been used
 void ReplicatedPG::reply_ctx(OpContext *ctx, int r, eversion_t v, version_t uv)
 {
   if (ctx->op)
@@ -9367,6 +9368,7 @@ void ReplicatedPG::issue_repop(RepGather *repop, OpContext *ctx)
     ctx->op);
 }
 
+// called by ReplicatedPG::execute_ctx, ReplicatedPG::simple_opc_submit
 ReplicatedPG::RepGather *ReplicatedPG::new_repop(
   OpContext *ctx, ObjectContextRef obc,
   ceph_tid_t rep_tid)
@@ -9391,6 +9393,7 @@ ReplicatedPG::RepGather *ReplicatedPG::new_repop(
   return repop;
 }
 
+// called by ReplicatedPG::submit_log_entries
 boost::intrusive_ptr<ReplicatedPG::RepGather> ReplicatedPG::new_repop(
   ObcLockManager &&manager,
   boost::optional<std::function<void(void)> > &&on_complete)
