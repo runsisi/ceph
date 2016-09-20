@@ -272,9 +272,9 @@ Context *AcquireRequest<I>::handle_open_journal(int *ret_val) {
     return nullptr;
   }
 
-  // we do a lot of things, like refresh image, open object map, open journal,
+  // we have done a lot of things, like refresh image, open object map, open journal,
   // now do the final step, but sadly we may fail if we are not the tag owner,
-  // we can only allocate the local tag if we are already the tag owner,
+  // we can allocate the local tag only if we are the tag owner,
   // otherwise we fail and we need to do all these cleanups
   send_allocate_journal_tag();
 
@@ -293,8 +293,11 @@ void AcquireRequest<I>::send_allocate_journal_tag() {
     klass, &klass::handle_allocate_journal_tag>(this);
 
   // call m_image_ctx->journal->allocate_local_tag to allocate a tag with
-  // tag.mirror_uuid and tag.prev mirror uuid both set to LOCAL_MIRROR_UUID
+  // tag.mirror_uuid and prev mirror uuid both set to LOCAL_MIRROR_UUID
   // only call it if the image is the primary, i.e., the tag owner
+  // client io for non-primary image is not allowed, so for non-primary
+  // image the allocate_tag_on_lock call will fail, which results the
+  // whole acquiring exclusive lock fail
   m_image_ctx.get_journal_policy()->allocate_tag_on_lock(ctx);
 }
 

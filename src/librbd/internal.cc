@@ -3151,6 +3151,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     return 0;
   }
 
+  // called by rbd_mirror_image_disable/Image::mirror_image_disable
+  // and mirror_mode_set
   int mirror_image_disable(ImageCtx *ictx, bool force) {
     CephContext *cct = ictx->cct;
     ldout(cct, 20) << "mirror_image_disable " << ictx << dendl;
@@ -3601,6 +3603,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     return 0;
   }
 
+  // called by rbd_mirror_mode_set/RBD::mirror_mode_set
   int mirror_mode_set(IoCtx& io_ctx, rbd_mirror_mode_t mirror_mode) {
     CephContext *cct = reinterpret_cast<CephContext *>(io_ctx.cct());
     ldout(cct, 20) << __func__ << dendl;

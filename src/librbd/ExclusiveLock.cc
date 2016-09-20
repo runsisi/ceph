@@ -403,9 +403,11 @@ void ExclusiveLock<I>::complete_active_action(State next_state, int r) {
   m_state = next_state;
 
   m_lock.Unlock();
+
   for (auto ctx : action_contexts.second) {
     ctx->complete(r);
   }
+
   m_lock.Lock();
 
   if (!is_transition_state() && !m_actions_contexts.empty()) {
@@ -457,6 +459,8 @@ void ExclusiveLock<I>::send_acquire_lock() {
     m_image_ctx, m_cookie,
     util::create_context_callback<el, &el::handle_acquiring_lock>(this),
     util::create_context_callback<el, &el::handle_acquire_lock>(this));
+
+  // request->send
   m_image_ctx.op_work_queue->queue(new C_SendRequest<AcquireRequest<I> >(req),
                                    0);
 }
@@ -533,6 +537,7 @@ void ExclusiveLock<I>::handle_acquire_lock(int r) {
 
     m_image_ctx.image_watcher->notify_acquired_lock();
 
+    // unblock io, see AioImageRequestWQ::_void_dequeue
     m_image_ctx.aio_work_queue->clear_require_lock_on_read();
     m_image_ctx.aio_work_queue->unblock_writes();
   }

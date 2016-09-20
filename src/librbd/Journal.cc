@@ -577,6 +577,7 @@ int Journal<I>::promote(I *image_ctx) {
   uint64_t tag_tid;
   journal::TagData tag_data;
 
+  // init Journaler and get the last tag
   int r = open_journaler(image_ctx->cct, &journaler, &client, &client_meta,
                          &tag_tid, &tag_data);
   BOOST_SCOPE_EXIT_ALL(&journaler) {
@@ -604,12 +605,8 @@ int Journal<I>::promote(I *image_ctx) {
 
   cls::journal::Tag new_tag;
 
-  // allocate a new tag with owner set to local master client
-  // allocate_journaler_tag(cct, journaler, client, tag_class, prev_tag_data, mirror_uuid, *new_tag)
-  // client is used to get the latest commit position to set tag_data.prev tag tid and tag_data.prev entry id
-  // tag_class is part of Tag
-  // pre_tag_data is used to set tag_data.prev mirror uuid
-  // mirror_uuid is used to set tag_data.mirror uuid
+  // allocate a new tag with owner set to local cluster
+  // note: client is not used
   r = allocate_journaler_tag(cct, &journaler, client, client_meta.tag_class,
                              predecessor, LOCAL_MIRROR_UUID, &new_tag);
   if (r < 0) {
@@ -792,8 +789,8 @@ int Journal<I>::demote() {
   // pre_tag_data is used to set tag_data.prev mirror uuid
   // mirror_uuid is used to set tag_data.mirror uuid
 
-  // we can not call Journal<I>::allocate_tag here, becoz the m_lock mutex
-  // has been held by us, while Journal<I>::allocate_tag still try to
+  // we can not call Journal<I>::allocate_tag member method here, becoz
+  // we have held the m_lock mutex, while Journal<I>::allocate_tag need to
   // lock the m_lock mutex
   // m_tag_class was got in Journal<I>::handle_initialized
   r = allocate_journaler_tag(cct, m_journaler, client, m_tag_class,
@@ -852,14 +849,20 @@ int Journal<I>::demote() {
 
 // ImageReplayer has an interface with the same name, i.e.,
 // ImageReplayer<I>::allocate_local_tag to mirror the tag of remote journal tag, but
-// it has to modify the tag.mirror_uuid and tag.prev mirror uuid before allocate the
+// it has to modify the tag.mirror_uuid and prev mirror uuid before allocate the
 // local tag
-// in this interface we allocate a tag with tag.mirror uuid and tag.prev mirror uuid
-// both set to LOCAL_MIRROR_UUID blindly
+// in this interface we allocate a tag with tag.mirror uuid and prev mirror uuid
+// both set to LOCAL_MIRROR_UUID, becoz we were primary image the last time
+// we closed the image, and now we have succeeded to open the journal, so
+// add a new tag to identify that we are still the primary image
 
-// called by librbd::journal::StandardPolicy::allocate_tag_on_lock when
-// we succeeded opened the journal after acquired the exclusive lock
-// ImageCtx has two policy: 1) exclusive_lock policy and 2) journal policy
+// called by librbd::journal::StandardPolicy::allocate_tag_on_lock after
+// we have succeeded acquiring the exclusive lock, opened the journal, and the
+// image is the primary image
+// only if we are the primary image then allocate_local_tag will be called,
+// because client io is not allowed for non-primary image
+
+// note: ImageCtx has two policy: 1) exclusive_lock policy and 2) journal policy
 template <typename I>
 void Journal<I>::allocate_local_tag(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -883,10 +886,12 @@ void Journal<I>::allocate_local_tag(Context *on_finish) {
     }
 
     // we have just opened the journal, see AcquireRequest<I>::handle_open_journal
-    // m_tag_data was got by Journal<I>::handle_initialized
+    // m_tag_data was got by Journal<I>::handle_initialized, which is the
+    // last tag of the journal, becoz we were the primary image when we
+    // were closed, so the last tag owner must be local cluster
     assert(m_tag_data.mirror_uuid == LOCAL_MIRROR_UUID);
 
-    // new -> older
+    // commit positions: new -> older
     if (!client.commit_position.object_positions.empty()) {
       auto position = client.commit_position.object_positions.front();
 
@@ -899,7 +904,9 @@ void Journal<I>::allocate_local_tag(Context *on_finish) {
   allocate_tag(LOCAL_MIRROR_UUID, predecessor, on_finish);
 }
 
-// called by Journal<I>::allocate_local_tag and ImageReplayer<I>::allocate_local_tag
+// called by
+// journal::StandardPolicy::allocate_tag_on_lock -> Journal<I>::allocate_local_tag
+// ImageReplayer<I>::handle_get_remote_tag -> ImageReplayer<I>::allocate_local_tag
 template <typename I>
 void Journal<I>::allocate_tag(const std::string &mirror_uuid,
                               const journal::TagPredecessor &predecessor,
@@ -1546,6 +1553,7 @@ void Journal<I>::handle_initialized(int r) {
                  << "client: " << client << ", "
                  << "image meta: " << *image_client_meta << dendl;
 
+  // get the last tag
   C_DecodeTags *tags_ctx = new C_DecodeTags(
     cct, &m_lock, &m_tag_tid, &m_tag_data, create_async_context_callback(
       m_image_ctx, create_context_callback<

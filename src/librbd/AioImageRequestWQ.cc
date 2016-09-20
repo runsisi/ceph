@@ -330,7 +330,8 @@ void AioImageRequestWQ::set_require_lock_on_read() {
 
 // called by:
 // RefreshRequest<I>::apply
-// ExclusiveLock<I>::handle_acquire_lock
+// ExclusiveLock<I>::handle_acquire_lock, which calls aio_work_queue->clear_require_lock_on_read
+// and aio_work_queue->unblock_writes to unlock the io
 // ExclusiveLock<I>::handle_shutdown_released
 // ExclusiveLock<I>::handle_shutdown
 void AioImageRequestWQ::clear_require_lock_on_read() {
@@ -525,6 +526,7 @@ void AioImageRequestWQ::queue(AioImageRequest<> *req) {
   assert(m_image_ctx.owner_lock.is_locked());
 
   bool write_op = req->is_write_op();
+
   bool lock_required = (write_op && is_lock_required()) ||
     (!write_op && m_require_lock_on_read);
 
