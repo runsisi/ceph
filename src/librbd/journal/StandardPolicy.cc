@@ -29,6 +29,8 @@ void StandardPolicy::allocate_tag_on_lock(Context *on_finish) {
     return;
   }
 
+  // called by
+  // AcquireRequest<I>::handle_open_journal -> AcquireRequest<I>::send_allocate_journal_tag
   // we have acquired the exclusive lock, and this image is the primary
   // image, so allocate a tag on the journal metadata object to identify
   // that we are the primary image now and previously the primary image

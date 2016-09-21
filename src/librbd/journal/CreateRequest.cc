@@ -119,10 +119,16 @@ void CreateRequest<I>::allocate_journal_tag() {
   using klass = CreateRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_journal_tag>(this);
 
-  // tag_data(LOCAL_MIRROR_UUID)
+  // if we are creating journal for local mirror image, then tag_data.mirror_uuid
+  // is remote cluster's mirror uuid, else it is LOCAL_MIRROR_UUID which means
+  // we are creating a primary image
   ::encode(m_tag_data, m_bl);
 
-  // Tag::TAG_CLASS_NEW
+  // Tag::TAG_CLASS_NEW, create the first tag to identify if we are
+  // a local mirror image, i.e., a non-primary image or a primary image
+  // note: only ImageReplayer can create a new image which is non-primary,
+  // all other non-primary images are from demotion when mirror is enabled
+  // for these images
   m_journaler->allocate_tag(m_tag_class, m_bl, &m_tag, ctx);
 }
 

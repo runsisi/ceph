@@ -227,7 +227,9 @@ void Journaler::get_mutable_metadata(uint64_t *minimum_set,
   m_metadata->get_mutable_metadata(minimum_set, active_set, clients, on_finish);
 }
 
-// called by Journal<I>::create
+// called by
+// Journal<I>::create
+// librbd::image::CreateRequest<I>::create_journal
 void Journaler::create(uint8_t order, uint8_t splay_width,
                       int64_t pool_id, Context *on_finish) {
   if (order > 64 || order < 12) {
@@ -318,6 +320,7 @@ void Journaler::unregister_client(Context *on_finish) {
 void Journaler::get_client(const std::string &client_id,
                            cls::journal::Client *client,
                            Context *on_finish) {
+  // get from journal metadata object's omap entry "client_" + client_id
   m_metadata->get_client(client_id, client, on_finish);
 }
 
@@ -347,7 +350,8 @@ void Journaler::allocate_tag(const bufferlist &data, cls::journal::Tag *tag,
 }
 
 // called by
-// Journal<I>::create -> CreateRequest<I>::allocate_journal_tag
+// librbd::image::CreateRequest<I>::journal_create -> CreateRequest<I>::allocate_journal_tag
+// Journal<I>::reset -> Journal<I>::create -> CreateRequest<I>::allocate_journal_tag
 // Journal<I>::promote -> allocate_journaler_tag
 // Journal<I>::demote -> allocate_journaler_tag,
 // Journal<I>::allocate_tag
@@ -368,6 +372,8 @@ void Journaler::get_tags(uint64_t tag_class, Tags *tags, Context *on_finish) {
 
 void Journaler::get_tags(uint64_t start_after_tag_tid, uint64_t tag_class,
                          Tags *tags, Context *on_finish) {
+  // get tags and exclude those have been committed by the current client,
+  // i.e., m_client_id
   m_metadata->get_tags(start_after_tag_tid, tag_class, tags, on_finish);
 }
 

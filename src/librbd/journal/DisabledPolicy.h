@@ -14,13 +14,21 @@ namespace journal {
 
 class DisabledPolicy : public Policy {
 public:
+  // checked by Journal<I>::is_journal_appending
   virtual bool append_disabled() const {
     assert(false);
     return false;
   }
+
+  // checked by
+  // AcquireRequest<I>::send_open_journal and
+  // RefreshRequest<I>::send_v2_open_journal
   virtual bool journal_disabled() const {
     return true;
   }
+
+  // called by
+  // AcquireRequest<I>::handle_open_journal -> AcquireRequest<I>::send_allocate_journal_tag
   virtual void allocate_tag_on_lock(Context *on_finish) {
     assert(false);
   }

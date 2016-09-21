@@ -3223,7 +3223,7 @@ int image_get(cls_method_context_t hctx, const string &image_id,
   return 0;
 }
 
-// create two keys:
+// create two omap keys:
 // image id -> MirrorImage
 // global image id -> image id
 int image_set(cls_method_context_t hctx, const string &image_id,
@@ -4154,8 +4154,9 @@ int mirror_image_set(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
-  // register 1) image id -> MirrorImage<global image id, enum mirror state>
-  // and 2) global image id -> image id
+  // register two omap entries, i.e.,
+  // 1) image id -> MirrorImage<global image id, enum mirror state>, and
+  // 2) global image id -> image id
   int r = mirror::image_set(hctx, image_id, mirror_image);
   if (r < 0) {
     return r;

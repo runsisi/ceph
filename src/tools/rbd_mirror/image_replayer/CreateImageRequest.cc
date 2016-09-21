@@ -78,6 +78,7 @@ void CreateImageRequest<I>::create_image() {
   int order = m_remote_image_ctx->order;
 
   CephContext *cct = reinterpret_cast<CephContext*>(m_local_io_ctx.cct());
+
   uint64_t journal_order = cct->_conf->rbd_journal_order;
   uint64_t journal_splay_width = cct->_conf->rbd_journal_splay_width;
   std::string journal_pool = cct->_conf->rbd_journal_pool;
@@ -92,6 +93,7 @@ void CreateImageRequest<I>::create_image() {
     m_remote_image_ctx->stripe_count, journal_order, journal_splay_width,
     journal_pool, m_global_image_id, m_remote_mirror_uuid,
     m_remote_image_ctx->op_work_queue, ctx);
+
   req->send();
 }
 

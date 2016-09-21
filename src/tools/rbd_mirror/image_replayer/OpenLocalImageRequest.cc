@@ -28,12 +28,17 @@ using librbd::util::create_context_callback;
 
 namespace {
 
+// AutomaticPolicy -> <true, release upon requested>
+// StandardPolicy -> <false, return -EROFS>
+// MirrorExclusiveLockPolicy -> <false, return -EROFS>
 struct MirrorExclusiveLockPolicy : public librbd::exclusive_lock::Policy {
 
+  // checked by librbd::AioImageRequestWQ::queue and librbd::lock_acquire
   virtual bool may_auto_request_lock() {
     return false;
   }
 
+  // always return return -EROFS, called by ImageWatcher<I>::handle_payload
   virtual int lock_requested(bool force) {
     // TODO: interlock is being requested (e.g. local promotion)
     // Wait for demote event from peer or abort replay on forced
@@ -43,20 +48,31 @@ struct MirrorExclusiveLockPolicy : public librbd::exclusive_lock::Policy {
 
 };
 
+// DisabledPolicy -> <assert, true, assert>
+// StandardPolicy -> <false, false, allocate tag if is primary else return -EPERM>
+// MirrorJournalPolicy -> <true, false, finish with do nothing>
+// DeleteJournalPolicy -> <true, false, finish with do nothing>
 struct MirrorJournalPolicy : public librbd::journal::Policy {
   ContextWQ *work_queue;
 
   MirrorJournalPolicy(ContextWQ *work_queue) : work_queue(work_queue) {
   }
 
+  // checked by Journal<I>::is_journal_appending
   virtual bool append_disabled() const {
     // avoid recording any events to the local journal
     return true;
   }
+
+  // checked by
+  // AcquireRequest<I>::send_open_journal and
+  // RefreshRequest<I>::send_v2_open_journal
   virtual bool journal_disabled() const {
     return false;
   }
 
+  // called by
+  // AcquireRequest<I>::handle_open_journal -> AcquireRequest<I>::send_allocate_journal_tag
   virtual void allocate_tag_on_lock(Context *on_finish) {
     // rbd-mirror will manually create tags by copying them from the peer
     work_queue->queue(on_finish, 0);
@@ -93,6 +109,8 @@ void OpenLocalImageRequest<I>::send_open_image() {
     RWLock::WLocker owner_locker((*m_local_image_ctx)->owner_lock);
     RWLock::WLocker snap_locker((*m_local_image_ctx)->snap_lock);
 
+    // we lock the image exclusively, we will not release the exclusive
+    // lock upon other peers requests
     (*m_local_image_ctx)->set_exclusive_lock_policy(
       new MirrorExclusiveLockPolicy());
     (*m_local_image_ctx)->set_journal_policy(
@@ -166,6 +184,8 @@ void OpenLocalImageRequest<I>::send_lock_image() {
     OpenLocalImageRequest<I>, &OpenLocalImageRequest<I>::handle_lock_image>(
       this);
 
+  // we will not allocate a tag on the journal even if we acquired the
+  // exclusive lock, see MirrorJournalPolicy
   (*m_local_image_ctx)->exclusive_lock->request_lock(ctx);
 }
 

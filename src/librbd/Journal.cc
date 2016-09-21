@@ -348,7 +348,7 @@ bool Journal<I>::is_journal_supported(I &image_ctx) {
 }
 
 // static
-// called by Journal<I>::reset and librbd::create_v2
+// called by Journal<I>::reset
 template <typename I>
 int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
                        uint8_t order, uint8_t splay_width,

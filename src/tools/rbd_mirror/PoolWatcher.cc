@@ -136,6 +136,7 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
     // get all mirror enabled images of the remote pool
     // <image id, image global id>
     std::map<std::string, std::string> mirror_images;
+
     r =  mirror_image_list(&m_remote_io_ctx, last_read, max_read,
                            &mirror_images);
     if (r < 0) {
@@ -156,7 +157,10 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
         image_name = it2->second;
       }
 
-      // set<image id, image name, image global id>
+      // set<image id, image name, image global id>, we did not check if
+      // this image is primary or not, coz if may be too completed
+      // for us to do it here, we delegate this check later to
+      // BootstrapRequest<I>::handle_open_remote_image
       image_ids->insert(ImageId(it->first, image_name, it->second));
     }
 

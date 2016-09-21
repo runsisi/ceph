@@ -1169,10 +1169,12 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
                  const std::string &primary_mirror_uuid,
                  ContextWQ *op_work_queue, Context *ctx) {
     std::string id = util::generate_image_id(io_ctx);
+
     image::CreateRequest<> *req = image::CreateRequest<>::create(
       io_ctx, imgname, id, size, order, features, stripe_unit,
       stripe_count, journal_order, journal_splay_width, journal_pool,
       non_primary_global_image_id, primary_mirror_uuid, op_work_queue, ctx);
+
     req->send();
   }
 
@@ -1182,9 +1184,11 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     CephContext *cct = (CephContext *)io_ctx.cct();
     bool old_format = cct->_conf->rbd_default_format == 1;
     uint64_t features = old_format ? 0 : cct->_conf->rbd_default_features;
+
     return create(io_ctx, imgname, size, old_format, features, order, 0, 0);
   }
 
+  // w/ striping options w/o journal options w/o mirror options
   int create(IoCtx& io_ctx, const char *imgname, uint64_t size,
 	     bool old_format, uint64_t features, int *order,
 	     uint64_t stripe_unit, uint64_t stripe_count)
@@ -1194,6 +1198,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     uint64_t order_ = *order;
     uint64_t format = old_format ? 1 : 2;
+
     ImageOptions opts;
     int r;
 
@@ -1208,21 +1213,25 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     r = opts.set(RBD_IMAGE_OPTION_STRIPE_COUNT, stripe_count);
     assert(r == 0);
 
+    // w/ striping options w/o journal options w/o mirror options
     r = create(io_ctx, imgname, size, opts, "", "");
 
     int r1 = opts.get(RBD_IMAGE_OPTION_ORDER, &order_);
     assert(r1 == 0);
+
     *order = order_;
 
     return r;
   }
 
+  // striping options + journal options + mirror options
   int create(IoCtx& io_ctx, const char *imgname, uint64_t size,
 	     ImageOptions& opts,
              const std::string &non_primary_global_image_id,
              const std::string &primary_mirror_uuid)
   {
     CephContext *cct = (CephContext *)io_ctx.cct();
+
     ldout(cct, 10) << __func__ << " name=" << imgname << ", "
                    << "size=" << size << ", opts=" << opts << dendl;
 
@@ -1326,11 +1335,15 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       ContextWQ op_work_queue("librbd::op_work_queue",
                               cct->_conf->rbd_op_thread_timeout,
                               ImageCtx::get_thread_pool_instance(cct));
+
       std::string imagename(imgname);
+
+      // striping options + journal options + mirror options
       create_v2(io_ctx, imagename, size, order, features, stripe_unit,
                 stripe_count, journal_order, journal_splay_width, journal_pool,
                 non_primary_global_image_id, primary_mirror_uuid,
                 &op_work_queue, &cond);
+
       r = cond.wait();
       op_work_queue.drain();
     }
@@ -2131,6 +2144,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     return 0;
   }
 
+  // called by rbd_lock_acquire/Image::lock_acquire
   int lock_acquire(ImageCtx *ictx, rbd_lock_mode_t lock_mode)
   {
     if (lock_mode != RBD_LOCK_MODE_EXCLUSIVE) {
@@ -2139,6 +2153,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     CephContext *cct = ictx->cct;
     C_SaferCond lock_ctx;
+
     {
       RWLock::WLocker l(ictx->owner_lock);
 
@@ -2148,7 +2163,13 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       }
 
       if (ictx->get_exclusive_lock_policy()->may_auto_request_lock()) {
-	ictx->set_exclusive_lock_policy(
+
+        // only true for AutomaticPolicy, always be false for StandardPolicy
+        // and MirrorExclusiveLockPolicy, so if initially we have the
+        // AutomaticPolicy then once the external program try to request the
+        // exclusive lock explicitly, we will transit into StandardPolicy
+
+        ictx->set_exclusive_lock_policy(
 	  new exclusive_lock::StandardPolicy(ictx));
       }
 

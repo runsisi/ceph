@@ -499,6 +499,7 @@ void Replayer::run()
   }
 
   ImageIds empty_sources;
+
   while (true) {
     Mutex::Locker l(m_lock);
 

@@ -634,7 +634,7 @@ void JournalMetadata::get_client(const std::string &client_id,
                                  cls::journal::Client *client,
                                  Context *on_finish) {
   // access journal metadata object, i.e., "journal." + local image id
-  // to get omap "client_" + client id
+  // to get omap entry "client_" + client id
   C_GetClient *ctx = new C_GetClient(m_cct, m_ioctx, m_oid, m_async_op_tracker,
                                      client_id, client, on_finish);
 
@@ -652,10 +652,11 @@ void JournalMetadata::get_tag(uint64_t tag_tid, Tag *tag, Context *on_finish) {
 void JournalMetadata::get_tags(uint64_t start_after_tag_tid,
                                const boost::optional<uint64_t> &tag_class,
                                Tags *tags, Context *on_finish) {
+  // m_client_id is used to exclude thos committed tags of current client,
+  // i.e., the client identified by m_client_id
   C_GetTags *ctx = new C_GetTags(m_cct, m_ioctx, m_oid, m_client_id,
                                  m_async_op_tracker, start_after_tag_tid,
                                  tag_class, tags, on_finish);
-  // m_client_id is used to filter the committed tags of this client
   ctx->send();
 }
 
