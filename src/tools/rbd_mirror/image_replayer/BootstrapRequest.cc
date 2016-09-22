@@ -418,6 +418,7 @@ void BootstrapRequest<I>::update_client_state() {
   update_progress("UPDATE_CLIENT_STATE");
 
   librbd::journal::MirrorPeerClientMeta client_meta(*m_client_meta);
+
   client_meta.state = librbd::journal::MIRROR_PEER_STATE_REPLAYING;
 
   librbd::journal::ClientData client_data(client_meta);
@@ -519,7 +520,7 @@ void BootstrapRequest<I>::handle_open_local_image(int r) {
   } if (m_client.state == cls::journal::CLIENT_STATE_DISCONNECTED) {
 
     // open local mirror image succeeded, but the administrator has
-    // requested explicitly to disconnect, see cli command
+    // requested to disconnect explicitly, see cli command
     // "rbd journal disconnect" and its implementation execute_client_disconnect
 
     dout(10) << ": client flagged disconnected -- skipping bootstrap" << dendl;
@@ -531,7 +532,7 @@ void BootstrapRequest<I>::handle_open_local_image(int r) {
     return;
   }
 
-  // open local mirror image succeeded and not disconnected
+  // open local mirror image succeeded and not disconnected manually
 
   update_client_image();
 }
@@ -590,6 +591,8 @@ void BootstrapRequest<I>::handle_create_local_image(int r) {
   open_local_image();
 }
 
+// open local mirror image succeeded, now update the MirrorPeerClientMeta
+// if this is a newly created local mirror image
 template <typename I>
 void BootstrapRequest<I>::update_client_image() {
   dout(20) << dendl;
@@ -615,6 +618,10 @@ void BootstrapRequest<I>::update_client_image() {
 
   dout(20) << dendl;
 
+  // in default state MIRROR_PEER_STATE_SYNCING will transit into
+  // MIRROR_PEER_STATE_REPLAYING by SyncPointPruneRequest<I>::send_update_client
+  // or by BootstrapRequest<I>::update_client_state if the remote image is
+  // not primary
   librbd::journal::MirrorPeerClientMeta client_meta;
 
   // update mirror peer client of remote journal
@@ -667,11 +674,21 @@ void BootstrapRequest<I>::get_remote_tags() {
 
   if (m_created_local_image ||
       m_client_meta->state == librbd::journal::MIRROR_PEER_STATE_SYNCING) {
+
+    // MIRROR_PEER_STATE_SYNCING is the default state of MirrorPeerClientMeta
+
     // optimization -- no need to compare remote tags if we just created
     // the image locally or sync was interrupted
     image_sync();
     return;
   }
+
+  // if the previous sync was interrupted and then the primary image was
+  // demoted, then the restarted ImageReplayer will update the MirrorPeerClientMeta
+  // state to MIRROR_PEER_STATE_REPLAYING, see
+  // BootstrapRequest<I>::handle_open_remote_image -> BootstrapRequest<I>::update_client_state
+  // if then the remote image promoted and we are continue to mirror, we
+  // need to do something more
 
   // detect split-brain and do image sync afterwards
 
@@ -685,7 +702,7 @@ void BootstrapRequest<I>::get_remote_tags() {
   // see ImageReplayer<I>::start, the client id id used to exclude the committed
   // tags of the client
 
-  // get uncommitted tags of the mirror peer client of the remote journal
+  // get uncommitted tags of the mirror peer client, i.e., us, of the remote journal
   m_journaler->get_tags(m_remote_tag_class, &m_remote_tags, ctx);
 }
 
@@ -724,6 +741,8 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
       return;
     }
 
+    // Journal::m_tag_tid and Journal::m_tag_data are updated with
+    // newly allocated tags accordingly
     local_tag_tid = local_image_ctx->journal->get_tag_tid();
     local_tag_data = local_image_ctx->journal->get_tag_data();
 
@@ -737,18 +756,26 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
     boost::make_optional<uint64_t>(false, 0U);
   bool reconnect_orphan = false;
 
+  // iterate list<cls::journal::Tag>
   // decode the remote tags
-  // list<cls::journal::Tag>
   for (auto &remote_tag : m_remote_tags) {
 
-    // iterate remote tags to check if we can find the remote mirrored
-    // local demotion tag
+    // iterate through remote tags that has not been committed by
+    // local mirror peer client
 
     if (local_tag_data.predecessor.commit_valid &&
         local_tag_data.predecessor.mirror_uuid == m_remote_mirror_uuid &&
         local_tag_data.predecessor.tag_tid > remote_tag.tid) {
+
+      // NOTE: if journal feature enabled, then the image should always
+      // create the journal metadata object and create the initial tag,
+      // see rbd::mirror::CreateImageRequest<I>::create_image ->
+      // librbd::image::CreateRequest<I>::journal_create for local mirror
+      // image creation
+
       dout(20) << ": skipping processed predecessor remote tag "
                << remote_tag.tid << dendl;
+
       continue;
     }
 
@@ -777,6 +804,8 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
       dout(20) << ": using initial primary remote tag" << dendl;
       break;
     }
+
+    // local mirror peer image has a valid predecessor
 
     if (local_tag_data.mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID) {
       // demotion last available local epoch
@@ -856,6 +885,7 @@ void BootstrapRequest<I>::image_sync() {
 
   {
     Mutex::Locker locker(m_lock);
+
     if (!m_canceled) {
       m_image_sync_throttler->start_sync(*m_local_image_ctx,
                                          m_remote_image_ctx, m_timer,

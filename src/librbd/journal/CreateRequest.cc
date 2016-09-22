@@ -87,6 +87,7 @@ void CreateRequest<I>::create_journal() {
   ldout(m_cct, 20) << this << " " << __func__ << dendl;
 
   ImageCtx::get_timer_instance(m_cct, &m_timer, &m_timer_lock);
+
   m_journaler = new Journaler(m_op_work_queue, m_timer, m_timer_lock,
                               m_ioctx, m_image_id, m_image_client_id, {});
 
@@ -142,6 +143,7 @@ Context *CreateRequest<I>::handle_journal_tag(int *result) {
     return nullptr;
   }
 
+  // register image client
   register_client();
   return nullptr;
 }
@@ -156,6 +158,7 @@ void CreateRequest<I>::register_client() {
   using klass = CreateRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_register_client>(this);
 
+  // register <m_image_client_id, m_bl> on journal metadata object omap
   m_journaler->register_client(m_bl, ctx);
 }
 

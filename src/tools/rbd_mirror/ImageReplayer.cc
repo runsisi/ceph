@@ -1161,6 +1161,9 @@ void ImageReplayer<I>::allocate_local_tag() {
 
   librbd::journal::TagPredecessor predecessor(m_replay_tag_data.predecessor);
   if (predecessor.mirror_uuid == librbd::Journal<>::LOCAL_MIRROR_UUID) {
+
+    // remote image client grabbed the exclusive lock and opened journal
+
     predecessor.mirror_uuid = m_remote_mirror_uuid;
   } else if (predecessor.mirror_uuid == m_local_mirror_uuid) {
     predecessor.mirror_uuid = librbd::Journal<>::LOCAL_MIRROR_UUID;

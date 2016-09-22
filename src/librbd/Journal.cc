@@ -348,7 +348,9 @@ bool Journal<I>::is_journal_supported(I &image_ctx) {
 }
 
 // static
-// called by Journal<I>::reset
+// called by
+// Journal<I>::reset
+// librbd::update_features
 template <typename I>
 int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
                        uint8_t order, uint8_t splay_width,
@@ -367,6 +369,8 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
     io_ctx, image_id, order, splay_width, object_pool, cls::journal::Tag::TAG_CLASS_NEW,
     tag_data, IMAGE_CLIENT_ID, &op_work_queue, &cond);
 
+  // create journal metadata object and allocate the initial tag then
+  // register image client
   req->send();
 
   int r = cond.wait();
@@ -404,6 +408,7 @@ int Journal<I>::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
 template <typename I>
 int Journal<I>::reset(librados::IoCtx &io_ctx, const std::string &image_id) {
   CephContext *cct = reinterpret_cast<CephContext *>(io_ctx.cct());
+
   ldout(cct, 5) << __func__ << ": image=" << image_id << dendl;
 
   Journaler journaler(io_ctx, image_id, IMAGE_CLIENT_ID, {});
@@ -916,6 +921,7 @@ void Journal<I>::allocate_tag(const std::string &mirror_uuid,
                  << dendl;
 
   Mutex::Locker locker(m_lock);
+
   assert(m_journaler != nullptr);
 
   journal::TagData tag_data;

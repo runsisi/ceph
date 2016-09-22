@@ -453,8 +453,10 @@ void CreateRequest<I>::journal_create() {
       cls::journal::Tag::TAG_CLASS_NEW, tag_data, librbd::Journal<I>::IMAGE_CLIENT_ID,
       m_op_work_queue, ctx);
 
-  // create the first tag to identify if we are a local mirror image,
-  // i.e., a non-primary image or a primary image
+  // create journal metadata object and allocate the initial tag then
+  // register image client
+  // the initial tag, tag.tag_data.mirror_uuid, can used to identify if
+  // we are a local mirror image, i.e., a non-primary image or a primary image
   req->send();
 }
 
