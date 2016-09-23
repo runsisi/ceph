@@ -22,6 +22,7 @@ struct C_AioExec : public Context {
     ioctx.dup(_ioctx);
   }
 
+  // arg is 'this'
   static void rados_callback(rados_completion_t c, void *arg) {
     Context *ctx = reinterpret_cast<Context *>(arg);
     ctx->complete(rados_aio_get_return_value(c));
@@ -199,17 +200,26 @@ int create(librados::IoCtx &ioctx, const std::string &oid, uint8_t order,
   return 0;
 }
 
+// called by
+// rbd::action::journal::do_show_journal_info
+// JournalMetadata::get_immutable_metadata
 void get_immutable_metadata(librados::IoCtx &ioctx, const std::string &oid,
                             uint8_t *order, uint8_t *splay_width,
                             int64_t *pool_id, Context *on_finish) {
   // <order, splay width, pool id>
-
   C_ImmutableMetadata *metadata = new C_ImmutableMetadata(ioctx, oid, order,
                                                           splay_width, pool_id,
                                                           on_finish);
+
+  // op.exec("journal", "get_order"), op.exec("journal", "get_splay_width")
+  // and op.exec("journal", "get_pool_id");
   metadata->send();
 }
 
+// called by
+// rbd::action::journal::do_show_journal_status
+// rbd::action::journal::do_disconnect_journal_client
+// JournalMetadata::get_mutable_metadata
 void get_mutable_metadata(librados::IoCtx &ioctx, const std::string &oid,
                           uint64_t *minimum_set, uint64_t *active_set,
                           std::set<cls::journal::Client> *clients,
@@ -223,6 +233,9 @@ void get_mutable_metadata(librados::IoCtx &ioctx, const std::string &oid,
   C_MutableMetadata *metadata = new C_MutableMetadata(
     ioctx, oid, minimum_set, active_set, client_list);
 
+  // op.exec("journal", "get_minimum_set"), op.exec("journal", "get_active_set")
+  // and op.exec("journal", "client_list") to get minimum_set, active_set
+  // and registered clients of the journal
   metadata->send();
 }
 

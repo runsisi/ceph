@@ -267,7 +267,7 @@ private:
 
     virtual void finish(int r) {
 
-      // refresh
+      // call JournalMetadata::refresh to get mutable metadata
       journal_metadata->handle_immutable_metadata(r, on_finish);
     }
   };

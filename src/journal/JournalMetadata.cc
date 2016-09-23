@@ -470,7 +470,8 @@ void JournalMetadata::init(Context *on_finish) {
   on_finish = utils::create_async_context_callback(
     this, on_finish);
 
-  // journal_metadata->handle_immutable_metadata
+  // journal_metadata->handle_immutable_metadata will refresh
+  // mutable metadata
   on_finish = new C_ImmutableMetadata(this, on_finish);
 
   on_finish = new FunctionContext([this, on_finish](int r) {
@@ -542,24 +543,28 @@ void JournalMetadata::shut_down(Context *on_finish) {
   }
 }
 
+// called by
+// JournalMetadata::init
+// Journaler::get_immutable_metadata
 void JournalMetadata::get_immutable_metadata(uint8_t *order,
 					     uint8_t *splay_width,
 					     int64_t *pool_id,
 					     Context *on_finish) {
 
-  // new client::C_ImmutableMetadata
-
+  // new client::C_ImmutableMetadata to get <order, splay width, pool id>
   client::get_immutable_metadata(m_ioctx, m_oid, order, splay_width, pool_id,
 				 on_finish);
 }
 
+// called by
+// JournalMetadata::refresh
+// Journaler::get_mutable_metadata
 void JournalMetadata::get_mutable_metadata(uint64_t *minimum_set,
 					   uint64_t *active_set,
 					   RegisteredClients *clients,
 					   Context *on_finish) {
 
-  // new client::C_MutableMetadata
-
+  // new client::C_MutableMetadata to get <minimum set, active set, set<Client>>
   client::get_mutable_metadata(m_ioctx, m_oid, minimum_set, active_set, clients,
 			       on_finish);
 }

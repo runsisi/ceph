@@ -224,6 +224,7 @@ void Journaler::get_mutable_metadata(uint64_t *minimum_set,
 				     uint64_t *active_set,
 				     RegisteredClients *clients,
 				     Context *on_finish) {
+  // get <minimum set, active set, set<Client>>
   m_metadata->get_mutable_metadata(minimum_set, active_set, clients, on_finish);
 }
 
