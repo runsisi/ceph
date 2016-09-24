@@ -289,6 +289,7 @@ void Journaler::remove_listener(JournalMetadataListener *listener) {
   m_metadata->remove_listener(listener);
 }
 
+// called by rbd::action::journal::Journaler::init
 int Journaler::register_client(const bufferlist &data) {
   C_SaferCond cond;
 
@@ -303,6 +304,9 @@ int Journaler::unregister_client() {
   return cond.wait();
 }
 
+// called by
+// librbd::journal::CreateRequest<I>::register_client
+// rbd::mirror::image_replayer::BootstrapRequest<I>::register_client
 void Journaler::register_client(const bufferlist &data, Context *on_finish) {
 
   // register JournalMetadata::m_client_id, i.e. Journaler::m_client_id
