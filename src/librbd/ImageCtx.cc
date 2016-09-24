@@ -54,6 +54,7 @@ namespace {
 
 class ThreadPoolSingleton : public ThreadPool {
 public:
+  // rbd_op_threads default 1
   explicit ThreadPoolSingleton(CephContext *cct)
     : ThreadPool(cct, "librbd::thread_pool", "tp_librbd", 1,
                  "rbd_op_threads") {
@@ -1131,9 +1132,12 @@ struct C_InvalidateCache : public Context {
   }
 
   ThreadPool *ImageCtx::get_thread_pool_instance(CephContext *cct) {
+    // inherited from ThreadPool, start on ctor and stop on dtor
     ThreadPoolSingleton *thread_pool_singleton;
+
     cct->lookup_or_create_singleton_object<ThreadPoolSingleton>(
       thread_pool_singleton, "librbd::thread_pool");
+
     return thread_pool_singleton;
   }
 

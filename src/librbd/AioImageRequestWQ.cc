@@ -18,6 +18,8 @@
 
 namespace librbd {
 
+// instance created by ImageCtx::ImageCtx
+// inherited from ThreadPool::PointerWQ<AioImageRequest<ImageCtx> >
 AioImageRequestWQ::AioImageRequestWQ(ImageCtx *image_ctx, const string &name,
                                      time_t ti, ThreadPool *tp)
   : ThreadPool::PointerWQ<AioImageRequest<> >(name, ti, 0, tp),
@@ -27,7 +29,9 @@ AioImageRequestWQ::AioImageRequestWQ(ImageCtx *image_ctx, const string &name,
     m_queued_writes(0), m_in_flight_ops(0), m_refresh_in_progress(false),
     m_shutdown(false), m_on_shutdown(nullptr) {
   CephContext *cct = m_image_ctx.cct;
+
   ldout(cct, 5) << this << " " << ": ictx=" << image_ctx << dendl;
+
   tp->add_work_queue(this);
 }
 
