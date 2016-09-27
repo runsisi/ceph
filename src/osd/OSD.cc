@@ -6971,13 +6971,16 @@ void OSD::handle_osd_map(MOSDMap *m)
   service.publish_superblock(superblock);
 }
 
+// called by C_OnMapCommit::finish
 void OSD::_committed_osd_maps(epoch_t first, epoch_t last, MOSDMap *m)
 {
   dout(10) << __func__ << " " << first << ".." << last << dendl;
+
   if (is_stopping()) {
     dout(10) << __func__ << " bailing, we are shutting down" << dendl;
     return;
   }
+
   Mutex::Locker l(osd_lock);
   map_lock.get_write();
 
@@ -7067,6 +7070,7 @@ void OSD::_committed_osd_maps(epoch_t first, epoch_t last, MOSDMap *m)
       is_active()) {
     if (!osdmap->exists(whoami)) {
       dout(0) << "map says i do not exist.  shutting down." << dendl;
+
       do_shutdown = true;   // don't call shutdown() while we have
 			    // everything paused
     } else if (!osdmap->is_up(whoami) ||
@@ -7117,17 +7121,21 @@ void OSD::_committed_osd_maps(epoch_t first, epoch_t last, MOSDMap *m)
       if (!service.is_stopping()) {
         epoch_t up_epoch = 0;
         epoch_t bind_epoch = osdmap->get_epoch();
+
         service.set_epochs(NULL,&up_epoch, &bind_epoch);
 	do_restart = true;
 
 	//add markdown log
 	utime_t now = ceph_clock_now(g_ceph_context);
 	utime_t grace = utime_t(g_conf->osd_max_markdown_period, 0);
+
 	osd_markdown_log.push_back(now);
+
 	//clear all out-of-date log
 	while (!osd_markdown_log.empty() &&
 	       osd_markdown_log.front() + grace < now)
 	  osd_markdown_log.pop_front();
+
 	if ((int)osd_markdown_log.size() > g_conf->osd_max_markdown_count) {
 	  dout(0) << __func__ << " marked down "
 		  << osd_markdown_log.size()
@@ -7208,8 +7216,10 @@ void OSD::_committed_osd_maps(epoch_t first, epoch_t last, MOSDMap *m)
         failure_pending.erase(it++);
       }
     }
+
     // trigger shutdown in a different thread
     dout(0) << __func__ << " shutdown OSD via async signal" << dendl;
+
     queue_async_signal(SIGINT);
   }
   else if (is_preboot()) {

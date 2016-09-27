@@ -570,6 +570,7 @@ void AsyncMessenger::set_addr_unknowns(const entity_addr_t &addr)
   }
 }
 
+// has never been used
 int AsyncMessenger::send_keepalive(Connection *con)
 {
   con->send_keepalive();

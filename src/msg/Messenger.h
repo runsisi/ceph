@@ -110,22 +110,49 @@ public:
 	features_required(req) {}
 
   public:
+    // MDS -> CLIENT
     static Policy stateful_server(uint64_t sup, uint64_t req) {
+      // lossy, server, standby, resetcheck
       return Policy(false, true, true, true, sup, req);
     }
+
+    // MON -> default, OSD, MDS, CLIENT
+    // OSD(public) -> default, OSD
+    // OSD(cluster) -> default, CLIENT
+    // OSD(hb_back/front_server) -> OSD
     static Policy stateless_server(uint64_t sup, uint64_t req) {
+      // lossy, server, standby, resetcheck
       return Policy(true, true, false, false, sup, req);
     }
+
+    // MDS -> MDS
+    // OSD(cluster) -> OSD
     static Policy lossless_peer(uint64_t sup, uint64_t req) {
+      // lossy, server, standby, resetcheck
       return Policy(false, false, true, false, sup, req);
     }
+
+    // MON -> MON
     static Policy lossless_peer_reuse(uint64_t sup, uint64_t req) {
+      // lossy, server, standby, resetcheck
       return Policy(false, false, true, true, sup, req);
     }
+
+    // RadosClient -> default
+    // ceph_fuse -> default
+    // MDS -> default, MON
+    // OSD(public) -> MON
+    // OSD(cluster) -> MON
+    // OSD(hbclient) -> OSD
+    // OSD(objecter) -> default
     static Policy lossy_client(uint64_t sup, uint64_t req) {
+      // lossy, server, standby, resetcheck
       return Policy(true, false, false, false, sup, req);
     }
+
+    // ceph_fuse -> MDS
     static Policy lossless_client(uint64_t sup, uint64_t req) {
+      // lossy, server, standby, resetcheck
       return Policy(false, false, false, true, sup, req);
     }
   };

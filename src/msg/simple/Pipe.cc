@@ -192,6 +192,7 @@ void Pipe::handle_ack(uint64_t seq)
 	 sent.front()->get_seq() <= seq) {
     Message *m = sent.front();
     sent.pop_front();
+
     lsubdout(msgr->cct, ms, 10) << "reader got ack seq "
 				<< seq << " >= " << m->get_seq() << " on " << m << " " << *m << dendl;
     m->put();
@@ -1353,10 +1354,17 @@ void Pipe::register_pipe()
   msgr->rank_pipe[peer_addr] = this;
 }
 
+// called by
+// Pipe::accept
+// Pipe::fault
+// SimpleMessenger::reaper, SimpleMessenger::wait, SimpleMessenger::mark_down_all,
+// SimpleMessenger::mark_down
 void Pipe::unregister_pipe()
 {
   assert(msgr->lock.is_locked());
+
   ceph::unordered_map<entity_addr_t,Pipe*>::iterator p = msgr->rank_pipe.find(peer_addr);
+
   if (p != msgr->rank_pipe.end() && p->second == this) {
     ldout(msgr->cct,10) << "unregister_pipe" << dendl;
     msgr->rank_pipe.erase(p);
@@ -1380,6 +1388,7 @@ void Pipe::join()
   }
 }
 
+// called by Pipe::accept or Pipe::fault
 void Pipe::requeue_sent()
 {
   if (sent.empty())
@@ -1429,6 +1438,7 @@ void Pipe::discard_out_queue()
     (*p)->put();
   }
   sent.clear();
+
   for (map<int,list<Message*> >::iterator p = out_q.begin(); p != out_q.end(); ++p)
     for (list<Message*>::iterator r = p->second.begin(); r != p->second.end(); ++r) {
       ldout(msgr->cct,20) << "  discard " << *r << dendl;
@@ -1841,6 +1851,10 @@ void Pipe::writer()
 
       // keepalive?
       if (send_keepalive) {
+
+        // was set by Pipe::_send_keepalive, actually only MonClient will send
+        // keepalive periodically
+
 	int rc;
 	if (connection_state->has_feature(CEPH_FEATURE_MSGR_KEEPALIVE2)) {
 	  pipe_lock.Unlock();
@@ -1850,6 +1864,7 @@ void Pipe::writer()
 	  pipe_lock.Unlock();
 	  rc = write_keepalive();
 	}
+
 	pipe_lock.Lock();
 	if (rc < 0) {
 	  ldout(msgr->cct,2) << "writer couldn't write keepalive[2], "
@@ -1857,8 +1872,10 @@ void Pipe::writer()
 	  fault();
  	  continue;
 	}
+
 	send_keepalive = false;
       }
+
       if (send_keepalive_ack) {
 	utime_t t = keepalive_ack_stamp;
 	pipe_lock.Unlock();
@@ -1869,12 +1886,14 @@ void Pipe::writer()
 	  fault();
 	  continue;
 	}
+
 	send_keepalive_ack = false;
       }
 
       // send ack?
       if (in_seq > in_seq_acked) {
 	uint64_t send_seq = in_seq;
+
 	pipe_lock.Unlock();
 	int rc = write_ack(send_seq);
 	pipe_lock.Lock();
@@ -1883,15 +1902,21 @@ void Pipe::writer()
 	  fault();
  	  continue;
 	}
+
 	in_seq_acked = send_seq;
       }
 
-      // grab outgoing message
+      // grab outgoing message from Pipe::out_q
       Message *m = _get_next_outgoing();
       if (m) {
 	m->set_seq(++out_seq);
+
 	if (!policy.lossy) {
 	  // put on sent list
+
+	  // will be popped by Pipe::handle_ack or Pipe::discard_out_queue or
+	  // requeued to Pipe::out_q by Pipe::requeue_sent
+	  // if requeued, the out_seq will be decreased
 	  sent.push_back(m); 
 	  m->get();
 	}

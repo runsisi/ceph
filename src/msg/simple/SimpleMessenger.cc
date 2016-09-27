@@ -545,6 +545,7 @@ void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
   }
 }
 
+// called by PipeConnection::send_keepalive
 int SimpleMessenger::send_keepalive(Connection *con)
 {
   int ret = 0;
@@ -638,7 +639,10 @@ void SimpleMessenger::wait()
   started = false;
 }
 
-
+// called by
+// OSD::_committed_osd_maps
+// SimpleMessenger::shutdown, SimpleMessenger::rebind
+// Monitor::bootstrap
 void SimpleMessenger::mark_down_all()
 {
   ldout(cct,1) << "mark_down_all" << dendl;
@@ -720,9 +724,11 @@ void SimpleMessenger::mark_down(Connection *con)
   lock.Unlock();
 }
 
+// called by PipeConnection::mark_disposable
 void SimpleMessenger::mark_disposable(Connection *con)
 {
   lock.Lock();
+
   Pipe *p = static_cast<Pipe *>(static_cast<PipeConnection*>(con)->get_pipe());
   if (p) {
     ldout(cct,1) << "mark_disposable " << con << " -- " << p << dendl;
@@ -734,6 +740,7 @@ void SimpleMessenger::mark_disposable(Connection *con)
   } else {
     ldout(cct,1) << "mark_disposable " << con << " -- pipe dne" << dendl;
   }
+
   lock.Unlock();
 }
 

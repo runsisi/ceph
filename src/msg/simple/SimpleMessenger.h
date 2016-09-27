@@ -320,9 +320,11 @@ private:
     ceph::unordered_map<entity_addr_t, Pipe*>::iterator p = rank_pipe.find(k);
     if (p == rank_pipe.end())
       return NULL;
+
     // see lock cribbing in Pipe::fault()
     if (p->second->state_closed.read())
       return NULL;
+
     return p->second;
   }
 
