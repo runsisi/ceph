@@ -495,6 +495,7 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
 	    }
 	    return;
 	  }
+
           resync_image(on_finish);
         });
 

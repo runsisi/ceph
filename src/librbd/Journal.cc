@@ -560,6 +560,7 @@ int Journal<I>::request_resync(I *image_ctx) {
     return r;
   }
 
+  // will be checked by Journal<I>::check_resync_requested
   client_meta.resync_requested = true;
 
   journal::ClientData client_data(client_meta);
@@ -1986,12 +1987,17 @@ void Journal<I>::wait_for_steady_state(Context *on_state) {
   m_wait_for_state_contexts.push_back(on_state);
 }
 
+// called by ImageReplayer<I>::handle_bootstrap
 template <typename I>
 int Journal<I>::is_resync_requested(bool *do_resync) {
   Mutex::Locker l(m_lock);
+
   return check_resync_requested(do_resync);
 }
 
+// called by
+// ournal<I>::is_resync_requested
+// Journal<I>::handle_refresh_metadata
 template <typename I>
 int Journal<I>::check_resync_requested(bool *do_resync) {
   CephContext *cct = m_image_ctx.cct;
@@ -2070,6 +2076,7 @@ void Journal<I>::handle_metadata_updated() {
   }
 
   uint64_t refresh_sequence = ++m_refresh_sequence;
+
   ldout(cct, 20) << this << " " << __func__ << ": "
                  << "refresh_sequence=" << refresh_sequence << dendl;
 
@@ -2081,9 +2088,11 @@ void Journal<I>::handle_metadata_updated() {
       handle_refresh_metadata(refresh_sequence, refresh_ctx->tag_tid,
                               refresh_ctx->tag_data, r);
     });
+
   C_DecodeTags *decode_tags_ctx = new C_DecodeTags(
       cct, &refresh_ctx->lock, &refresh_ctx->tag_tid,
       &refresh_ctx->tag_data, refresh_ctx);
+
   m_journaler->get_tags(m_tag_tid == 0 ? 0 : m_tag_tid - 1, m_tag_class,
                         &decode_tags_ctx->tags, decode_tags_ctx);
 }
@@ -2110,6 +2119,7 @@ void Journal<I>::handle_refresh_metadata(uint64_t refresh_sequence,
                  << "refresh_sequence=" << refresh_sequence << ", "
                  << "tag_tid=" << tag_tid << ", "
                  << "tag_data=" << tag_data << dendl;
+
   while (m_listener_notify) {
     m_listener_cond.Wait(m_lock);
   }
@@ -2119,6 +2129,7 @@ void Journal<I>::handle_refresh_metadata(uint64_t refresh_sequence,
     m_tag_tid = tag_tid;
     m_tag_data = tag_data;
   }
+
   bool promoted_to_primary = (!was_tag_owner && is_tag_owner(m_lock));
 
   bool resync_requested = false;
@@ -2161,6 +2172,7 @@ void Journal<I>::remove_listener(journal::Listener *listener) {
   while (m_listener_notify) {
     m_listener_cond.Wait(m_lock);
   }
+
   m_listeners.erase(listener);
 }
 
