@@ -379,7 +379,9 @@ void BootstrapRequest<I>::handle_open_remote_image(int r) {
     m_ret_val = -EREMOTEIO;
 
     // set mirror peer client state to MIRROR_PEER_STATE_REPLAYING
+    // prevent syncing to non-primary image after failover, see beaef37
     update_client_state();
+
     return;
   }
 
@@ -561,9 +563,9 @@ void BootstrapRequest<I>::create_local_image() {
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_create_local_image>(
       this);
 
-  // m_global_image_id is used to enable mirroring of the newly created local mirror
-  // image if the mirror mode is pool mode, the newly create tag.mirror_uuid is set
-  // to m_remote_mirror_uuid
+  // m_global_image_id is used to enable mirroring of the newly created
+  // local mirror image if the mirror mode is pool mode
+  // the newly created tag_data.mirror_uuid is set to m_remote_mirror_uuid
   CreateImageRequest<I> *request = CreateImageRequest<I>::create(
     m_local_io_ctx, m_work_queue, m_global_image_id, m_remote_mirror_uuid,
     m_local_image_name, m_remote_image_ctx, ctx);
@@ -693,7 +695,7 @@ void BootstrapRequest<I>::get_remote_tags() {
   // if then the remote image promoted and we are continue to mirror, we
   // need to do something more
 
-  // detect split-brain and do image sync afterwards
+  // to detect split-brain and do image sync afterwards
 
   dout(20) << dendl;
 
@@ -769,13 +771,16 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
         local_tag_data.predecessor.mirror_uuid == m_remote_mirror_uuid &&
         local_tag_data.predecessor.tag_tid > remote_tag.tid) {
 
+      // local mirror peer client ever committed, and the local tags were
+      // mirrored from the remote tags
+
       // NOTE: if journal feature enabled, then the image should always
       // create the journal metadata object and create the initial tag,
       // see rbd::mirror::CreateImageRequest<I>::create_image ->
       // librbd::image::CreateRequest<I>::journal_create for local mirror
       // image creation
-      // NOTE: the initial tag only set tag.mirror_uuid, so the
-      // predecessor.commit_valid was set to false
+      // NOTE: the initial tag only set tag.mirror_uuid, so for the initial
+      // tag, the predecessor.commit_valid field was always set to false
 
       dout(20) << ": skipping processed predecessor remote tag "
                << remote_tag.tid << dendl;
@@ -783,12 +788,7 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
       continue;
     }
 
-    // ok, local tag may be in any middle of the remote tags
-
-    // if everything went as expected, the current remote tag will be
-    // the tag that allocated after the remote image client acquired the
-    // exclusive lock, and the next, i.e., the last tag is the demotion
-    // tag
+    // 1) never
 
     try {
       bufferlist::iterator it = remote_tag.data.begin();
@@ -817,7 +817,9 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
 
     if (!local_tag_data.predecessor.commit_valid) {
 
-      // local mirror peer client never committed
+      // local mirror peer client 1) never committed, i.e., never written
+      // data to, or 2) local journal for local mirror image was reset, i.e.,
+      // we want a re-mirror
 
       // newly synced local image (no predecessor) replays from the first tag
 
@@ -833,31 +835,56 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
     }
 
     // local mirror peer client has a valid predecessor tag, i.e., ever
-    // committed, we must to check if we have divergent entries
+    // committed, next we are to check remote image's demotion/promotion chain
 
     if (local_tag_data.mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID) {
+
+      // local mirror image currently in demoted state
+
       // demotion last available local epoch
 
       if (remote_tag_data.mirror_uuid == local_tag_data.mirror_uuid &&
           remote_tag_data.predecessor.commit_valid &&
           remote_tag_data.predecessor.tag_tid ==
             local_tag_data.predecessor.tag_tid) {
+
+        // remote_tag_data.mirror_uuid == ORPHAN_MIRROR_UUID, i.e., remote
+        // image was also in demoted state at this tag point
+        // to check if:
+        // 1) this remote demotion was replayed from the local image or
+        // 2) the local demotion was replayed from the remote image
+
         // demotion matches remote epoch
 
         if (remote_tag_data.predecessor.mirror_uuid == m_local_mirror_uuid &&
             local_tag_data.predecessor.mirror_uuid ==
               librbd::Journal<>::LOCAL_MIRROR_UUID) {
+
+          // the remote demotion was replayed from the local demotion, then
+          // to check if the remote image promoted followed by the local
+          // demotion
+
           // local demoted and remote has matching event
+
           dout(20) << ": found matching local demotion tag" << dendl;
+
           remote_orphan_tag_tid = remote_tag.tid;
+
           continue;
         }
 
         if (local_tag_data.predecessor.mirror_uuid == m_remote_mirror_uuid &&
             remote_tag_data.predecessor.mirror_uuid ==
               librbd::Journal<>::LOCAL_MIRROR_UUID) {
+
+          // the local demotion was replayed from the remote demotion, then
+          // to check if the remote image promoted again followed by its
+          // demotion
+
           // remote demoted and local has matching event
+
           dout(20) << ": found matching remote demotion tag" << dendl;
+
           remote_orphan_tag_tid = remote_tag.tid;
           continue;
         }
@@ -867,24 +894,41 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
           remote_tag_data.predecessor.mirror_uuid == librbd::Journal<>::ORPHAN_MIRROR_UUID &&
           remote_tag_data.predecessor.commit_valid && remote_orphan_tag_tid &&
           remote_tag_data.predecessor.tag_tid == *remote_orphan_tag_tid) {
+
+        // remote image promoted again after the previous demotion event(either
+        // demoted by administrator manually or replay from local demotion)
+
         // remote promotion tag chained to remote/local demotion tag
+
         dout(20) << ": found chained remote promotion tag" << dendl;
+
         reconnect_orphan = true;
+
         break;
       }
 
       // promotion must follow demotion
       remote_orphan_tag_tid = boost::none;
-    }
-  }
+    } // local image in demoted state
+  } // for (auto &remote_tag : m_remote_tags)
 
   if (remote_tag_data_valid &&
       local_tag_data.mirror_uuid == m_remote_mirror_uuid) {
+
+    // ever decoded a remote tag, i.e., remote tags are not empty and
+    // the last replaying has not finished yet, so continue
+
+    // NOTE: for local mirror image the initial tag has mirror_uuid set
+    // to m_remote_mirror_uuid, see
+    // BootstrapRequest<I>::create_local_image -> librbd::image::CreateRequest<I>::journal_create
 
     // we are in replaying
 
     dout(20) << ": local image is in clean replay state" << dendl;
   } else if (reconnect_orphan) {
+
+    // clean demotion/promotion
+
     dout(20) << ": remote image was demoted/promoted" << dendl;
   } else {
     derr << ": split-brain detected -- skipping image replay" << dendl;
@@ -929,6 +973,7 @@ void BootstrapRequest<I>::image_sync() {
   }
 
   dout(10) << ": request canceled" << dendl;
+
   m_ret_val = -ECANCELED;
   close_remote_image();
 }
