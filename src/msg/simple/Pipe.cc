@@ -447,6 +447,9 @@ int Pipe::accept()
   set_peer_addr(peer_addr);  // so that connection_state gets set up
   
   while (1) {
+
+    // recv peer's connect request
+
     if (tcp_read((char*)&connect, sizeof(connect)) < 0) {
       ldout(msgr->cct,10) << "accept couldn't read connect" << dendl;
       goto fail_unlocked;
@@ -471,8 +474,11 @@ int Pipe::accept()
 	     << dendl;
     
     msgr->lock.Lock();   // FIXME
+
     pipe_lock.Lock();
 
+    // set by DispatchQueue::shutdown which called by msgr->wait, i.e., when the ceph daemon
+    // is to shutdown
     if (msgr->dispatch_queue.stop)
       goto shutting_down;
     if (state != STATE_ACCEPTING) {
@@ -492,6 +498,7 @@ int Pipe::accept()
 
     memset(&reply, 0, sizeof(reply));
     reply.protocol_version = msgr->get_proto_version(peer_type, false);
+
     msgr->lock.Unlock();
 
     // mismatch?
@@ -505,17 +512,22 @@ int Pipe::accept()
 
     // require signatures for cephx?
     if (connect.authorizer_protocol == CEPH_AUTH_CEPHX) {
+
+      // if cephx enabled, then must require peer has MSG_AUTH feature
+
       if (peer_type == CEPH_ENTITY_TYPE_OSD ||
 	  peer_type == CEPH_ENTITY_TYPE_MDS) {
 	if (msgr->cct->_conf->cephx_require_signatures ||
 	    msgr->cct->_conf->cephx_cluster_require_signatures) {
 	  ldout(msgr->cct,10) << "using cephx, requiring MSG_AUTH feature bit for cluster" << dendl;
+
 	  policy.features_required |= CEPH_FEATURE_MSG_AUTH;
 	}
       } else {
 	if (msgr->cct->_conf->cephx_require_signatures ||
 	    msgr->cct->_conf->cephx_service_require_signatures) {
 	  ldout(msgr->cct,10) << "using cephx, requiring MSG_AUTH feature bit for service" << dendl;
+
 	  policy.features_required |= CEPH_FEATURE_MSG_AUTH;
 	}
       }
@@ -524,6 +536,7 @@ int Pipe::accept()
     feat_missing = policy.features_required & ~(uint64_t)connect.features;
     if (feat_missing) {
       ldout(msgr->cct,1) << "peer missing required features " << std::hex << feat_missing << std::dec << dendl;
+
       reply.tag = CEPH_MSGR_TAG_FEATURES;
       goto reply;
     }
@@ -538,11 +551,14 @@ int Pipe::accept()
       ldout(msgr->cct,0) << "accept: got bad authorizer" << dendl;
 
       pipe_lock.Lock();
+
       if (state != STATE_ACCEPTING)
 	goto shutting_down_msgr_unlocked;
 
       reply.tag = CEPH_MSGR_TAG_BADAUTHORIZER;
+
       session_security.reset();
+
       goto reply;
     } 
 
@@ -550,7 +566,7 @@ int Pipe::accept()
 
     ldout(msgr->cct,10) << "accept:  setting up session_security." << dendl;
 
-  retry_existing_lookup:
+retry_existing_lookup:
     msgr->lock.Lock();
     pipe_lock.Lock();
 
@@ -559,7 +575,7 @@ int Pipe::accept()
     if (state != STATE_ACCEPTING)
       goto shutting_down;
     
-    // existing?
+    // existing? sockaddr + nonce
     existing = msgr->_lookup_pipe(peer_addr);
 
     if (existing) {
@@ -597,10 +613,13 @@ int Pipe::accept()
       if (connect.global_seq < existing->peer_global_seq) {
 	ldout(msgr->cct,10) << "accept existing " << existing << ".gseq " << existing->peer_global_seq
 		 << " > " << connect.global_seq << ", RETRY_GLOBAL" << dendl;
+
 	reply.tag = CEPH_MSGR_TAG_RETRY_GLOBAL;
 	reply.global_seq = existing->peer_global_seq;  // so we can send it below..
+
 	existing->pipe_lock.Unlock();
 	msgr->lock.Unlock();
+
 	goto reply;
       } else {
 	ldout(msgr->cct,10) << "accept existing " << existing << ".gseq " << existing->peer_global_seq
@@ -610,7 +629,9 @@ int Pipe::accept()
       if (existing->policy.lossy) {
 	ldout(msgr->cct,0) << "accept replacing existing (lossy) channel (new one lossy="
 	        << policy.lossy << ")" << dendl;
+
 	existing->was_session_reset();
+
 	goto replace;
       }
 
@@ -620,10 +641,12 @@ int Pipe::accept()
 
       if (connect.connect_seq == 0 && existing->connect_seq > 0) {
 	ldout(msgr->cct,0) << "accept peer reset, then tried to connect to us, replacing" << dendl;
-        // this is a hard reset from peer
+
+	// this is a hard reset from peer
         is_reset_from_peer = true;
 	if (policy.resetcheck)
 	  existing->was_session_reset(); // this resets out_queue, msg_ and connect_seq #'s
+
 	goto replace;
       }
 
@@ -631,6 +654,7 @@ int Pipe::accept()
 	// old attempt, or we sent READY but they didn't get it.
 	ldout(msgr->cct,10) << "accept existing " << existing << ".cseq " << existing->connect_seq
 			    << " > " << connect.connect_seq << ", RETRY_SESSION" << dendl;
+
 	goto retry_session;
       }
 
@@ -705,13 +729,17 @@ int Pipe::accept()
       // reconnect
       ldout(msgr->cct,10) << "accept peer sent cseq " << connect.connect_seq
 	       << " > " << existing->connect_seq << dendl;
+
       goto replace;
     } // existing
     else if (connect.connect_seq > 0) {
       // we reset, and they are opening a new session
       ldout(msgr->cct,0) << "accept we reset (peer sent cseq " << connect.connect_seq << "), sending RESETSESSION" << dendl;
+
       msgr->lock.Unlock();
+
       reply.tag = CEPH_MSGR_TAG_RESETSESSION;
+
       goto reply;
     } else {
       // new session
@@ -722,7 +750,7 @@ int Pipe::accept()
 
     assert(0);
 
-  retry_session:
+retry_session:
     assert(existing->pipe_lock.is_locked());
     assert(pipe_lock.is_locked());
     reply.tag = CEPH_MSGR_TAG_RETRY_SESSION;
@@ -731,22 +759,28 @@ int Pipe::accept()
     msgr->lock.Unlock();
     goto reply;    
 
-  reply:
+reply:
     assert(pipe_lock.is_locked());
+
     reply.features = ((uint64_t)connect.features & policy.features_supported) | policy.features_required;
     reply.authorizer_len = authorizer_reply.length();
+
     pipe_lock.Unlock();
+
     r = tcp_write((char*)&reply, sizeof(reply));
     if (r < 0)
       goto fail_unlocked;
+
     if (reply.authorizer_len) {
       r = tcp_write(authorizer_reply.c_str(), authorizer_reply.length());
       if (r < 0)
 	goto fail_unlocked;
     }
-  }
+
+    // ok, to read the next connect request
+  } // while (1)
   
- replace:
+replace:
   assert(existing->pipe_lock.is_locked());
   assert(pipe_lock.is_locked());
   // if it is a hard reset from peer, we don't need a round-trip to negotiate in/out sequence
@@ -808,7 +842,7 @@ int Pipe::accept()
   existing->stop_and_wait();
   existing->pipe_lock.Unlock();
 
- open:
+open:
   // open
   assert(pipe_lock.is_locked());
 
@@ -886,6 +920,8 @@ int Pipe::accept()
 
   pipe_lock.Lock();
 
+  // discard requeued messages, i.e., messages on Pipe::out_q[CEPH_MSG_PRIO_HIGHEST], up
+  // to specified seq, both us and Pipe::fault will requeue sent messages
   discard_requeued_up_to(newly_acked_seq);
 
   if (state != STATE_CLOSED) {
@@ -899,7 +935,7 @@ int Pipe::accept()
 
   return 0;   // success.
 
- fail_registered:
+fail_registered:
   ldout(msgr->cct, 10) << "accept fault after register" << dendl;
 
   if (msgr->cct->_conf->ms_inject_internal_delays) {
@@ -909,7 +945,7 @@ int Pipe::accept()
     t.sleep();
   }
 
- fail_unlocked:
+fail_unlocked:
   pipe_lock.Lock();
 
   if (state != STATE_CLOSED) {
@@ -926,6 +962,7 @@ int Pipe::accept()
       state_closed.set(1);
     }
 
+    // fault(false)
     fault();
 
     if (queued || replaced)
@@ -934,10 +971,10 @@ int Pipe::accept()
 
   return -1;
 
- shutting_down:
+shutting_down:
   msgr->lock.Unlock();
 
- shutting_down_msgr_unlocked:
+shutting_down_msgr_unlocked:
   assert(pipe_lock.is_locked());
 
   if (msgr->cct->_conf->ms_inject_internal_delays) {
@@ -1168,12 +1205,15 @@ int Pipe::connect()
     connect.protocol_version = msgr->get_proto_version(peer_type, true);
     connect.authorizer_protocol = authorizer ? authorizer->protocol : 0;
     connect.authorizer_len = authorizer ? authorizer->bl.length() : 0;
+
     if (authorizer) 
       ldout(msgr->cct,10) << "connect.authorizer_len=" << connect.authorizer_len
 	       << " protocol=" << connect.authorizer_protocol << dendl;
+
     connect.flags = 0;
     if (policy.lossy)
       connect.flags |= CEPH_MSG_CONNECT_LOSSY;  // this is fyi, actually, server decides!
+
     memset(&msg, 0, sizeof(msg));
     msgvec[0].iov_base = (char*)&connect;
     msgvec[0].iov_len = sizeof(connect);
@@ -1270,6 +1310,7 @@ int Pipe::connect()
 
     if (reply.tag == CEPH_MSGR_TAG_BADAUTHORIZER) {
       ldout(msgr->cct,0) << "connect got BADAUTHORIZER" << dendl;
+
       if (got_bad_auth)
         goto stop_locked;
 
@@ -1285,6 +1326,7 @@ int Pipe::connect()
 
       was_session_reset();
       cseq = 0;
+
       pipe_lock.Unlock();
 
       continue;
@@ -1393,7 +1435,7 @@ int Pipe::connect()
     goto fail_locked;
   } // while (1)
 
- fail:
+fail:
   if (conf->ms_inject_internal_delays) {
     ldout(msgr->cct, 10) << " sleep for " << msgr->cct->_conf->ms_inject_internal_delays << dendl;
     utime_t t;
@@ -1402,14 +1444,15 @@ int Pipe::connect()
   }
 
   pipe_lock.Lock();
- fail_locked:
+
+fail_locked:
   if (state == STATE_CONNECTING)
     fault();
   else
     ldout(msgr->cct,3) << "connect fault, but state = " << get_state_name()
 		       << " != connecting, stopping" << dendl;
 
- stop_locked:
+stop_locked:
   delete authorizer;
   return rc;
 }
@@ -1464,6 +1507,7 @@ void Pipe::join()
 // called by Pipe::accept or Pipe::fault
 void Pipe::requeue_sent()
 {
+  // only !policy.lossy will push sent messages on Pipe::sent, see Pipe::writer
   if (sent.empty())
     return;
 
@@ -1471,27 +1515,35 @@ void Pipe::requeue_sent()
   while (!sent.empty()) {
     Message *m = sent.back();
     sent.pop_back();
+
     ldout(msgr->cct,10) << "requeue_sent " << *m << " for resend seq " << out_seq
 			<< " (" << m->get_seq() << ")" << dendl;
+
     rq.push_front(m);
     out_seq--;
   }
 }
 
+// called by Pipe::accept
 void Pipe::discard_requeued_up_to(uint64_t seq)
 {
   ldout(msgr->cct, 10) << "discard_requeued_up_to " << seq << dendl;
+
   if (out_q.count(CEPH_MSG_PRIO_HIGHEST) == 0)
     return;
+
+  // requeued messages are put on out_q[CEPH_MSG_PRIO_HIGHEST], see Pipe::requeue_sent
   list<Message*>& rq = out_q[CEPH_MSG_PRIO_HIGHEST];
   while (!rq.empty()) {
     Message *m = rq.front();
     if (m->get_seq() == 0 || m->get_seq() > seq)
       break;
+
     ldout(msgr->cct,10) << "discard_requeued_up_to " << *m << " for resend seq " << out_seq
 			<< " <= " << seq << ", discarding" << dendl;
     m->put();
     rq.pop_front();
+
     out_seq++;
   }
   if (rq.empty())
@@ -1505,6 +1557,8 @@ void Pipe::discard_requeued_up_to(uint64_t seq)
 void Pipe::discard_out_queue()
 {
   ldout(msgr->cct,10) << "discard_queue" << dendl;
+
+  // discard Pipe::sent and Pipe::out_q
 
   for (list<Message*>::iterator p = sent.begin(); p != sent.end(); ++p) {
     ldout(msgr->cct,20) << "  discard " << *p << dendl;
@@ -1539,8 +1593,10 @@ void Pipe::fault(bool onread)
   if (state == STATE_CLOSED ||
       state == STATE_CLOSING) {
     ldout(msgr->cct,10) << "fault already closed|closing" << dendl;
+
     if (connection_state->clear_pipe(this))
       msgr->dispatch_queue.queue_reset(connection_state.get());
+
     return;
   }
 
@@ -1602,6 +1658,7 @@ void Pipe::fault(bool onread)
       state = STATE_STANDBY;
     } else {
       ldout(msgr->cct,0) << "fault, initiating reconnect" << dendl;
+
       connect_seq++;
       state = STATE_CONNECTING;
     }
@@ -1633,8 +1690,11 @@ int Pipe::randomize_out_seq()
     // Set out_seq to a random value, so CRC won't be predictable.   Don't bother checking seq_error
     // here.  We'll check it on the call.  PLR
     int seq_error = get_random_bytes((char *)&out_seq, sizeof(out_seq));
+
     out_seq &= SEQ_MASK;
+
     lsubdout(msgr->cct, ms, 10) << "randomize_out_seq " << out_seq << dendl;
+
     return seq_error;
   } else {
     // previously, seq #'s always started at 0.
@@ -1672,9 +1732,12 @@ void Pipe::stop()
   ldout(msgr->cct,10) << "stop" << dendl;
 
   assert(pipe_lock.is_locked());
+
   state = STATE_CLOSED;
   state_closed.set(1);
+
   cond.Signal();
+
   shutdown_socket();
 }
 
@@ -1731,6 +1794,7 @@ void Pipe::reader()
     // sleep if (re)connecting
     if (state == STATE_STANDBY) {
       ldout(msgr->cct,20) << "reader sleeping during reconnect|standby" << dendl;
+
       cond.Wait(pipe_lock);
       continue;
     }
@@ -1741,7 +1805,9 @@ void Pipe::reader()
     pipe_lock.Unlock();
 
     char tag = -1;
+
     ldout(msgr->cct,20) << "reader reading tag..." << dendl;
+
     if (tcp_read((char*)&tag, 1) < 0) {
       pipe_lock.Lock();
       ldout(msgr->cct,2) << "reader couldn't read tag, " << cpp_strerror(errno) << dendl;

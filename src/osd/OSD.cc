@@ -1744,10 +1744,13 @@ OSD::~OSD()
 
 void cls_initialize(ClassHandler *ch);
 
+// called by ceph_osd.cc:handle_osd_signal
 void OSD::handle_signal(int signum)
 {
   assert(signum == SIGINT || signum == SIGTERM);
+
   derr << "*** Got signal " << sig_str(signum) << " ***" << dendl;
+
   shutdown();
 }
 
@@ -2655,15 +2658,18 @@ void OSD::create_recoverystate_perf()
   cct->get_perfcounters_collection()->add(recoverystate_perf);
 }
 
+// called by OSD::handle_signal
 int OSD::shutdown()
 {
   if (!service.prepare_to_stop())
     return 0; // already shutting down
+
   osd_lock.Lock();
   if (is_stopping()) {
     osd_lock.Unlock();
     return 0;
   }
+
   derr << "shutdown" << dendl;
 
   set_state(STATE_STOPPING);

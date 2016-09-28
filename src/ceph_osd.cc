@@ -603,7 +603,11 @@ int main(int argc, const char **argv)
   }
 
   // install signal handlers
+
+  // create pipe and signal handle thread
   init_async_signal_handler();
+
+  // only register signal handler for SIGHUP, SIGINT, SIGTERM
   register_async_signal_handler(SIGHUP, sighup_handler);
   register_async_signal_handler_oneshot(SIGINT, handle_osd_signal);
   register_async_signal_handler_oneshot(SIGTERM, handle_osd_signal);
@@ -613,6 +617,7 @@ int main(int argc, const char **argv)
   if (g_conf->inject_early_sigterm)
     kill(getpid(), SIGTERM);
 
+  // wait msgr->stopped be set to true, i.e., msgr->shutdown() to be called
   ms_public->wait();
   ms_hbclient->wait();
   ms_hb_front_server->wait();

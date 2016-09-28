@@ -250,6 +250,7 @@ void DispatchQueue::discard_local()
   local_messages.clear();
 }
 
+// called by SimpleMessenger::wait, AsyncMessenger::wait
 void DispatchQueue::shutdown()
 {
   // stop my local delivery thread

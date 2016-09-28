@@ -85,6 +85,7 @@ void SimpleMessenger::ready()
 int SimpleMessenger::shutdown()
 {
   ldout(cct,10) << "shutdown " << get_myaddr() << dendl;
+
   mark_down_all();
 
   // break ref cycles on the loopback connection
@@ -98,6 +99,7 @@ int SimpleMessenger::shutdown()
   return 0;
 }
 
+// called by send_message(Message *m, const entity_inst_t& dest)
 int SimpleMessenger::_send_message(Message *m, const entity_inst_t& dest)
 {
   // set envelope
@@ -127,6 +129,7 @@ int SimpleMessenger::_send_message(Message *m, const entity_inst_t& dest)
   return 0;
 }
 
+// called by send_message(Message *m, Connection *con)
 int SimpleMessenger::_send_message(Message *m, Connection *con)
 {
   //set envelope
@@ -465,6 +468,9 @@ ConnectionRef SimpleMessenger::get_loopback_connection()
   return local_connection;
 }
 
+// called by
+// SimpleMessenger::_send_message(Message *m, const entity_inst_t& dest)
+// SimpleMessenger::_send_message(Message *m, Connection *con)
 void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
 				     const entity_addr_t& dest_addr, int dest_type,
 				     bool already_locked)
@@ -606,6 +612,9 @@ void SimpleMessenger::wait()
     lock.Unlock();
     return;
   }
+
+  // will be set and signalled by SimpleMessenger::shutdown, see ms_public->wait() called
+  // in ceph_osd.cc:main as an example
   if (!stopped)
     stop_cond.Wait(lock);
 

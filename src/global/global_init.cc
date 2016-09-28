@@ -158,6 +158,7 @@ void global_init(std::vector < const char * > *alt_def_args,
   int siglist[] = { SIGPIPE, 0 };
   block_signals(siglist, NULL);
 
+  // default true
   if (g_conf->fatal_signal_handlers)
     install_standard_sighandlers();
 

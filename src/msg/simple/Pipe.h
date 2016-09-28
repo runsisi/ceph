@@ -243,6 +243,7 @@ static const int SM_IOV_MAX = (IOV_MAX >= 1024 ? IOV_MAX / 4 : IOV_MAX);
       assert(pipe_lock.is_locked());
 
       out_q[m->get_priority()].push_back(m);
+
       cond.Signal();
     }
 
