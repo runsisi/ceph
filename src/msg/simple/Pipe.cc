@@ -126,6 +126,7 @@ public:
  * Pipe
  */
 
+// called by SimpleMessenger::add_accept_pipe, SimpleMessenger::connect_rank
 Pipe::Pipe(SimpleMessenger *r, int st, PipeConnection *con)
   : RefCountedObject(r->cct),
     reader_thread(this),
@@ -203,10 +204,12 @@ void Pipe::start_reader()
 {
   assert(pipe_lock.is_locked());
   assert(!reader_running);
+
   if (reader_needs_join) {
     reader_thread.join();
     reader_needs_join = false;
   }
+
   reader_running = true;
   reader_thread.create("ms_pipe_read", msgr->cct->_conf->ms_rwthread_stack_bytes);
 }
@@ -216,6 +219,7 @@ void Pipe::maybe_start_delay_thread()
   if (!delay_thread &&
       msgr->cct->_conf->ms_inject_delay_type.find(ceph_entity_type_name(connection_state->peer_type)) != string::npos) {
     lsubdout(msgr->cct, ms, 1) << "setting up a delay queue on Pipe " << this << dendl;
+
     delay_thread = new DelayedDelivery(this);
     delay_thread->create("ms_pipe_delay");
   }
@@ -225,6 +229,7 @@ void Pipe::start_writer()
 {
   assert(pipe_lock.is_locked());
   assert(!writer_running);
+
   writer_running = true;
   writer_thread.create("ms_pipe_write", msgr->cct->_conf->ms_rwthread_stack_bytes);
 }
@@ -233,10 +238,13 @@ void Pipe::join_reader()
 {
   if (!reader_running)
     return;
+
   cond.Signal();
+
   pipe_lock.Unlock();
   reader_thread.join();
   pipe_lock.Lock();
+
   reader_needs_join = false;
 }
 
@@ -317,10 +325,11 @@ void Pipe::DelayedDelivery::stop_fast_dispatching() {
     delay_cond.Wait(delay_lock);
 }
 
-
+// called by Pipe::reader
 int Pipe::accept()
 {
   ldout(msgr->cct,10) << "accept" << dendl;
+
   assert(pipe_lock.is_locked());
   assert(state == STATE_ACCEPTING);
 
@@ -360,6 +369,7 @@ int Pipe::accept()
 
   set_socket_options();
 
+  // send banner
   // announce myself.
   r = tcp_write(CEPH_BANNER, strlen(CEPH_BANNER));
   if (r < 0) {
@@ -381,8 +391,11 @@ int Pipe::accept()
     goto fail_unlocked;
   }
   socket_addr.set_sockaddr((sockaddr*)&ss);
+
+  // peer's addr
   ::encode(socket_addr, addrs, 0);  // legacy
 
+  // send my addr + peer's addr
   r = tcp_write(addrs.c_str(), addrs.length());
   if (r < 0) {
     ldout(msgr->cct,10) << "accept couldn't write my+peer addr" << dendl;
@@ -391,6 +404,7 @@ int Pipe::accept()
 
   ldout(msgr->cct,1) << "accept sd=" << sd << " " << socket_addr << dendl;
   
+  // recv banner
   // identify peer
   if (tcp_read(banner, strlen(CEPH_BANNER)) < 0) {
     ldout(msgr->cct,10) << "accept couldn't read banner" << dendl;
@@ -401,10 +415,13 @@ int Pipe::accept()
     ldout(msgr->cct,1) << "accept peer sent bad banner '" << banner << "' (should be '" << CEPH_BANNER << "')" << dendl;
     goto fail_unlocked;
   }
+
   {
     bufferptr tp(sizeof(ceph_entity_addr));
     addrbl.push_back(std::move(tp));
   }
+
+  // recv peer's addr
   if (tcp_read(addrbl.c_str(), addrbl.length()) < 0) {
     ldout(msgr->cct,10) << "accept couldn't read peer_addr" << dendl;
     goto fail_unlocked;
@@ -415,14 +432,18 @@ int Pipe::accept()
   }
 
   ldout(msgr->cct,10) << "accept peer addr is " << peer_addr << dendl;
+
   if (peer_addr.is_blank_ip()) {
     // peer apparently doesn't know what ip they have; figure it out for them.
     int port = peer_addr.get_port();
+
     peer_addr.u = socket_addr.u;
     peer_addr.set_port(port);
+
     ldout(msgr->cct,0) << "accept peer addr is really " << peer_addr
 	    << " (socket is " << socket_addr << ")" << dendl;
   }
+
   set_peer_addr(peer_addr);  // so that connection_state gets set up
   
   while (1) {
@@ -451,6 +472,7 @@ int Pipe::accept()
     
     msgr->lock.Lock();   // FIXME
     pipe_lock.Lock();
+
     if (msgr->dispatch_queue.stop)
       goto shutting_down;
     if (state != STATE_ACCEPTING) {
@@ -460,6 +482,7 @@ int Pipe::accept()
     // note peer's type, flags
     set_peer_type(connect.host_type);
     policy = msgr->get_policy(connect.host_type);
+
     ldout(msgr->cct,10) << "accept of host_type " << connect.host_type
 			<< ", policy.lossy=" << policy.lossy
 			<< " policy.server=" << policy.server
@@ -474,6 +497,7 @@ int Pipe::accept()
     // mismatch?
     ldout(msgr->cct,10) << "accept my proto " << reply.protocol_version
 	     << ", their proto " << connect.protocol_version << dendl;
+
     if (connect.protocol_version != reply.protocol_version) {
       reply.tag = CEPH_MSGR_TAG_BADPROTOVER;
       goto reply;
@@ -512,9 +536,11 @@ int Pipe::accept()
 				 authorizer_reply, authorizer_valid, session_key) ||
 	!authorizer_valid) {
       ldout(msgr->cct,0) << "accept: got bad authorizer" << dendl;
+
       pipe_lock.Lock();
       if (state != STATE_ACCEPTING)
 	goto shutting_down_msgr_unlocked;
+
       reply.tag = CEPH_MSGR_TAG_BADAUTHORIZER;
       session_security.reset();
       goto reply;
@@ -527,6 +553,7 @@ int Pipe::accept()
   retry_existing_lookup:
     msgr->lock.Lock();
     pipe_lock.Lock();
+
     if (msgr->dispatch_queue.stop)
       goto shutting_down;
     if (state != STATE_ACCEPTING)
@@ -534,8 +561,10 @@ int Pipe::accept()
     
     // existing?
     existing = msgr->_lookup_pipe(peer_addr);
+
     if (existing) {
       existing->pipe_lock.Lock(true);  // skip lockdep check (we are locking a second Pipe here)
+
       if (existing->reader_dispatching) {
 	/** we need to wait, or we can deadlock if downstream
 	 *  fast_dispatchers are (naughtily!) waiting on resources
@@ -549,14 +578,19 @@ int Pipe::accept()
 	 *  locking existing->lock and checking reader_dispatching.
 	 */
 	existing->get();
+
 	pipe_lock.Unlock();
 	msgr->lock.Unlock();
+
 	existing->notify_on_dispatch_done = true;
+
 	while (existing->reader_dispatching)
 	  existing->cond.Wait(existing->pipe_lock);
+
 	existing->pipe_lock.Unlock();
 	existing->put();
 	existing = nullptr;
+
 	goto retry_existing_lookup;
       }
 
@@ -634,14 +668,18 @@ int Pipe::accept()
 	  // our existing outgoing wins
 	  ldout(msgr->cct,10) << "accept connection race, existing " << existing << ".cseq " << existing->connect_seq
 		   << " == " << connect.connect_seq << ", sending WAIT" << dendl;
+
 	  assert(peer_addr > msgr->my_inst.addr);
+
 	  if (!(existing->state == STATE_CONNECTING))
 	    lderr(msgr->cct) << "accept race bad state, would send wait, existing="
 			     << existing->get_state_name()
 			     << " " << existing << ".cseq=" << existing->connect_seq
 			     << " == " << connect.connect_seq
 			     << dendl;
+
 	  assert(existing->state == STATE_CONNECTING);
+
 	  // make sure our outgoing connection will follow through
 	  existing->_send_keepalive();
 	  reply.tag = CEPH_MSGR_TAG_WAIT;
@@ -681,6 +719,7 @@ int Pipe::accept()
       existing = NULL;
       goto open;
     }
+
     assert(0);
 
   retry_session:
@@ -715,7 +754,9 @@ int Pipe::accept()
     reply_tag = CEPH_MSGR_TAG_SEQ;
     existing_seq = existing->in_seq;
   }
+
   ldout(msgr->cct,10) << "accept replacing " << existing << dendl;
+
   existing->stop();
   existing->unregister_pipe();
   replaced = true;
@@ -723,6 +764,7 @@ int Pipe::accept()
   if (existing->policy.lossy) {
     // disconnect from the Connection
     assert(existing->connection_state);
+
     if (existing->connection_state->clear_pipe(existing))
       msgr->dispatch_queue.queue_reset(existing->connection_state.get());
   } else {
@@ -769,10 +811,13 @@ int Pipe::accept()
  open:
   // open
   assert(pipe_lock.is_locked());
+
   connect_seq = connect.connect_seq + 1;
   peer_global_seq = connect.global_seq;
+
   assert(state == STATE_ACCEPTING);
   state = STATE_OPEN;
+
   ldout(msgr->cct,10) << "accept success, connect_seq = " << connect_seq << ", sending READY" << dendl;
 
   // send READY reply
@@ -786,6 +831,7 @@ int Pipe::accept()
     reply.flags = reply.flags | CEPH_MSG_CONNECT_LOSSY;
 
   connection_state->set_features((uint64_t)reply.features & (uint64_t)connect.features);
+
   ldout(msgr->cct,10) << "accept features " << connection_state->get_features() << dendl;
 
   session_security.reset(
@@ -799,11 +845,18 @@ int Pipe::accept()
   msgr->ms_deliver_handle_fast_accept(connection_state.get());
 
   // ok!
+
+  // DispatchQueue::shutdown set this
   if (msgr->dispatch_queue.stop)
     goto shutting_down;
+
+  // was insert by SimpleMessenger::add_accept_pipe which called by Accepter::entry
   removed = msgr->accepting_pipes.erase(this);
   assert(removed == 1);
+
+  // insert this pipe into msgr->rank_pipe
   register_pipe();
+
   msgr->lock.Unlock();
   pipe_lock.Unlock();
 
@@ -824,6 +877,7 @@ int Pipe::accept()
       ldout(msgr->cct,2) << "accept write error on in_seq" << dendl;
       goto fail_registered;
     }
+
     if (tcp_read((char*)&newly_acked_seq, sizeof(newly_acked_seq)) < 0) {
       ldout(msgr->cct,2) << "accept read error on newly_acked_seq" << dendl;
       goto fail_registered;
@@ -831,11 +885,14 @@ int Pipe::accept()
   }
 
   pipe_lock.Lock();
+
   discard_requeued_up_to(newly_acked_seq);
+
   if (state != STATE_CLOSED) {
     ldout(msgr->cct,10) << "accept starting writer, state " << get_state_name() << dendl;
     start_writer();
   }
+
   ldout(msgr->cct,20) << "accept done" << dendl;
 
   maybe_start_delay_thread();
@@ -854,9 +911,12 @@ int Pipe::accept()
 
  fail_unlocked:
   pipe_lock.Lock();
+
   if (state != STATE_CLOSED) {
     bool queued = is_queued();
+
     ldout(msgr->cct, 10) << "  queued = " << (int)queued << dendl;
+
     if (queued) {
       state = policy.server ? STATE_STANDBY : STATE_CONNECTING;
     } else if (replaced) {
@@ -865,14 +925,18 @@ int Pipe::accept()
       state = STATE_CLOSED;
       state_closed.set(1);
     }
+
     fault();
+
     if (queued || replaced)
       start_writer();
   }
+
   return -1;
 
  shutting_down:
   msgr->lock.Unlock();
+
  shutting_down_msgr_unlocked:
   assert(pipe_lock.is_locked());
 
@@ -885,7 +949,9 @@ int Pipe::accept()
 
   state = STATE_CLOSED;
   state_closed.set(1);
+
   fault();
+
   return -1;
 }
 
@@ -945,6 +1011,7 @@ void Pipe::set_socket_options()
   }
 }
 
+// called by Pipe::writer
 int Pipe::connect()
 {
   bool got_bad_auth = false;
@@ -1215,9 +1282,11 @@ int Pipe::connect()
 
     if (reply.tag == CEPH_MSGR_TAG_RESETSESSION) {
       ldout(msgr->cct,0) << "connect got RESETSESSION" << dendl;
+
       was_session_reset();
       cseq = 0;
       pipe_lock.Unlock();
+
       continue;
     }
 
@@ -1240,7 +1309,9 @@ int Pipe::connect()
 
     if (reply.tag == CEPH_MSGR_TAG_WAIT) {
       ldout(msgr->cct,3) << "connect got WAIT (connection race)" << dendl;
+
       state = STATE_WAIT;
+
       goto stop_locked;
     }
 
@@ -1310,6 +1381,7 @@ int Pipe::connect()
 	ldout(msgr->cct,20) << "connect starting reader" << dendl;
 	start_reader();
       }
+
       maybe_start_delay_thread();
       delete authorizer;
       return 0;
@@ -1319,7 +1391,7 @@ int Pipe::connect()
     ldout(msgr->cct,0) << "connect got bad tag " << (int)tag << dendl;
 
     goto fail_locked;
-  }
+  } // while (1)
 
  fail:
   if (conf->ms_inject_internal_delays) {
@@ -1342,6 +1414,7 @@ int Pipe::connect()
   return rc;
 }
 
+// called by Pipe::accept, SimpleMessenger::connect_rank
 void Pipe::register_pipe()
 {
   ldout(msgr->cct,10) << "register_pipe" << dendl;
@@ -1450,7 +1523,10 @@ void Pipe::discard_out_queue()
 void Pipe::fault(bool onread)
 {
   const md_config_t *conf = msgr->cct->_conf;
+
   assert(pipe_lock.is_locked());
+
+  // reader/writer/
   cond.Signal();
 
   if (onread && state == STATE_CONNECTING) {
@@ -1509,7 +1585,7 @@ void Pipe::fault(bool onread)
   if (delay_thread)
     delay_thread->flush();
 
-  // requeue sent items
+  // requeue sent items, i.e., Pipe::sent, on front of out_q[CEPH_MSG_PRIO_HIGHEST]
   requeue_sent();
 
   if (policy.standby && !is_queued()) {
@@ -1517,6 +1593,8 @@ void Pipe::fault(bool onread)
     state = STATE_STANDBY;
     return;
   }
+
+  // non-standby policy or has message(s) to send
 
   if (state != STATE_CONNECTING) {
     if (policy.server) {
@@ -1527,16 +1605,24 @@ void Pipe::fault(bool onread)
       connect_seq++;
       state = STATE_CONNECTING;
     }
+
     backoff = utime_t();
   } else if (backoff == utime_t()) {
     ldout(msgr->cct,0) << "fault" << dendl;
+
+    // default 0.2
     backoff.set_from_double(conf->ms_initial_backoff);
   } else {
     ldout(msgr->cct,10) << "fault waiting " << backoff << dendl;
+
     cond.WaitInterval(msgr->cct, pipe_lock, backoff);
+
     backoff += backoff;
+
+    // default 15.0
     if (backoff > conf->ms_max_backoff)
       backoff.set_from_double(conf->ms_max_backoff);
+
     ldout(msgr->cct,10) << "fault done waiting or woke up" << dendl;
   }
 }
@@ -1562,6 +1648,7 @@ void Pipe::was_session_reset()
   assert(pipe_lock.is_locked());
 
   ldout(msgr->cct,10) << "was_session_reset" << dendl;
+
   in_q->discard_queue(conn_id);
   if (delay_thread)
     delay_thread->discard();
@@ -1577,9 +1664,13 @@ void Pipe::was_session_reset()
   connect_seq = 0;
 }
 
+// called by
+// SimpleMessenger::mark_down_all, SimpleMessenger::mark_down
+// Pipe::accept, Pipe::fault, Pipe::stop_and_wait
 void Pipe::stop()
 {
   ldout(msgr->cct,10) << "stop" << dendl;
+
   assert(pipe_lock.is_locked());
   state = STATE_CLOSED;
   state_closed.set(1);
@@ -1604,6 +1695,7 @@ void Pipe::stop_and_wait()
   if (delay_thread) {
     delay_thread->stop_fast_dispatching();
   }
+
   while (reader_running &&
 	 reader_dispatching)
     cond.Wait(pipe_lock);
@@ -1612,12 +1704,22 @@ void Pipe::stop_and_wait()
 /* read msgs from socket.
  * also, server.
  */
+// called by Pipe::Reader::entry
 void Pipe::reader()
 {
   pipe_lock.Lock();
 
   if (state == STATE_ACCEPTING) {
+
+    // new pipe for newly accepted socket, the socket layer accept has
+    // been completed by Accepter::entry, now we are doing ceph layer
+    // accept, see
+    // Accepter::entry -> SimpleMessenger::add_accept_pipe
+
+    // establish connection on the ceph layer, if everything went well
+    // then start the writer thread
     accept();
+
     assert(pipe_lock.is_locked());
   }
 
@@ -1801,11 +1903,14 @@ void Pipe::reader()
     }
   }
 
- 
+  // reader thread exits
+
   // reap?
   reader_running = false;
   reader_needs_join = true;
+
   unlock_maybe_reap();
+
   ldout(msgr->cct,10) << "reader done" << dendl;
 }
 
@@ -1815,6 +1920,7 @@ void Pipe::reader()
 void Pipe::writer()
 {
   pipe_lock.Lock();
+
   while (state != STATE_CLOSED) {// && state != STATE_WAIT) {
     ldout(msgr->cct,10) << "writer: state = " << get_state_name()
 			<< " policy.server=" << policy.server << dendl;
@@ -1826,6 +1932,7 @@ void Pipe::writer()
     // connect?
     if (state == STATE_CONNECTING) {
       assert(!policy.server);
+
       connect();
       continue;
     }
@@ -1833,16 +1940,21 @@ void Pipe::writer()
     if (state == STATE_CLOSING) {
       // write close tag
       ldout(msgr->cct,20) << "writer writing CLOSE tag" << dendl;
+
       char tag = CEPH_MSGR_TAG_CLOSE;
       state = STATE_CLOSED;
       state_closed.set(1);
+
       pipe_lock.Unlock();
+
       if (sd >= 0) {
 	// we can ignore return value, actually; we don't care if this succeeds.
 	int r = ::write(sd, &tag, 1);
 	(void)r;
       }
+
       pipe_lock.Lock();
+
       continue;
     }
 
@@ -1974,19 +2086,25 @@ void Pipe::writer()
         }
 	m->put();
       }
+
       continue;
     }
     
     // wait
     ldout(msgr->cct,20) << "writer sleeping" << dendl;
+
     cond.Wait(pipe_lock);
   }
   
+  // writer thread exits
+
   ldout(msgr->cct,20) << "writer finishing" << dendl;
 
   // reap?
   writer_running = false;
+
   unlock_maybe_reap();
+
   ldout(msgr->cct,10) << "writer done" << dendl;
 }
 

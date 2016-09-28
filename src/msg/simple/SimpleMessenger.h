@@ -318,6 +318,7 @@ private:
 
   Pipe *_lookup_pipe(const entity_addr_t& k) {
     ceph::unordered_map<entity_addr_t, Pipe*>::iterator p = rank_pipe.find(k);
+
     if (p == rank_pipe.end())
       return NULL;
 

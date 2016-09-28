@@ -219,6 +219,7 @@ static const int SM_IOV_MAX = (IOV_MAX >= 1024 ? IOV_MAX / 4 : IOV_MAX);
 
     entity_addr_t& get_peer_addr() { return peer_addr; }
 
+    // called by Pipe::accept, SimpleMessenger::connect_rank
     void set_peer_addr(const entity_addr_t& a) {
       if (&peer_addr != &a)  // shut up valgrind
         peer_addr = a;

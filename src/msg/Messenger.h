@@ -79,6 +79,8 @@ public:
     /// If true, the underlying connection can't be re-established from this end.
     bool server;
     /// If true, we will standby when idle
+    // used by Pipe::fault to determine if the pipe should go to standby state
+    // or
     bool standby;
     /// If true, we will try to detect session resets
     bool resetcheck;
@@ -95,6 +97,7 @@ public:
     /// Specify features any remotes must have to talk to this endpoint.
     uint64_t features_required;
 
+    // for default policy if set_default_policy did not get called
     Policy()
       : lossy(false), server(false), standby(false), resetcheck(true),
 	throttler_bytes(NULL),

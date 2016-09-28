@@ -330,16 +330,26 @@ int SimpleMessenger::start()
   return 0;
 }
 
+// called by Accepter::entry
 Pipe *SimpleMessenger::add_accept_pipe(int sd)
 {
   lock.Lock();
+
   Pipe *p = new Pipe(this, Pipe::STATE_ACCEPTING, NULL);
   p->sd = sd;
+
   p->pipe_lock.Lock();
+
+  // start reader thread
   p->start_reader();
+
   p->pipe_lock.Unlock();
+
   pipes.insert(p);
+
+  // will be erased and insert into msgr->rank_pipe by Pipe::accept
   accepting_pipes.insert(p);
+
   lock.Unlock();
   return p;
 }
@@ -347,6 +357,9 @@ Pipe *SimpleMessenger::add_accept_pipe(int sd)
 /* connect_rank
  * NOTE: assumes messenger.lock held.
  */
+// callded by
+// SimpleMessenger::get_connection
+// SimpleMessenger::submit_message
 Pipe *SimpleMessenger::connect_rank(const entity_addr_t& addr,
 				    int type,
 				    PipeConnection *con,
@@ -400,6 +413,18 @@ bool SimpleMessenger::verify_authorizer(Connection *con, int peer_type,
   return ms_deliver_verify_authorizer(con, peer_type, protocol, authorizer, authorizer_reply, isvalid,session_key);
 }
 
+// called by
+// Client::_open_mds_session
+// Client::handle_mds_map
+// Client::mds_command
+// MonClient::get_monmap_privately
+// MonClient::ping_monitor
+// MonClient::_reopen_session
+// OSDService::send_message_osd_cluster
+// OSDService::get_con_osd_cluster
+// OSDService::get_con_osd_hb
+// Objecter::_get_session
+// Objecter::_reopen_session
 ConnectionRef SimpleMessenger::get_connection(const entity_inst_t& dest)
 {
   Mutex::Locker l(lock);
@@ -413,6 +438,7 @@ ConnectionRef SimpleMessenger::get_connection(const entity_inst_t& dest)
   while (true) {
     // lookup in SimpleMessenger::rank_pipe
     Pipe *pipe = _lookup_pipe(dest.addr);
+
     if (pipe) {
 
       // pipe has not closed
@@ -678,11 +704,16 @@ void SimpleMessenger::mark_down_all()
 void SimpleMessenger::mark_down(const entity_addr_t& addr)
 {
   lock.Lock();
+
   Pipe *p = _lookup_pipe(addr);
+
   if (p) {
     ldout(cct,1) << "mark_down " << addr << " -- " << p << dendl;
+
     p->unregister_pipe();
+
     p->pipe_lock.Lock();
+
     p->stop();
     if (p->connection_state) {
       // generate a reset event for the caller in this case, even
@@ -692,10 +723,12 @@ void SimpleMessenger::mark_down(const entity_addr_t& addr)
       if (con && con->clear_pipe(p))
 	dispatch_queue.queue_reset(con.get());
     }
+
     p->pipe_lock.Unlock();
   } else {
     ldout(cct,1) << "mark_down " << addr << " -- pipe dne" << dendl;
   }
+
   lock.Unlock();
 }
 
@@ -703,6 +736,7 @@ void SimpleMessenger::mark_down(Connection *con)
 {
   if (con == NULL)
     return;
+
   lock.Lock();
   Pipe *p = static_cast<Pipe *>(static_cast<PipeConnection*>(con)->get_pipe());
   if (p) {
