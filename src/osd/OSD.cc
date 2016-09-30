@@ -2854,14 +2854,17 @@ int OSD::shutdown()
   return r;
 }
 
+// called by OSD::init
 int OSD::update_crush_location()
 {
+  // default true
   if (!g_conf->osd_crush_update_on_start) {
     dout(10) << __func__ << " osd_crush_update_on_start = false" << dendl;
     return 0;
   }
 
   char weight[32];
+  // default -1
   if (g_conf->osd_crush_initial_weight >= 0) {
     snprintf(weight, sizeof(weight), "%.4lf", g_conf->osd_crush_initial_weight);
   } else {
@@ -2877,7 +2880,10 @@ int OSD::update_crush_location()
 		 (double)(1ull << 40 /* TB */)));
   }
 
+  // the loc string was initialized by CrushLocation::init_on_startup which
+  // was called by global_init
   std::multimap<string,string> loc = cct->crush_location.get_location();
+
   dout(10) << __func__ << " crush location is " << loc << dendl;
 
   string cmd =
@@ -2885,11 +2891,13 @@ int OSD::update_crush_location()
     string("\"id\": ") + stringify(whoami) + string(", ") +
     string("\"weight\":") + weight + string(", ") +
     string("\"args\": [");
+
   for (multimap<string,string>::iterator p = loc.begin(); p != loc.end(); ++p) {
     if (p != loc.begin())
       cmd += ", ";
     cmd += "\"" + p->first + "=" + p->second + "\"";
   }
+
   cmd += "]}";
 
   bool created = false;

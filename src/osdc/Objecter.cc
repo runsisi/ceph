@@ -223,9 +223,14 @@ void Objecter::handle_conf_change(const struct md_config_t *conf,
   }
 }
 
+// called by Objecter::init and Objecter::handle_conf_change
 void Objecter::update_crush_location()
 {
   unique_lock wl(rwlock);
+
+  // the crush_location string was initialized by CrushLocation::init_on_startup
+  // which was called by global_init
+  // the crush_location string will be used by Objecter::_calc_target
   crush_location = cct->crush_location.get_location();
 }
 
