@@ -300,14 +300,18 @@ public:
     if (changed.count(
 	  "enable_experimental_unrecoverable_data_corrupting_features")) {
       ceph_spin_lock(&cct->_feature_lock);
+
       get_str_set(
 	conf->enable_experimental_unrecoverable_data_corrupting_features,
 	cct->_experimental_features);
+
       ceph_spin_unlock(&cct->_feature_lock);
+
       if (!cct->_experimental_features.empty())
 	lderr(cct) << "WARNING: the following dangerous and experimental features are enabled: "
 		   << cct->_experimental_features << dendl;
     }
+
     if (changed.count("crush_location")) {
       cct->crush_location.update_from_conf();
     }
