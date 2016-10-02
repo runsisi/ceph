@@ -4870,14 +4870,19 @@ bool OSD::ms_handle_reset(Connection *con)
 
 bool OSD::ms_handle_refused(Connection *con)
 {
+  // default true
   if (!cct->_conf->osd_fast_fail_on_connection_refused)
     return false;
 
   OSD::Session *session = (OSD::Session *)con->get_priv();
+
   dout(1) << "ms_handle_refused con " << con << " session " << session << dendl;
+
   if (!session)
     return false;
+
   int type = con->get_peer_type();
+
   // handle only OSD failures here
   if (monc && (type == CEPH_ENTITY_TYPE_OSD)) {
     OSDMapRef osdmap = get_osdmap();
@@ -4895,6 +4900,7 @@ bool OSD::ms_handle_refused(Connection *con)
       }
     }
   }
+
   session->put();
   return true;
 }

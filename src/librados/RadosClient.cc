@@ -242,6 +242,7 @@ int librados::RadosClient::connect()
     goto out;
 
   err = -ENOMEM;
+
   messenger = Messenger::create_client_messenger(cct, "radosclient");
   if (!messenger)
     goto out;
@@ -261,6 +262,7 @@ int librados::RadosClient::connect()
 			  cct->_conf->rados_osd_op_timeout);
   if (!objecter)
     goto out;
+
   objecter->set_balanced_budget();
 
   monclient.set_messenger(messenger);
@@ -274,8 +276,10 @@ int librados::RadosClient::connect()
   messenger->start();
 
   ldout(cct, 1) << "setting wanted keys" << dendl;
+
   monclient.set_want_keys(
       CEPH_ENTITY_TYPE_MON | CEPH_ENTITY_TYPE_OSD | CEPH_ENTITY_TYPE_MGR);
+
   ldout(cct, 1) << "calling monclient init" << dendl;
 
   err = monclient.init();
@@ -291,6 +295,7 @@ int librados::RadosClient::connect()
     shutdown();
     goto out;
   }
+
   messenger->set_myname(entity_name_t::CLIENT(monclient.get_global_id()));
 
   // MgrClient needs this (it doesn't have MonClient reference itself)
@@ -301,6 +306,7 @@ int librados::RadosClient::connect()
 
   objecter->set_client_incarnation(0);
   objecter->start();
+
   lock.Lock();
 
   timer.init();
@@ -308,11 +314,13 @@ int librados::RadosClient::connect()
   finisher.start();
 
   state = CONNECTED;
+
   instance_id = monclient.get_global_id();
 
   lock.Unlock();
 
   ldout(cct, 1) << "init done" << dendl;
+
   err = 0;
 
  out:

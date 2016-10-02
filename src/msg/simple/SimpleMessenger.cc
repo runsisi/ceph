@@ -122,9 +122,11 @@ int SimpleMessenger::_send_message(Message *m, const entity_inst_t& dest)
   }
 
   lock.Lock();
+
   Pipe *pipe = _lookup_pipe(dest.addr);
   submit_message(m, (pipe ? pipe->connection_state.get() : NULL),
                  dest.addr, dest.name.type(), true);
+
   lock.Unlock();
   return 0;
 }
@@ -795,21 +797,29 @@ void SimpleMessenger::learned_addr(const entity_addr_t &peer_addr_for_me)
   // this always goes from true -> false under the protection of the
   // mutex.  if it is already false, we need not retake the mutex at
   // all.
+  // was set to true in ctor
   if (!need_addr)
     return;
 
   lock.Lock();
+
   if (need_addr) {
     entity_addr_t t = peer_addr_for_me;
+
+    // for client we do not have fixed port, so do not bother to change it
+    // for server we have bound to a fixed port, so do not bother to change it either
     t.set_port(my_inst.addr.get_port());
     t.set_nonce(my_inst.addr.get_nonce());
     ANNOTATE_BENIGN_RACE_SIZED(&my_inst.addr, sizeof(my_inst.addr),
                                "SimpleMessenger learned addr");
     my_inst.addr = t;
     ldout(cct,1) << "learned my addr " << my_inst.addr << dendl;
+
     need_addr = false;
+
     init_local_connection();
   }
+
   lock.Unlock();
 }
 

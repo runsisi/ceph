@@ -1013,6 +1013,7 @@ int OSDMap::identify_osd_on_all_channels(const entity_addr_t& addr) const
     if (exists(i) && (get_addr(i) == addr || get_cluster_addr(i) == addr ||
 	get_hb_back_addr(i) == addr || get_hb_front_addr(i) == addr))
       return i;
+
   return -1;
 }
 

@@ -125,7 +125,10 @@ void common_init_finish(CephContext *cct)
   cct->init_crypto();
 
   int flags = cct->get_init_flags();
+
   if (!(flags & CINIT_FLAG_NO_DAEMON_ACTIONS))
+    // create service thread to reopen log files, heart beat and refresh perf counter,
+    // init admin socket
     cct->start_service_thread();
 
   if ((flags & CINIT_FLAG_DEFER_DROP_PRIVILEGES) &&

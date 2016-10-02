@@ -1169,6 +1169,7 @@ void Objecter::_scan_requests(OSDSession *s,
 void Objecter::handle_osd_map(MOSDMap *m)
 {
   shunique_lock sul(rwlock, acquire_unique);
+
   if (!initialized.read())
     return;
 
@@ -1185,6 +1186,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
   bool was_pausewr = osdmap->test_flag(CEPH_OSDMAP_PAUSEWR) || cluster_full ||
     _osdmap_has_pool_full();
   map<int64_t, bool> pool_full_map;
+
   for (map<int64_t, pg_pool_t>::const_iterator it
 	 = osdmap->get_pools().begin();
        it != osdmap->get_pools().end(); ++it)
@@ -1206,6 +1208,7 @@ void Objecter::handle_osd_map(MOSDMap *m)
 
     if (osdmap->get_epoch()) {
       bool skipped_map = false;
+
       // we want incrementals
       for (epoch_t e = osdmap->get_epoch() + 1;
 	   e <= m->get_last();
@@ -1231,17 +1234,22 @@ void Objecter::handle_osd_map(MOSDMap *m)
 	    _maybe_request_map();
 	    break;
 	  }
+
 	  ldout(cct, 3) << "handle_osd_map missing epoch "
 			<< osdmap->get_epoch()+1
 			<< ", jumping to " << m->get_oldest() << dendl;
+
 	  e = m->get_oldest() - 1;
 	  skipped_map = true;
+
 	  continue;
 	}
 	logger->set(l_osdc_map_epoch, osdmap->get_epoch());
 
 	cluster_full = cluster_full || _osdmap_full_flag();
+
 	update_pool_full_map(pool_full_map);
+
 	_scan_requests(homeless_session, skipped_map, cluster_full,
 		       &pool_full_map, need_resend,
 		       need_resend_linger, need_resend_command, sul);
@@ -1785,10 +1793,13 @@ void Objecter::close_session(OSDSession *s)
   // rwlock is locked unique
 
   ldout(cct, 10) << "close_session for osd." << s->osd << dendl;
+
   if (s->con) {
     s->con->mark_down();
+
     logger->inc(l_osdc_osd_session_close);
   }
+
   OSDSession::unique_lock sl(s->lock);
 
   std::list<LingerOp*> homeless_lingers;
@@ -1797,27 +1808,38 @@ void Objecter::close_session(OSDSession *s)
 
   while (!s->linger_ops.empty()) {
     std::map<uint64_t, LingerOp*>::iterator i = s->linger_ops.begin();
+
     ldout(cct, 10) << " linger_op " << i->first << dendl;
+
     homeless_lingers.push_back(i->second);
+
     _session_linger_op_remove(s, i->second);
   }
 
   while (!s->ops.empty()) {
     std::map<ceph_tid_t, Op*>::iterator i = s->ops.begin();
+
     ldout(cct, 10) << " op " << i->first << dendl;
+
     homeless_ops.push_back(i->second);
+
     _session_op_remove(s, i->second);
   }
 
   while (!s->command_ops.empty()) {
     std::map<ceph_tid_t, CommandOp*>::iterator i = s->command_ops.begin();
+
     ldout(cct, 10) << " command_op " << i->first << dendl;
+
     homeless_commands.push_back(i->second);
+
     _session_command_op_remove(s, i->second);
   }
 
   osd_sessions.erase(s->osd);
+
   sl.unlock();
+
   put_session(s);
 
   // Assign any leftover ops to the homeless session
@@ -4349,25 +4371,35 @@ bool Objecter::ms_handle_reset(Connection *con)
 {
   if (!initialized.read())
     return false;
+
   if (con->get_peer_type() == CEPH_ENTITY_TYPE_OSD) {
     int osd = osdmap->identify_osd(con->get_peer_addr());
     if (osd >= 0) {
       ldout(cct, 1) << "ms_handle_reset on osd." << osd << dendl;
+
       unique_lock wl(rwlock);
+
       if (!initialized.read()) {
 	wl.unlock();
 	return false;
       }
+
       map<int,OSDSession*>::iterator p = osd_sessions.find(osd);
       if (p != osd_sessions.end()) {
 	OSDSession *session = p->second;
 	map<uint64_t, LingerOp *> lresend;
+
 	OSDSession::unique_lock sl(session->lock);
+
 	_reopen_session(session);
 	_kick_requests(session, lresend);
+
 	sl.unlock();
+
 	_linger_ops_resend(lresend, wl);
+
 	wl.unlock();
+
 	maybe_request_map();
       } else {
 	wl.unlock();
@@ -4376,8 +4408,10 @@ bool Objecter::ms_handle_reset(Connection *con)
       ldout(cct, 10) << "ms_handle_reset on unknown osd addr "
 		     << con->get_peer_addr() << dendl;
     }
+
     return true;
   }
+
   return false;
 }
 

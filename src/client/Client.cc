@@ -12623,7 +12623,9 @@ bool Client::ms_handle_reset(Connection *con)
 void Client::ms_handle_remote_reset(Connection *con)
 {
   ldout(cct, 0) << "ms_handle_remote_reset on " << con->get_peer_addr() << dendl;
+
   Mutex::Locker l(client_lock);
+
   switch (con->get_peer_type()) {
   case CEPH_ENTITY_TYPE_MDS:
     {

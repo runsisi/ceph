@@ -662,15 +662,20 @@ void CephContext::init_crypto()
   }
 }
 
+// called by common_init_finish
 void CephContext::start_service_thread()
 {
   ceph_spin_lock(&_service_thread_lock);
+
   if (_service_thread) {
     ceph_spin_unlock(&_service_thread_lock);
     return;
   }
+
+  // reopen log file, check heart beat, refresh perf counter
   _service_thread = new CephContextServiceThread(this);
   _service_thread->create("service");
+
   ceph_spin_unlock(&_service_thread_lock);
 
   // make logs flush on_exit()
@@ -683,6 +688,7 @@ void CephContext::start_service_thread()
   _conf->call_all_observers();
 
   // start admin socket
+  // default "$run_dir/$cluster-$name.asok"
   if (_conf->admin_socket.length())
     _admin_socket->init(_conf->admin_socket);
 }
