@@ -154,10 +154,13 @@ public:
         break;
       }
 
+      // initialized to false by ctor, set to true by CephContextServiceThread::reopen_logs
       if (_reopen_logs) {
         _cct->_log->reopen_log_file();
+
         _reopen_logs = false;
       }
+
       _cct->_heartbeat_map->check_touch_file();
 
       // refresh the perf coutners
@@ -166,6 +169,7 @@ public:
     return NULL;
   }
 
+  // called by CephContext::reopen_logs
   void reopen_logs()
   {
     Mutex::Locker l(_lock);

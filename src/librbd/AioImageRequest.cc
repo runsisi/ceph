@@ -576,10 +576,14 @@ uint64_t AioImageWrite<I>::append_journal_event(
 
   uint64_t tid;
   uint64_t buffer_offset = 0;
+
   assert(!this->m_image_extents.empty());
+
   for (auto &extent : this->m_image_extents) {
     bufferlist sub_bl;
+
     sub_bl.substr_of(m_bl, buffer_offset, extent.second);
+
     buffer_offset += extent.second;
 
     tid = image_ctx.journal->append_write_event(extent.first, extent.second,

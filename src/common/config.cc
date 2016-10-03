@@ -607,6 +607,7 @@ bool md_config_t::_internal_field(const string& s)
   return false;
 }
 
+// called by md_config_t::apply_changes, md_config_t::injectargs
 void md_config_t::_apply_changes(std::ostream *oss)
 {
   /* Maps observers to the configuration options that they care about which

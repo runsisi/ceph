@@ -917,33 +917,38 @@ void Journal<I>::flush_commit_position(Context *on_finish) {
 }
 
 // called by AioImageWrite<I>::append_journal_event
-// for AioImageDiscard it calls image_ctx.journal->append_io_event directly
+// for AioImageDiscard and AioImageFlush it calls image_ctx.journal->append_io_event directly
 template <typename I>
 uint64_t Journal<I>::append_write_event(uint64_t offset, size_t length,
                                         const bufferlist &bl,
                                         const AioObjectRequests &requests,
                                         bool flush_entry) {
+  // m_max_append_size was initialized by Journal<I>::handle_initialized
   assert(m_max_append_size > journal::AioWriteEvent::get_fixed_size());
 
   uint64_t max_write_data_size =
     m_max_append_size - journal::AioWriteEvent::get_fixed_size();
 
   // ensure that the write event fits within the journal entry
+  // std::list<bufferlist>
   Bufferlists bufferlists;
   uint64_t bytes_remaining = length;
   uint64_t event_offset = 0;
 
+  // an image extent write may split into multiple journal entries
   do {
 
     // one user io may split into multiple EventEntry and then in
     // append_io_events each EventEntry is represented by a future,
     // and multiple futures make up an Event
 
+    // <event_offset, event_length> is <off, len> in image extent
     uint64_t event_length = MIN(bytes_remaining, max_write_data_size);
 
     bufferlist event_bl;
 
     event_bl.substr_of(bl, event_offset, event_length);
+
     journal::EventEntry event_entry(journal::AioWriteEvent(offset + event_offset,
                                                            event_length,
                                                            event_bl));
@@ -955,10 +960,14 @@ uint64_t Journal<I>::append_write_event(uint64_t offset, size_t length,
     bytes_remaining -= event_length;
   } while (bytes_remaining > 0);
 
+  // <offset, length> is the image extent in image
   return append_io_events(journal::EVENT_TYPE_AIO_WRITE, bufferlists, requests,
                           offset, length, flush_entry);
 }
 
+// called by
+// AioImageDiscard<I>::append_journal_event
+// AioImageFlush<I>::send_request
 template <typename I>
 uint64_t Journal<I>::append_io_event(journal::EventEntry &&event_entry,
                                      const AioObjectRequests &requests,
@@ -970,9 +979,12 @@ uint64_t Journal<I>::append_io_event(journal::EventEntry &&event_entry,
                           length, flush_entry);
 }
 
+// AioWriteEvent, AioDiscardEvent, AioFlushEvent
+
 // interface between librbd and Journaler, called by
-// AioImageWrite<I>::append_journal_event and AioImageDiscard<I>::append_journal_event
-// indirectly
+// AioImageWrite<I>::append_journal_event
+// AioImageDiscard<I>::append_journal_event
+// AioImageFlush<I>::send_request
 template <typename I>
 uint64_t Journal<I>::append_io_events(journal::EventType event_type,
                                       const Bufferlists &bufferlists,
@@ -1477,6 +1489,7 @@ void Journal<I>::handle_open(int r) {
   }
 
   m_tag_class = m_client_meta.tag_class;
+  // journal object size - (journal entry header + remainder)
   m_max_append_size = m_journaler->get_max_append_size();
   ldout(cct, 20) << this << " " << __func__ << ": "
                  << "tag_class=" << m_tag_class << ", "

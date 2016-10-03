@@ -88,11 +88,16 @@ void global_pre_init(std::vector < const char * > *alt_def_args,
 {
   std::string conf_file_list;
   std::string cluster = "";
+
   CephInitParameters iparams = ceph_argparse_early_args(args, module_type, flags,
 							&cluster, &conf_file_list);
+
   CephContext *cct = common_preinit(iparams, code_env, flags, data_dir_option);
+
   cct->_conf->cluster = cluster;
+
   global_init_set_globals(cct);
+
   md_config_t *conf = cct->_conf;
 
   if (alt_def_args)
@@ -130,6 +135,7 @@ void global_pre_init(std::vector < const char * > *alt_def_args,
   g_conf->complain_about_parse_errors(g_ceph_context);
 }
 
+// called by all daemons and utils
 void global_init(std::vector < const char * > *alt_def_args,
 		 std::vector < const char* >& args,
 		 uint32_t module_type, code_environment_t code_env,

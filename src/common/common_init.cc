@@ -34,12 +34,14 @@
 #define _STR(x) #x
 #define STRINGIFY(x) _STR(x)
 
+// called by global_pre_init, rados_create_cct, Replayer::init_rados, libcephfs.c:ceph_create
 CephContext *common_preinit(const CephInitParameters &iparams,
 			    enum code_environment_t code_env, int flags,
 			    const char *data_dir_option)
 {
   // set code environment
   ANNOTATE_BENIGN_RACE_SIZED(&g_code_env, sizeof(g_code_env), "g_code_env");
+
   g_code_env = code_env;
 
   // Create a configuration object
@@ -120,6 +122,7 @@ void complain_about_parse_errors(CephContext *cct,
 
 /* Please be sure that this can safely be called multiple times by the
  * same application. */
+// called by all daemons, utils, and librados::RadosClient::connect
 void common_init_finish(CephContext *cct)
 {
   cct->init_crypto();
