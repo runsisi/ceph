@@ -979,7 +979,7 @@ uint64_t Journal<I>::append_io_event(journal::EventEntry &&event_entry,
                           length, flush_entry);
 }
 
-// AioWriteEvent, AioDiscardEvent, AioFlushEvent
+// IO event types: AioWriteEvent, AioDiscardEvent, AioFlushEvent
 
 // interface between librbd and Journaler, called by
 // AioImageWrite<I>::append_journal_event

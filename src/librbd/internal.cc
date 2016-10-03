@@ -2290,10 +2290,15 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
   int clip_io(ImageCtx *ictx, uint64_t off, uint64_t *len)
   {
     assert(ictx->snap_lock.is_locked());
+
     uint64_t image_size = ictx->get_image_size(ictx->snap_id);
+
+    // ictx->snap_exists should always be true unless be set to false by
+    // RefreshRequest<I>::apply, which means we are reading from a non-exist snapshot
     bool snap_exists = ictx->snap_exists;
 
     if (!snap_exists)
+      // the snaphost we previously operated has been removed
       return -ENOENT;
 
     // special-case "len == 0" requests: always valid

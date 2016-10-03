@@ -68,13 +68,18 @@ protected:
   Extents m_image_extents;
   bool m_bypass_image_cache = false;
 
+  // only accepts std::vector<std::pair<uint64_t,uint64_t> >, so AioImageWrite and
+  // AioImageDiscard must construct std::vector<std::pair<uint64_t,uint64_t> > from
+  // <off, len>
   AioImageRequest(ImageCtxT &image_ctx, AioCompletion *aio_comp,
                   Extents &&image_extents)
     : m_image_ctx(image_ctx), m_aio_comp(aio_comp),
       m_image_extents(image_extents) {
   }
 
+  // AioImageFlush always return 0
   virtual int clip_request();
+
   // bypass or without image cache
   virtual void send_request() = 0;
   // with image cache

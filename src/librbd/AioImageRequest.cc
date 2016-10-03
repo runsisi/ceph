@@ -189,10 +189,13 @@ private:
 } // anonymous namespace
 
 // static
+// AioImageRequestWQ::aio_read will construct std::vector<std::pair<uint64_t,uint64_t> >
+// from user provided <off, len>
 template <typename I>
 void AioImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
                                   Extents &&image_extents, char *buf,
                                   bufferlist *pbl, int op_flags) {
+  // std::vector<std::pair<uint64_t,uint64_t> >
   AioImageRead<I> req(*ictx, c, std::move(image_extents), buf, pbl, op_flags);
   req.send();
 }
@@ -206,6 +209,8 @@ void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c, uint64_t off,
 }
 
 // static
+// never been used, AioImageRequestWQ::aio_write uses the above method,
+// AioImageWrite has ctors accept <off, len> and std::vector<std::pair<uint64_t,uint64_t> >
 template <typename I>
 void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
                                    Extents &&image_extents, bufferlist &&bl,
@@ -244,6 +249,7 @@ void AioImageRequest<I>::send() {
                  << "completion=" << aio_comp <<  dendl;
 
   aio_comp->get();
+
   int r = clip_request();
   if (r < 0) {
     m_aio_comp->fail(r);
@@ -251,17 +257,24 @@ void AioImageRequest<I>::send() {
   }
 
   if (m_bypass_image_cache || m_image_ctx.image_cache == nullptr) {
+    // overrided by AioImageRead, AbstractAioImageWrite, AioImageFlush
     send_request();
   } else {
     send_image_cache_request();
   }
 }
 
+// only AioImageFlush will override this and always return 0, becoz it does not
+// have the <off, len> parameter pair
 template <typename I>
 int AioImageRequest<I>::clip_request() {
   RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
   for (auto &image_extent : m_image_extents) {
     size_t clip_len = image_extent.second;
+
+    // do not operate beyond the image size, especially check if the snapshost
+    // we previously operated has been removed
     int r = clip_io(get_image_ctx(&m_image_ctx), image_extent.first, &clip_len);
     if (r < 0) {
       return r;
@@ -286,6 +299,7 @@ void AioImageRead<I>::send_request() {
   CephContext *cct = image_ctx.cct;
 
   auto &image_extents = this->m_image_extents;
+
   if (image_ctx.object_cacher && image_ctx.readahead_max_bytes > 0 &&
       !(m_op_flags & LIBRADOS_OP_FLAG_FADVISE_RANDOM)) {
     readahead(get_image_ctx(&image_ctx), image_extents);
@@ -303,13 +317,19 @@ void AioImageRead<I>::send_request() {
 
     // map image extents to object extents
     for (auto &extent : image_extents) {
+
+      // there should be only 1 extent, becoz rbd_aio_read only accepts <off, len> parameter
+
       if (extent.second == 0) {
+        // if the io beyonds the image size, clip_request called previously will
+        // truncate the requested extent(s)
         continue;
       }
 
       Striper::file_to_extents(cct, image_ctx.format_string, &image_ctx.layout,
                                extent.first, extent.second, 0, object_extents,
                                buffer_ofs);
+
       buffer_ofs += extent.second;
     }
   }
@@ -398,6 +418,7 @@ void AbstractAioImageWrite<I>::send_request() {
 
   AioCompletion *aio_comp = this->m_aio_comp;
   uint64_t clip_len = 0;
+  // std::vector<ObjectExtent>
   ObjectExtents object_extents;
   ::SnapContext snapc;
 
@@ -412,13 +433,22 @@ void AbstractAioImageWrite<I>::send_request() {
     }
 
     for (auto &extent : this->m_image_extents) {
+
+      // there should be only 1 extent, becoz rbd_aio_write only accepts <off, len> parameter
+
       if (extent.second == 0) {
+        // if the io beyonds the image size, clip_request called previously will
+        // truncate the requested extent(s)
         continue;
       }
 
       // map to object extents
+      // <off, len> in image -> std::vector<ObjectExtent>
       Striper::file_to_extents(cct, image_ctx.format_string, &image_ctx.layout,
                                extent.first, extent.second, 0, object_extents);
+
+      // used for updating perf counter, the original request may have been clipped, the
+      // requested length after clipping is not known directly
       clip_len += extent.second;
     }
 
@@ -428,6 +458,7 @@ void AbstractAioImageWrite<I>::send_request() {
                   image_ctx.journal->is_journal_appending());
   }
 
+  // only overridded by AioImageDiscard
   prune_object_extents(object_extents);
 
   if (!object_extents.empty()) {
@@ -518,7 +549,9 @@ void AbstractAioImageWrite<I>::send_request() {
     aio_comp->unblock();
   }
 
+  // update perf counter
   update_stats(clip_len);
+
   aio_comp->put();
 }
 
