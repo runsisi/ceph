@@ -458,14 +458,17 @@ void AbstractAioImageWrite<I>::send_request() {
                   image_ctx.journal->is_journal_appending());
   }
 
-  // only overridded by AioImageDiscard
+  // only overridded by AioImageDiscard, to skip discarding extents that are not on the
+  // object trailing border
   prune_object_extents(object_extents);
 
   if (!object_extents.empty()) {
+
+    // AioImageWrite or AioImageDiscard
+
     uint64_t journal_tid = 0;
 
-    // for AioImageDiscard and if journaling and caching enabled, the total
-    // object requests count will add 1 for cache request
+    // for AioImageDiscard only, if object cache and journaling enabled, the +1 object request
     aio_comp->set_request_count(
       object_extents.size() + get_object_cache_request_count(journaling));
 
@@ -502,19 +505,10 @@ void AbstractAioImageWrite<I>::send_request() {
     //   else:
     //     discard the cache directly
 
-
-    // considering both 1) journaling and 2) caching
-    // for journaling, only after 1) the object requests associated with
-    // the journal entry have sent and finished, and 2) the journal entry has
-    // been written to the journal object safely
-    // for caching, it determines the behavior of the AioImageWrite
-
-    // 1) for AioImageWrite, it will call AioImageWrite<I>::send_object_requests
-    // override method, so if object cacher enabled, it will do nothing, the
+    // only overrided by AioImageWrite, if object cacher enabled, it will do nothing, the
     // object cacher will create and send object requests for it, if object
-    // cacher disabled, then call AbstractAioImageWrite<I>::send_object_requests
-    // directly, i.e., create and send/stash object requests
-    // 2) for AioImageDiscard we create and send/stash object requests directly
+    // cacher disabled, do the same as AioImageDiscard, i.e., call implementation of
+    // AbstractAioImageWrite directly, i.e., create and send/stash object requests
     send_object_requests(object_extents, snapc,
                          (journaling ? &requests : nullptr));
 
@@ -732,6 +726,7 @@ void AioImageDiscard<I>::prune_object_extents(ObjectExtents &object_extents) {
   I &image_ctx = this->m_image_ctx;
   CephContext *cct = image_ctx.cct;
   
+  // default false
   if (!cct->_conf->rbd_skip_partial_discard) {
     return;
   }
@@ -739,9 +734,11 @@ void AioImageDiscard<I>::prune_object_extents(ObjectExtents &object_extents) {
   for (auto p = object_extents.begin(); p != object_extents.end(); ) {
     // do not zero the trailing part of the object
     if (p->offset + p->length < image_ctx.layout.object_size) {
+
       ldout(cct, 20) << " oid " << p->oid << " " << p->offset << "~"
 		     << p->length << " from " << p->buffer_extents
 		     << ": skip partial discard" << dendl;
+
       p = object_extents.erase(p);
     } else {
       ++p;
