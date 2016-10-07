@@ -458,17 +458,18 @@ void AbstractAioImageWrite<I>::send_request() {
                   image_ctx.journal->is_journal_appending());
   }
 
-  // only overridded by AioImageDiscard, to skip discarding extents that are not on the
+  // only implemented by AioImageDiscard, to skip discarding extents that are not on the
   // object trailing border
   prune_object_extents(object_extents);
 
   if (!object_extents.empty()) {
 
-    // AioImageWrite or AioImageDiscard
+    // AioImageWrite or AioImageDiscard, has block data to write or discard
 
     uint64_t journal_tid = 0;
 
-    // for AioImageDiscard only, if object cache and journaling enabled, the +1 object request
+    // set AioCompletion::pending_count
+    // for AioImageDiscard, if object cache and journaling enabled, then +1 object request
     aio_comp->set_request_count(
       object_extents.size() + get_object_cache_request_count(journaling));
 
@@ -505,10 +506,11 @@ void AbstractAioImageWrite<I>::send_request() {
     //   else:
     //     discard the cache directly
 
+    // to create object requests with given image request, then stash or send them
     // only overrided by AioImageWrite, if object cacher enabled, it will do nothing, the
     // object cacher will create and send object requests for it, if object
     // cacher disabled, do the same as AioImageDiscard, i.e., call implementation of
-    // AbstractAioImageWrite directly, i.e., create and send/stash object requests
+    // AbstractAioImageWrite directly
     send_object_requests(object_extents, snapc,
                          (journaling ? &requests : nullptr));
 
@@ -522,6 +524,7 @@ void AbstractAioImageWrite<I>::send_request() {
       // requests have been created for AioImageWrite when object cacher
       // is enabled
       // 2) for AioImageDiscard the aio completion will associated the journal id
+
       // the m_synchronous field never be set, so always be false
       journal_tid = append_journal_event(requests, m_synchronous);
     }
@@ -566,7 +569,8 @@ void AbstractAioImageWrite<I>::send_object_requests(
 
     C_AioRequest *req_comp = new C_AioRequest(aio_comp);
 
-    // pure virtual function, implemented by AioImageWrite and AioImageDiscard
+    // to allocate AioObjectRequest, i.e., AioObjectWrite, AioObjectRemove,
+    // AioObjectTruncate, AioObjectZero, for AioImageWrite or AioImageDiscard
     AioObjectRequestHandle *request = create_object_request(*p, snapc,
                                                             req_comp);
 
@@ -683,13 +687,20 @@ AioObjectRequestHandle *AioImageWrite<I>::create_object_request(
     const ObjectExtent &object_extent, const ::SnapContext &snapc,
     Context *on_finish) {
   I &image_ctx = this->m_image_ctx;
+
+  // if object cacher enabled, AioImageWrite will not create object requests, instead
+  // the object cacher will do all these things
   assert(image_ctx.object_cacher == NULL);
 
   bufferlist bl;
+
+  // object_extent->buffer_extents denotes vector<pair<uint64_t,uint64_t> > in image
   assemble_extent(object_extent, &bl);
+
   AioObjectRequest<I> *req = AioObjectRequest<I>::create_write(
     &image_ctx, object_extent.oid.name, object_extent.objectno,
     object_extent.offset, bl, snapc, on_finish, m_op_flags);
+
   return req;
 }
 
@@ -707,7 +718,9 @@ uint64_t AioImageDiscard<I>::append_journal_event(
   I &image_ctx = this->m_image_ctx;
 
   uint64_t tid;
+
   assert(!this->m_image_extents.empty());
+
   for (auto &extent : this->m_image_extents) {
     journal::EventEntry event_entry(journal::AioDiscardEvent(extent.first,
                                                              extent.second));
@@ -730,6 +743,10 @@ void AioImageDiscard<I>::prune_object_extents(ObjectExtents &object_extents) {
   if (!cct->_conf->rbd_skip_partial_discard) {
     return;
   }
+
+  // AioImageDiscard will create mutiple AioObjectRemove, AioObjectTruncate or
+  // AioObjectZero, if rbd_skip_partial_discard is enabled, we do not create
+  // AioObjectZero
 
   for (auto p = object_extents.begin(); p != object_extents.end(); ) {
     // do not zero the trailing part of the object
@@ -796,6 +813,7 @@ AioObjectRequestHandle *AioImageDiscard<I>::create_object_request(
   I &image_ctx = this->m_image_ctx;
 
   AioObjectRequest<I> *req;
+
   if (object_extent.length == image_ctx.layout.object_size) {
     req = AioObjectRequest<I>::create_remove(
       &image_ctx, object_extent.oid.name, object_extent.objectno, snapc,
@@ -810,6 +828,7 @@ AioObjectRequestHandle *AioImageDiscard<I>::create_object_request(
       &image_ctx, object_extent.oid.name, object_extent.objectno,
       object_extent.offset, object_extent.length, snapc, on_finish);
   }
+
   return req;
 }
 
