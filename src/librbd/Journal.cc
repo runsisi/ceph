@@ -975,6 +975,7 @@ uint64_t Journal<I>::append_io_event(journal::EventEntry &&event_entry,
                                      bool flush_entry) {
   bufferlist bl;
   ::encode(event_entry, bl);
+
   return append_io_events(event_entry.get_event_type(), {bl}, requests, offset,
                           length, flush_entry);
 }
@@ -1203,6 +1204,7 @@ void Journal<I>::wait_event(uint64_t tid, Context *on_safe) {
                  << "on_safe=" << on_safe << dendl;
 
   Mutex::Locker event_locker(m_event_lock);
+
   wait_event(m_lock, tid, on_safe);
 }
 

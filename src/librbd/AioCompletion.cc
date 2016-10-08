@@ -102,6 +102,7 @@ void AioCompletion::complete() {
   // inform the journal that the op has successfully committed
   if (journal_tid != 0) {
     assert(ictx->journal != NULL);
+
     ictx->journal->commit_io_event(journal_tid, rval);
   }
 
