@@ -521,10 +521,10 @@ void AbstractAioImageWrite<I>::send_request() {
 
       // for AioImageWrite, AioObjectRequest(s) have not been created, journaling
       // only recorded the AioImageWrite, i.e., the user IO, now delegate the
-      // write to objecter cache and pass the journaled Event id to it
+      // write to object cache and pass the journaled Event id to it
 
       // for AioImageDiscard, AioObjectRequests(s) and journaling have been
-      // ready,
+      // ready, discard cache or wait for journal
 
       send_object_cache_requests(object_extents, journal_tid);
     }
