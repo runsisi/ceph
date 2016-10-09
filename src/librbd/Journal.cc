@@ -998,6 +998,7 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
 
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_state == STATE_READY);
 
     tid = ++m_event_tid;
@@ -1005,14 +1006,17 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
   }
 
   Futures futures;
+
   for (auto &bl : bufferlists) {
     // each buffer is an encoded librbd::journal::EventEntry
     assert(bl.length() <= m_max_append_size);
+
     futures.push_back(m_journaler->append(m_tag_tid, bl));
   }
 
   {
     Mutex::Locker event_locker(m_event_lock);
+
     m_events[tid] = Event(futures, requests, offset, length);
   }
 
@@ -1180,6 +1184,7 @@ void Journal<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   }
 }
 
+// wait the Event to be safe with actively flushing
 template <typename I>
 void Journal<I>::flush_event(uint64_t tid, Context *on_safe) {
   CephContext *cct = m_image_ctx.cct;
@@ -1197,6 +1202,7 @@ void Journal<I>::flush_event(uint64_t tid, Context *on_safe) {
   }
 }
 
+// wait the Event to be safe without actively flushing
 template <typename I>
 void Journal<I>::wait_event(uint64_t tid, Context *on_safe) {
   CephContext *cct = m_image_ctx.cct;
@@ -1208,6 +1214,8 @@ void Journal<I>::wait_event(uint64_t tid, Context *on_safe) {
   wait_event(m_lock, tid, on_safe);
 }
 
+// push a callback back of Event::on_safe_contexts, so when the journal::Event
+// is safe the callback will be called
 template <typename I>
 typename Journal<I>::Future Journal<I>::wait_event(Mutex &lock, uint64_t tid,
                                                    Context *on_safe) {
@@ -1232,6 +1240,8 @@ typename Journal<I>::Future Journal<I>::wait_event(Mutex &lock, uint64_t tid,
 
   event.on_safe_contexts.push_back(create_async_context_callback(m_image_ctx,
                                                                  on_safe));
+
+  // each EventEntry in the journal::Event associated with a Future
   return event.futures.back();
 }
 

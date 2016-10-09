@@ -225,7 +225,7 @@ vinodeno_t Client::map_faked_ino(ino_t ino)
 }
 
 // cons/des
-
+// called by ceph_fuse.cc:main, ceph_sync.cc:main, ceph_mount_info::init
 Client::Client(Messenger *m, MonClient *mc)
   : Dispatcher(m->cct),
     logger(NULL),

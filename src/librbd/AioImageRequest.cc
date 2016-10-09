@@ -413,6 +413,11 @@ void AbstractAioImageWrite<I>::send_request() {
   I &image_ctx = this->m_image_ctx;
   CephContext *cct = image_ctx.cct;
 
+  // image extents -> std::vector<ObjectExtent>
+  // AioImageRequest -> AioObjectRequest
+  // append journal event
+  // write object cache
+
   RWLock::RLocker md_locker(image_ctx.md_lock);
 
   bool journaling = false;
@@ -505,6 +510,8 @@ void AbstractAioImageWrite<I>::send_request() {
       // the journal::Event id
 
       // the m_synchronous field will never be set, so always be false
+      // journal::Event is created on each image extent
+      // Journal<I>::handle_io_event_safe will send the AioObjectRequest(s), i.e., requests
       journal_tid = append_journal_event(requests, m_synchronous);
     }
 
@@ -602,6 +609,9 @@ uint64_t AioImageWrite<I>::append_journal_event(
   assert(!this->m_image_extents.empty());
 
   for (auto &extent : this->m_image_extents) {
+
+    // each image extent has an journal::Event
+
     bufferlist sub_bl;
 
     // <off, len> in AioImageRequest::m_bl, i.e., user provided buffer
@@ -611,6 +621,7 @@ uint64_t AioImageWrite<I>::append_journal_event(
 
     // <off, len> in image, an user provided AioImageWrite extent may fit into
     // multiple journal::EventEntry(s), and fit into one journal::Event
+    // an tid identifies an journal::Event
     tid = image_ctx.journal->append_write_event(extent.first, extent.second,
                                                 sub_bl, requests, synchronous);
   }
@@ -619,6 +630,7 @@ uint64_t AioImageWrite<I>::append_journal_event(
   if (image_ctx.object_cacher == NULL) {
     AioCompletion *aio_comp = this->m_aio_comp;
 
+    // when AioCompletion completed it will notify the journal
     aio_comp->associate_journal_event(tid);
   }
 
@@ -651,15 +663,23 @@ void AioImageWrite<I>::send_object_cache_requests(const ObjectExtents &object_ex
   I &image_ctx = this->m_image_ctx;
 
   for (auto p = object_extents.begin(); p != object_extents.end(); ++p) {
+
+    // an AioImageRequest may be divided into multiple AioObjectRequest(s)
+
     const ObjectExtent &object_extent = *p;
 
     bufferlist bl;
+
+    // AioImageWrite::m_bl -> bl
     assemble_extent(object_extent, &bl);
 
     AioCompletion *aio_comp = this->m_aio_comp;
 
+    // m_completion->complete_request
     C_AioRequest *req_comp = new C_AioRequest(aio_comp);
 
+    // object cache enabled, so AioCompletion has not been associated with
+    // the journal::Event id yet, see AioImageWrite<I>::append_journal_event
     image_ctx.write_to_cache(object_extent.oid, bl, object_extent.length,
                              object_extent.offset, req_comp, m_op_flags,
                                journal_tid);
@@ -723,12 +743,15 @@ uint64_t AioImageDiscard<I>::append_journal_event(
     journal::EventEntry event_entry(journal::AioDiscardEvent(extent.first,
                                                              extent.second));
 
+    // an journal::Event
     tid = image_ctx.journal->append_io_event(std::move(event_entry),
                                              requests, extent.first,
                                              extent.second, synchronous);
   }
 
   AioCompletion *aio_comp = this->m_aio_comp;
+
+  // when AioCompletion completed it will notify the journal
   aio_comp->associate_journal_event(tid);
 
   return tid;

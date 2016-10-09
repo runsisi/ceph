@@ -278,13 +278,20 @@ struct C_InvalidateCache : public Context {
     perf_start(pname);
 
     if (cache) {
+
+      // rbd_cache enabled
+
       Mutex::Locker l(cache_lock);
+
       ldout(cct, 20) << "enabling caching..." << dendl;
+
       writeback_handler = new LibrbdWriteback(this, cache_lock);
 
       uint64_t init_max_dirty = cache_max_dirty;
+
       if (cache_writethrough_until_flush)
 	init_max_dirty = 0;
+
       ldout(cct, 20) << "Initial cache settings:"
 		     << " size=" << cache_size
 		     << " num_objects=" << 10
@@ -737,21 +744,32 @@ struct C_InvalidateCache : public Context {
       onfinish->complete(r);
   }
 
+  // called by AioImageWrite<I>::send_object_cache_requests
   void ImageCtx::write_to_cache(object_t o, const bufferlist& bl, size_t len,
 				uint64_t off, Context *onfinish,
 				int fadvise_flags, uint64_t journal_tid) {
     snap_lock.get_read();
+
+    // allocate an instance of OSDWrite
     ObjectCacher::OSDWrite *wr = object_cacher->prepare_write(
       snapc, bl, ceph::real_time::min(), fadvise_flags, journal_tid);
+
     snap_lock.put_read();
+
+    // <off, len> in object
     ObjectExtent extent(o, 0, off, len, 0);
+
     extent.oloc.pool = data_ctx.get_id();
     // XXX: nspace is always default, io_ctx_impl field private
     //extent.oloc.nspace = data_ctx.io_ctx_impl->oloc.nspace;
     extent.buffer_extents.push_back(make_pair(0, len));
+
+    // <off, len> in bl
     wr->extents.push_back(extent);
+
     {
       Mutex::Locker l(cache_lock);
+
       object_cacher->writex(wr, object_set, onfinish);
     }
   }

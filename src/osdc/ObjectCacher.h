@@ -674,6 +674,7 @@ public:
     return readx(rd, oset, onfinish);
   }
 
+  // called by Client::_write
   int file_write(ObjectSet *oset, file_layout_t *layout,
 		 const SnapContext& snapc, loff_t offset, uint64_t len,
 		 bufferlist& bl, ceph::real_time mtime, int flags) {
