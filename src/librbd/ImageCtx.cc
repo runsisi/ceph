@@ -787,7 +787,9 @@ struct C_InvalidateCache : public Context {
 	md_lock.put_write();
 
 	ldout(cct, 10) << "saw first user flush, enabling writeback" << dendl;
+
 	Mutex::Locker l(cache_lock);
+
 	object_cacher->set_max_dirty(max_dirty);
       }
     }
@@ -888,13 +890,17 @@ struct C_InvalidateCache : public Context {
   void ImageCtx::flush_async_operations(Context *on_finish) {
     {
       Mutex::Locker l(async_ops_lock);
+
       if (!async_ops.empty()) {
         ldout(cct, 20) << "flush async operations: " << on_finish << " "
                        << "count=" << async_ops.size() << dendl;
+
+        // xlist<AsyncOperation*>
         async_ops.front()->add_flush_context(on_finish);
         return;
       }
     }
+
     on_finish->complete(0);
   }
 

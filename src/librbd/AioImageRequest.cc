@@ -610,7 +610,8 @@ uint64_t AioImageWrite<I>::append_journal_event(
 
   for (auto &extent : this->m_image_extents) {
 
-    // each image extent has an journal::Event
+    // each image extent will encoded as an journal::Event, for
+    // rbd_aio_write, we always have only one extent with an user IO
 
     bufferlist sub_bl;
 
@@ -877,11 +878,16 @@ template <typename I>
 void AioImageFlush<I>::send_request() {
   I &image_ctx = this->m_image_ctx;
 
+  // if cache_writethrough_until_flush is true, then enable the
+  // writeback mode, i.e., object_cacher->set_max_dirty(max_dirty)
   image_ctx.user_flushed();
 
   bool journaling = false;
+
   {
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
+    // STATE_READY and journal policy not disable appending
     journaling = (image_ctx.journal != nullptr &&
                   image_ctx.journal->is_journal_appending());
   }
@@ -895,6 +901,7 @@ void AioImageFlush<I>::send_request() {
       AioObjectRequests(), 0, 0, false);
 
     aio_comp->set_request_count(1);
+
     aio_comp->associate_journal_event(journal_tid);
 
     FunctionContext *flush_ctx = new FunctionContext(
@@ -906,19 +913,27 @@ void AioImageFlush<I>::send_request() {
 
         // track flush op for block writes
         aio_comp->start_op(true);
+
         aio_comp->put();
     });
 
+    // push flush_ctx back of ImageCtx::async_ops.front()::m_flush_contexts,
+    // NOTE: the more recent async ops are push front of the ImageCtx::async_ops
     image_ctx.flush_async_operations(flush_ctx);
   } else {
+
+    // journaling disabled
+
     // flush rbd cache only when journaling is not enabled
     aio_comp->set_request_count(1);
 
+    // m_completion->complete_request(r)
     C_AioRequest *req_comp = new C_AioRequest(aio_comp);
 
     image_ctx.flush(req_comp);
 
     aio_comp->start_op(true);
+
     aio_comp->put();
   }
 

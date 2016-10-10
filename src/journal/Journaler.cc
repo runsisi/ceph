@@ -447,8 +447,11 @@ void Journaler::committed(const ReplayEntry &replay_entry) {
   m_trimmer->committed(replay_entry.get_commit_tid());
 }
 
-// called by Journal<I>::demote, Journal<I>::complete_event, Journal<I>::handle_io_event_safe
-// and Journal<I>::handle_op_event_safe
+// called by
+// Journal<I>::demote
+// Journal<I>::complete_event
+// Journal<I>::handle_io_event_safe
+// Journal<I>::handle_op_event_safe
 void Journaler::committed(const Future &future) {
   FutureImplPtr future_impl = future.get_future_impl();
 
@@ -497,6 +500,8 @@ uint64_t Journaler::get_max_append_size() const {
 
 // m_recorder instance was created by Journaler::start_append
 Future Journaler::append(uint64_t tag_tid, const bufferlist &payload_bl) {
+  // allocate an instance of FutureImpl and init it, i.e., chain the
+  // future with the previous future
   return m_recorder->append(tag_tid, payload_bl);
 }
 

@@ -32,7 +32,7 @@ public:
     return m_xlist_item.is_on_list();
   }
 
-  // push back of m_image_ctx->async_ops, started by AioCompletion::start_op which
+  // push front of m_image_ctx->async_ops, started by AioCompletion::start_op which
   // called by AioImageRequestWQ::_void_dequeue
   void start_op(ImageCtx &image_ctx);
 

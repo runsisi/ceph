@@ -622,7 +622,9 @@ bool Journal<I>::is_journal_replaying(const Mutex &) const {
 template <typename I>
 bool Journal<I>::is_journal_appending() const {
   assert(m_image_ctx.snap_lock.is_locked());
+
   Mutex::Locker locker(m_lock);
+
   return (m_state == STATE_READY &&
           !m_image_ctx.get_journal_policy()->append_disabled());
 }
@@ -632,6 +634,7 @@ void Journal<I>::wait_for_journal_ready(Context *on_ready) {
   on_ready = create_async_context_callback(m_image_ctx, on_ready);
 
   Mutex::Locker locker(m_lock);
+
   if (m_state == STATE_READY) {
     on_ready->complete(m_error_result);
   } else {
@@ -1005,18 +1008,25 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
     assert(tid != 0);
   }
 
+  // std::list<Future>
   Futures futures;
 
   for (auto &bl : bufferlists) {
-    // each buffer is an encoded librbd::journal::EventEntry
+
+    // each buffer is an encoded librbd::journal::EventEntry, for AioWriteEvent
+    // an journal::Event may consist multiple journal::EventEntry(s)
+
     assert(bl.length() <= m_max_append_size);
 
+    // the future are constructed from Journaler::append, and allocated
+    // by JournalRecorder::append eventually
     futures.push_back(m_journaler->append(m_tag_tid, bl));
   }
 
   {
     Mutex::Locker event_locker(m_event_lock);
 
+    // a future represents an append of librbd::journal::EventEntry
     m_events[tid] = Event(futures, requests, offset, length);
   }
 
@@ -1033,8 +1043,15 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
     m_image_ctx, new C_IOEventSafe(this, tid));
 
   if (flush_entry) {
+
+    // always be false, see AbstractAioImageWrite<I>::send_request
+
     futures.back().flush(on_safe);
   } else {
+    // will call m_future_impl->wait(on_safe) eventually, i.e.,
+    // FutureImpl::wait, if the journal::EventEntry has been safe then
+    // the on_safe will be called directly, else on_safe will be
+    // pushed back of FutureImpl::m_contexts
     futures.back().wait(on_safe);
   }
 
@@ -1057,10 +1074,16 @@ void Journal<I>::commit_io_event(uint64_t tid, int r) {
     return;
   }
 
-  // update client commit position
+  // the original user request represented by this journal::Event
+  // has been completed
+
   complete_event(it, r);
 }
 
+// called by
+// LibrbdWriteback.cc:C_WriteJournalCommit::commit_io_event_extent
+// LibrbdWriteback.cc:C_CommitIOEventExtent::finish
+// LibrbdWriteback.cc:LibrbdWriteback::overwrite_extent
 template <typename I>
 void Journal<I>::commit_io_event_extent(uint64_t tid, uint64_t offset,
                                         uint64_t length, int r) {
@@ -1085,6 +1108,7 @@ void Journal<I>::commit_io_event_extent(uint64_t tid, uint64_t offset,
     event.ret_val = r;
   }
 
+  // interval_set<uint64_t>
   ExtentInterval extent;
   extent.insert(offset, length);
 
@@ -1092,12 +1116,17 @@ void Journal<I>::commit_io_event_extent(uint64_t tid, uint64_t offset,
   intersect.intersection_of(extent, event.pending_extents);
 
   event.pending_extents.subtract(intersect);
+
+  // Event::pending_extents was initialized in ctor by user provided image
+  // extent, see Journal<I>::append_io_events
   if (!event.pending_extents.empty()) {
     ldout(cct, 20) << this << " " << __func__ << ": "
                    << "pending extents: " << event.pending_extents << dendl;
     return;
   }
 
+  // ok, the original user request represented by this journal::Event
+  // has been completed
   complete_event(it, event.ret_val);
 }
 
@@ -1192,8 +1221,12 @@ void Journal<I>::flush_event(uint64_t tid, Context *on_safe) {
                  << "on_safe=" << on_safe << dendl;
 
   Future future;
+
   {
     Mutex::Locker event_locker(m_event_lock);
+
+    // if the journal::Event already safe, then will return an invalid
+    // future
     future = wait_event(m_lock, tid, on_safe);
   }
 
@@ -1241,7 +1274,8 @@ typename Journal<I>::Future Journal<I>::wait_event(Mutex &lock, uint64_t tid,
   event.on_safe_contexts.push_back(create_async_context_callback(m_image_ctx,
                                                                  on_safe));
 
-  // each EventEntry in the journal::Event associated with a Future
+  // each EventEntry in the journal::Event associated with
+  // a Future
   return event.futures.back();
 }
 
@@ -1428,9 +1462,13 @@ void Journal<I>::recreate_journaler(int r) {
       Journal<I>, &Journal<I>::handle_journal_destroyed>(this)));
 }
 
+// called by
+// Journal<I>::commit_io_event
+// Journal<I>::commit_io_event_extent
 template <typename I>
 void Journal<I>::complete_event(typename Events::iterator it, int r) {
   assert(m_event_lock.is_locked());
+
   assert(m_state == STATE_READY);
 
   CephContext *cct = m_image_ctx.cct;
@@ -1444,7 +1482,9 @@ void Journal<I>::complete_event(typename Events::iterator it, int r) {
     // event recorded to journal but failed to update disk, we cannot
     // commit this IO event. this event must be replayed.
 
+    // Event::safe is set by Journal<I>::handle_io_event_safe
     assert(event.safe);
+
     lderr(cct) << this << " " << __func__ << ": "
                << "failed to commit IO to disk, replay required: "
                << cpp_strerror(r) << dendl;
@@ -1453,9 +1493,6 @@ void Journal<I>::complete_event(typename Events::iterator it, int r) {
   event.committed_io = true;
 
   if (event.safe) {
-
-    // journal safe + io requests completed
-
     if (r >= 0) {
 
       // do not update commit position if our io requests failed

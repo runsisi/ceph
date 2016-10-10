@@ -15,6 +15,7 @@ FutureImpl::FutureImpl(uint64_t tag_tid, uint64_t entry_tid,
     m_consistent_ack(this) {
 }
 
+// called by JournalRecorder::append
 void FutureImpl::init(const FutureImplPtr &prev_future) {
   // chain ourself to the prior future (if any) to that we known when the
   // journal is consistent
@@ -22,12 +23,14 @@ void FutureImpl::init(const FutureImplPtr &prev_future) {
     m_prev_future = prev_future;
 
     // push back of FutureImpl::m_contexts if the previous future has not
-    // completed yet which means the previous will set m_consistent for us,
-    // else complete this callback directly
+    // completed yet then push m_consistent_ack to back of FutureImpl::m_contexts,
+    // which means the previous future will set FutureImpl::m_consistent for us
+    // when the previous future has completed, else complete this callback
+    // directly, i.e., call m_consistent_ack.complete(m_return_value)
     m_prev_future->wait(&m_consistent_ack);
   } else {
-    // this is the first Future, no previous future to set m_consistent for us,
-    // so set m_consistent = true myself
+    // this is the first future, no previous future to set m_consistent for us,
+    // so set m_consistent = true for myself
     m_consistent_ack.complete(0);
   }
 }
@@ -35,8 +38,11 @@ void FutureImpl::init(const FutureImplPtr &prev_future) {
 void FutureImpl::flush(Context *on_safe) {
 
   bool complete;
+
+  // std::map<FlushHandlerPtr, FutureImplPtr>
   FlushHandlers flush_handlers;
   FutureImplPtr prev_future;
+
   {
     Mutex::Locker locker(m_lock);
 
@@ -87,11 +93,13 @@ FutureImplPtr FutureImpl::prepare_flush(FlushHandlers *flush_handlers) {
 
 void FutureImpl::wait(Context *on_safe) {
   assert(on_safe != NULL);
+
   {
     Mutex::Locker locker(m_lock);
 
     if (!m_safe || !m_consistent) {
       m_contexts.push_back(on_safe);
+
       return;
     }
   }
@@ -119,10 +127,12 @@ bool FutureImpl::attach(const FlushHandlerPtr &flush_handler) {
   return m_flush_state != FLUSH_STATE_NONE;
 }
 
+// called by ObjectRecorder::handle_append_flushed
 void FutureImpl::safe(int r) {
   m_lock.Lock();
 
   assert(!m_safe);
+
   m_safe = true;
 
   if (m_return_value == 0) {
@@ -141,6 +151,8 @@ void FutureImpl::safe(int r) {
   }
 }
 
+// called by FutureImpl::C_ConsistentAck::complete, i.e., the previous
+// futureimpl's FutureImpl::safe
 void FutureImpl::consistent(int r) {
   m_lock.Lock();
 
@@ -165,6 +177,7 @@ void FutureImpl::consistent(int r) {
 
 void FutureImpl::finish_unlock() {
   assert(m_lock.is_locked());
+
   assert(m_safe && m_consistent);
 
   Contexts contexts;

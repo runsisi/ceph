@@ -37,11 +37,13 @@ struct C_CompleteFlushes : public Context {
 
 void AsyncOperation::start_op(ImageCtx &image_ctx) {
   assert(m_image_ctx == NULL);
+
   m_image_ctx = &image_ctx;
 
   ldout(m_image_ctx->cct, 20) << this << " " << __func__ << dendl;
 
   Mutex::Locker l(m_image_ctx->async_ops_lock);
+
   m_image_ctx->async_ops.push_front(&m_xlist_item);
 }
 
@@ -50,14 +52,23 @@ void AsyncOperation::finish_op() {
 
   {
     Mutex::Locker l(m_image_ctx->async_ops_lock);
+
     xlist<AsyncOperation *>::iterator iter(&m_xlist_item);
+
+    // point to a previous op
     ++iter;
+
     assert(m_xlist_item.remove_myself());
 
     // linked list stored newest -> oldest ops
     if (!iter.end() && !m_flush_contexts.empty()) {
+
+      // call flush callback only when current and all prevous ops have
+      // been finished
+
       ldout(m_image_ctx->cct, 20) << "moving flush contexts to previous op: "
                                   << *iter << dendl;
+
       (*iter)->m_flush_contexts.insert((*iter)->m_flush_contexts.end(),
                                        m_flush_contexts.begin(),
                                        m_flush_contexts.end());
@@ -68,14 +79,17 @@ void AsyncOperation::finish_op() {
   if (!m_flush_contexts.empty()) {
     C_CompleteFlushes *ctx = new C_CompleteFlushes(m_image_ctx,
                                                    std::move(m_flush_contexts));
+
     m_image_ctx->op_work_queue->queue(ctx);
   }
 }
 
 void AsyncOperation::add_flush_context(Context *on_finish) {
   assert(m_image_ctx->async_ops_lock.is_locked());
+
   ldout(m_image_ctx->cct, 20) << this << " " << __func__ << ": "
                               << "flush=" << on_finish << dendl;
+
   m_flush_contexts.push_back(on_finish);
 }
 

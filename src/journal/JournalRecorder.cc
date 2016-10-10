@@ -57,6 +57,7 @@ JournalRecorder::JournalRecorder(librados::IoCtx &ioctx,
     m_current_set(m_journal_metadata->get_active_set()) {
 
   Mutex::Locker locker(m_lock);
+
   m_ioctx.dup(ioctx);
   m_cct = reinterpret_cast<CephContext*>(m_ioctx.cct());
 
@@ -66,7 +67,9 @@ JournalRecorder::JournalRecorder(librados::IoCtx &ioctx,
     m_object_locks.push_back(shared_ptr<Mutex>(
                                           new Mutex("ObjectRecorder::m_lock::"+
                                           std::to_string(splay_offset))));
+
     uint64_t object_number = splay_offset + (m_current_set * splay_width);
+
     m_object_ptrs[splay_offset] = create_object_recorder(
                                                 object_number,
                                                 m_object_locks[splay_offset]);
@@ -113,18 +116,25 @@ Future JournalRecorder::append(uint64_t tag_tid,
   uint64_t commit_tid = m_journal_metadata->allocate_commit_tid(
     object_ptr->get_object_number(), tag_tid, entry_tid);
 
-  // a future represents an id of a commit
+  // a future represents an append of librbd::journal::EventEntry, see
+  // Journal<I>::append_io_events
   FutureImplPtr future(new FutureImpl(tag_tid, entry_tid, commit_tid));
-  future->init(m_prev_future); // register consistent callback
+
+  // for the very first append, m_prev_future is NULL, so the first future
+  // should always be consistent, i.e., its FutreImpl::m_consistent should
+  // always be true
+  future->init(m_prev_future); // chain the FutureImpl::m_consistent_ack callback
 
   m_prev_future = future;
 
   m_object_locks[splay_offset]->Lock();
+
   m_lock.Unlock();
 
   bufferlist entry_bl;
   ::encode(Entry(future->get_tag_tid(), future->get_entry_tid(), payload_bl),
            entry_bl);
+
   assert(entry_bl.length() <= m_journal_metadata->get_object_size());
 
   bool object_full = object_ptr->append_unlock({{future, entry_bl}});
@@ -137,7 +147,9 @@ Future JournalRecorder::append(uint64_t tag_tid,
 
     ldout(m_cct, 10) << "object " << object_ptr->get_oid() << " now full"
                      << dendl;
+
     Mutex::Locker l(m_lock);
+
     close_and_advance_object_set(object_ptr->get_object_number() / splay_width);
   }
 

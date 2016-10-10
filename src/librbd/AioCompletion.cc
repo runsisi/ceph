@@ -76,6 +76,7 @@ void AioCompletion::finalize(ssize_t rval)
 
 void AioCompletion::complete() {
   assert(lock.is_locked());
+
   assert(ictx != nullptr);
   CephContext *cct = ictx->cct;
 
@@ -149,9 +150,12 @@ void AioCompletion::init_time(ImageCtx *i, aio_type_t t) {
 
 void AioCompletion::start_op(bool ignore_type) {
   Mutex::Locker locker(lock);
+
   assert(ictx != nullptr);
   assert(!async_op.started());
+
   if (state == STATE_PENDING && (ignore_type || aio_type != AIO_TYPE_FLUSH)) {
+    // push front of m_image_ctx->async_ops
     async_op.start_op(*ictx);
   }
 }

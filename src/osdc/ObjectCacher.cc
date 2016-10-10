@@ -545,16 +545,27 @@ ObjectCacher::BufferHead *ObjectCacher::Object::map_write(ObjectExtent &ex,
   return final;
 }
 
+// called by
+// ObjectCacher::Object::map_write
+// ObjectCacher::Object::truncate
 void ObjectCacher::Object::replace_journal_tid(BufferHead *bh,
 					       ceph_tid_t tid) {
+  // get the original journal::Event id
   ceph_tid_t bh_tid = bh->get_journal_tid();
 
   assert(tid == 0 || bh_tid <= tid);
+
   if (bh_tid != 0 && bh_tid != tid) {
+
+    // bh_tid == 0 means we are handling an inflight journaling + object cache
+    // op
+
     // inform journal that it should not expect a writeback from this extent
     oc->writeback_handler.overwrite_extent(get_oid(), bh->start(),
 					   bh->length(), bh_tid, tid);
   }
+
+  // set BufferHead::journal_tid
   bh->set_journal_tid(tid);
 }
 
@@ -563,22 +574,28 @@ void ObjectCacher::Object::truncate(loff_t s)
   assert(oc->lock.is_locked());
   ldout(oc->cct, 10) << "truncate " << *this << " to " << s << dendl;
 
+  // map<loff_t, BufferHead*>
   while (!data.empty()) {
     BufferHead *bh = data.rbegin()->second;
+
     if (bh->end() <= s)
       break;
 
     // split bh at truncation point?
     if (bh->start() < s) {
       split(bh, s);
+
       continue;
     }
 
     // remove bh entirely
     assert(bh->start() >= s);
     assert(bh->waitfor_read.empty());
+
     replace_journal_tid(bh, 0);
+
     oc->bh_remove(this, bh);
+
     delete bh;
   }
 }
