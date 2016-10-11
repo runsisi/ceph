@@ -443,7 +443,7 @@ void Journaler::stop_replay(Context *on_finish) {
 // called by Journal<I>::handle_replay_process_safe
 // and ImageReplayer<I>::handle_process_entry_safe
 void Journaler::committed(const ReplayEntry &replay_entry) {
-  // call m_journal_metadata->committed
+  // call m_journal_metadata->committed to update commit position
   m_trimmer->committed(replay_entry.get_commit_tid());
 }
 
@@ -455,7 +455,11 @@ void Journaler::committed(const ReplayEntry &replay_entry) {
 void Journaler::committed(const Future &future) {
   FutureImplPtr future_impl = future.get_future_impl();
 
-  // call m_journal_metadata->committed
+  // NOTE: <m_tag_tid, m_entry_tid> is encoded with journal::EventEntry and
+  // appended into journal object, while the m_entry_tid global uniquely
+  // identifies an append to the journal object, see JournalRecorder::append
+
+  // call m_journal_metadata->committed to update commit position
   m_trimmer->committed(future_impl->get_commit_tid());
 }
 
@@ -498,10 +502,17 @@ uint64_t Journaler::get_max_append_size() const {
   return max_payload_size;
 }
 
-// m_recorder instance was created by Journaler::start_append
+// called by
+// Journal<I>::append_io_events
+// Journal<I>::append_op_event
 Future Journaler::append(uint64_t tag_tid, const bufferlist &payload_bl) {
+
+  // NOTE: m_recorder instance was created by Journaler::start_append
+
   // allocate an instance of FutureImpl and init it, i.e., chain the
   // future with the previous future
+  // <m_tag_tid, m_entry_tid> will be encoded with journal::EventEntry, i.e.,
+  // the playload_bl, and appended into journal object
   return m_recorder->append(tag_tid, payload_bl);
 }
 

@@ -586,6 +586,7 @@ void JournalMetadata::register_client(const bufferlist &data,
   comp->release();
 }
 
+// called by Journaler::update_client
 void JournalMetadata::update_client(const bufferlist &data,
 				    Context *on_finish) {
   ldout(m_cct, 10) << __func__ << ": " << m_client_id << dendl;
@@ -920,6 +921,9 @@ void JournalMetadata::schedule_commit_task() {
   }
 }
 
+// called by
+// JournalMetadata::flush_commit_position()
+// JournalMetadata::flush_commit_position(Context *on_safe)
 void JournalMetadata::handle_commit_position_task() {
   assert(m_timer_lock->is_locked());
   assert(m_lock.is_locked());
@@ -933,6 +937,7 @@ void JournalMetadata::handle_commit_position_task() {
   client::client_commit(&op, m_client_id, m_commit_position);
 
   Context *ctx = new C_NotifyUpdate(this, m_commit_position_ctx);
+
   m_commit_position_ctx = NULL;
 
   ctx = schedule_laggy_clients_disconnect(ctx);
@@ -1075,11 +1080,13 @@ void JournalMetadata::committed(uint64_t commit_tid,
       commit_position = m_client.commit_position;
     }
 
-    // CommitEntry inserted in JournalRecorder::append
+    // CommitEntry was inserted by JournalRecorder::append, FutureImpl::m_commit_tid
+    // global uniquely identifies this journal::EventEntry
     CommitTids::iterator it = m_pending_commit_tids.find(commit_tid);
     assert(it != m_pending_commit_tids.end());
 
     CommitEntry &commit_entry = it->second;
+
     commit_entry.committed = true;
 
     bool update_commit_position = false;
@@ -1098,7 +1105,8 @@ void JournalMetadata::committed(uint64_t commit_tid,
       }
 
       // the newer commit position always at the front of the
-      // commit position list
+      // commit position list, we will prune to ensure only one
+      // commit position at the same splay offset
       commit_position.object_positions.emplace_front(
         commit_entry.object_num, commit_entry.tag_tid,
         commit_entry.entry_tid);
@@ -1115,17 +1123,23 @@ void JournalMetadata::committed(uint64_t commit_tid,
       return;
     }
 
-    // prune the position to have one position per splay offset
+    // used to prune the position to have one position per splay offset
     std::set<uint8_t> in_use_splay_offsets;
+
+    // iterate from the newest commit position and try to prune old
+    // commit position(s) at the same splay offset
     ObjectPositions::iterator ob_it = commit_position.object_positions.begin();
 
     while (ob_it != commit_position.object_positions.end()) {
       uint8_t splay_offset = ob_it->object_number % m_splay_width;
 
+      // we do not want duplicate commit position at the same splay offset,
+      // so remove the duplicate old commit positions
       if (!in_use_splay_offsets.insert(splay_offset).second) {
 
-        // insert failed which means there is already an object position
-        // at the splay offset
+        // insert failed which means there is already an commit position
+        // at the splay offset, i.e., there is already newer commit position
+        // exists
 
         ob_it = commit_position.object_positions.erase(ob_it);
       } else {
@@ -1136,6 +1150,7 @@ void JournalMetadata::committed(uint64_t commit_tid,
     stale_ctx = m_commit_position_ctx;
 
     m_commit_position_ctx = create_context();
+
     m_commit_position = commit_position;
     m_commit_position_tid = commit_tid;
 
@@ -1150,6 +1165,7 @@ void JournalMetadata::committed(uint64_t commit_tid,
   if (stale_ctx != nullptr) {
     ldout(m_cct, 20) << "canceling stale commit: on_safe=" << stale_ctx
                      << dendl;
+
     stale_ctx->complete(-ESTALE);
   }
 }

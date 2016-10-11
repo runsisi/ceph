@@ -91,6 +91,9 @@ FutureImplPtr FutureImpl::prepare_flush(FlushHandlers *flush_handlers) {
   return m_prev_future;
 }
 
+// called by
+// FutureImpl::init
+// Journal<I>::append_io_events
 void FutureImpl::wait(Context *on_safe) {
   assert(on_safe != NULL);
 
@@ -143,8 +146,8 @@ void FutureImpl::safe(int r) {
 
   if (m_consistent) {
 
-    // finish all contexts on m_contexts
-
+    // complete FutureImpl::m_contexts, which pushed back by
+    // FutureImpl::wait, see Journal<I>::append_io_events
     finish_unlock();
   } else {
     m_lock.Unlock();

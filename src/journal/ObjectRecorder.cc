@@ -61,6 +61,7 @@ bool ObjectRecorder::append_unlock(AppendBuffers &&append_buffers) {
     return false;
   }
 
+  // std::list<std::pair<FutureImplPtr, bufferlist> >
   for (AppendBuffers::const_iterator iter = append_buffers.begin();
        iter != append_buffers.end(); ++iter) {
 

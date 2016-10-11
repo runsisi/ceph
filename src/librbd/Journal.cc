@@ -805,6 +805,7 @@ int Journal<I>::demote() {
 
   {
     Mutex::Locker l(m_lock);
+
     m_journaler->committed(future);
     m_journaler->flush_commit_position(&flush_ctx);
   }
@@ -952,6 +953,7 @@ uint64_t Journal<I>::append_write_event(uint64_t offset, size_t length,
 
     event_bl.substr_of(bl, event_offset, event_length);
 
+    // will be encoded into a bufferlist and represented as a future
     journal::EventEntry event_entry(journal::AioWriteEvent(offset + event_offset,
                                                            event_length,
                                                            event_bl));
@@ -1042,6 +1044,7 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
   Context *on_safe = create_async_context_callback(
     m_image_ctx, new C_IOEventSafe(this, tid));
 
+  // the on_safe will be called by ObjectRecorder::handle_append_flushed
   if (flush_entry) {
 
     // always be false, see AbstractAioImageWrite<I>::send_request
@@ -1055,6 +1058,8 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
     futures.back().wait(on_safe);
   }
 
+  // id which represents an user IO, has nothing to do with
+  // <m_tag_tid, m_entry_tid, m_commit_tid> in future
   return tid;
 }
 
@@ -1074,7 +1079,7 @@ void Journal<I>::commit_io_event(uint64_t tid, int r) {
     return;
   }
 
-  // the original user request represented by this journal::Event
+  // the original user IO represented by this journal::Event
   // has been completed
 
   complete_event(it, r);
@@ -1140,6 +1145,7 @@ void Journal<I>::append_op_event(uint64_t op_tid,
   ::encode(event_entry, bl);
 
   Future future;
+
   {
     Mutex::Locker locker(m_lock);
     assert(m_state == STATE_READY);
@@ -1213,7 +1219,7 @@ void Journal<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   }
 }
 
-// wait the Event to be safe with actively flushing
+// wait the Event to be safe with an initiated flushing
 template <typename I>
 void Journal<I>::flush_event(uint64_t tid, Context *on_safe) {
   CephContext *cct = m_image_ctx.cct;
@@ -1235,7 +1241,8 @@ void Journal<I>::flush_event(uint64_t tid, Context *on_safe) {
   }
 }
 
-// wait the Event to be safe without actively flushing
+// called by AioImageDiscard<I>::send_object_cache_requests
+// wait the Event to be safe without an initiated flushing
 template <typename I>
 void Journal<I>::wait_event(uint64_t tid, Context *on_safe) {
   CephContext *cct = m_image_ctx.cct;
@@ -1244,6 +1251,8 @@ void Journal<I>::wait_event(uint64_t tid, Context *on_safe) {
 
   Mutex::Locker event_locker(m_event_lock);
 
+  // push a callback back of Event::on_safe_contexts, so when the journal::Event
+  // is safe the callback will be called
   wait_event(m_lock, tid, on_safe);
 }
 
@@ -1463,8 +1472,8 @@ void Journal<I>::recreate_journaler(int r) {
 }
 
 // called by
-// Journal<I>::commit_io_event
-// Journal<I>::commit_io_event_extent
+// Journal<I>::commit_io_event, which called by AioCompletion::complete
+// Journal<I>::commit_io_event_extent, which called by LibrbdWriteback.cc
 template <typename I>
 void Journal<I>::complete_event(typename Events::iterator it, int r) {
   assert(m_event_lock.is_locked());
@@ -1493,11 +1502,16 @@ void Journal<I>::complete_event(typename Events::iterator it, int r) {
   event.committed_io = true;
 
   if (event.safe) {
+
+    // do not update commit position if our io requests failed
     if (r >= 0) {
 
-      // do not update commit position if our io requests failed
+      // user io committed to disk and journal Event is safe
 
       for (auto &future : event.futures) {
+
+        // a future represents an journal::EventEntry
+
         m_journaler->committed(future);
       }
     }
@@ -1881,8 +1895,8 @@ void Journal<I>::handle_journal_destroyed(int r) {
   transition_state(STATE_CLOSED, r);
 }
 
-// called by C_IOEventSafe::finish
-// user io Event write to journal object returned
+// called by C_IOEventSafe::finish, which called by
+// ObjectRecorder::handle_append_flushed eventually
 template <typename I>
 void Journal<I>::handle_io_event_safe(int r, uint64_t tid) {
   CephContext *cct = m_image_ctx.cct;
@@ -1909,7 +1923,10 @@ void Journal<I>::handle_io_event_safe(int r, uint64_t tid) {
 
     Event &event = it->second;
 
+    // stashed by AbstractAioImageWrite<I>::send_object_requests
     aio_object_requests.swap(event.aio_object_requests);
+
+    // pushed back by Journal<I>::wait_event
     on_safe_contexts.swap(event.on_safe_contexts);
 
     if (r < 0 || event.committed_io) {

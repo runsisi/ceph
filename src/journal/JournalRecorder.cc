@@ -87,6 +87,7 @@ JournalRecorder::~JournalRecorder() {
   assert(m_in_flight_object_closes == 0);
 }
 
+// called by Journaler::append
 Future JournalRecorder::append(uint64_t tag_tid,
                                const bufferlist &payload_bl) {
 
@@ -108,6 +109,12 @@ Future JournalRecorder::append(uint64_t tag_tid,
   // commit id is global to the JournalMetadata instance, it is used to
   // record the pending entries, by the commit id we can find the
   // entry to be committed, see JournalMetadata::m_pending_commit_tids
+
+  // NOTE: entry_tid is not global unique, so need an other global unique
+  // tid, i.e., commit_tid to identify the entry in the journal
+  // <m_tag_tid, m_entry_tid> will be encoded with journal::EventEntry and
+  // appended into journal object, while m_commit_tid is a in memory global
+  // unique id, it will be used by Journaler::committed later
 
   // construct an CommitEntry and register into m_pending_commit_tids
   // i.e., JournalMetadata::
