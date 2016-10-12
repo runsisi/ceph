@@ -175,6 +175,8 @@ private:
   };
   typedef std::map<uint64_t, CommitEntry> CommitTids;
 
+  // a member variable of JournalMetadata, the watch context is registered
+  // by JournalMetadata::init or JournalMetadata::handle_watch_reset
   struct C_WatchCtx : public librados::WatchCtx2 {
     JournalMetadata *journal_metadata;
 
@@ -190,6 +192,7 @@ private:
     }
   };
 
+  // used by JournalMetadata::schedule_watch_reset
   struct C_WatchReset : public Context {
     JournalMetadata *journal_metadata;
 
@@ -221,6 +224,7 @@ private:
     };
   };
 
+  // used by JournalMetadata::async_notify_update
   struct C_AioNotify : public Context {
     JournalMetadata* journal_metadata;
     Context *on_safe;
@@ -232,14 +236,25 @@ private:
     virtual ~C_AioNotify() {
       journal_metadata->m_async_op_tracker.finish_op();
     }
+
     virtual void finish(int r) {
+      // only a debug message, nothing else
       journal_metadata->handle_notified(r);
+
       if (on_safe != nullptr) {
         on_safe->complete(0);
       }
     }
   };
 
+  // used by:
+  // JournalMetadata::register_client
+  // JournalMetadata::update_client
+  // JournalMetadata::unregister_client
+  // JournalMetadata::allocate_tag
+  // JournalMetadata::set_minimum_set
+  // JournalMetadata::set_active_set
+  // JournalMetadata::handle_commit_position_task
   struct C_NotifyUpdate : public Context {
     JournalMetadata* journal_metadata;
     Context *on_safe;
@@ -251,11 +266,15 @@ private:
     virtual ~C_NotifyUpdate() {
       journal_metadata->m_async_op_tracker.finish_op();
     }
+
     virtual void finish(int r) {
       if (r == 0) {
+        // notify other rados clients
         journal_metadata->async_notify_update(on_safe);
         return;
       }
+
+      // the rados op failed, finish the callback directly
       if (on_safe != NULL) {
         on_safe->complete(r);
       }
@@ -283,6 +302,7 @@ private:
     }
   };
 
+  // used by JournalMetadata::refresh
   struct C_Refresh : public Context {
     JournalMetadata* journal_metadata;
     uint64_t minimum_set;

@@ -2371,6 +2371,7 @@ int Pipe::read_message(Message **pm, AuthSessionHandler* auth_handler)
     ldout(msgr->cct,10) << "reader wants " << 1 << " message from policy throttler "
 			<< policy.throttler_messages->get_current() << "/"
 			<< policy.throttler_messages->get_max() << dendl;
+
     policy.throttler_messages->get();
   }
 

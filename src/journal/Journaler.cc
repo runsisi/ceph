@@ -262,6 +262,7 @@ void Journaler::create(uint8_t order, uint8_t splay_width,
   comp->release();
 }
 
+// called by journal::RemoveRequest<I>::remove_journal
 void Journaler::remove(bool force, Context *on_finish) {
   // chain journal removal (reverse order)
   on_finish = new FunctionContext([this, on_finish](int r) {
@@ -279,6 +280,7 @@ void Journaler::remove(bool force, Context *on_finish) {
       m_trimmer->remove_objects(force, on_finish);
     });
 
+  // unwatch -> flush_commit_position ->  m_async_op_tracker.wait_for_ops
   m_metadata->shut_down(on_finish);
 }
 
@@ -288,6 +290,7 @@ void Journaler::flush_commit_position(Context *on_safe) {
 
 // called by Journal<I>::handle_initialized
 void Journaler::add_listener(JournalMetadataListener *listener) {
+  // push back of JournalMetadata::m_listeners
   m_metadata->add_listener(listener);
 }
 
@@ -320,6 +323,24 @@ void Journaler::register_client(const bufferlist &data, Context *on_finish) {
   return m_metadata->register_client(data, on_finish);
 }
 
+// called by
+// Journal<I>::request_resync
+// image_replayer/BootstrapRequest.cc:
+//   BootstrapRequest<I>::update_client_state
+//   BootstrapRequest<I>::update_client_image
+// image_replayer/EventPreprocessor.cc:
+//   EventPreprocessor<I>::update_client
+// image_sync/ImageCopyRequest.cc:
+//   ImageCopyRequest<I>::send_update_max_object_count
+//   ImageCopyRequest<I>::send_update_sync_point
+//   ImageCopyRequest<I>::send_flush_sync_point
+// image_sync/SnapshotCopyRequest.cc:
+//   SnapshotCopyRequest<I>::send_update_client
+// image_sync/SyncPointRequest.cc:
+//   SyncPointCreateRequest<I>::send_update_client
+// image_sync/SyncPointPruneRequest.cc:
+//   SyncPointPruneRequest<I>::send_update_client
+// data is ClientMeta variant, either ImageClientMeta, or MirrorPeerClientMeta
 void Journaler::update_client(const bufferlist &data, Context *on_finish) {
   return m_metadata->update_client(data, on_finish);
 }
@@ -528,6 +549,7 @@ void Journaler::create_player(ReplayHandler *replay_handler) {
                                replay_handler);
 }
 
+// called by Journal<I>::reset
 void Journaler::get_metadata(uint8_t *order, uint8_t *splay_width,
 			     int64_t *pool_id) {
   assert(m_metadata != NULL);

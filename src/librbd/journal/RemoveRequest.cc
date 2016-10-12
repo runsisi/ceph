@@ -58,6 +58,7 @@ Context *RemoveRequest<I>::handle_stat_journal(int *result) {
 
   if ((*result < 0) && (*result != -ENOENT)) {
     lderr(m_cct) << "failed to stat journal header: " << cpp_strerror(*result) << dendl;
+
     shut_down_journaler(*result);
     return nullptr;
   }
@@ -87,6 +88,7 @@ Context *RemoveRequest<I>::handle_init_journaler(int *result) {
 
   if ((*result < 0) && (*result != -ENOENT)) {
     lderr(m_cct) << "failed to init journaler: " << cpp_strerror(*result) << dendl;
+
     shut_down_journaler(*result);
     return nullptr;
   }

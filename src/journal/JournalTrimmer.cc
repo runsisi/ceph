@@ -64,6 +64,7 @@ void JournalTrimmer::shut_down(Context *on_finish) {
   m_journal_metadata->flush_commit_position(on_finish);
 }
 
+// called by Journaler::remove
 void JournalTrimmer::remove_objects(bool force, Context *on_finish) {
   ldout(m_cct, 20) << __func__ << dendl;
 

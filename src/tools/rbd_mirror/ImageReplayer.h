@@ -292,6 +292,7 @@ private:
   librbd::journal::EventEntry m_event_entry;
   AsyncOpTracker m_event_replay_tracker;
 
+  // registered by ImageReplayer<I>::handle_init_remote_journaler
   struct RemoteJournalerListener : public ::journal::JournalMetadataListener {
     ImageReplayer *replayer;
 

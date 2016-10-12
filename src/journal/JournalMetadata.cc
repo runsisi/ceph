@@ -492,7 +492,9 @@ void JournalMetadata::init(Context *on_finish) {
   librados::AioCompletion *comp = librados::Rados::aio_create_completion(
     on_finish, nullptr, utils::rados_ctx_callback);
 
-  // watch the journal metadata object, i.e., journal header object
+  // watch the journal metadata object, i.e., journal header object,
+  // m_watch_ctx will be used to call JournalMetadata::handle_watch_notify and
+  // JournalMetadata::handle_watch_error accordingly
   int r = m_ioctx.aio_watch(m_oid, comp, &m_watch_handle, &m_watch_ctx);
   assert(r == 0);
   comp->release();
@@ -569,6 +571,7 @@ void JournalMetadata::get_mutable_metadata(uint64_t *minimum_set,
 			       on_finish);
 }
 
+// called by Journaler::register_client
 void JournalMetadata::register_client(const bufferlist &data,
 				      Context *on_finish) {
   ldout(m_cct, 10) << __func__ << ": " << m_client_id << dendl;
@@ -576,6 +579,7 @@ void JournalMetadata::register_client(const bufferlist &data,
   librados::ObjectWriteOperation op;
   client::client_register(&op, m_client_id, data);
 
+  // journal_metadata->async_notify_update(on_safe)
   C_NotifyUpdate *ctx = new C_NotifyUpdate(this, on_finish);
 
   librados::AioCompletion *comp =
@@ -592,6 +596,8 @@ void JournalMetadata::update_client(const bufferlist &data,
   ldout(m_cct, 10) << __func__ << ": " << m_client_id << dendl;
 
   librados::ObjectWriteOperation op;
+
+  // data is ClientMeta variant, either ImageClientMeta, or MirrorPeerClientMeta
   client::client_update_data(&op, m_client_id, data);
 
   C_NotifyUpdate *ctx = new C_NotifyUpdate(this, on_finish);
@@ -625,6 +631,7 @@ void JournalMetadata::unregister_client(Context *on_finish) {
 void JournalMetadata::allocate_tag(uint64_t tag_class, const bufferlist &data,
                                    Tag *tag, Context *on_finish) {
   on_finish = new C_NotifyUpdate(this, on_finish);
+
   C_AllocateTag *ctx = new C_AllocateTag(m_cct, m_ioctx, m_oid,
                                          m_async_op_tracker, tag_class,
                                          data, tag, on_finish);
@@ -827,6 +834,10 @@ void JournalMetadata::handle_immutable_metadata(int r, Context *on_init) {
   refresh(on_init);
 }
 
+// called by
+// JournalMetadata::handle_immutable_metadata
+// JournalMetadata::handle_watch_reset
+// JournalMetadata::handle_watch_notify
 void JournalMetadata::refresh(Context *on_complete) {
   ldout(m_cct, 10) << "refreshing mutable metadata" << dendl;
 
@@ -838,6 +849,7 @@ void JournalMetadata::refresh(Context *on_complete) {
 		       &refresh->registered_clients, refresh);
 }
 
+// called by JournalMetadata::C_Refresh::finish
 void JournalMetadata::handle_refresh_complete(C_Refresh *refresh, int r) {
   ldout(m_cct, 10) << "refreshed mutable metadata: r=" << r << dendl;
 
@@ -912,10 +924,13 @@ void JournalMetadata::schedule_commit_task() {
 
   assert(m_timer_lock->is_locked());
   assert(m_lock.is_locked());
+
   assert(m_commit_position_ctx != nullptr);
 
   if (m_commit_position_task_ctx == NULL) {
+    // journal_metadata->handle_commit_position_task
     m_commit_position_task_ctx = new C_CommitPositionTask(this);
+
     m_timer->add_event_after(m_settings.commit_interval,
                              m_commit_position_task_ctx);
   }
@@ -924,6 +939,7 @@ void JournalMetadata::schedule_commit_task() {
 // called by
 // JournalMetadata::flush_commit_position()
 // JournalMetadata::flush_commit_position(Context *on_safe)
+// JournalMetadata::C_CommitPositionTask::finish
 void JournalMetadata::handle_commit_position_task() {
   assert(m_timer_lock->is_locked());
   assert(m_lock.is_locked());
@@ -936,6 +952,7 @@ void JournalMetadata::handle_commit_position_task() {
 
   client::client_commit(&op, m_client_id, m_commit_position);
 
+  // journal_metadata->async_notify_update
   Context *ctx = new C_NotifyUpdate(this, m_commit_position_ctx);
 
   m_commit_position_ctx = NULL;
@@ -952,13 +969,22 @@ void JournalMetadata::handle_commit_position_task() {
   m_commit_position_task_ctx = NULL;
 }
 
+// called by
+// JournalMetadata::handle_watch_error
+// JournalMetadata::handle_watch_reset
+// previous watch reset, we need to schedule a new watch, delegate this
+// to the timer
 void JournalMetadata::schedule_watch_reset() {
   assert(m_timer_lock->is_locked());
+
+  // journal_metadata->handle_watch_reset
   m_timer->add_event_after(1, new C_WatchReset(this));
 }
 
+// called by JournalMetadata::C_WatchReset::finish, to re-watch and refresh
 void JournalMetadata::handle_watch_reset() {
   assert(m_timer_lock->is_locked());
+
   if (!m_initialized) {
     return;
   }
@@ -971,13 +997,18 @@ void JournalMetadata::handle_watch_reset() {
       lderr(m_cct) << __func__ << ": failed to watch journal: "
                    << cpp_strerror(r) << dendl;
     }
+
+    // schedule a timer to call us again
     schedule_watch_reset();
   } else {
     ldout(m_cct, 10) << __func__ << ": reset journal watch" << dendl;
+
     refresh(NULL);
   }
 }
 
+// called by JournalMetadata::C_WatchCtx::handle_notify, the watch was initiated by
+// JournalMetadata::init or JournalMetadata::handle_watch_reset
 void JournalMetadata::handle_watch_notify(uint64_t notify_id, uint64_t cookie) {
   ldout(m_cct, 10) << "journal header updated" << dendl;
 
@@ -987,6 +1018,7 @@ void JournalMetadata::handle_watch_notify(uint64_t notify_id, uint64_t cookie) {
   refresh(NULL);
 }
 
+// called by JournalMetadata::C_WatchCtx::handle_error
 void JournalMetadata::handle_watch_error(int err) {
   if (err == -ENOTCONN) {
     ldout(m_cct, 5) << "journal watch error: header removed" << dendl;
@@ -1004,6 +1036,8 @@ void JournalMetadata::handle_watch_error(int err) {
   }
 
   if (m_initialized && err != -ENOENT) {
+    // schedule to call journal_metadata->handle_watch_reset, i.e.,
+    // re-watch and refresh
     schedule_watch_reset();
   }
 }
@@ -1170,6 +1204,7 @@ void JournalMetadata::committed(uint64_t commit_tid,
   }
 }
 
+// never be called
 void JournalMetadata::notify_update() {
   ldout(m_cct, 10) << "notifying journal header update" << dendl;
 
@@ -1177,10 +1212,15 @@ void JournalMetadata::notify_update() {
   m_ioctx.notify2(m_oid, bl, 5000, NULL);
 }
 
+// called by JournalMetadata::C_NotifyUpdate::finish, which used
+// by client and tag related updates
 void JournalMetadata::async_notify_update(Context *on_safe) {
   ldout(m_cct, 10) << "async notifying journal header update" << dendl;
 
+  // used to finish the on_safe callback, always call it with 0 as
+  // result, so even the notify failed, we ignore the notify error
   C_AioNotify *ctx = new C_AioNotify(this, on_safe);
+
   librados::AioCompletion *comp =
     librados::Rados::aio_create_completion(ctx, NULL,
                                            utils::rados_ctx_callback);
@@ -1192,16 +1232,20 @@ void JournalMetadata::async_notify_update(Context *on_safe) {
   comp->release();
 }
 
+// called by Journaler::~Journaler
 void JournalMetadata::wait_for_ops() {
   C_SaferCond ctx;
   m_async_op_tracker.wait_for_ops(&ctx);
   ctx.wait();
 }
 
+// called by JournalMetadata::C_AioNotify::finish, which means the
+// JournalMetadata::async_notify_update has completed
 void JournalMetadata::handle_notified(int r) {
   ldout(m_cct, 10) << "notified journal header update: r=" << r << dendl;
 }
 
+// called by JournalMetadata::handle_commit_position_task
 Context *JournalMetadata::schedule_laggy_clients_disconnect(Context *on_finish) {
   assert(m_lock.is_locked());
 
@@ -1219,6 +1263,7 @@ Context *JournalMetadata::schedule_laggy_clients_disconnect(Context *on_finish) 
 	m_settings.whitelisted_laggy_clients.count(c.id) > 0) {
       continue;
     }
+
     const std::string &client_id = c.id;
     uint64_t object_set = 0;
     if (!c.commit_position.object_positions.empty()) {
@@ -1235,6 +1280,8 @@ Context *JournalMetadata::schedule_laggy_clients_disconnect(Context *on_finish) 
                            << ": flagging disconnected" << dendl;
 
           librados::ObjectWriteOperation op;
+
+          // two states: CONNECTED or DISCONNECTED
           client::client_update_state(&op, client_id,
                                       cls::journal::CLIENT_STATE_DISCONNECTED);
 

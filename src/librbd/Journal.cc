@@ -424,6 +424,7 @@ int Journal<I>::reset(librados::IoCtx &io_ctx, const std::string &image_id) {
 
   uint8_t order, splay_width;
   int64_t pool_id;
+
   journaler.get_metadata(&order, &splay_width, &pool_id);
 
   std::string pool_name;
