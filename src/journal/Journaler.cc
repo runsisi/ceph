@@ -480,7 +480,8 @@ void Journaler::committed(const Future &future) {
   // appended into journal object, while the m_entry_tid global uniquely
   // identifies an append to the journal object, see JournalRecorder::append
 
-  // call m_journal_metadata->committed to update commit position
+  // call m_journal_metadata->committed to update commit position, update both
+  // in memory structure and journal omap
   m_trimmer->committed(future_impl->get_commit_tid());
 }
 

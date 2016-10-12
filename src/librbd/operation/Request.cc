@@ -31,17 +31,22 @@ void Request<I>::send() {
 
     // 1) this op will affect data io, so the sequence of the data io and
     // the mgmt op is important, we need to stop the data io first,
-    // see ResizeRequest<I>::send_pre_block_writes and
-    // SnapshotCreateRequest<I>::send_suspend_aio
+    // see ResizeRequest<I>::send_pre_block_writes,
+    // SnapshotCreateRequest<I>::send_suspend_aio,
+    // EnableFeaturesRequest<I>::handle_prepare_lock,
+    // DisableFeaturesRequest<I>::handle_prepare_lock
     // or 2) journal disabled, no need to append op event
     // or 3) journal enabled, but it's not ready
 
-    // pure virtual function
+    // pure virtual function, will call Request<I>::append_op_event(T *request)
+    // to append journal Event
     send_op();
   }
 }
 
-// called by: ResizeRequest, SnapshotCreateRequest, and SnapshotRollbackRequest
+// called by:
+// ResizeRequest, SnapshotCreateRequest, and SnapshotRollbackRequest,
+// EnableFeaturesRequest, DisableFeaturesRequest
 template <typename I>
 Context *Request<I>::create_context_finisher(int r) {
   // automatically commit the event if required (delete after commit)
@@ -53,6 +58,7 @@ Context *Request<I>::create_context_finisher(int r) {
   I &image_ctx = this->m_image_ctx;
   CephContext *cct = image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
+
   return util::create_context_callback<Request<I>, &Request<I>::finish>(this);
 }
 
@@ -60,6 +66,7 @@ Context *Request<I>::create_context_finisher(int r) {
 template <typename I>
 void Request<I>::finish_and_destroy(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
@@ -69,12 +76,14 @@ void Request<I>::finish_and_destroy(int r) {
     return;
   }
 
+  // call finish(r) then delete
   AsyncRequest<I>::finish_and_destroy(r);
 }
 
 template <typename I>
 void Request<I>::finish(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
@@ -94,6 +103,7 @@ bool Request<I>::append_op_event() {
   assert(image_ctx.owner_lock.is_locked());
 
   RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
   if (image_ctx.journal != nullptr &&
       image_ctx.journal->is_journal_appending()) {
 
@@ -113,8 +123,8 @@ bool Request<I>::append_op_event() {
 }
 
 // called by
-// Request<I>::create_context_finisher,
-// Request<I>::finish_and_destroy,
+// Request<I>::create_context_finisher
+// Request<I>::finish_and_destroy
 template <typename I>
 bool Request<I>::commit_op_event(int r) {
   I &image_ctx = this->m_image_ctx;
@@ -139,16 +149,22 @@ bool Request<I>::commit_op_event(int r) {
 
     // ops will be canceled / completed before closing journal
     assert(image_ctx.journal->is_journal_ready());
+
+    // C_CommitOpEvent::finish calls request->handle_commit_op_event
     image_ctx.journal->commit_op_event(m_op_tid, r,
                                        new C_CommitOpEvent(this, r));
+
     return true;
   }
+
   return false;
 }
 
+// called by Request<I>::C_CommitOpEvent::finish
 template <typename I>
 void Request<I>::handle_commit_op_event(int r, int original_ret_val) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
@@ -156,9 +172,11 @@ void Request<I>::handle_commit_op_event(int r, int original_ret_val) {
     lderr(cct) << "failed to commit op event to journal: " << cpp_strerror(r)
                << dendl;
   }
+
   if (original_ret_val < 0) {
     r = original_ret_val;
   }
+
   finish(r);
 }
 
@@ -179,8 +197,9 @@ void Request<I>::replay_op_ready(Context *on_safe) {
     m_op_tid, util::create_async_context_callback(image_ctx, on_safe));
 }
 
-// called by template Request<I>::append_op_event if journaling is enabled
-// and we are currently not in replaying
+// called by
+// Request<I>::append_op_event()
+// Request<I>::append_op_event(T *request)
 template <typename I>
 void Request<I>::append_op_event(Context *on_safe) {
   I &image_ctx = this->m_image_ctx;
@@ -194,15 +213,18 @@ void Request<I>::append_op_event(Context *on_safe) {
   m_op_tid = image_ctx.journal->allocate_op_tid();
 
   // librbd::Journal must be STATE_READY
+  // C_AppendOpEvent::finish will set request->m_appended_op_event = true and
+  // complete on_safe
   image_ctx.journal->append_op_event(
     m_op_tid, journal::EventEntry{create_event(m_op_tid)},
     new C_AppendOpEvent(this, on_safe));
 }
 
-// neither ResizeRequest nor SnapshotCreateRequest
+// not for ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
 template <typename I>
 void Request<I>::handle_op_event_safe(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
@@ -215,14 +237,16 @@ void Request<I>::handle_op_event_safe(int r) {
     delete this;
   } else {
 
-    // request->m_appended_op_event has set to true
+    // if can_affect_io() returns true, then Request<I>::send will call send_op() instead
+    // of calling Request<I>::append_op_event(), i.e., this method will not be called
 
     assert(!can_affect_io());
 
     // haven't started the request state machine yet
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
 
-    // pure virtual
+    // for requests except ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest,
+    // DisableFeaturesRequest, so there will not be any journal appending for those overrides
     send_op();
   }
 }

@@ -1183,6 +1183,7 @@ void JournalMetadata::committed(uint64_t commit_tid,
 
     stale_ctx = m_commit_position_ctx;
 
+    // JournalTrimmer::C_CommitPositionSafe, actually do nothing
     m_commit_position_ctx = create_context();
 
     m_commit_position = commit_position;

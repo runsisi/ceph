@@ -1136,6 +1136,8 @@ void Journal<I>::commit_io_event_extent(uint64_t tid, uint64_t offset,
   complete_event(it, event.ret_val);
 }
 
+// called by librbd::operation::Request<I>::append_op_event(Context *on_safe),
+// which called by Request<I>::append_op_event() and Request<I>::append_op_event(T *request)
 template <typename I>
 void Journal<I>::append_op_event(uint64_t op_tid,
                                  journal::EventEntry &&event_entry,
@@ -1513,6 +1515,8 @@ void Journal<I>::complete_event(typename Events::iterator it, int r) {
 
         // a future represents an journal::EventEntry
 
+        // update client's commit position, both in memory structure and journal header
+        // object's omap
         m_journaler->committed(future);
       }
     }
@@ -1972,6 +1976,7 @@ void Journal<I>::handle_io_event_safe(int r, uint64_t tid) {
   }
 }
 
+// called by Journal::C_OpEventSafe::finish
 template <typename I>
 void Journal<I>::handle_op_event_safe(int r, uint64_t tid,
                                       const Future &op_start_future,

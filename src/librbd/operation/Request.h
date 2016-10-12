@@ -26,10 +26,10 @@ public:
   Request(ImageCtxT &image_ctx, Context *on_finish,
           uint64_t journal_op_tid = 0);
 
-  // call send_op() based on can_affect_io(), if this op affect the io,
-  // i.e., this is ResizeRequest or SnapshotCreateRequest, or if we can
-  // not journal it now, i.e., ImageCtx->journal is nullptr is the journal
-  // currently is replaying
+  // if this type of request affect the io, i.e., this is ResizeRequest, SnapshotCreateRequest,
+  // EnableFeaturesRequest, DisableFeaturesRequest, or if we can not journal it now, i.e.,
+  // ImageCtx->journal is nullptr or the journal currently is replaying, we call send_op, else
+  // we call append_op_event and then call send_op when the journalled Event is safe
   virtual void send();
 
 protected:
@@ -39,20 +39,22 @@ protected:
   // called by send and Request<I>::handle_op_event_safe
   virtual void send_op() = 0;
 
-  // only ResizeRequest and SnapshotCreateRequest override this and return true
+  // only ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
+  // overrides this and return true
   virtual bool can_affect_io() const {
     return false;
   }
 
   virtual journal::Event create_event(uint64_t op_tid) const = 0;
 
-  // T is a specific request type, either ResizeRequest or SnapshotCreateRequest
+  // T is a specific request type, can be:
+  // ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
   template <typename T, Context*(T::*MF)(int*)>
   bool append_op_event(T *request) {
     ImageCtxT &image_ctx = this->m_image_ctx;
 
-    // only ResizeRequest or SnapshotCreateRequest overrides the can_affect_io
-    // and returns true
+    // only ResizeRequest, SnapshotCreateRequest EnableFeaturesRequest, DisableFeaturesRequest
+    // overrides the can_affect_io and returns true
     assert(can_affect_io());
 
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
@@ -64,6 +66,8 @@ protected:
         return true;
       } else if (image_ctx.journal->is_journal_appending()) {
         Context *ctx = util::create_context_callback<T, MF>(request);
+
+        // call Request<I>::append_op_event(Context *on_safe)
         append_op_event(ctx);
         return true;
       }
@@ -79,6 +83,7 @@ protected:
   virtual void finish_and_destroy(int r) override;
 
 private:
+  // used by Request<I>::append_op_event(Context *on_safe)
   struct C_AppendOpEvent : public Context {
     Request *request;
     Context *on_safe;
@@ -95,12 +100,14 @@ private:
     }
   };
 
+  // used by Request<I>::commit_op_event
   struct C_CommitOpEvent : public Context {
     Request *request;
     int ret_val;
     C_CommitOpEvent(Request *request, int ret_val)
       : request(request), ret_val(ret_val) {
     }
+
     virtual void finish(int r) override {
       request->handle_commit_op_event(r, ret_val);
       delete request;

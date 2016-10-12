@@ -100,7 +100,7 @@ void JournalTrimmer::remove_objects(bool force, Context *on_finish) {
 void JournalTrimmer::committed(uint64_t commit_tid) {
   ldout(m_cct, 20) << __func__ << ": commit_tid=" << commit_tid << dendl;
 
-  // callback is an instance of C_CommitPositionSafe
+  // callback is an instance of JournalTrimmer::C_CommitPositionSafe
   m_journal_metadata->committed(commit_tid,
                                 m_create_commit_position_safe_context);
 }

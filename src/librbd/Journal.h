@@ -210,6 +210,7 @@ private:
   typedef std::unordered_map<uint64_t, Event> Events;
   typedef std::unordered_map<uint64_t, Future> TidToFutures;
 
+  // used by Journal<I>::append_io_events
   struct C_IOEventSafe : public Context {
     Journal *journal;
     uint64_t tid;
@@ -223,6 +224,7 @@ private:
     }
   };
 
+  // used by Journal<I>::commit_op_event
   struct C_OpEventSafe : public Context {
     Journal *journal;
     uint64_t tid;
@@ -242,6 +244,7 @@ private:
     }
   };
 
+  // used by Journal<I>::handle_replay_ready
   struct C_ReplayProcessSafe : public Context {
     Journal *journal;
     ReplayEntry replay_entry;
