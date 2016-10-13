@@ -310,6 +310,7 @@ private:
 
   util::AsyncOpTracker m_async_journal_op_tracker;
 
+  // registered by Journal<I>::handle_initialized
   struct MetadataListener : public ::journal::JournalMetadataListener {
     Journal<ImageCtxT> *journal;
 

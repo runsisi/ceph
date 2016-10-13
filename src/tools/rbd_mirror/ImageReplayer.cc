@@ -278,7 +278,10 @@ ImageReplayer<I>::ImageReplayer(Threads *threads,
   m_lock("rbd::mirror::ImageReplayer " + stringify(remote_pool_id) + " " +
 	 remote_image_id),
   m_progress_cxt(this),
+  // registered by ImageReplayer<I>::handle_bootstrap for local Journal
   m_journal_listener(new JournalListener(this)),
+  // an instance of RemoteJournalerListener, registered by
+  // ImageReplayer<I>::handle_init_remote_journaler
   m_remote_listener(this)
 {
   // Register asok commands using a temporary "remote_pool_name/global_image_id"
@@ -436,6 +439,7 @@ void ImageReplayer<I>::bootstrap() {
 template <typename I>
 void ImageReplayer<I>::handle_bootstrap(int r) {
   dout(20) << "r=" << r << dendl;
+
   {
     Mutex::Locker locker(m_lock);
 
@@ -465,8 +469,13 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
 
   {
     RWLock::RLocker snap_locker(m_local_image_ctx->snap_lock);
+
     if (m_local_image_ctx->journal != nullptr) {
       m_local_journal = m_local_image_ctx->journal;
+
+      // m_journal_listener is an instance of JournalListener, which was
+      // allocated by ImageReplayer<I>::ImageReplayer
+      // NOTE: Journal will then register its own listeners
       m_local_journal->add_listener(m_journal_listener);
     }
   }
@@ -478,6 +487,7 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
 
   {
     Mutex::Locker locker(m_lock);
+
     bool do_resync = false;
     // check ImageClientMeta::resync_requested
     r = m_local_image_ctx->journal->is_resync_requested(&do_resync);
@@ -560,7 +570,8 @@ void ImageReplayer<I>::handle_init_remote_journaler(int r) {
   }
 
   // push back of JournalMetadata::m_listeners, the callback is
-  // handle_remote_journal_metadata_updated
+  // ImageReplayer<I>::handle_remote_journal_metadata_updated,
+  // m_remote_listener constructed by ImageReplayer<I>::ImageReplayer
   m_remote_journaler->add_listener(&m_remote_listener);
 
   cls::journal::Client client;

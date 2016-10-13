@@ -59,16 +59,34 @@ protected:
 
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     if (image_ctx.journal != nullptr) {
+
+      // journaling enabled, when the journal::Event is safe, the
+      // callback MF, i.e., XxxRequest<I>::handle_append_op_event will
+      // be called, see:
+      // ResizeRequest<I>::handle_append_op_event
+      // SnapshotCreateRequest<I>::handle_append_op_event
+      // EnableFeaturesRequest<I>::handle_append_op_event
+      // DisableFeaturesRequest<I>::handle_append_op_event
+
       if (image_ctx.journal->is_journal_replaying()) {
+
+        // Journal<I>::m_state is in one of:
+        // STATE_REPLAYING, STATE_FLUSHING_REPLAY, STATE_FLUSHING_RESTART, STATE_RESTARTING_REPLAY
+
         Context *ctx = util::create_context_callback<T, MF>(request);
+
         replay_op_ready(ctx);
+
         return true;
       } else if (image_ctx.journal->is_journal_appending()) {
         Context *ctx = util::create_context_callback<T, MF>(request);
 
         // call Request<I>::append_op_event(Context *on_safe)
+        // NOTE: XxxRequest<I>::handle_append_op_event is wrapped in the ctx
         append_op_event(ctx);
+
         return true;
       }
     }

@@ -258,10 +258,12 @@ bool AioImageRequestWQ::is_lock_request_needed() const {
           (m_require_lock_on_read && m_queued_reads.read() > 0));
 }
 
-// called by librbd::update_features
+// never be used
 int AioImageRequestWQ::block_writes() {
   C_SaferCond cond_ctx;
+
   block_writes(&cond_ctx);
+
   return cond_ctx.wait();
 }
 
@@ -272,6 +274,8 @@ int AioImageRequestWQ::block_writes() {
 // ResizeRequest<I>::send_pre_block_writes, ResizeRequest<I>::send_post_block_writes
 // SnapshotCreateRequest<I>::send_suspend_aio
 // SnapshotRollbackRequest<I>::send_block_writes
+// EnableFeaturesRequest<I>::handle_prepare_lock,
+// DisableFeaturesRequest<I>::handle_prepare_lock
 // ExclusiveLock<I>::init
 // AioImageRequestWQ::block_writes()
 void AioImageRequestWQ::block_writes(Context *on_blocked) {
@@ -281,10 +285,15 @@ void AioImageRequestWQ::block_writes(Context *on_blocked) {
 
   {
     RWLock::WLocker locker(m_lock);
+
     ++m_write_blockers;
+
     ldout(cct, 5) << __func__ << ": " << &m_image_ctx << ", "
                   << "num=" << m_write_blockers << dendl;
+
     if (!m_write_blocker_contexts.empty() || m_in_progress_writes.read() > 0) {
+      // will be called by AioImageRequestWQ::handle_blocked_writes, see
+      // AioImageRequestWQ::finish_in_progress_write
       m_write_blocker_contexts.push_back(on_blocked);
       return;
     }
@@ -474,9 +483,12 @@ void AioImageRequestWQ::finish_queued_op(AioImageRequest<> *req) {
 
 void AioImageRequestWQ::finish_in_progress_write() {
   bool writes_blocked = false;
+
   {
     RWLock::RLocker locker(m_lock);
+
     assert(m_in_progress_writes.read() > 0);
+
     if (m_in_progress_writes.dec() == 0 &&
         !m_write_blocker_contexts.empty()) {
       writes_blocked = true;
@@ -484,6 +496,9 @@ void AioImageRequestWQ::finish_in_progress_write() {
   }
 
   if (writes_blocked) {
+    // flush ImageCtx::async_ops
+
+    // C_BlockedWrites::finish will call aio_work_queue->handle_blocked_writes
     m_image_ctx.flush(new C_BlockedWrites(this));
   }
 }
@@ -602,10 +617,14 @@ void AioImageRequestWQ::handle_refreshed(int r, AioImageRequest<> *req) {
   }
 }
 
+// called by AioImageRequestWQ::C_BlockedWrites::finish, see
+// AioImageRequestWQ::finish_in_progress_write
 void AioImageRequestWQ::handle_blocked_writes(int r) {
   Contexts contexts;
+
   {
     RWLock::WLocker locker(m_lock);
+
     contexts.swap(m_write_blocker_contexts);
   }
 

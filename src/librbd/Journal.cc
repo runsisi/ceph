@@ -675,18 +675,26 @@ void Journal<I>::close(Context *on_finish) {
   on_finish = create_async_context_callback(m_image_ctx, on_finish);
 
   Mutex::Locker locker(m_lock);
+
   while (m_listener_notify) {
+
+    // will be notified by Journal<I>::handle_refresh_metadata
+
     m_listener_cond.Wait(m_lock);
   }
 
+  // std::set<journal::Listener *>
   Listeners listeners(m_listeners);
   m_listener_notify = true;
+
   m_lock.Unlock();
+
   for (auto listener : listeners) {
     listener->handle_close();
   }
 
   m_lock.Lock();
+
   m_listener_notify = false;
   m_listener_cond.Signal();
 
@@ -1208,7 +1216,7 @@ void Journal<I>::commit_op_event(uint64_t op_tid, int r, Context *on_safe) {
                                    op_finish_future, on_safe)));
 }
 
-// called by Request<I>::replay_op_ready
+// called by librbd::operation::Request<I>::replay_op_ready
 template <typename I>
 void Journal<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   CephContext *cct = m_image_ctx.cct;
@@ -1218,6 +1226,7 @@ void Journal<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
     Mutex::Locker locker(m_lock);
 
     assert(m_journal_replay != nullptr);
+
     m_journal_replay->replay_op_ready(op_tid, on_resume);
   }
 }
@@ -1397,6 +1406,7 @@ void Journal<I>::create_journaler() {
   ldout(cct, 20) << this << " " << __func__ << dendl;
 
   assert(m_lock.is_locked());
+
   assert(m_state == STATE_UNINITIALIZED || m_state == STATE_RESTARTING_REPLAY);
   assert(m_journaler == NULL);
 
@@ -2144,10 +2154,12 @@ struct C_RefreshTags : public Context {
   }
 };
 
-// called by MetadataListener::handle_update
+// called by MetadataListener::handle_update, which registered by
+// Journal<I>::handle_initialized
 template <typename I>
 void Journal<I>::handle_metadata_updated() {
   CephContext *cct = m_image_ctx.cct;
+
   Mutex::Locker locker(m_lock);
 
   if (m_state != STATE_READY && !is_journal_replaying(m_lock)) {
@@ -2170,6 +2182,7 @@ void Journal<I>::handle_metadata_updated() {
   C_RefreshTags *refresh_ctx = new C_RefreshTags(m_async_journal_op_tracker);
   refresh_ctx->on_finish = new FunctionContext(
     [this, refresh_sequence, refresh_ctx](int r) {
+      // notify Journal<I>::m_listeners
       handle_refresh_metadata(refresh_sequence, refresh_ctx->tag_tid,
                               refresh_ctx->tag_data, r);
     });
@@ -2187,6 +2200,7 @@ void Journal<I>::handle_refresh_metadata(uint64_t refresh_sequence,
                                          uint64_t tag_tid,
                                          journal::TagData tag_data, int r) {
   CephContext *cct = m_image_ctx.cct;
+
   Mutex::Locker locker(m_lock);
 
   if (r < 0) {
@@ -2206,6 +2220,9 @@ void Journal<I>::handle_refresh_metadata(uint64_t refresh_sequence,
                  << "tag_data=" << tag_data << dendl;
 
   while (m_listener_notify) {
+
+    // will be notified by Journal<I>::close
+
     m_listener_cond.Wait(m_lock);
   }
 
@@ -2227,6 +2244,7 @@ void Journal<I>::handle_refresh_metadata(uint64_t refresh_sequence,
 
   Listeners listeners(m_listeners);
   m_listener_notify = true;
+
   m_lock.Unlock();
 
   if (promoted_to_primary) {
@@ -2240,6 +2258,7 @@ void Journal<I>::handle_refresh_metadata(uint64_t refresh_sequence,
   }
 
   m_lock.Lock();
+
   m_listener_notify = false;
   m_listener_cond.Signal();
 }
@@ -2248,12 +2267,14 @@ void Journal<I>::handle_refresh_metadata(uint64_t refresh_sequence,
 template <typename I>
 void Journal<I>::add_listener(journal::Listener *listener) {
   Mutex::Locker locker(m_lock);
+
   m_listeners.insert(listener);
 }
 
 template <typename I>
 void Journal<I>::remove_listener(journal::Listener *listener) {
   Mutex::Locker locker(m_lock);
+
   while (m_listener_notify) {
     m_listener_cond.Wait(m_lock);
   }

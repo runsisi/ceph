@@ -59,6 +59,7 @@ protected:
 private:
   typedef std::list<Context *> Contexts;
 
+  // used by AioImageRequestWQ::_void_dequeue
   struct C_RefreshFinish : public Context {
     AioImageRequestWQ *aio_work_queue;
     AioImageRequest<ImageCtx> *aio_image_request;
@@ -72,6 +73,7 @@ private:
     }
   };
 
+  // used by AioImageRequestWQ::finish_in_progress_write
   struct C_BlockedWrites : public Context {
     AioImageRequestWQ *aio_work_queue;
     C_BlockedWrites(AioImageRequestWQ *_aio_work_queue)

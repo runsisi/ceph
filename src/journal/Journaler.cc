@@ -288,7 +288,9 @@ void Journaler::flush_commit_position(Context *on_safe) {
   m_metadata->flush_commit_position(on_safe);
 }
 
-// called by Journal<I>::handle_initialized
+// called by
+// Journal<I>::handle_initialized, then Journal will register its own listeners
+// ImageReplayer<I>::handle_init_remote_journaler
 void Journaler::add_listener(JournalMetadataListener *listener) {
   // push back of JournalMetadata::m_listeners
   m_metadata->add_listener(listener);

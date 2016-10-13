@@ -1282,7 +1282,7 @@ Context *JournalMetadata::schedule_laggy_clients_disconnect(Context *on_finish) 
 
           librados::ObjectWriteOperation op;
 
-          // two states: CONNECTED or DISCONNECTED
+          // two states for journal client: CONNECTED or DISCONNECTED
           client::client_update_state(&op, client_id,
                                       cls::journal::CLIENT_STATE_DISCONNECTED);
 

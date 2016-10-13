@@ -29,17 +29,18 @@ void Request<I>::send() {
   // about affecting concurrent IO ops
   if (can_affect_io() || !append_op_event()) {
 
-    // 1) this op will affect data io, so the sequence of the data io and
-    // the mgmt op is important, we need to stop the data io first,
-    // see ResizeRequest<I>::send_pre_block_writes,
+    // 1) ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
+    // affects concurrent IO ops, need to block and flush ImageCtx::async_ops, see:
+    // ResizeRequest<I>::send_pre_block_writes,
     // SnapshotCreateRequest<I>::send_suspend_aio,
     // EnableFeaturesRequest<I>::handle_prepare_lock,
     // DisableFeaturesRequest<I>::handle_prepare_lock
-    // or 2) journal disabled, no need to append op event
-    // or 3) journal enabled, but it's not ready
+    // or
+    // 2) journaling not available currently now
 
-    // pure virtual function, will call Request<I>::append_op_event(T *request)
-    // to append journal Event
+    // for ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest,
+    // will call Request<I>::append_op_event(T *request) to try to append journal Event,
+    // other type of requests will send request directly
     send_op();
   }
 }
@@ -180,14 +181,16 @@ void Request<I>::handle_commit_op_event(int r, int original_ret_val) {
   finish(r);
 }
 
-// called by template Request<I>::append_op_event
+// called by Request<I>::append_op_event(T *request)
 template <typename I>
 void Request<I>::replay_op_ready(Context *on_safe) {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
   assert(image_ctx.snap_lock.is_locked());
 
-  // TODO: for ResizeRequest and SnapshotCreateRequest this is not true ???
+  // TODO: for ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
+  // this is not true ???
   assert(m_op_tid != 0);
 
   m_appended_op_event = true;

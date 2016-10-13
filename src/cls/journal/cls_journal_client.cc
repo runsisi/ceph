@@ -317,6 +317,7 @@ void client_update_data(librados::ObjectWriteOperation *op,
   op->exec("journal", "client_update_data", bl);
 }
 
+// called by rbd::action::journal::do_disconnect_journal_client
 int client_update_state(librados::IoCtx &ioctx, const std::string &oid,
                         const std::string &id, cls::journal::ClientState state) {
   librados::ObjectWriteOperation op;
@@ -324,6 +325,9 @@ int client_update_state(librados::IoCtx &ioctx, const std::string &oid,
   return ioctx.operate(oid, &op);
 }
 
+// called by
+// client_update_state
+// JournalMetadata::schedule_laggy_clients_disconnect
 void client_update_state(librados::ObjectWriteOperation *op,
                          const std::string &id,
                          cls::journal::ClientState state) {

@@ -672,6 +672,9 @@ void Operations<I>::execute_rename(const std::string &dest_name,
   req->send();
 }
 
+// rbd_resize2 allow user to determine if the image can be shrinked
+// rbd_resize and rbd_resize_with_progress always allow the image to be
+// shrinked
 template <typename I>
 int Operations<I>::resize(uint64_t size, bool allow_shrink, ProgressContext& prog_ctx) {
   CephContext *cct = m_image_ctx.cct;
@@ -694,6 +697,7 @@ int Operations<I>::resize(uint64_t size, bool allow_shrink, ProgressContext& pro
   }
 
   uint64_t request_id = ++m_async_request_seq;
+
   r = invoke_async_request("resize", false,
                            boost::bind(&Operations<I>::execute_resize, this,
                                        size, allow_shrink, boost::ref(prog_ctx), _1, 0),
@@ -702,7 +706,9 @@ int Operations<I>::resize(uint64_t size, bool allow_shrink, ProgressContext& pro
                                        size, allow_shrink, boost::ref(prog_ctx), _1));
 
   m_image_ctx.perfcounter->inc(l_librbd_resize);
+
   ldout(cct, 2) << "resize finished" << dendl;
+
   return r;
 }
 
@@ -715,6 +721,7 @@ void Operations<I>::execute_resize(uint64_t size, bool allow_shrink, ProgressCon
          m_image_ctx.exclusive_lock->is_lock_owner());
 
   CephContext *cct = m_image_ctx.cct;
+
   m_image_ctx.snap_lock.get_read();
 
   ldout(cct, 5) << this << " " << __func__ << ": "

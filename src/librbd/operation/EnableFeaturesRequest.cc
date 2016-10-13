@@ -37,23 +37,28 @@ EnableFeaturesRequest<I>::EnableFeaturesRequest(I &image_ctx,
 template <typename I>
 void EnableFeaturesRequest<I>::send_op() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
+
   assert(image_ctx.owner_lock.is_locked());
 
   ldout(cct, 20) << this << " " << __func__ << ": features=" << m_features
 		 << dendl;
+
   send_prepare_lock();
 }
 
 template <typename I>
 bool EnableFeaturesRequest<I>::should_complete(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << "r=" << r << dendl;
 
   if (r < 0) {
     lderr(cct) << "encountered error: " << cpp_strerror(r) << dendl;
   }
+
   return true;
 }
 
