@@ -877,6 +877,7 @@ void JournalMetadata::handle_refresh_complete(C_Refresh *refresh, int r) {
       m_active_set = MAX(m_active_set, refresh->active_set);
 
       m_registered_clients = refresh->registered_clients;
+
       m_client = *it;
 
       ++m_update_notifications;
@@ -1259,6 +1260,9 @@ Context *JournalMetadata::schedule_laggy_clients_disconnect(Context *on_finish) 
   Context *ctx = on_finish;
 
   for (auto &c : m_registered_clients) {
+
+    // m_registered_clients was set by JournalMetadata::handle_refresh_complete
+
     if (c.state == cls::journal::CLIENT_STATE_DISCONNECTED ||
 	c.id == m_client_id ||
 	m_settings.whitelisted_laggy_clients.count(c.id) > 0) {

@@ -131,8 +131,14 @@ public:
     *commit_position = m_client.commit_position;
   }
 
+  // called by
+  // Journaler::get_cached_client
+  // JournalTrimmer::remove_objects
+  // JournalTrimmer::handle_metadata_updated
   void get_registered_clients(RegisteredClients *registered_clients) {
     Mutex::Locker locker(m_lock);
+
+    // m_registered_clients was set by JournalMetadata::handle_refresh_complete
     *registered_clients = m_registered_clients;
   }
 

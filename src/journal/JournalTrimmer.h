@@ -67,6 +67,7 @@ private:
   std::string m_object_oid_prefix;
 
   JournalMetadataPtr m_journal_metadata;
+  // registered by JournalTrimmer::JournalTrimmer
   MetadataListener m_metadata_listener;
 
   AsyncOpTracker m_async_op_tracker;

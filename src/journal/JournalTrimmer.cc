@@ -157,12 +157,14 @@ void JournalTrimmer::remove_set(uint64_t object_set) {
   }
 }
 
+// called by MetadataListener::handle_update, which registered by JournalTrimmer::JournalTrimmer
 void JournalTrimmer::handle_metadata_updated() {
   ldout(m_cct, 20) << __func__ << dendl;
 
   Mutex::Locker locker(m_lock);
 
   JournalMetadata::RegisteredClients registered_clients;
+
   m_journal_metadata->get_registered_clients(&registered_clients);
 
   uint8_t splay_width = m_journal_metadata->get_splay_width();

@@ -1360,8 +1360,9 @@ void Journal<I>::handle_start_external_replay(int r,
 
   transition_state(STATE_REPLAYING, 0);
 
-  // the internal replay started in Journal<I>::handle_get_tags has been
-  // finished, so create a new replay handler
+  // this is for external replay, will be deleted by:
+  // Journal<I>::stop_external_replay
+  // for local replay, see Journal<I>::handle_get_tags
   m_journal_replay = journal::Replay<I>::create(m_image_ctx);
 
   // the image replayer will need this
@@ -1419,6 +1420,7 @@ void Journal<I>::create_journaler() {
     m_image_ctx.journal_max_concurrent_object_sets;
   // TODO: a configurable filter to exclude certain peers from being
   // disconnected.
+  // will be used by JournalMetadata::schedule_laggy_clients_disconnect
   settings.whitelisted_laggy_clients = {IMAGE_CLIENT_ID};
 
   m_journaler = new Journaler(m_work_queue, m_timer, m_timer_lock,
@@ -1548,6 +1550,7 @@ void Journal<I>::start_append() {
   transition_state(STATE_READY, 0);
 }
 
+// callback of Journal<I>::create_journaler
 template <typename I>
 void Journal<I>::handle_open(int r) {
   CephContext *cct = m_image_ctx.cct;
@@ -1575,6 +1578,11 @@ void Journal<I>::handle_open(int r) {
 
   transition_state(STATE_REPLAYING, 0);
 
+  // this is for local replay, will be deleted by
+  // Journal<I>::destroy_journaler
+  // Journal<I>::recreate_journaler
+  // Journal<I>::handle_flushing_replay
+  // for external replay, see Journal<I>::start_external_replay
   m_journal_replay = journal::Replay<I>::create(m_image_ctx);
 
   // create an JournalPlayer instance and register a rbd replay handler,
@@ -1721,7 +1729,9 @@ void Journal<I>::handle_replay_complete(int r) {
   // all journal entries has been replayed or some entries failed,
   // stop replay and flush or restart replay
 
-  // JournalPlayer::shutdown and delete the JournalPlayer instance
+  // stop replay which was started by Journal<I>::handle_get_tags
+
+  // call JournalPlayer::shutdown and delete the JournalPlayer instance
   m_journaler->stop_replay(ctx);
 }
 

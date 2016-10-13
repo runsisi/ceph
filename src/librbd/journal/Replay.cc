@@ -233,6 +233,7 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
           Context *on_op_finish_event = nullptr;
 
           std::swap(on_op_finish_event, op_event.on_op_finish_event);
+
           m_image_ctx.op_work_queue->queue(on_op_finish_event, -ERESTART);
         }
       } else if (op_event.on_op_finish_event != nullptr) {
@@ -240,6 +241,7 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
         Context *on_op_finish_event = nullptr;
 
         std::swap(on_op_finish_event, op_event.on_op_finish_event);
+
         m_image_ctx.op_work_queue->queue(on_op_finish_event, 0);
       } else if (op_event.on_start_ready != nullptr) {
         // waiting for op ready
@@ -249,10 +251,15 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
 
     assert(m_flush_ctx == nullptr);
 
+    // m_in_flight_op_events increased by Replay<I>::create_op_context_callback and
+    // decreased by Replay<I>::handle_op_complete
     if (m_in_flight_op_events > 0 || flush_comp != nullptr) {
 
       // has inflight op events or inflight aio events
 
+      // the callback will be called by:
+      // Replay<I>::handle_aio_flush_complete
+      // Replay<I>::handle_op_complete
       std::swap(m_flush_ctx, on_finish);
     }
   }
@@ -317,7 +324,11 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
 
   // cancel has been requested -- send error to paused state machine
   if (!op_event.finish_on_ready && m_flush_ctx != nullptr) {
+
+    // m_flush_ctx was set by Replay<I>::shut_down
+
     m_image_ctx.op_work_queue->queue(on_resume, -ERESTART);
+
     return;
   }
 
@@ -422,6 +433,7 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
   bool filter_ret_val;
   Context *on_op_complete = nullptr;
   Context *on_op_finish_event = nullptr;
+
   {
     Mutex::Locker locker(m_lock);
 
@@ -460,6 +472,7 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
       delete on_op_finish_event;
       handle_op_complete(event.op_tid, filter_ret_val ? 0 : event.r);
     }
+
     return;
   }
 
@@ -804,6 +817,7 @@ void Replay<I>::handle_event(const journal::UnknownEvent &event,
   on_safe->complete(0);
 }
 
+// called by librbd::journal::Replay<I>::C_AioModifyComplete::finish
 template <typename I>
 void Replay<I>::handle_aio_modify_complete(Context *on_ready, Context *on_safe,
                                            int r) {
@@ -835,6 +849,7 @@ void Replay<I>::handle_aio_modify_complete(Context *on_ready, Context *on_safe,
   m_aio_modify_safe_contexts.insert(on_safe);
 }
 
+// called by librbd::journal::Replay<I>::C_AioFlushComplete::finish
 template <typename I>
 void Replay<I>::handle_aio_flush_complete(Context *on_flush_safe,
                                           Contexts &on_safe_ctxs, int r) {
@@ -955,6 +970,7 @@ Context *Replay<I>::create_op_context_callback(uint64_t op_tid,
   return on_op_complete;
 }
 
+// called by librbd::journal::Replay<I>::C_OpOnComplete::finish
 template <typename I>
 void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
   CephContext *cct = m_image_ctx.cct;
@@ -967,12 +983,14 @@ void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
   {
     Mutex::Locker locker(m_lock);
 
+    // std::unordered_map<uint64_t, OpEvent>
     auto op_it = m_op_events.find(op_tid);
     assert(op_it != m_op_events.end());
 
     op_event = std::move(op_it->second);
     m_op_events.erase(op_it);
 
+    // m_flush_ctx was set by Replay<I>::shut_down
     shutting_down = (m_flush_ctx != nullptr);
   }
 
@@ -1010,10 +1028,13 @@ void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
   // shut down request might have occurred while lock was
   // dropped -- handle if pending
   Context *on_flush = nullptr;
+
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_in_flight_op_events > 0);
     --m_in_flight_op_events;
+
     if (m_in_flight_op_events == 0 &&
         (m_in_flight_aio_flush + m_in_flight_aio_modify) == 0) {
       on_flush = m_flush_ctx;
