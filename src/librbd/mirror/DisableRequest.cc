@@ -24,6 +24,9 @@ namespace mirror {
 
 using util::create_rados_ack_callback;
 
+// called by
+// librbd::mirror_image_disable_internal
+// librbd::operation::DisableFeaturesRequest<I>::send_disable_mirror_image
 template <typename I>
 DisableRequest<I>::DisableRequest(I *image_ctx, bool force, bool remove,
                                   Context *on_finish)
@@ -317,6 +320,7 @@ void DisableRequest<I>::send_remove_snap(const std::string &client_id,
 
   assert(m_lock.is_locked());
 
+  // will be decreased by DisableRequest<I>::handle_remove_snap
   m_current_ops[client_id]++;
 
   Context *ctx = create_context_callback(
@@ -341,6 +345,7 @@ Context *DisableRequest<I>::handle_remove_snap(int *result,
 
   assert(m_current_ops[client_id] > 0);
 
+  // was increased by DisableRequest<I>::send_remove_snap
   m_current_ops[client_id]--;
 
   if (*result < 0 && *result != -ENOENT) {

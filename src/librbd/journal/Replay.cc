@@ -865,11 +865,14 @@ void Replay<I>::handle_aio_flush_complete(Context *on_flush_safe,
 
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_in_flight_aio_flush > 0);
     assert(m_in_flight_aio_modify >= on_safe_ctxs.size());
 
+    // was increased by Replay<I>::create_aio_flush_completion
     --m_in_flight_aio_flush;
 
+    // was increased by Replay<I>::create_aio_modify_completion
     m_in_flight_aio_modify -= on_safe_ctxs.size();
 
     // m_on_aio_ready is set in Replay<I>::create_aio_modify_completion
@@ -957,12 +960,14 @@ Context *Replay<I>::create_op_context_callback(uint64_t op_tid,
     return nullptr;
   }
 
+  // will be decreased by Replay<I>::handle_op_complete
   ++m_in_flight_op_events;
 
   *op_event = &m_op_events[op_tid];
 
   (*op_event)->on_start_safe = on_safe;
 
+  // replay->handle_op_complete
   Context *on_op_complete = new C_OpOnComplete(this, op_tid);
 
   (*op_event)->on_op_complete = on_op_complete;
@@ -1032,6 +1037,7 @@ void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
   {
     Mutex::Locker locker(m_lock);
 
+    // was increased by Replay<I>::create_op_context_callback
     assert(m_in_flight_op_events > 0);
     --m_in_flight_op_events;
 
@@ -1051,9 +1057,12 @@ AioCompletion *Replay<I>::create_aio_modify_completion(Context *on_ready,
                                                        aio_type_t aio_type,
                                                        bool *flush_required) {
   Mutex::Locker locker(m_lock);
+
   CephContext *cct = m_image_ctx.cct;
+
   assert(m_on_aio_ready == nullptr);
 
+  // will be decreased by Replay<I>::handle_aio_flush_complete
   ++m_in_flight_aio_modify;
 
   // stash those on_safe callbacks, it will be completed in batch
@@ -1064,6 +1073,7 @@ AioCompletion *Replay<I>::create_aio_modify_completion(Context *on_ready,
   // completed by flushes-only so that we don't move the journal
   // commit position until safely on-disk
 
+  // default 32
   *flush_required = (m_aio_modify_unsafe_contexts.size() ==
                        IN_FLIGHT_IO_LOW_WATER_MARK);
 
@@ -1082,6 +1092,9 @@ AioCompletion *Replay<I>::create_aio_modify_completion(Context *on_ready,
   //   shrink has adjusted clip boundary, etc) -- should have already been
   //   flagged not-ready
   if (m_in_flight_aio_modify == IN_FLIGHT_IO_HIGH_WATER_MARK) {
+
+    // default 64
+
     ldout(cct, 10) << ": hit AIO replay high-water mark: pausing replay"
                    << dendl;
 
@@ -1108,6 +1121,7 @@ template <typename I>
 AioCompletion *Replay<I>::create_aio_flush_completion(Context *on_safe) {
   assert(m_lock.is_locked());
 
+  // will be decreased by Replay<I>::handle_aio_flush_complete
   ++m_in_flight_aio_flush;
 
   // associate all prior write/discard ops to this flush request

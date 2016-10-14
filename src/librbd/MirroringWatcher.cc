@@ -63,6 +63,7 @@ int MirroringWatcher<I>::notify_image_updated(
   return cond.wait();
 }
 
+// static
 template <typename I>
 void MirroringWatcher<I>::notify_image_updated(
     librados::IoCtx &io_ctx, cls::rbd::MirrorImageState mirror_image_state,
@@ -75,6 +76,7 @@ void MirroringWatcher<I>::notify_image_updated(
   ::encode(NotifyMessage{ImageUpdatedPayload{mirror_image_state, image_id,
                                              global_image_id}},
            bl);
+
   librados::AioCompletion *comp = util::create_rados_ack_callback(on_finish);
   int r = io_ctx.aio_notify(RBD_MIRRORING, comp, bl, NOTIFY_TIMEOUT_MS,
                             nullptr);

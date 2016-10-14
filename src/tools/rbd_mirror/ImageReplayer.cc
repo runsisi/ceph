@@ -359,6 +359,7 @@ void ImageReplayer<I>::start(Context *on_finish, bool manual)
         assert(m_on_start_finish == nullptr);
         m_on_start_finish = on_finish;
       }
+
       assert(m_on_stop_finish == nullptr);
     }
   }
@@ -489,6 +490,7 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
     Mutex::Locker locker(m_lock);
 
     bool do_resync = false;
+
     // check ImageClientMeta::resync_requested
     r = m_local_image_ctx->journal->is_resync_requested(&do_resync);
     if (r < 0) {
@@ -500,8 +502,11 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
       // see Journal<I>::request_resync which called by user interface
       // rbd_mirror_image_resync eventually
 
+      // m_on_start_finish was initialized to the callback of ImageReplayer<I>::start
       Context *on_finish = m_on_start_finish;
 
+      // used for shutdown the ImageReplayer, see ImageReplayer<I>::shut_down,
+      // ImageReplayer<I>::handle_shut_down
       m_stopping_for_resync = true;
 
       FunctionContext *ctx = new FunctionContext([this, on_finish](int r) {
@@ -613,6 +618,7 @@ void ImageReplayer<I>::start_replay() {
   Context *start_ctx = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_start_replay>(this);
 
+  // stop append and call journal::Replay<I>::create
   m_local_journal->start_external_replay(&m_local_replay, start_ctx);
 }
 
@@ -662,8 +668,8 @@ void ImageReplayer<I>::handle_start_replay(int r) {
 
   if (on_finish != nullptr) {
 
-    // finish user callback or the resync wrapper, i.e., resync and then
-    // finish user callback
+    // start replay succeeded, now call callback of ImageReplayer<I>::start or
+    // its resync wrapper if resync requested
 
     dout(20) << "on finish complete, r=" << r << dendl;
 
@@ -1843,6 +1849,9 @@ std::string ImageReplayer<I>::to_string(const State state) {
   return "Unknown(" + stringify(state) + ")";
 }
 
+// called by
+// ImageReplayer<I>::JournalListener::handle_resync
+// ImageReplayer<I>::handle_bootstrap
 template <typename I>
 void ImageReplayer<I>::resync_image(Context *on_finish) {
   dout(20) << dendl;

@@ -43,6 +43,7 @@ void RemoveRequest<I>::stat_journal() {
   ldout(m_cct, 20) << this << " " << __func__ << dendl;
 
   ImageCtx::get_timer_instance(m_cct, &m_timer, &m_timer_lock);
+
   m_journaler = new Journaler(m_op_work_queue, m_timer, m_timer_lock,
                               m_ioctx, m_image_id, m_image_client_id, {});
 

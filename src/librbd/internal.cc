@@ -2721,6 +2721,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     return 0;
   }
 
+  // called by
+  // RBD::mirror_image_resync
+  // rbd_mirror_image_resync
   int mirror_image_resync(ImageCtx *ictx) {
     CephContext *cct = ictx->cct;
     ldout(cct, 20) << __func__ << ": ictx=" << ictx << dendl;

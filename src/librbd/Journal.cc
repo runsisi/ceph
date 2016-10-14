@@ -535,6 +535,7 @@ int Journal<I>::get_tag_owner(IoCtx& io_ctx, std::string& image_id,
 }
 
 // static
+// called by librbd::mirror_image_resync
 template <typename I>
 int Journal<I>::request_resync(I *image_ctx) {
   CephContext *cct = image_ctx->cct;
@@ -1326,6 +1327,7 @@ void Journal<I>::start_external_replay(journal::Replay<I> **journal_replay,
   assert(m_journal_replay == nullptr);
 
   on_start = util::create_async_context_callback(m_image_ctx, on_start);
+
   on_start = new FunctionContext(
     [this, journal_replay, on_start](int r) {
       handle_start_external_replay(r, journal_replay, on_start);
@@ -2108,7 +2110,7 @@ int Journal<I>::is_resync_requested(bool *do_resync) {
 }
 
 // called by
-// ournal<I>::is_resync_requested
+// Journal<I>::is_resync_requested
 // Journal<I>::handle_refresh_metadata
 template <typename I>
 int Journal<I>::check_resync_requested(bool *do_resync) {
