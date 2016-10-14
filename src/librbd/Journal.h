@@ -316,6 +316,7 @@ private:
 
     MetadataListener(Journal<ImageCtxT> *journal) : journal(journal) { }
 
+    // will be notified by JournalMetadata::handle_refresh_complete
     void handle_update(::journal::JournalMetadata *) {
       FunctionContext *ctx = new FunctionContext([this](int r) {
         journal->handle_metadata_updated();

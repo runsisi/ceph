@@ -336,6 +336,7 @@ void ImageState<I>::refresh(Context *on_finish) {
 
   Action action(ACTION_TYPE_REFRESH);
   action.refresh_seq = m_refresh_seq;
+
   execute_action_unlock(action, on_finish);
 }
 
@@ -345,6 +346,7 @@ int ImageState<I>::refresh_if_required() {
 
   {
     m_lock.Lock();
+
     if (m_last_refresh == m_refresh_seq) {
       m_lock.Unlock();
       return 0;
@@ -381,14 +383,21 @@ void ImageState<I>::prepare_lock(Context *on_ready) {
   ldout(cct, 10) << __func__ << dendl;
 
   m_lock.Lock();
+
   if (is_closed()) {
     m_lock.Unlock();
+
     on_ready->complete(-ESHUTDOWN);
     return;
   }
 
   Action action(ACTION_TYPE_LOCK);
+
+  // action_contexts.first.on_ready and action_contexts.second are exclusive
+  // see: ImageState<I>::send_prepare_lock_unlock
   action.on_ready = on_ready;
+
+  // to append std::pair<Action, Contexts> with Context is nullptr
   execute_action_unlock(action, nullptr);
 }
 
@@ -475,6 +484,7 @@ void ImageState<I>::append_context(const Action &action, Context *context) {
   assert(m_lock.is_locked());
 
   ActionContexts *action_contexts = nullptr;
+
   for (auto &action_ctxs : m_actions_contexts) {
     if (action == action_ctxs.first) {
       action_contexts = &action_ctxs;
@@ -483,7 +493,9 @@ void ImageState<I>::append_context(const Action &action, Context *context) {
   }
 
   if (action_contexts == nullptr) {
+    // std::pair<Action, Contexts>
     m_actions_contexts.push_back({action, {}});
+
     action_contexts = &m_actions_contexts.back();
   }
 
@@ -495,6 +507,7 @@ void ImageState<I>::append_context(const Action &action, Context *context) {
 template <typename I>
 void ImageState<I>::execute_next_action_unlock() {
   assert(m_lock.is_locked());
+
   assert(!m_actions_contexts.empty());
 
   switch (m_actions_contexts.front().first.action_type) {
@@ -721,22 +734,29 @@ void ImageState<I>::handle_set_snap(int r) {
   complete_action_unlock(STATE_OPEN, r);
 }
 
+// called by ImageState<I>::execute_next_action_unlock for ACTION_TYPE_LOCK
 template <typename I>
 void ImageState<I>::send_prepare_lock_unlock() {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   assert(m_lock.is_locked());
+
   m_state = STATE_PREPARING_LOCK;
 
   assert(!m_actions_contexts.empty());
+
   ActionContexts &action_contexts(m_actions_contexts.front());
   assert(action_contexts.first.action_type == ACTION_TYPE_LOCK);
 
   Context *on_ready = action_contexts.first.on_ready;
+
   m_lock.Unlock();
 
   if (on_ready == nullptr) {
+
+    // action_contexts.first.on_ready and action_contexts.second are exclusive
+    // see: ImageState<I>::prepare_lock
     complete_action_unlock(STATE_OPEN, 0);
     return;
   }

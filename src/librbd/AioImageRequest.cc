@@ -358,6 +358,7 @@ void AioImageRead<I>::send_request() {
                      << dendl;
 
       C_AioRead<I> *req_comp = new C_AioRead<I>(aio_comp);
+
       AioObjectRead<I> *req = AioObjectRead<I>::create(
         &image_ctx, extent.oid.name, extent.objectno, extent.offset,
         extent.length, extent.buffer_extents, snap_id, true, req_comp,

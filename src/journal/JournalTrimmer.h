@@ -39,6 +39,8 @@ private:
     MetadataListener(JournalTrimmer *journal_trimmmer)
       : journal_trimmmer(journal_trimmmer) {
     }
+
+    // will be notified by JournalMetadata::handle_refresh_complete
     void handle_update(JournalMetadata *) {
       journal_trimmmer->handle_metadata_updated();
     }

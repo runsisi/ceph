@@ -64,12 +64,15 @@ void ReleaseRequest<I>::send_prepare_lock() {
     return;
   }
 
+  // release exclusive lock not for shutdown the exclusive lock
+
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << __func__ << dendl;
 
   // release the lock if the image is not busy performing other actions
   Context *ctx = create_context_callback<
     ReleaseRequest<I>, &ReleaseRequest<I>::handle_prepare_lock>(this);
+
   m_image_ctx.state->prepare_lock(ctx);
 }
 

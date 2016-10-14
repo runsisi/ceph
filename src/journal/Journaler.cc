@@ -176,13 +176,16 @@ int Journaler::init_complete() {
   return 0;
 }
 
+// called by rbd::action::journal::Journaler::shut_down
 void Journaler::shut_down() {
   C_SaferCond ctx;
   shut_down(&ctx);
   ctx.wait();
 }
 
-// called by Journaler::shut_down, RemoveRequest<I>::shut_down_journaler
+// called by
+// Journaler::shut_down()
+// librbd::journal::RemoveRequest<I>::shut_down_journaler
 void Journaler::shut_down(Context *on_finish) {
   assert(m_player == nullptr);
   assert(m_recorder == nullptr);
@@ -284,6 +287,12 @@ void Journaler::remove(bool force, Context *on_finish) {
   m_metadata->shut_down(on_finish);
 }
 
+// called by:
+// ImageReplayer<I>::on_flush_flush_commit_position_start
+// Journal<I>::demote
+// Journal<I>::flush_commit_position, which never be used
+// Journal<I>::append_op_event
+// Journal<I>::handle_op_event_safe
 void Journaler::flush_commit_position(Context *on_safe) {
   m_metadata->flush_commit_position(on_safe);
 }

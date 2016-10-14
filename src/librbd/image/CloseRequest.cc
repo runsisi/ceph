@@ -140,10 +140,12 @@ void CloseRequest<I>::handle_shut_down_exclusive_lock(int r) {
 
   {
     RWLock::RLocker owner_locker(m_image_ctx->owner_lock);
+
     assert(m_image_ctx->exclusive_lock == nullptr);
 
     // object map and journal closed during exclusive lock shutdown
     RWLock::RLocker snap_locker(m_image_ctx->snap_lock);
+
     assert(m_image_ctx->journal == nullptr);
     assert(m_image_ctx->object_map == nullptr);
   }
@@ -156,6 +158,7 @@ void CloseRequest<I>::handle_shut_down_exclusive_lock(int r) {
     lderr(cct) << "failed to shut down exclusive lock: " << cpp_strerror(r)
                << dendl;
   }
+
   send_flush_readahead();
 }
 

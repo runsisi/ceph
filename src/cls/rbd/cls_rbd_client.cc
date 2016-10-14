@@ -1503,6 +1503,7 @@ namespace librbd {
 
     int mirror_image_remove(librados::IoCtx *ioctx, const std::string &image_id) {
       librados::ObjectWriteOperation op;
+
       mirror_image_remove(&op, image_id);
 
       int r = ioctx->operate(RBD_MIRRORING, &op);

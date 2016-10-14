@@ -287,12 +287,14 @@ void AioObjectRead<I>::send() {
 
   librados::ObjectReadOperation op;
   int flags = image_ctx->get_read_flags(this->m_snap_id);
+
   if (m_sparse) {
     op.sparse_read(this->m_object_off, this->m_object_len, &m_ext_map,
                    &m_read_data, nullptr);
   } else {
     op.read(this->m_object_off, this->m_object_len, &m_read_data, nullptr);
   }
+
   op.set_op_flags2(m_op_flags);
 
   // AioObjectRequest<I>::complete which then calls virtual method
@@ -624,6 +626,7 @@ void AbstractAioObjectWrite::send_write_op(bool write_guard)
     guard_write();
 
   add_write_ops(&m_write);
+
   assert(m_write.size() != 0);
 
   librados::AioCompletion *rados_completion =

@@ -153,6 +153,7 @@ void ExclusiveLock<I>::shut_down(Context *on_shut_down) {
 
   {
     Mutex::Locker locker(m_lock);
+
     assert(!is_shutdown());
 
     execute_action(ACTION_SHUT_DOWN, on_shut_down);
@@ -256,6 +257,7 @@ void ExclusiveLock<I>::reacquire_lock(Context *on_reacquired) {
                 m_state == STATE_WAITING_FOR_PEER)) {
       // interlock the lock operation with other image state ops
       ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
+
       execute_action(ACTION_REACQUIRE_LOCK, on_reacquired);
       return;
     }
@@ -634,9 +636,11 @@ void ExclusiveLock<I>::handle_reacquire_lock(int r) {
   complete_active_action(STATE_LOCKED, 0);
 }
 
+// called by ExclusiveLock<I>::execute_next_action for ACTION_RELEASE_LOCK
 template <typename I>
 void ExclusiveLock<I>::send_release_lock() {
   assert(m_lock.is_locked());
+
   if (m_state == STATE_UNLOCKED) {
 
     // did not own the lock, do need to release it
@@ -654,7 +658,8 @@ void ExclusiveLock<I>::send_release_lock() {
     m_image_ctx, m_cookie,
     util::create_context_callback<el, &el::handle_releasing_lock>(this),
     util::create_context_callback<el, &el::handle_release_lock>(this),
-    false);
+    false); // not release lock for shutdown
+
   m_image_ctx.op_work_queue->queue(new C_SendRequest<ReleaseRequest<I> >(req),
                                    0);
 }
@@ -662,6 +667,7 @@ void ExclusiveLock<I>::send_release_lock() {
 template <typename I>
 void ExclusiveLock<I>::handle_releasing_lock(int r) {
   Mutex::Locker locker(m_lock);
+
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
 
   assert(r == 0);
@@ -710,14 +716,15 @@ void ExclusiveLock<I>::handle_release_lock(int r) {
   }
 }
 
+// called by ExclusiveLock<I>::execute_next_action for action ACTION_SHUT_DOWN
 template <typename I>
 void ExclusiveLock<I>::send_shutdown() {
   assert(m_lock.is_locked());
 
   if (m_state == STATE_UNLOCKED) {
 
-    // we do not own the exclusive lock, so no need to release it
-
+    // we do not own the exclusive lock, so we have skipped the exclusive
+    // lock release process
     m_state = STATE_SHUTTING_DOWN;
 
     m_image_ctx.op_work_queue->queue(util::create_context_callback<
@@ -726,7 +733,7 @@ void ExclusiveLock<I>::send_shutdown() {
     return;
   }
 
-  // release the owned exclusive lock
+  // first, to release the owned exclusive lock
 
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
 
@@ -744,8 +751,12 @@ void ExclusiveLock<I>::send_shutdown() {
 template <typename I>
 void ExclusiveLock<I>::send_shutdown_release() {
   std::string cookie;
+
   {
     Mutex::Locker locker(m_lock);
+
+    // an string constructed by we m_watch_handle, see
+    // ExclusiveLock<I>::send_acquire_lock, ExclusiveLock<I>::send_reacquire_lock
     cookie = m_cookie;
   }
 
@@ -754,7 +765,7 @@ void ExclusiveLock<I>::send_shutdown_release() {
     m_image_ctx, cookie,
     util::create_context_callback<el, &el::handle_shutdown_releasing>(this),
     util::create_context_callback<el, &el::handle_shutdown_released>(this),
-    true);
+    true); // release lock for shutdown
 
   // release exclusive lock: including cancel op requests, close journal,
   // close object_map
@@ -780,6 +791,7 @@ void ExclusiveLock<I>::handle_shutdown_released(int r) {
 
   {
     RWLock::WLocker owner_locker(m_image_ctx.owner_lock);
+
     m_image_ctx.aio_work_queue->clear_require_lock_on_read();
     m_image_ctx.exclusive_lock = nullptr;
   }
@@ -796,6 +808,8 @@ void ExclusiveLock<I>::handle_shutdown_released(int r) {
   complete_shutdown(r);
 }
 
+// called by ExclusiveLock<I>::send_shutdown if we do not own the
+// exclusive lock, so we have skipped the exclusive lock release process
 template <typename I>
 void ExclusiveLock<I>::handle_shutdown(int r) {
   CephContext *cct = m_image_ctx.cct;
@@ -803,6 +817,7 @@ void ExclusiveLock<I>::handle_shutdown(int r) {
 
   {
     RWLock::WLocker owner_locker(m_image_ctx.owner_lock);
+
     m_image_ctx.aio_work_queue->clear_require_lock_on_read();
     m_image_ctx.exclusive_lock = nullptr;
   }
@@ -816,12 +831,15 @@ void ExclusiveLock<I>::handle_shutdown(int r) {
 template <typename I>
 void ExclusiveLock<I>::complete_shutdown(int r) {
   ActionContexts action_contexts;
+
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_lock.is_locked());
     assert(m_actions_contexts.size() == 1);
 
     action_contexts = std::move(m_actions_contexts.front());
+    // has completed the action on the front, so pop it
     m_actions_contexts.pop_front();
     m_state = STATE_SHUTDOWN;
   }

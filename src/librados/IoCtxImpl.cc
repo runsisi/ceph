@@ -1836,6 +1836,7 @@ int librados::IoCtxImpl::cache_unpin(const object_t& oid)
 librados::IoCtxImpl::C_aio_Ack::C_aio_Ack(AioCompletionImpl *_c) : c(_c)
 {
   assert(!c->io);
+
   c->get();
 }
 
@@ -1846,6 +1847,7 @@ void librados::IoCtxImpl::C_aio_Ack::finish(int r)
   c->ack = true;
   if (c->is_read)
     c->safe = true;
+
   c->cond.Signal();
 
   if (r == 0 && c->blp && c->blp->length() > 0) {
@@ -1857,6 +1859,7 @@ void librados::IoCtxImpl::C_aio_Ack::finish(int r)
   if (c->callback_complete) {
     c->io->client->finisher.queue(new C_AioComplete(c));
   }
+
   if (c->is_read && c->callback_safe) {
     c->io->client->finisher.queue(new C_AioSafe(c));
   }

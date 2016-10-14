@@ -148,9 +148,12 @@ int mirror_image_enable_internal(ImageCtx *ictx) {
   return 0;
 }
 
-// called by update_features(false, false), remove(force, !force), mirror_image_disable(force, true)
-// force means even if the image is not primary we still to set the mirror state to MIRROR_IMAGE_STATE_DISABLING
-// remove means remove image mirror state omap key, so the mirroring is disabled definitely
+// called by
+// librbd::remove(force, !force)
+// mirror_image_disable(force, true)
+// force means even if the image is not primary we still to disable mirroring
+// remove means if there are mirror peer clients for this image should we
+// remove omap pairs from RBD_MIRRORING object for this image
 int mirror_image_disable_internal(ImageCtx *ictx, bool force,
                                   bool remove=true) {
   CephContext *cct = ictx->cct;
@@ -158,6 +161,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
   mirror::DisableRequest<ImageCtx> *req =
     mirror::DisableRequest<ImageCtx>::create(ictx, force, remove, &cond);
+
   req->send();
 
   int r = cond.wait();
@@ -1509,6 +1513,12 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     return 0;
   }
 
+  // called by
+  // rbd_remove
+  // rbd_remove_with_progress
+  // RBD::remove
+  // RBD::remove_with_progress
+  // librbd::clone when failed
   int remove(IoCtx& io_ctx, const std::string &image_name,
              const std::string &image_id, ProgressContext& prog_ctx,
              bool force)
@@ -1521,8 +1531,10 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     std::string id(image_id);
     bool old_format = false;
     bool unknown_format = true;
+
     ImageCtx *ictx = new ImageCtx(
       (id.empty() ? name : std::string()), id, nullptr, io_ctx, false);
+
     int r = ictx->state->open();
     if (r < 0) {
       ldout(cct, 2) << "error opening image: " << cpp_strerror(-r) << dendl;
@@ -1535,6 +1547,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       id = ictx->id;
 
       ictx->owner_lock.get_read();
+
       if (ictx->exclusive_lock != nullptr) {
         if (force) {
           // releasing read lock to avoid a deadlock when upgrading to
@@ -1586,6 +1599,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
         ictx->state->close();
         return r;
       }
+
       if (watchers.size() > 1) {
         lderr(cct) << "image has watchers - not removing" << dendl;
 	ictx->owner_lock.put_read();
@@ -1610,8 +1624,10 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       trim_image(ictx, 0, prog_ctx);
 
       ictx->parent_lock.get_read();
+
       // struct assignment
       parent_info parent_info = ictx->parent_md;
+
       ictx->parent_lock.put_read();
 
       r = cls_client::remove_child(&ictx->md_ctx, RBD_CHILDREN,
@@ -1639,6 +1655,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       ictx->state->close();
 
       ldout(cct, 2) << "removing header..." << dendl;
+
       r = io_ctx.remove(header_oid);
       if (r < 0 && r != -ENOENT) {
 	lderr(cct) << "error removing header: " << cpp_strerror(-r) << dendl;
@@ -1648,12 +1665,14 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     if (old_format || unknown_format) {
       ldout(cct, 2) << "removing rbd image from v1 directory..." << dendl;
+
       r = tmap_rm(io_ctx, name);
+
       old_format = (r == 0);
 
       if (r < 0 && !unknown_format) {
 
-        // known format, and is old format, but we remove it failed
+        // open ImageCtx succeeded, it is old format, and we remove it failed
 
         if (r != -ENOENT) {
           lderr(cct) << "error removing image from v1 directory: "
@@ -1667,6 +1686,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     if (!old_format) {
       if (id.empty()) {
         ldout(cct, 5) << "attempting to determine image id" << dendl;
+
         r = cls_client::dir_get_id(&io_ctx, RBD_DIRECTORY, name, &id);
         if (r < 0 && r != -ENOENT) {
           lderr(cct) << "error getting id of image" << dendl;
@@ -1674,6 +1694,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
         }
       } else if (name.empty()) {
         ldout(cct, 5) << "attempting to determine image name" << dendl;
+
         r = cls_client::dir_get_name(&io_ctx, RBD_DIRECTORY, id, &name);
         if (r < 0 && r != -ENOENT) {
           lderr(cct) << "error getting name of image" << dendl;
@@ -1682,6 +1703,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       }
 
       if (!id.empty()) {
+
+        // image id is used as journal id
+
         ldout(cct, 10) << "removing journal..." << dendl;
 
         r = Journal<>::remove(io_ctx, id);
@@ -1710,6 +1734,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       }
 
       ldout(cct, 2) << "removing id object..." << dendl;
+
       r = io_ctx.remove(util::id_obj_name(name));
       if (r < 0 && r != -ENOENT) {
 	lderr(cct) << "error removing id object: " << cpp_strerror(r)
@@ -1718,6 +1743,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       }
 
       ldout(cct, 2) << "removing rbd image from v2 directory..." << dendl;
+
       r = cls_client::dir_remove_image(&io_ctx, RBD_DIRECTORY, name, id);
       if (r < 0) {
         if (r != -ENOENT) {
@@ -1729,6 +1755,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     ldout(cct, 2) << "done." << dendl;
+
     return 0;
   }
 

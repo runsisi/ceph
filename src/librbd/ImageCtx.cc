@@ -327,7 +327,7 @@ struct C_InvalidateCache : public Context {
     readahead.set_max_readahead_size(readahead_max_bytes);
   }
 
-  // called by CloseRequest<I>::finish
+  // called by librbd::image::CloseRequest<I>::finish
   void ImageCtx::shutdown() {
     delete image_watcher;
     image_watcher = nullptr;

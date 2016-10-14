@@ -172,6 +172,12 @@ struct librados::AioCompletionImpl {
 };
 
 namespace librados {
+// used by:
+// C_aio_linger_Complete::finish
+// librados::IoCtxImpl::C_aio_Ack::finish
+// librados::IoCtxImpl::C_aio_stat_Ack::finish
+// librados::IoCtxImpl::C_aio_stat2_Ack::finish
+// C_aio_watch_flush_Complete::finish
 struct C_AioComplete : public Context {
   AioCompletionImpl *c;
 
@@ -182,6 +188,7 @@ struct C_AioComplete : public Context {
   void finish(int r) {
     rados_callback_t cb = c->callback_complete;
     void *cb_arg = c->callback_complete_arg;
+
     cb(c, cb_arg);
 
     c->lock.Lock();
@@ -191,6 +198,11 @@ struct C_AioComplete : public Context {
   }
 };
 
+// used by:
+// C_aio_linger_Complete::finish
+// librados::IoCtxImpl::C_aio_Ack::finish
+// librados::IoCtxImpl::C_aio_Safe::finish
+// C_aio_watch_flush_Complete::finish
 struct C_AioSafe : public Context {
   AioCompletionImpl *c;
 
@@ -201,6 +213,7 @@ struct C_AioSafe : public Context {
   void finish(int r) {
     rados_callback_t cb = c->callback_safe;
     void *cb_arg = c->callback_safe_arg;
+
     cb(c, cb_arg);
 
     c->lock.Lock();

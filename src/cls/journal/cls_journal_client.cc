@@ -370,6 +370,7 @@ int client_list(librados::IoCtx &ioctx, const std::string &oid,
 void client_list(librados::IoCtx &ioctx, const std::string &oid,
                  std::set<cls::journal::Client> *clients, Context *on_finish) {
   C_ClientList *client_list = new C_ClientList(ioctx, oid, clients, on_finish);
+
   client_list->send("");
 }
 

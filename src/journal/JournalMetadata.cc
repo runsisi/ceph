@@ -500,6 +500,9 @@ void JournalMetadata::init(Context *on_finish) {
   comp->release();
 }
 
+// called by
+// Journaler::shut_down
+// Journaler::remove
 void JournalMetadata::shut_down(Context *on_finish) {
 
   ldout(m_cct, 20) << __func__ << dendl;
@@ -766,6 +769,7 @@ void JournalMetadata::flush_commit_position() {
 
   Mutex::Locker timer_locker(*m_timer_lock);
   Mutex::Locker locker(m_lock);
+
   if (m_commit_position_ctx == nullptr) {
     return;
   }
@@ -774,11 +778,16 @@ void JournalMetadata::flush_commit_position() {
   handle_commit_position_task();
 }
 
+// called by
+// JournalMetadata::shut_down
+// Journaler::flush_commit_position
+// JournalTrimmer::shut_down
 void JournalMetadata::flush_commit_position(Context *on_safe) {
   ldout(m_cct, 20) << __func__ << dendl;
 
   Mutex::Locker timer_locker(*m_timer_lock);
   Mutex::Locker locker(m_lock);
+
   if (m_commit_position_ctx == nullptr) {
     // nothing to flush
     if (on_safe != nullptr) {
@@ -788,10 +797,20 @@ void JournalMetadata::flush_commit_position(Context *on_safe) {
   }
 
   if (on_safe != nullptr) {
+
+    // wrap the on_safe to notify the caller when the flush finishes
+
     m_commit_position_ctx = new C_FlushCommitPosition(
       m_commit_position_ctx, on_safe);
   }
+
+  // cancel m_commit_position_task_ctx, which is a timer callback to
+  // update our commit position, bc we are to update it manually,
+  // see JournalMetadata::schedule_commit_task
   cancel_commit_task();
+
+  // canceled the timer above, now call callback of the timer manually,
+  // i.e., update in memory m_commit_position to the journal header
   handle_commit_position_task();
 }
 
@@ -929,7 +948,8 @@ void JournalMetadata::schedule_commit_task() {
   assert(m_commit_position_ctx != nullptr);
 
   if (m_commit_position_task_ctx == NULL) {
-    // journal_metadata->handle_commit_position_task
+    // journal_metadata->handle_commit_position_task to update our
+    // commit position
     m_commit_position_task_ctx = new C_CommitPositionTask(this);
 
     m_timer->add_event_after(m_settings.commit_interval,

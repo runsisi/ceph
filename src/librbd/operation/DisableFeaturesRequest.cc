@@ -320,8 +320,10 @@ void DisableFeaturesRequest<I>::send_disable_mirror_image() {
     DisableFeaturesRequest<I>,
     &DisableFeaturesRequest<I>::handle_disable_mirror_image>(this);
 
+  // force=false, remove=true
   mirror::DisableRequest<I> *req =
     mirror::DisableRequest<I>::create(&image_ctx, false, true, ctx);
+
   req->send();
 }
 
@@ -348,6 +350,7 @@ void DisableFeaturesRequest<I>::send_close_journal() {
 
   {
     RWLock::WLocker locker(image_ctx.owner_lock);
+
     if (image_ctx.journal != nullptr) {
 
       ldout(cct, 20) << this << " " << __func__ << dendl;

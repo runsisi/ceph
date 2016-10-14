@@ -374,13 +374,14 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
 }
 
 // static
-// called by librbd::update_features and librbd::remove
+// called by librbd::remove
 template <typename I>
 int Journal<I>::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
   CephContext *cct = reinterpret_cast<CephContext *>(io_ctx.cct());
   ldout(cct, 5) << __func__ << ": image=" << image_id << dendl;
 
   C_SaferCond cond;
+
   ContextWQ op_work_queue("librbd::op_work_queue",
                           cct->_conf->rbd_op_thread_timeout,
                           ImageCtx::get_thread_pool_instance(cct));
@@ -667,6 +668,8 @@ void Journal<I>::open(Context *on_finish) {
   create_journaler();
 }
 
+// called by
+// librbd::exclusive_lock::ReleaseRequest<I>::send_close_journal
 template <typename I>
 void Journal<I>::close(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -683,8 +686,9 @@ void Journal<I>::close(Context *on_finish) {
     m_listener_cond.Wait(m_lock);
   }
 
-  // std::set<journal::Listener *>
+  // std::set<journal::Listener *>, registered by Journal<I>::add_listener
   Listeners listeners(m_listeners);
+
   m_listener_notify = true;
 
   m_lock.Unlock();
@@ -918,6 +922,7 @@ void Journal<I>::allocate_tag(const std::string &mirror_uuid,
                             decode_tag_ctx);
 }
 
+// never be used
 template <typename I>
 void Journal<I>::flush_commit_position(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -1454,6 +1459,7 @@ void Journal<I>::destroy_journaler(int r) {
   Context *ctx = create_async_context_callback(
     m_image_ctx, create_context_callback<
       Journal<I>, &Journal<I>::handle_journal_destroyed>(this));
+
   ctx = new FunctionContext(
     [this, ctx](int r) {
       Mutex::Locker locker(m_lock);
@@ -1878,6 +1884,7 @@ void Journal<I>::handle_flushing_replay() {
   start_append();
 }
 
+// callback of Journal<I>::stop_recording
 template <typename I>
 void Journal<I>::handle_recording_stopped(int r) {
   CephContext *cct = m_image_ctx.cct;
@@ -2252,7 +2259,9 @@ void Journal<I>::handle_refresh_metadata(uint64_t refresh_sequence,
     return;
   }
 
+  // std::set<journal::Listener *>, registered by Journal<I>::add_listener
   Listeners listeners(m_listeners);
+
   m_listener_notify = true;
 
   m_lock.Unlock();

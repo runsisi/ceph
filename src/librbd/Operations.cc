@@ -1370,10 +1370,12 @@ int Operations<I>::update_features(uint64_t features, bool enabled) {
     lderr(cct) << "cannot update immutable features" << dendl;
     return -EINVAL;
   }
+
   if (features == 0) {
     lderr(cct) << "update requires at least one feature" << dendl;
     return -EINVAL;
   }
+
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     if (enabled && (features & m_image_ctx.features) != 0) {
@@ -1381,6 +1383,7 @@ int Operations<I>::update_features(uint64_t features, bool enabled) {
 		 << dendl;
       return -EINVAL;
     }
+
     if (!enabled && (features & ~m_image_ctx.features) != 0) {
       lderr(cct) << "one or more requested features are already disabled"
 		 << dendl;
@@ -1430,11 +1433,13 @@ void Operations<I>::execute_update_features(uint64_t features, bool enabled,
     operation::EnableFeaturesRequest<I> *req =
       new operation::EnableFeaturesRequest<I>(
         m_image_ctx, on_finish, journal_op_tid, features);
+
     req->send();
   } else {
     operation::DisableFeaturesRequest<I> *req =
       new operation::DisableFeaturesRequest<I>(
         m_image_ctx, on_finish, journal_op_tid, features);
+
     req->send();
   }
 }
