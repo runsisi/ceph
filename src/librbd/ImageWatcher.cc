@@ -103,8 +103,10 @@ void ImageWatcher<I>::register_watch(Context *on_finish) {
   ldout(m_image_ctx.cct, 10) << this << " registering image watcher" << dendl;
 
   RWLock::RLocker watch_locker(m_watch_lock);
+
   assert(m_watch_state == WATCH_STATE_UNREGISTERED);
 
+  // image_watcher->handle_register_watch
   librados::AioCompletion *aio_comp = create_rados_safe_callback(
     new C_RegisterWatch(this, on_finish));
 
@@ -118,7 +120,9 @@ void ImageWatcher<I>::register_watch(Context *on_finish) {
 template <typename I>
 void ImageWatcher<I>::handle_register_watch(int r) {
   RWLock::WLocker watch_locker(m_watch_lock);
+
   assert(m_watch_state == WATCH_STATE_UNREGISTERED);
+
   if (r < 0) {
     m_watch_handle = 0;
   } else if (r >= 0) {

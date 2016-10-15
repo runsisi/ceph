@@ -852,10 +852,12 @@ struct C_InvalidateCache : public Context {
     object_cacher->clear_nonexistence(object_set);
   }
 
-  // called in OpenRequest<I>::send_register_watch
+  // called by OpenRequest<I>::send_register_watch
   void ImageCtx::register_watch(Context *on_finish) {
     assert(image_watcher == NULL);
+
     image_watcher = new ImageWatcher<>(*this);
+
     image_watcher->register_watch(on_finish);
   }
 

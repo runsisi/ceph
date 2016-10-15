@@ -476,7 +476,6 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
 
       // m_journal_listener is an instance of JournalListener, which was
       // allocated by ImageReplayer<I>::ImageReplayer
-      // NOTE: Journal will then register its own listeners
       m_local_journal->add_listener(m_journal_listener);
     }
   }
@@ -846,9 +845,10 @@ void ImageReplayer<I>::stop(Context *on_finish, bool manual, int r,
 }
 
 // called by:
-// ImageReplayer<I>::handle_stop_replay_request
 // ImageReplayer<I>::stop
 // ImageReplayer<I>::on_replay_interrupted
+// ImageReplayer<I>::JournalListener::handle_close
+// ImageReplayer<I>::JournalListener::handle_promoted
 template <typename I>
 void ImageReplayer<I>::on_stop_journal_replay(int r, const std::string &desc)
 {

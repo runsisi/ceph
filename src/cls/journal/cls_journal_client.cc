@@ -337,6 +337,7 @@ void client_update_state(librados::ObjectWriteOperation *op,
   op->exec("journal", "client_update_state", bl);
 }
 
+// never been called
 int client_unregister(librados::IoCtx &ioctx, const std::string &oid,
                        const std::string &id) {
   librados::ObjectWriteOperation op;
@@ -344,6 +345,10 @@ int client_unregister(librados::IoCtx &ioctx, const std::string &oid,
   return ioctx.operate(oid, &op);
 }
 
+// called by
+// cls::journal::client::client_unregister
+// JournalMetadata::unregister_client
+// librbd::mirror::DisableRequest<I>::send_unregister_client
 void client_unregister(librados::ObjectWriteOperation *op,
 		       const std::string &id) {
 

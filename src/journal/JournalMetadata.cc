@@ -613,6 +613,7 @@ void JournalMetadata::update_client(const bufferlist &data,
   comp->release();
 }
 
+// called by Journaler::unregister_client
 void JournalMetadata::unregister_client(Context *on_finish) {
   assert(!m_client_id.empty());
 
@@ -1234,8 +1235,14 @@ void JournalMetadata::notify_update() {
   m_ioctx.notify2(m_oid, bl, 5000, NULL);
 }
 
-// called by JournalMetadata::C_NotifyUpdate::finish, which used
-// by client and tag related updates
+// called by JournalMetadata::C_NotifyUpdate::finish, which used by:
+// JournalMetadata::register_client
+// JournalMetadata::update_client
+// JournalMetadata::unregister_client
+// JournalMetadata::allocate_tag
+// JournalMetadata::set_minimum_set
+// JournalMetadata::set_active_set
+// JournalMetadata::handle_commit_position_task
 void JournalMetadata::async_notify_update(Context *on_safe) {
   ldout(m_cct, 10) << "async notifying journal header update" << dendl;
 
@@ -1250,7 +1257,6 @@ void JournalMetadata::async_notify_update(Context *on_safe) {
   bufferlist bl;
   int r = m_ioctx.aio_notify(m_oid, comp, bl, 5000, NULL);
   assert(r == 0);
-
   comp->release();
 }
 

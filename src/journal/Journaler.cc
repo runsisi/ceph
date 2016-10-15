@@ -318,6 +318,8 @@ int Journaler::register_client(const bufferlist &data) {
   return cond.wait();
 }
 
+// called by
+// rbd::action::journal::Journaler::shutdown
 int Journaler::unregister_client() {
   C_SaferCond cond;
   unregister_client(&cond);
@@ -356,6 +358,9 @@ void Journaler::update_client(const bufferlist &data, Context *on_finish) {
   return m_metadata->update_client(data, on_finish);
 }
 
+// called by
+// Journaler::unregister_client()
+// ImageReplayer<I>::shut_down
 void Journaler::unregister_client(Context *on_finish) {
   return m_metadata->unregister_client(on_finish);
 }
