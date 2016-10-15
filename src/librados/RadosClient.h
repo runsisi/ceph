@@ -80,6 +80,7 @@ private:
   int wait_for_osdmap();
 
 public:
+  // will be started by librados::RadosClient::connect
   Finisher finisher;
 
   explicit RadosClient(CephContext *cct_);

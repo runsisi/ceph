@@ -2830,6 +2830,7 @@ void RGWPutObj::execute()
   bool need_calc_md5 = (dlo_manifest == NULL) && (slo_info == NULL);
 
   perfcounter->inc(l_rgw_put);
+
   op_ret = -EINVAL;
   if (s->object.empty()) {
     goto done;

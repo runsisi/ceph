@@ -695,10 +695,9 @@ void ImageReplayer<I>::handle_start_replay(int r) {
     // ReplayHandler::handle_entries_available -> ImageReplayer<I>::handle_replay_ready
     // ReplayHandler::handle_complete -> ImageReplayer<I>::handle_replay_complete
     m_replay_handler = new ReplayHandler<I>(this);
+
     // create Journaler::m_player to fetch and watch, the Journaler::m_player
     // will only be deleted by ImageReplayer<I>::shut_down
-    // note: Journaler only has two interfaces for replay, i.e.,
-    // Journaler::start_replay and Journaler::start_live_replay
     m_remote_journaler->start_live_replay(m_replay_handler, poll_seconds);
 
     dout(20) << "m_remote_journaler=" << *m_remote_journaler << dendl;
@@ -898,6 +897,7 @@ void ImageReplayer<I>::handle_replay_ready()
   }
 
   m_event_replay_tracker.start_op();
+
   // got a new journal entry
 
   // m_replay_tag_valid and m_replay_tag are got from ImageReplayer<I>::get_remote_tag,
@@ -1071,6 +1071,7 @@ void ImageReplayer<I>::handle_replay_complete(int r, const std::string &error_de
 
   {
     Mutex::Locker locker(m_lock);
+
     m_stop_requested = true;
   }
 
@@ -1083,8 +1084,10 @@ void ImageReplayer<I>::replay_flush() {
   dout(20) << dendl;
 
   bool interrupted = false;
+
   {
     Mutex::Locker locker(m_lock);
+
     if (m_state != STATE_REPLAYING) {
       dout(20) << "replay interrupted" << dendl;
       interrupted = true;
@@ -1331,6 +1334,7 @@ void ImageReplayer<I>::process_entry() {
 template <typename I>
 void ImageReplayer<I>::handle_process_entry_ready(int r) {
   dout(20) << dendl;
+
   assert(r == 0);
 
   // attempt to process the next aio/op event
@@ -1348,8 +1352,10 @@ void ImageReplayer<I>::handle_process_entry_safe(const ReplayEntry& replay_entry
     handle_replay_complete(r, "failed to commit journal event");
   } else {
     assert(m_remote_journaler != nullptr);
+
     m_remote_journaler->committed(replay_entry);
   }
+
   m_event_replay_tracker.finish_op();
 }
 
