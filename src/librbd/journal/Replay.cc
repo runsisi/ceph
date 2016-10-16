@@ -183,6 +183,7 @@ int Replay<I>::decode(bufferlist::iterator *it, EventEntry *event_entry) {
   return 0;
 }
 
+// on_safe is C_ReplayCommitted, see ImageReplayer<I>::process_entry
 template <typename I>
 void Replay<I>::process(const EventEntry &event_entry,
                         Context *on_ready, Context *on_safe) {
@@ -296,8 +297,8 @@ void Replay<I>::flush(Context *on_finish) {
   AioImageRequest<I>::aio_flush(&m_image_ctx, aio_comp);
 }
 
-// called by Journal<I>::replay_op_ready when librbd::Journal is not
-// in STATE_READY and we still need to append op event
+// called by Journal<I>::replay_op_ready, which is called by
+// librbd::operation::Request<I>::replay_op_ready
 template <typename I>
 void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   CephContext *cct = m_image_ctx.cct;
@@ -320,6 +321,7 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   // resume processing replay events
   Context *on_start_ready = nullptr;
   std::swap(on_start_ready, op_event.on_start_ready);
+
   on_start_ready->complete(0);
 
   // cancel has been requested -- send error to paused state machine
@@ -641,6 +643,7 @@ void Replay<I>::handle_event(const journal::RenameEvent &event,
   ldout(cct, 20) << ": Rename event" << dendl;
 
   Mutex::Locker locker(m_lock);
+
   OpEvent *op_event;
   Context *on_op_complete = create_op_context_callback(event.op_tid, on_ready,
                                                        on_safe, &op_event);

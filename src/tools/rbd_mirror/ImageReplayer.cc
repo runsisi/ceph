@@ -1328,6 +1328,7 @@ void ImageReplayer<I>::process_entry() {
   Context *on_commit = new C_ReplayCommitted(this, std::move(m_replay_entry));
 
   // m_local_replay was created by m_local_journal->start_external_replay
+  // on_ready will be called directly, see librbd::journal::Replay<I>::handle_event
   m_local_replay->process(m_event_entry, on_ready, on_commit);
 }
 
@@ -1341,6 +1342,8 @@ void ImageReplayer<I>::handle_process_entry_ready(int r) {
   handle_replay_ready();
 }
 
+// called by rbd::ImageReplayer<I>::C_ReplayCommitted::finish, which was used by
+// ImageReplayer<I>::process_entry
 template <typename I>
 void ImageReplayer<I>::handle_process_entry_safe(const ReplayEntry& replay_entry,
                                                  int r) {

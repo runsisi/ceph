@@ -178,12 +178,15 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 		    bool *old_format, uint64_t *size)
   {
     CephContext *cct = (CephContext *)io_ctx.cct();
+
     if (old_format)
       *old_format = true;
+
     int r = io_ctx.stat(util::old_header_name(name), size, NULL);
     if (r == -ENOENT) {
       if (old_format)
 	*old_format = false;
+
       r = io_ctx.stat(util::id_obj_name(name), size, NULL);
       if (r < 0)
 	return r;
@@ -194,6 +197,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     ldout(cct, 20) << "detect format of " << name << " : "
 		   << (old_format ? (*old_format ? "old" : "new") :
 		       "don't care")  << dendl;
+
     return 0;
   }
 

@@ -616,6 +616,7 @@ int Operations<I>::rename(const char *dstname) {
     RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
 
     C_SaferCond cond_ctx;
+
     execute_rename(dstname, &cond_ctx);
 
     r = cond_ctx.wait();
@@ -640,11 +641,13 @@ void Operations<I>::execute_rename(const std::string &dest_name,
   }
 
   m_image_ctx.snap_lock.get_read();
+
   if (m_image_ctx.name == dest_name) {
     m_image_ctx.snap_lock.put_read();
     on_finish->complete(-EEXIST);
     return;
   }
+
   m_image_ctx.snap_lock.put_read();
 
   CephContext *cct = m_image_ctx.cct;
@@ -662,7 +665,9 @@ void Operations<I>::execute_rename(const std::string &dest_name,
 	  m_image_ctx, on_finish, dest_name);
 	req->send();
       });
+
     m_image_ctx.image_watcher->unregister_watch(on_finish);
+
     return;
   }
 

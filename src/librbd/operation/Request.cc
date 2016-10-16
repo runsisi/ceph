@@ -181,7 +181,7 @@ void Request<I>::handle_commit_op_event(int r, int original_ret_val) {
   finish(r);
 }
 
-// called by Request<I>::append_op_event(T *request)
+// called by librbd::operation::Request<I>::append_op_event(T *request)
 template <typename I>
 void Request<I>::replay_op_ready(Context *on_safe) {
   I &image_ctx = this->m_image_ctx;
