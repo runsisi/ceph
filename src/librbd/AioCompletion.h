@@ -69,6 +69,7 @@ struct AioCompletion {
   char *read_buf;
   size_t read_buf_len;
 
+  // will be pushed on ImageCtx::async_ops by AioCompletion::start_op
   AsyncOperation async_op;
 
   uint64_t journal_tid;

@@ -297,6 +297,7 @@ void AioImageRequest<I>::fail(int r) {
 template <typename I>
 void AioImageRead<I>::send_request() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
 
   auto &image_extents = this->m_image_extents;
@@ -310,10 +311,12 @@ void AioImageRead<I>::send_request() {
   librados::snap_t snap_id;
   map<object_t,vector<ObjectExtent> > object_extents;
   uint64_t buffer_ofs = 0;
+
   {
     // prevent image size from changing between computing clip and recording
     // pending async operation
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     snap_id = image_ctx.snap_id;
 
     // map image extents to object extents

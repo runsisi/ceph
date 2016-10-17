@@ -426,7 +426,8 @@ void Journaler::get_tags(uint64_t start_after_tag_tid, uint64_t tag_class,
 }
 
 void Journaler::start_replay(ReplayHandler *replay_handler) {
-  create_player(replay_handler); // m_player = new JournalPlayer
+  // m_player = new JournalPlayer(replay_handler)
+  create_player(replay_handler);
 
   m_player->prefetch();
 }

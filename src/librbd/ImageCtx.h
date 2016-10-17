@@ -139,8 +139,9 @@ namespace librbd {
 
     std::map<uint64_t, CopyupRequest*> copyup_list;
 
-    // AioImageRequest
+    // librbd::AioImageRequest<I>
     xlist<AsyncOperation*> async_ops;
+    // librbd::operation::Request<I>, librbd::object_map::Request<I>
     xlist<AsyncRequest<>*> async_requests;
     std::list<Context*> async_requests_waiters;
 

@@ -224,6 +224,9 @@ void AioImageRequestWQ::aio_flush(AioCompletion *c, bool native_async) {
   if (m_image_ctx.non_blocking_aio || writes_blocked() || !writes_empty()) {
     queue(new AioImageFlush<>(m_image_ctx, c));
   } else {
+
+    // AioImageFlush<I>::send_request will initiate the c->start_op()
+
     AioImageRequest<>::aio_flush(&m_image_ctx, c);
 
     finish_in_flight_op();

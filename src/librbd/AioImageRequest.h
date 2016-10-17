@@ -41,11 +41,10 @@ public:
     return false;
   }
 
-  // called by AioImageRequestWQ::_void_dequeue if we are queuing aio request,
-  // else called by AioImageRequest<I>::aio_read, aio_write, aio_discard,
-  // aio_flush if we are doing the aio request directly, see
-  // AioImageRequestWQ::aio_write, AioImageRequestWQ::_void_dequeue and
-  // AioImageRequestWQ::process
+  // called by
+  // AioImageRequestWQ::_void_dequeue
+  // AioImageRequest<I>::aio_read, aio_write, aio_discard, AioImageFlush<I>::send_request
+  // if we are doing the aio request directly
   void start_op() {
     // push AioCompletion::async_op back of m_image_ctx->async_ops
     m_aio_comp->start_op();

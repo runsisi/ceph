@@ -35,6 +35,9 @@ struct C_CompleteFlushes : public Context {
 
 } // anonymous namespace
 
+// called by
+// AioCompletion::start_op
+// CopyupRequest::CopyupRequest
 void AsyncOperation::start_op(ImageCtx &image_ctx) {
   assert(m_image_ctx == NULL);
 

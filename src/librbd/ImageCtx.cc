@@ -897,7 +897,7 @@ struct C_InvalidateCache : public Context {
         ldout(cct, 20) << "flush async operations: " << on_finish << " "
                        << "count=" << async_ops.size() << dendl;
 
-        // xlist<AsyncOperation*>
+        // xlist<AsyncOperation*>, was pushed front by librbd::AsyncOperation::start_op
         async_ops.front()->add_flush_context(on_finish);
         return;
       }

@@ -148,6 +148,13 @@ void AioCompletion::init_time(ImageCtx *i, aio_type_t t) {
   }
 }
 
+// called by
+// librbd::AioCompletion::create_and_start
+// librbd::AioImageFlush<I>::send_request
+// librbd::AioImageRequest<I>::start_op
+// librbd::AioImageRequestWQ::aio_read
+// librbd::AioImageRequestWQ::aio_write
+// librbd::AioImageRequestWQ::aio_discard
 void AioCompletion::start_op(bool ignore_type) {
   Mutex::Locker locker(lock);
 
