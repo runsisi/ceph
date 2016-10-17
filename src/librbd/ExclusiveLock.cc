@@ -116,6 +116,7 @@ void ExclusiveLock<I>::block_requests(int r) {
 template <typename I>
 void ExclusiveLock<I>::unblock_requests() {
   Mutex::Locker locker(m_lock);
+
   assert(m_request_blocked_count > 0);
   m_request_blocked_count--;
   if (m_request_blocked_count == 0) {
@@ -128,6 +129,7 @@ void ExclusiveLock<I>::unblock_requests() {
 template <typename I>
 void ExclusiveLock<I>::init(uint64_t features, Context *on_init) {
   assert(m_image_ctx.owner_lock.is_locked());
+
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
 
   {
@@ -171,6 +173,7 @@ void ExclusiveLock<I>::try_lock(Context *on_tried_lock) {
   int r = 0;
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_image_ctx.owner_lock.is_locked());
 
     if (is_shutdown()) {
@@ -199,6 +202,7 @@ void ExclusiveLock<I>::request_lock(Context *on_locked) {
 
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_image_ctx.owner_lock.is_locked());
 
     if (is_shutdown()) {
@@ -221,6 +225,7 @@ void ExclusiveLock<I>::release_lock(Context *on_released) {
   int r = 0;
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_image_ctx.owner_lock.is_locked());
 
     if (is_shutdown()) {
@@ -284,6 +289,7 @@ void ExclusiveLock<I>::handle_peer_notification() {
 template <typename I>
 void ExclusiveLock<I>::assert_header_locked(librados::ObjectWriteOperation *op) {
   Mutex::Locker locker(m_lock);
+
   rados::cls::lock::assert_locked(op, RBD_LOCK_NAME, LOCK_EXCLUSIVE,
                                   m_cookie, WATCHER_LOCK_TAG);
 }
@@ -293,8 +299,10 @@ std::string ExclusiveLock<I>::encode_lock_cookie() const {
   assert(m_lock.is_locked());
 
   assert(m_watch_handle != 0);
+
   std::ostringstream ss;
   ss << WATCHER_LOCK_COOKIE_PREFIX << " " << m_watch_handle;
+
   return ss.str();
 }
 
@@ -445,6 +453,7 @@ void ExclusiveLock<I>::send_acquire_lock() {
 
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
+
   m_state = STATE_ACQUIRING;
 
   m_watch_handle = m_image_ctx.image_watcher->get_watch_handle();
@@ -454,6 +463,8 @@ void ExclusiveLock<I>::send_acquire_lock() {
     return;
   }
 
+  // "auto" + str(m_watch_handle), the cookie is used for
+  // rados::cls::lock::lock and rados::cls::lock::unlock
   m_cookie = encode_lock_cookie();
 
   using el = ExclusiveLock<I>;

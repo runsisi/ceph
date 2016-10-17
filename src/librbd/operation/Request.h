@@ -98,6 +98,7 @@ protected:
 
   // NOTE: temporary until converted to new state machine format
   Context *create_context_finisher(int r);
+
   virtual void finish_and_destroy(int r) override;
 
 private:
@@ -132,9 +133,6 @@ private:
     }
   };
 
-  // only ResizeRequest and SnapshotCreateRequest will create the request
-  // with non-zero journal_op_tid constructed, see Operations<I>::execute_resize
-  // and Operations<I>::execute_snap_create
   uint64_t m_op_tid = 0;
 
   bool m_appended_op_event = false;

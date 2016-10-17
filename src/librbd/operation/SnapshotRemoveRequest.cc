@@ -62,15 +62,18 @@ void SnapshotRemoveRequest<I>::send_op() {
 template <typename I>
 bool SnapshotRemoveRequest<I>::should_complete(int r) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": state=" << m_state << ", "
                 << "r=" << r << dendl;
+
   r = filter_state_return_code(r);
   if (r < 0) {
     return true;
   }
 
   RWLock::RLocker owner_lock(image_ctx.owner_lock);
+
   bool finished = false;
   switch (m_state) {
   case STATE_REMOVE_OBJECT_MAP:

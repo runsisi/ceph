@@ -24,20 +24,23 @@ AsyncRequest<T>::~AsyncRequest() {
 
 template <typename T>
 void AsyncRequest<T>::async_complete(int r) {
+  // queue a callback which will call this->complete
   m_image_ctx.op_work_queue->queue(create_callback_context(), r);
 }
 
 template <typename T>
 librados::AioCompletion *AsyncRequest<T>::create_callback_completion() {
+  // create a rados AioCompletion which will call this->complete
   return util::create_rados_safe_callback(this);
 }
 
 template <typename T>
 Context *AsyncRequest<T>::create_callback_context() {
+  // create a Context callback which will call this->complete
   return util::create_context_callback(this);
 }
 
-// called in TrimRequest<I>::send_clean_boundary
+// only called by TrimRequest<I>::send_clean_boundary
 template <typename T>
 Context *AsyncRequest<T>::create_async_callback_context() {
   // TODO: can use create_async_context_callback instead ???
@@ -46,7 +49,7 @@ Context *AsyncRequest<T>::create_async_callback_context() {
                                        &AsyncRequest<T>::async_complete>(this);
 }
 
-// private, called by ctor of AsyncRequest
+// private, called by AsyncRequest<T>::AsyncRequest
 template <typename T>
 void AsyncRequest<T>::start_request() {
   Mutex::Locker async_ops_locker(m_image_ctx.async_ops_lock);
@@ -54,7 +57,7 @@ void AsyncRequest<T>::start_request() {
   m_image_ctx.async_requests.push_back(&m_xlist_item);
 }
 
-// private
+// private, called by librbd::AsyncRequest::finish
 template <typename T>
 void AsyncRequest<T>::finish_request() {
   decltype(m_image_ctx.async_requests_waiters) waiters;

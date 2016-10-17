@@ -148,6 +148,8 @@ librados::AioCompletion *create_rados_ack_callback(T *obj) {
 
 template <typename T>
 librados::AioCompletion *create_rados_safe_callback(T *obj) {
+  // rados_callback<T> will call
+  // reinterpret_cast<T*>(obj)->complete(rados_aio_get_return_value(c))
   return librados::Rados::aio_create_completion(
     obj, nullptr, &detail::rados_callback<T>);
 }
@@ -166,6 +168,7 @@ librados::AioCompletion *create_rados_safe_callback(T *obj) {
 
 template <typename T, void(T::*MF)(int) = &T::complete>
 Context *create_context_callback(T *obj) {
+  // detail::C_CallbackAdapter<T, MF>::finish will call (obj->*MF)(r)
   return new detail::C_CallbackAdapter<T, MF>(obj);
 }
 

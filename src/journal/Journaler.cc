@@ -497,7 +497,7 @@ void Journaler::committed(const Future &future) {
   // identifies an append to the journal object, see JournalRecorder::append
 
   // call m_journal_metadata->committed to update commit position, update both
-  // in memory structure and journal omap
+  // in memory structure and journal metadata omap
   m_trimmer->committed(future_impl->get_commit_tid());
 }
 

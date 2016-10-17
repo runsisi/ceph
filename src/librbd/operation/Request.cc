@@ -53,17 +53,22 @@ Context *Request<I>::create_context_finisher(int r) {
   // automatically commit the event if required (delete after commit)
   if (m_appended_op_event && !m_committed_op_event &&
       commit_op_event(r)) {
+
+    // commit op event initiated, Request<I>::handle_commit_op_event will
+    // be called after the op event committed
+
     return nullptr;
   }
 
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   return util::create_context_callback<Request<I>, &Request<I>::finish>(this);
 }
 
-// called by librbd/AsyncRequest::complete
+// called by librbd::AsyncRequest::complete
 template <typename I>
 void Request<I>::finish_and_destroy(int r) {
   I &image_ctx = this->m_image_ctx;
@@ -71,13 +76,21 @@ void Request<I>::finish_and_destroy(int r) {
   CephContext *cct = image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
+  // m_appended_op_event has been set by librbd::operation::Request::C_AppendOpEvent::finish,
+  // now we are to
+
   // automatically commit the event if required (delete after commit)
   if (m_appended_op_event && !m_committed_op_event &&
       commit_op_event(r)) {
+
+    // commit op event initiated, Request<I>::handle_commit_op_event will
+    // be called after the op event committed
+
     return;
   }
 
-  // call finish(r) then delete
+  // finish(r);
+  // delete this;
   AsyncRequest<I>::finish_and_destroy(r);
 }
 
@@ -91,12 +104,14 @@ void Request<I>::finish(int r) {
   // either we need appended the event or the event has committed
   assert(!m_appended_op_event || m_committed_op_event);
 
-  // finish_request() and complete m_on_finish
+  // finish_request();
+  // m_on_finish->complete(r);
   AsyncRequest<I>::finish(r);
 }
 
-// called by Request<I>::send if can_affect_io() returns false, i.e., neither
-// ResizeRequest nor SnapshotCreateRequest
+// called by Request<I>::send if the op does not affect io, i.e.,
+// can_affect_io() returns false, i.e., requests except:
+// ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
 template <typename I>
 bool Request<I>::append_op_event() {
   I &image_ctx = this->m_image_ctx;
@@ -129,12 +144,15 @@ bool Request<I>::append_op_event() {
 template <typename I>
 bool Request<I>::commit_op_event(int r) {
   I &image_ctx = this->m_image_ctx;
+
   RWLock::RLocker snap_locker(image_ctx.snap_lock);
 
-  // m_appended_op_event set to true in Request<I>::replay_op_ready or
+  // m_appended_op_event was set to true in Request<I>::replay_op_ready or
   // C_OpEventSafe::finish(r >= 0), see librbd/operation/Request.h
 
   if (!m_appended_op_event) {
+    // actually, this check is no need, bc we are only be called
+    // when m_appended_op_event is true
     return false;
   }
 
@@ -151,7 +169,7 @@ bool Request<I>::commit_op_event(int r) {
     // ops will be canceled / completed before closing journal
     assert(image_ctx.journal->is_journal_ready());
 
-    // C_CommitOpEvent::finish calls request->handle_commit_op_event
+    // C_CommitOpEvent::finish will call request->handle_commit_op_event
     image_ctx.journal->commit_op_event(m_op_tid, r,
                                        new C_CommitOpEvent(this, r));
 
@@ -213,17 +231,19 @@ void Request<I>::append_op_event(Context *on_safe) {
   CephContext *cct = image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
+  // Journal::m_op_tid.inc()
   m_op_tid = image_ctx.journal->allocate_op_tid();
 
   // librbd::Journal must be STATE_READY
   // C_AppendOpEvent::finish will set request->m_appended_op_event = true and
-  // complete on_safe
+  // call on_safe->complete(r)
   image_ctx.journal->append_op_event(
     m_op_tid, journal::EventEntry{create_event(m_op_tid)},
     new C_AppendOpEvent(this, on_safe));
 }
 
-// not for ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
+// for requests except ResizeRequest, SnapshotCreateRequest,
+// EnableFeaturesRequest, DisableFeaturesRequest
 template <typename I>
 void Request<I>::handle_op_event_safe(int r) {
   I &image_ctx = this->m_image_ctx;
@@ -248,8 +268,9 @@ void Request<I>::handle_op_event_safe(int r) {
     // haven't started the request state machine yet
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
 
-    // for requests except ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest,
-    // DisableFeaturesRequest, so there will not be any journal appending for those overrides
+    // for requests except ResizeRequest, SnapshotCreateRequest,
+    // EnableFeaturesRequest, DisableFeaturesRequest
+    // in the end, the state machine will call this->complete
     send_op();
   }
 }

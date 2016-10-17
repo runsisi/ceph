@@ -93,6 +93,7 @@ bool RebuildObjectMapRequest<I>::should_complete(int r) {
 template <typename I>
 void RebuildObjectMapRequest<I>::send_resize_object_map() {
   assert(m_image_ctx.owner_lock.is_locked());
+
   CephContext *cct = m_image_ctx.cct;
 
   m_image_ctx.snap_lock.get_read();
@@ -108,6 +109,7 @@ void RebuildObjectMapRequest<I>::send_resize_object_map() {
   }
 
   ldout(cct, 5) << this << " send_resize_object_map" << dendl;
+
   m_state = STATE_RESIZE_OBJECT_MAP;
 
   // should have been canceled prior to releasing lock

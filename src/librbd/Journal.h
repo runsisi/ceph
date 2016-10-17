@@ -298,9 +298,11 @@ private:
 
   Mutex m_event_lock;
   uint64_t m_event_tid;
+  // std::unordered_map<uint64_t, Event>
   Events m_events;
 
   atomic_t m_op_tid;
+  // std::unordered_map<uint64_t, Future>
   TidToFutures m_op_futures;
 
   bool m_processing_entry = false;

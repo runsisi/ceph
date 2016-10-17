@@ -476,6 +476,7 @@ void ImageWatcher<I>::schedule_request_lock(bool use_timer, int timer_delay) {
          !m_image_ctx.exclusive_lock->is_lock_owner());
 
   RWLock::RLocker watch_locker(m_watch_lock);
+
   if (m_watch_state == WATCH_STATE_REGISTERED) {
     ldout(m_image_ctx.cct, 15) << this << " requesting exclusive lock" << dendl;
 
@@ -548,6 +549,7 @@ void ImageWatcher<I>::handle_request_lock(int r) {
 template <typename I>
 void ImageWatcher<I>::notify_lock_owner(bufferlist &&bl, Context *on_finish) {
   assert(on_finish != nullptr);
+
   assert(m_image_ctx.owner_lock.is_locked());
 
   NotifyLockOwner *notify_lock_owner = NotifyLockOwner::create(

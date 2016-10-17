@@ -1993,6 +1993,7 @@ bool Objecter::wait_for_map(epoch_t epoch, Context *c, int err)
   return false;
 }
 
+// called by Client::handle_mds_map
 void Objecter::kick_requests(OSDSession *session)
 {
   ldout(cct, 10) << "kick_requests for osd." << session->osd << dendl;
@@ -2007,6 +2008,9 @@ void Objecter::kick_requests(OSDSession *session)
   _linger_ops_resend(lresend, wl);
 }
 
+// called by
+// Objecter::kick_requests
+// Objecter::ms_handle_reset
 void Objecter::_kick_requests(OSDSession *session,
 			      map<uint64_t, LingerOp *>& lresend)
 {
@@ -2075,6 +2079,8 @@ void Objecter::_linger_ops_resend(map<uint64_t, LingerOp *>& lresend,
 void Objecter::start_tick()
 {
   assert(tick_event == 0);
+
+  // default 5.0
   tick_event =
     timer.add_event(ceph::make_timespan(cct->_conf->objecter_tick_interval),
 		    &Objecter::tick, this);
@@ -2100,6 +2106,7 @@ void Objecter::tick()
 
   // look for laggy requests
   auto cutoff = ceph::mono_clock::now();
+  // default 10.0
   cutoff -= ceph::make_timespan(cct->_conf->objecter_timeout);  // timeout
 
   unsigned laggy_ops = 0;
@@ -2109,6 +2116,7 @@ void Objecter::tick()
     OSDSession *s = siter->second;
     OSDSession::lock_guard l(s->lock);
     bool found = false;
+
     for (map<ceph_tid_t,Op*>::iterator p = s->ops.begin();
 	p != s->ops.end();
 	++p) {
@@ -2121,6 +2129,7 @@ void Objecter::tick()
 	++laggy_ops;
       }
     }
+
     for (map<uint64_t,LingerOp*>::iterator p = s->linger_ops.begin();
 	p != s->linger_ops.end();
 	++p) {
@@ -2133,6 +2142,7 @@ void Objecter::tick()
       if (op->is_watch && op->registered && !op->last_error)
 	_send_linger_ping(op);
     }
+
     for (map<uint64_t,CommandOp*>::iterator p = s->command_ops.begin();
 	p != s->command_ops.end();
 	++p) {
@@ -2142,9 +2152,11 @@ void Objecter::tick()
 		     << " (osd." << op->session->osd << ")" << dendl;
       found = true;
     }
+
     if (found)
       toping.insert(s);
   }
+
   if (num_homeless_ops.read() || !toping.empty()) {
     _maybe_request_map();
   }

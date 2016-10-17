@@ -1022,6 +1022,7 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
     assert(m_state == STATE_READY);
 
     tid = ++m_event_tid;
+
     assert(tid != 0);
   }
 
@@ -1165,12 +1166,14 @@ void Journal<I>::append_op_event(uint64_t op_tid,
 
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_state == STATE_READY);
 
     future = m_journaler->append(m_tag_tid, bl);
 
     // delay committing op event to ensure consistent replay
     assert(m_op_futures.count(op_tid) == 0);
+
     m_op_futures[op_tid] = future;
   }
 
@@ -1188,7 +1191,7 @@ void Journal<I>::append_op_event(uint64_t op_tid,
                  << "event=" << event_entry.get_event_type() << dendl;
 }
 
-// called by operation/Request<I>::commit_op_event
+// called by librbd::operation::Request<I>::commit_op_event
 template <typename I>
 void Journal<I>::commit_op_event(uint64_t op_tid, int r, Context *on_safe) {
   CephContext *cct = m_image_ctx.cct;
@@ -1205,18 +1208,24 @@ void Journal<I>::commit_op_event(uint64_t op_tid, int r, Context *on_safe) {
 
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_state == STATE_READY);
 
     // ready to commit op event
     auto it = m_op_futures.find(op_tid);
     assert(it != m_op_futures.end());
 
+    // this future was created by Journal<I>::append_op_event
     op_start_future = it->second;
+
     m_op_futures.erase(it);
 
+    // N.B. the difference between IO event, see
+    // Journal<I>::commit_io_event -> Journal<I>::complete_event
     op_finish_future = m_journaler->append(m_tag_tid, bl);
   }
 
+  // C_OpEventSafe will call journal->handle_op_event_safe
   op_finish_future.flush(create_async_context_callback(
     m_image_ctx, new C_OpEventSafe(this, op_tid, op_start_future,
                                    op_finish_future, on_safe)));
@@ -1421,8 +1430,11 @@ void Journal<I>::create_journaler() {
   transition_state(STATE_INITIALIZING, 0);
 
   ::journal::Settings settings;
+  // default 5
   settings.commit_interval = m_image_ctx.journal_commit_age;
+  // default 16384
   settings.max_payload_bytes = m_image_ctx.journal_max_payload_bytes;
+  // default 0
   settings.max_concurrent_object_sets =
     m_image_ctx.journal_max_concurrent_object_sets;
   // TODO: a configurable filter to exclude certain peers from being
@@ -1535,8 +1547,8 @@ void Journal<I>::complete_event(typename Events::iterator it, int r) {
 
         // a future represents an journal::EventEntry
 
-        // update client's commit position, both in memory structure and journal header
-        // object's omap
+        // update client's commit position, update in memory commit position
+        // immediately and schedule a timer to update journal metadata object
         m_journaler->committed(future);
       }
     }
@@ -1964,6 +1976,7 @@ void Journal<I>::handle_io_event_safe(int r, uint64_t tid) {
     on_safe_contexts.swap(event.on_safe_contexts);
 
     if (r < 0 || event.committed_io) {
+      // event.committed_io was set by Journal<I>::complete_event
 
       // journal safe + io requests completed
 
@@ -1977,6 +1990,9 @@ void Journal<I>::handle_io_event_safe(int r, uint64_t tid) {
     }
 
     if (event.committed_io) {
+
+      // event.committed_io was set by Journal<I>::complete_event
+
       m_events.erase(it);
     } else {
       event.safe = true;
@@ -2023,9 +2039,12 @@ void Journal<I>::handle_op_event_safe(int r, uint64_t tid,
                << "failed to commit op event: "  << cpp_strerror(r) << dendl;
   }
 
+  // update the in memory client commit position and scheduled a timer
+  // to update the journal metadata object
   m_journaler->committed(op_start_future);
   m_journaler->committed(op_finish_future);
 
+  // update the journal metadata object manually
   // reduce the replay window after committing an op event
   m_journaler->flush_commit_position(on_safe);
 }

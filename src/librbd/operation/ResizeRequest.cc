@@ -379,21 +379,26 @@ Context *ResizeRequest<I>::send_shrink_object_map() {
 template <typename I>
 Context *ResizeRequest<I>::handle_shrink_object_map(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": r=" << *result << dendl;
 
   update_size_and_overlap();
+
   assert(*result == 0);
+
   return this->create_context_finisher(0);
 }
 
 template <typename I>
 void ResizeRequest<I>::send_post_block_writes() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
 
   RWLock::RLocker owner_locker(image_ctx.owner_lock);
+
   image_ctx.aio_work_queue->block_writes(create_context_callback<
     ResizeRequest<I>, &ResizeRequest<I>::handle_post_block_writes>(this));
 }
@@ -443,6 +448,7 @@ void ResizeRequest<I>::send_update_header() {
     if (image_ctx.exclusive_lock != nullptr) {
       image_ctx.exclusive_lock->assert_header_locked(&op);
     }
+
     cls_client::set_size(&op, m_new_size);
   }
 

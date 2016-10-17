@@ -668,6 +668,7 @@ void Replay<I>::handle_event(const journal::ResizeEvent &event,
   ldout(cct, 20) << ": Resize start event" << dendl;
 
   Mutex::Locker locker(m_lock);
+
   OpEvent *op_event;
   Context *on_op_complete = create_op_context_callback(event.op_tid, on_ready,
                                                        on_safe, &op_event);
