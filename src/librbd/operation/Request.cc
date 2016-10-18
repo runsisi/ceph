@@ -207,8 +207,7 @@ void Request<I>::replay_op_ready(Context *on_safe) {
   assert(image_ctx.owner_lock.is_locked());
   assert(image_ctx.snap_lock.is_locked());
 
-  // TODO: for ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
-  // this is not true ???
+  // see librbd::journal::ExecuteOp
   assert(m_op_tid != 0);
 
   m_appended_op_event = true;

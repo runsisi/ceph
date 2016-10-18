@@ -286,8 +286,10 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
 template <typename I>
 void Replay<I>::flush(Context *on_finish) {
   AioCompletion *aio_comp;
+
   {
     Mutex::Locker locker(m_lock);
+
     aio_comp = create_aio_flush_completion(
       util::create_async_context_callback(m_image_ctx, on_finish));
   }

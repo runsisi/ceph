@@ -717,6 +717,9 @@ int Operations<I>::resize(uint64_t size, bool allow_shrink, ProgressContext& pro
   return r;
 }
 
+// called by
+// librbd::Operations<I>::resize, always has journal_op_tid set to zero
+// librbd::journal::ExecuteOp::execute(journal::ResizeEvent), which has journal_op_tid set to non-zero
 template <typename I>
 void Operations<I>::execute_resize(uint64_t size, bool allow_shrink, ProgressContext &prog_ctx,
                                    Context *on_finish,
@@ -813,10 +816,9 @@ void Operations<I>::snap_create(const char *snap_name,
   req->send();
 }
 
-// only SnapshotCreateRequest<I>::send_snap_create calls with skip_object_map
-// set to true
-// only ExecuteOp::execute(journal::SnapCreateEvent) calls with journal_op_tid
-// set to non-zero
+// called by
+// librbd::Operations<I>::snap_create, always has journal_op_tid set to zero
+// librbd::ExecuteOp::execute(journal::SnapCreateEvent), which has journal_op_tid set to non-zero
 template <typename I>
 void Operations<I>::execute_snap_create(const std::string &snap_name,
 					const cls::rbd::SnapshotNamespace &snap_namespace,
@@ -1422,6 +1424,9 @@ int Operations<I>::update_features(uint64_t features, bool enabled) {
   return r;
 }
 
+// called by
+// librbd::Operations<I>::update_features, always has journal_op_tid set to zero
+// librbd::journal::ExecuteOp::execute(journal::UpdateFeaturesEvent), which has journal_op_tid set to non-zero
 template <typename I>
 void Operations<I>::execute_update_features(uint64_t features, bool enabled,
                                             Context *on_finish,

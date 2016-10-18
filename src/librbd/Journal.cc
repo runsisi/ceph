@@ -694,6 +694,8 @@ void Journal<I>::close(Context *on_finish) {
 
   m_lock.Unlock();
 
+  // only ImageReplayer<I>::m_journal_listener registered listener by
+  // ImageReplayer<I>::handle_bootstrap
   for (auto listener : listeners) {
     listener->handle_close();
   }
@@ -711,11 +713,14 @@ void Journal<I>::close(Context *on_finish) {
   }
 
   if (m_state == STATE_READY) {
+    // call m_journaler->stop_append then will call destroy_journaler after
+    // appending stopped
     stop_recording();
   }
 
   m_close_pending = true;
 
+  // wait for STATE_READY or STATE_CLOSED
   wait_for_steady_state(on_finish);
 }
 
@@ -1220,7 +1225,7 @@ void Journal<I>::commit_op_event(uint64_t op_tid, int r, Context *on_safe) {
 
     m_op_futures.erase(it);
 
-    // N.B. the difference between IO event, see
+    // N.B. the difference between IO event commit, see
     // Journal<I>::commit_io_event -> Journal<I>::complete_event
     op_finish_future = m_journaler->append(m_tag_tid, bl);
   }
@@ -1605,11 +1610,9 @@ void Journal<I>::handle_open(int r) {
   // for external replay, see Journal<I>::start_external_replay
   m_journal_replay = journal::Replay<I>::create(m_image_ctx);
 
-  // create an JournalPlayer instance and register a rbd replay handler,
-  // i.e., Journal::ReplayHandler instance, into it, then prefetch
-  // the ReplayHandler provides two interfaces, i.e., journal->handle_replay_ready
-  // and journal->handle_replay_complete, to notify us from the
-  // journaler inside
+  // fetch journaled but has not committed Journal::EventEntry(s) and
+  // replay, after flushing the replay, will transit into STATE_READY,
+  // see Journal<I>::handle_flushing_replay
   m_journaler->start_replay(&m_replay_handler);
 }
 
@@ -1671,7 +1674,7 @@ void Journal<I>::handle_replay_ready() {
   m_journal_replay->process(event_entry, on_ready, on_commit);
 }
 
-// only called by ReplayHandler::handle_complete
+// called by ReplayHandler::handle_complete
 template <typename I>
 void Journal<I>::handle_replay_complete(int r) {
 
@@ -2280,7 +2283,9 @@ void Journal<I>::handle_refresh_metadata(uint64_t refresh_sequence,
     return;
   }
 
-  // std::set<journal::Listener *>, registered by Journal<I>::add_listener
+  // std::set<journal::Listener *>, registered by Journal<I>::add_listener,
+  // only ImageReplayer<I>::m_journal_listener registered listener by
+  // ImageReplayer<I>::handle_bootstrap
   Listeners listeners(m_listeners);
 
   m_listener_notify = true;

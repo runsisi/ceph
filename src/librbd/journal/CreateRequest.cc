@@ -183,6 +183,10 @@ void CreateRequest<I>::shut_down_journaler(int r) {
   using klass = CreateRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_journaler_shutdown>(this);
 
+  // remove metadata listener registered by m_trimmer, unwatch metadata object
+  // NOTE: we only called m_journaler->create(), without calling
+  // m_journaler->start_replay() and m_journaler->start_append(), so
+  // Journaler::m_player and Journaler::m_recorder are both NULL
   m_journaler->shut_down(ctx);
 }
 
@@ -219,6 +223,7 @@ void CreateRequest<I>::remove_journal() {
 
   RemoveRequest<I> *req = RemoveRequest<I>::create(
     m_ioctx, m_image_id, m_image_client_id, m_op_work_queue, ctx);
+
   req->send();
 }
 

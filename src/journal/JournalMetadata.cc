@@ -511,6 +511,7 @@ void JournalMetadata::shut_down(Context *on_finish) {
 
   {
     Mutex::Locker locker(m_lock);
+
     m_initialized = false;
     std::swap(watch_handle, m_watch_handle);
   }
