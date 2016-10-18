@@ -123,6 +123,8 @@ bool Request<I>::append_op_event() {
   if (image_ctx.journal != nullptr &&
       image_ctx.journal->is_journal_appending()) {
 
+    // STATE_READY
+
     // if the journal are opened by acquiring exclusive lock, then
     // ImageCtx::journal is set before the journal has opened, see
     // AcquireRequest<I>::send_open_journal

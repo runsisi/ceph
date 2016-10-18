@@ -191,6 +191,9 @@ void Replay<I>::process(const EventEntry &event_entry,
   ldout(cct, 20) << ": on_ready=" << on_ready << ", on_safe=" << on_safe
                  << dendl;
 
+  // on_ready == ImageReplayer<I>::handle_process_entry_ready
+  // on_safe == C_ReplayCommitted, i.e., ImageReplayer<I>::handle_process_entry_safe
+
   on_ready = util::create_async_context_callback(m_image_ctx, on_ready);
 
   RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
@@ -199,6 +202,10 @@ void Replay<I>::process(const EventEntry &event_entry,
   boost::apply_visitor(EventVisitor(this, on_ready, on_safe), event_entry.event);
 }
 
+// called by
+// Journal<I>::handle_replay_complete
+// ImageReplayer<I>::shut_down
+// ImageReplayer<I>::replay_flush
 template <typename I>
 void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -547,7 +554,11 @@ void Replay<I>::handle_event(const journal::SnapRenameEvent &event,
   ldout(cct, 20) << ": Snap rename event" << dendl;
 
   Mutex::Locker locker(m_lock);
+
   OpEvent *op_event;
+
+  // op_event->on_start_safe = on_safe
+  // op_event->on_op_complete = C_OpOnComplete, i.e., Replay<I>::handle_op_complete
   Context *on_op_complete = create_op_context_callback(event.op_tid, on_ready,
                                                        on_safe, &op_event);
   if (on_op_complete == nullptr) {
@@ -561,6 +572,7 @@ void Replay<I>::handle_event(const journal::SnapRenameEvent &event,
   // ignore errors caused due to replay
   op_event->ignore_error_codes = {-EEXIST};
 
+  // ImageReplayer<I>::handle_process_entry_ready, try to pop the next relay entry
   on_ready->complete(0);
 }
 
@@ -571,6 +583,7 @@ void Replay<I>::handle_event(const journal::SnapProtectEvent &event,
   ldout(cct, 20) << ": Snap protect event" << dendl;
 
   Mutex::Locker locker(m_lock);
+
   OpEvent *op_event;
   Context *on_op_complete = create_op_context_callback(event.op_tid, on_ready,
                                                        on_safe, &op_event);
@@ -1005,7 +1018,10 @@ void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
     shutting_down = (m_flush_ctx != nullptr);
   }
 
+  // op_event.on_start_ready only be set by Replay<I>::handle_event for SnapCreateEvent,
+  // ResizeEvent, UpdateFeaturesEvent
   assert(op_event.on_start_ready == nullptr || (r < 0 && r != -ERESTART));
+
   if (op_event.on_start_ready != nullptr) {
     // blocking op event failed before it became ready
     assert(op_event.on_finish_ready == nullptr &&
@@ -1032,6 +1048,7 @@ void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
   }
 
   op_event.on_start_safe->complete(r);
+
   if (op_event.on_finish_safe != nullptr) {
     op_event.on_finish_safe->complete(r);
   }
@@ -1043,15 +1060,19 @@ void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
   {
     Mutex::Locker locker(m_lock);
 
-    // was increased by Replay<I>::create_op_context_callback
     assert(m_in_flight_op_events > 0);
+
+    // was increased by Replay<I>::create_op_context_callback
     --m_in_flight_op_events;
 
     if (m_in_flight_op_events == 0 &&
         (m_in_flight_aio_flush + m_in_flight_aio_modify) == 0) {
+      // no in flight aio/op/flush, check if we can finish the shutdown now,
+      // see Replay<I>::shut_down
       on_flush = m_flush_ctx;
     }
   }
+
   if (on_flush != nullptr) {
     m_image_ctx.op_work_queue->queue(on_flush, 0);
   }

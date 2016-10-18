@@ -186,6 +186,7 @@ void Journaler::shut_down() {
 // called by
 // Journaler::shut_down()
 // librbd::journal::RemoveRequest<I>::shut_down_journaler
+// ImageReplayer<I>::shut_down
 void Journaler::shut_down(Context *on_finish) {
   assert(m_player == nullptr);
   assert(m_recorder == nullptr);
@@ -502,6 +503,9 @@ void Journaler::committed(const Future &future) {
   m_trimmer->committed(future_impl->get_commit_tid());
 }
 
+// called by
+// Journal<I>::start_append
+// rbd::action::journal::JournalImporter::exec
 void Journaler::start_append(int flush_interval, uint64_t flush_bytes,
 			     double flush_age) {
   assert(m_recorder == NULL);
@@ -513,6 +517,10 @@ void Journaler::start_append(int flush_interval, uint64_t flush_bytes,
 				   flush_age);
 }
 
+// called by
+// Journal<I>::start_external_replay
+// Journal<I>::stop_recording
+// rbd::action::journal::JournalImporter::exec
 void Journaler::stop_append(Context *on_safe) {
   JournalRecorder *recorder = nullptr;
 

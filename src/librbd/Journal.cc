@@ -336,6 +336,7 @@ Journal<I>::~Journal() {
 template <typename I>
 bool Journal<I>::is_journal_supported(I &image_ctx) {
   assert(image_ctx.snap_lock.is_locked());
+
   return ((image_ctx.features & RBD_FEATURE_JOURNALING) &&
           !image_ctx.read_only && image_ctx.snap_id == CEPH_NOSNAP);
 }
@@ -610,12 +611,14 @@ bool Journal<I>::is_journal_ready() const {
 template <typename I>
 bool Journal<I>::is_journal_replaying() const {
   Mutex::Locker locker(m_lock);
+
   return is_journal_replaying(m_lock);
 }
 
 template <typename I>
 bool Journal<I>::is_journal_replaying(const Mutex &) const {
   assert(m_lock.is_locked());
+
   return (m_state == STATE_REPLAYING ||
           m_state == STATE_FLUSHING_REPLAY ||
           m_state == STATE_FLUSHING_RESTART ||
@@ -718,6 +721,8 @@ void Journal<I>::close(Context *on_finish) {
     stop_recording();
   }
 
+  // will wait until replay finished, see Journal<I>::handle_flushing_replay,
+  // Journal<I>::handle_flushing_restart, Journal<I>::stop_external_replay
   m_close_pending = true;
 
   // wait for STATE_READY or STATE_CLOSED
@@ -1484,6 +1489,7 @@ void Journal<I>::destroy_journaler(int r) {
       Mutex::Locker locker(m_lock);
       m_journaler->shut_down(ctx);
     });
+
   m_async_journal_op_tracker.wait(m_image_ctx, ctx);
 }
 
@@ -1562,7 +1568,9 @@ void Journal<I>::complete_event(typename Events::iterator it, int r) {
   }
 }
 
-// called by Journal<I>::stop_external_replay, Journal<I>::handle_flushing_replay
+// called by
+// Journal<I>::stop_external_replay
+// Journal<I>::handle_flushing_replay
 template <typename I>
 void Journal<I>::start_append() {
   assert(m_lock.is_locked());

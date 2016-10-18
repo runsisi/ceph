@@ -1321,6 +1321,7 @@ void ImageReplayer<I>::process_entry() {
   dout(20) << "processing entry tid=" << m_replay_entry.get_commit_tid()
            << dendl;
 
+  // on_ready will try to pop the next replay entry
   Context *on_ready = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_process_entry_ready>(this);
 
