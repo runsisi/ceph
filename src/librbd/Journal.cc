@@ -1677,6 +1677,7 @@ void Journal<I>::handle_replay_ready() {
   Context *on_ready = create_context_callback<
     Journal<I>, &Journal<I>::handle_replay_process_ready>(this);
 
+  // journal->handle_replay_process_safe
   Context *on_commit = new C_ReplayProcessSafe(this, std::move(replay_entry));
 
   m_journal_replay->process(event_entry, on_ready, on_commit);
@@ -1862,12 +1863,14 @@ void Journal<I>::handle_flushing_restart(int r) {
 
   if (m_close_pending) {
 
-    // we are to close, set by Journal<I>::close
+    // was set by Journal<I>::close, we are to close, set by Journal<I>::close
 
     destroy_journaler(r);
     return;
   }
 
+  // m_journaler->shut_down, and create_journaler in its callback, i.e., restart the
+  // whole replay process
   recreate_journaler(r);
 }
 
@@ -1893,12 +1896,14 @@ void Journal<I>::handle_flushing_replay() {
 
     // failed to replay one-or-more events -- restart
 
-    // transit into STATE_RESTARTING_REPLAY
+    // transit into STATE_RESTARTING_REPLAY, shutdown and delete the current
+    // m_journaler then create and start a new m_journaler, i.e., to restart the replay
     recreate_journaler(0);
 
     return;
   }
 
+  // replay finished
 
   delete m_journal_replay;
   m_journal_replay = NULL;

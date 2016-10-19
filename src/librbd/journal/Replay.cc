@@ -261,6 +261,12 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
         // OpFinishEvent or waiting for ready)
         if (op_event.on_start_ready == nullptr &&
             op_event.on_op_finish_event != nullptr) {
+
+          // for SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, we are waiting for
+          // the OpFinishEvent, see Replay<I>::replay_op_ready
+          // for other events, we are also waiting for the OpFinishEvent, see
+          // Replay<I>::handle_event
+
           Context *on_op_finish_event = nullptr;
 
           std::swap(on_op_finish_event, op_event.on_op_finish_event);
@@ -269,7 +275,9 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
         }
       } else if (op_event.on_op_finish_event != nullptr) {
 
-        // was set by Replay<I>::handle_event, for events except
+        // was set by Replay<I>::handle_event for other events except
+        // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent
+        // or by Replay<I>::replay_op_ready for
         // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent
 
         // start ops waiting for OpFinishEvent
@@ -283,7 +291,7 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
         // was set by Replay<I>::handle_event, for
         // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent only
 
-        // waiting for op ready
+        // waiting for op ready, see Replay<I>::replay_op_ready
         op_event_pair.second.finish_on_ready = true;
       }
     }
@@ -386,7 +394,8 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
       on_resume->complete(r);
     });
 
-  // ok, next we need the OpFinishEvent to drive us proceed
+  // ok, next we need the OpFinishEvent to drive us proceed, like the other events
+  // just did in their Replay<I>::handle_event
 
   // shut down request -- don't expect OpFinishEvent
   if (op_event.finish_on_ready) {
@@ -517,21 +526,24 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
 
   if (event.r < 0) {
 
-    // this op failed, do not try to resume or apply op
+    // this op has failed, do not try to resume or apply op, now the
     // op_event.on_op_finish_event should be on_resume or C_RefreshIfRequired,
-    // so
 
     if (op_in_progress) {
 
-      // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent has started
+      // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent
 
-      // op_event.on_op_finish_event should be on_resume
+      // op_event.on_op_finish_event should be on_resume, i.e., XxxRequest<I>::handle_append_op_event,
+      // we need to pass the error to it
 
       // bubble the error up to the in-progress op to cancel it
       on_op_finish_event->complete(event.r);
     } else {
 
-      // op_event.on_op_finish_event should be C_RefreshIfRequired
+      // op_event.on_op_finish_event should be C_RefreshIfRequired, now we should
+      // skip the mediate callbacks, i.e., C_RefreshIfRequired and ExecuteOp and
+      // complete the final callback, i.e., on_op_complete, i.e., C_OpOnComplete, i.e.,
+      // handle_op_complete, directly
 
       // op hasn't been started -- bubble the error up since
       // our image is now potentially in an inconsistent state
@@ -586,7 +598,8 @@ void Replay<I>::handle_event(const journal::SnapCreateEvent &event,
   op_event->op_in_progress = true;
   // other events will call on_ready->complete(0) directly, but for
   // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent we will defer it
-  // to Replay<I>::replay_op_ready
+  // to Replay<I>::replay_op_ready, which will be initiated by
+  // C_RefreshIfRequired::finish -> ExecuteOp::finish -> ExecuteOp::execute(SnapCreateEvent)
   op_event->on_start_ready = on_ready;
 }
 
@@ -1064,7 +1077,9 @@ Context *Replay<I>::create_op_context_callback(uint64_t op_tid,
   return on_op_complete;
 }
 
-// called by librbd::journal::Replay<I>::C_OpOnComplete::finish
+// called by
+// librbd::journal::Replay<I>::C_OpOnComplete::finish
+// Replay<I>::handle_event(OpFinishEvent), when the op event failed
 template <typename I>
 void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
   CephContext *cct = m_image_ctx.cct;
@@ -1096,21 +1111,39 @@ void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
   assert(op_event.on_start_ready == nullptr || (r < 0 && r != -ERESTART));
 
   if (op_event.on_start_ready != nullptr) {
+
+    // Replay<I>::handle_op_complete was called by C_RefreshIfRequired::finish -> ExecuteOp::finish
+    // with r < 0
+
     // blocking op event failed before it became ready
     assert(op_event.on_finish_ready == nullptr &&
            op_event.on_finish_safe == nullptr);
 
+    // try to pop the next replay entry
     op_event.on_start_ready->complete(0);
   } else {
+
+    // op_event.on_finish_ready and op_event.on_finish_safe were set by
+    // Replay<I>::handle_event(OpFinishEvent)
+
     // event kicked off by OpFinishEvent
     assert((op_event.on_finish_ready != nullptr &&
             op_event.on_finish_safe != nullptr) || shutting_down);
   }
 
   if (op_event.on_op_finish_event != nullptr) {
+
+    // not called directly, i.e., the op event has not failed, see
+    // Replay<I>::handle_event(OpFinishEvent)
+
+    // for SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, on_resume->complete,
+    // i.e., XxxRequest<I>::handle_append_op_event
+    // for other events, C_RefreshIfRequired
+
     op_event.on_op_finish_event->complete(r);
   }
 
+  // try to pop the next replay entry
   if (op_event.on_finish_ready != nullptr) {
     op_event.on_finish_ready->complete(0);
   }
@@ -1120,8 +1153,10 @@ void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
     r = 0;
   }
 
+  // commit the op event
   op_event.on_start_safe->complete(r);
 
+  // commit  OpFinishEvent
   if (op_event.on_finish_safe != nullptr) {
     op_event.on_finish_safe->complete(r);
   }
