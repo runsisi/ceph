@@ -79,6 +79,8 @@ protected:
 private:
   Context *m_on_finish;
   bool m_canceled;
+
+  // will be pushed back of ImageCtx::async_requests
   typename xlist<AsyncRequest<ImageCtxT> *>::item m_xlist_item;
 
   // push ourself back of m_image_ctx.async_requests

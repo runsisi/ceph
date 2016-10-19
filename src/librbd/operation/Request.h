@@ -72,11 +72,11 @@ protected:
 
       if (image_ctx.journal->is_journal_replaying()) {
 
+        // Journal is in state of:
+        // STATE_REPLAYING, STATE_FLUSHING_REPLAY, STATE_FLUSHING_RESTART, STATE_RESTARTING_REPLAY
+
         // we are in replaying, see Replay<I>::handle_event(SnapCreateEvent/ResizeEvent/
         // UpdateFeaturesEvent)
-
-        // Journal<I>::m_state is in one of:
-        // STATE_REPLAYING, STATE_FLUSHING_REPLAY, STATE_FLUSHING_RESTART, STATE_RESTARTING_REPLAY
 
         Context *ctx = util::create_context_callback<T, MF>(request);
 
@@ -85,7 +85,7 @@ protected:
         return true;
       } else if (image_ctx.journal->is_journal_appending()) {
 
-        // STATE_READY
+        // Journal is in state of STATE_READY
 
         Context *ctx = util::create_context_callback<T, MF>(request);
 

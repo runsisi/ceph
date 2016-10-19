@@ -127,6 +127,7 @@ private:
   Contexts m_aio_modify_unsafe_contexts;
   ContextSet m_aio_modify_safe_contexts;
 
+  // std::unordered_map<uint64_t, OpEvent>
   OpEvents m_op_events;
   uint64_t m_in_flight_op_events = 0;
 

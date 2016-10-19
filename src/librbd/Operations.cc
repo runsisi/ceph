@@ -834,11 +834,13 @@ void Operations<I>::execute_snap_create(const std::string &snap_name,
                 << dendl;
 
   m_image_ctx.snap_lock.get_read();
+
   if (m_image_ctx.get_snap_id(snap_name) != CEPH_NOSNAP) {
     m_image_ctx.snap_lock.put_read();
     on_finish->complete(-EEXIST);
     return;
   }
+
   m_image_ctx.snap_lock.put_read();
 
   operation::SnapshotCreateRequest<I> *req =

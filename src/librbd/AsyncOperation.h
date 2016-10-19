@@ -45,7 +45,10 @@ public:
 private:
 
   ImageCtx *m_image_ctx;
+
+  // will be pushed front of ImageCtx::async_ops
   xlist<AsyncOperation *>::item m_xlist_item;
+
   std::list<Context *> m_flush_contexts;
 
 };

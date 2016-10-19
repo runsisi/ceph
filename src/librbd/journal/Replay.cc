@@ -27,6 +27,7 @@ static const uint64_t IN_FLIGHT_IO_HIGH_WATER_MARK(64);
 
 static NoOpProgressContext no_op_progress_callback;
 
+// C_ExecuteOp should be a better name
 template <typename I, typename E>
 struct ExecuteOp : public Context {
   I &image_ctx;
@@ -37,6 +38,12 @@ struct ExecuteOp : public Context {
     : image_ctx(image_ctx), event(event), on_op_complete(on_op_complete) {
   }
 
+  // only SnapCreateEvent, ResizeEvent, UpdateFeaturesEvent need to
+  // handle specially during replaying, see
+  // librbd::operation::Request<I>::append_op_event(T *request)
+  // then the control will return to Replay<I>::replay_op_ready, then
+  // to SnapshotCreateRequest<I>::handle_append_op_event, and finally to
+  // on_op_complete
   void execute(const journal::SnapCreateEvent &_) {
     image_ctx.operations->execute_snap_create(event.snap_name,
 					      event.snap_namespace,
@@ -76,6 +83,12 @@ struct ExecuteOp : public Context {
                                          on_op_complete);
   }
 
+  // only SnapCreateEvent, ResizeEvent, UpdateFeaturesEvent need to
+  // handle specially during replaying, see
+  // librbd::operation::Request<I>::append_op_event(T *request)
+  // then the control will return to Replay<I>::replay_op_ready, then
+  // to ResizeRequest<I>::handle_append_op_event, and finally to
+  // on_op_complete
   void execute(const journal::ResizeEvent &_) {
     image_ctx.operations->execute_resize(event.size, true, no_op_progress_callback,
                                          on_op_complete, event.op_tid);
@@ -90,6 +103,12 @@ struct ExecuteOp : public Context {
     image_ctx.operations->execute_snap_set_limit(event.limit, on_op_complete);
   }
 
+  // only SnapCreateEvent, ResizeEvent, UpdateFeaturesEvent need to
+  // handle specially during replaying, see
+  // librbd::operation::Request<I>::append_op_event(T *request)
+  // then the control will return to Replay<I>::replay_op_ready, then
+  // to DisableFeaturesRequest/EnableFeaturesRequest<I>::handle_append_op_event, and finally to
+  // on_op_complete
   void execute(const journal::UpdateFeaturesEvent &_) {
     image_ctx.operations->execute_update_features(event.features, event.enabled,
 						  on_op_complete, event.op_tid);
@@ -106,6 +125,7 @@ struct ExecuteOp : public Context {
 
   virtual void finish(int r) override {
     CephContext *cct = image_ctx.cct;
+
     if (r < 0) {
       lderr(cct) << ": ExecuteOp::" << __func__ << ": r=" << r << dendl;
       on_op_complete->complete(r);
@@ -113,7 +133,9 @@ struct ExecuteOp : public Context {
     }
 
     ldout(cct, 20) << ": ExecuteOp::" << __func__ << dendl;
+
     RWLock::RLocker owner_locker(image_ctx.owner_lock);
+
     execute(event);
   }
 };
@@ -227,6 +249,7 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
       flush_comp = create_aio_flush_completion(nullptr);
     }
 
+    // std::unordered_map<uint64_t, OpEvent>
     for (auto &op_event_pair : m_op_events) {
 
       // iterate unordered_map<uint64_t, OpEvent>
@@ -245,6 +268,10 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
           m_image_ctx.op_work_queue->queue(on_op_finish_event, -ERESTART);
         }
       } else if (op_event.on_op_finish_event != nullptr) {
+
+        // was set by Replay<I>::handle_event, for events except
+        // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent
+
         // start ops waiting for OpFinishEvent
         Context *on_op_finish_event = nullptr;
 
@@ -252,6 +279,10 @@ void Replay<I>::shut_down(bool cancel_ops, Context *on_finish) {
 
         m_image_ctx.op_work_queue->queue(on_op_finish_event, 0);
       } else if (op_event.on_start_ready != nullptr) {
+
+        // was set by Replay<I>::handle_event, for
+        // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent only
+
         // waiting for op ready
         op_event_pair.second.finish_on_ready = true;
       }
@@ -306,8 +337,10 @@ void Replay<I>::flush(Context *on_finish) {
   AioImageRequest<I>::aio_flush(&m_image_ctx, aio_comp);
 }
 
-// called by Journal<I>::replay_op_ready, which is called by
-// librbd::operation::Request<I>::replay_op_ready
+// called by Journal<I>::replay_op_ready, which is only used for
+// SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, when this method
+// is called, the aio write has been blocked, so we can try to pop
+// the next replay entry
 template <typename I>
 void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   CephContext *cct = m_image_ctx.cct;
@@ -315,7 +348,7 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
 
   Mutex::Locker locker(m_lock);
 
-  // m_op_events inserted by Replay<I>::create_op_context_callback
+  // m_op_events was inserted by Replay<I>::create_op_context_callback
 
   auto op_it = m_op_events.find(op_tid);
   assert(op_it != m_op_events.end());
@@ -331,6 +364,9 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   Context *on_start_ready = nullptr;
   std::swap(on_start_ready, op_event.on_start_ready);
 
+  // ok, io blocked, can try to pop the next replay entry, for events
+  // except SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent we have
+  // called this callback directly in their own Replay<I>::handle_event
   on_start_ready->complete(0);
 
   // cancel has been requested -- send error to paused state machine
@@ -350,8 +386,13 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
       on_resume->complete(r);
     });
 
+  // ok, next we need the OpFinishEvent to drive us proceed
+
   // shut down request -- don't expect OpFinishEvent
   if (op_event.finish_on_ready) {
+
+    // was set by Replay<I>::shut_down for SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent
+
     m_image_ctx.op_work_queue->queue(on_resume, 0);
   }
 }
@@ -458,10 +499,14 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
     }
 
     OpEvent &op_event = op_it->second;
+
     assert(op_event.on_finish_safe == nullptr);
+
     op_event.on_finish_ready = on_ready;
     op_event.on_finish_safe = on_safe;
+
     op_in_progress = op_event.op_in_progress;
+
     std::swap(on_op_complete, op_event.on_op_complete);
     std::swap(on_op_finish_event, op_event.on_op_finish_event);
 
@@ -471,21 +516,39 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
   }
 
   if (event.r < 0) {
+
+    // this op failed, do not try to resume or apply op
+    // op_event.on_op_finish_event should be on_resume or C_RefreshIfRequired,
+    // so
+
     if (op_in_progress) {
+
+      // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent has started
+
+      // op_event.on_op_finish_event should be on_resume
+
       // bubble the error up to the in-progress op to cancel it
       on_op_finish_event->complete(event.r);
     } else {
+
+      // op_event.on_op_finish_event should be C_RefreshIfRequired
+
       // op hasn't been started -- bubble the error up since
       // our image is now potentially in an inconsistent state
       // since simple errors should have been caught before
       // creating the op event
       delete on_op_complete;
       delete on_op_finish_event;
+
       handle_op_complete(event.op_tid, filter_ret_val ? 0 : event.r);
     }
 
     return;
   }
+
+  // for other events we apply the op now, and for SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent
+  // we resume the paused state machine which stopped after blocking
+  // the writes
 
   // journal recorded success -- apply the op now
   on_op_finish_event->complete(0);
@@ -510,6 +573,8 @@ void Replay<I>::handle_event(const journal::SnapCreateEvent &event,
   // ignore errors caused due to replay
   op_event->ignore_error_codes = {-EEXIST};
 
+  // call ExecuteOp directly, op_event->on_op_finish_event will be set
+  // later by Replay<I>::replay_op_ready
   // avoid lock cycles
   m_image_ctx.op_work_queue->queue(new C_RefreshIfRequired<I>(
     m_image_ctx, new ExecuteOp<I, journal::SnapCreateEvent>(m_image_ctx, event,
@@ -519,6 +584,9 @@ void Replay<I>::handle_event(const journal::SnapCreateEvent &event,
   // do not process more events until the state machine is ready
   // since it will affect IO
   op_event->op_in_progress = true;
+  // other events will call on_ready->complete(0) directly, but for
+  // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent we will defer it
+  // to Replay<I>::replay_op_ready
   op_event->on_start_ready = on_ready;
 }
 
@@ -537,6 +605,8 @@ void Replay<I>::handle_event(const journal::SnapRemoveEvent &event,
     return;
   }
 
+  // now, we are waiting for the corresponding OpFinishEvent to drive
+  // us to proceed, i.e., call ExecuteOp
   op_event->on_op_finish_event = new C_RefreshIfRequired<I>(
     m_image_ctx, new ExecuteOp<I, journal::SnapRemoveEvent>(m_image_ctx, event,
                                                             on_op_complete));
@@ -1018,8 +1088,11 @@ void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
     shutting_down = (m_flush_ctx != nullptr);
   }
 
-  // op_event.on_start_ready only be set by Replay<I>::handle_event for SnapCreateEvent,
-  // ResizeEvent, UpdateFeaturesEvent
+  // op_event.on_start_ready can only be set by Replay<I>::handle_event for
+  // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, normally it should
+  // have been set to nullptr by Replay<I>::replay_op_ready
+  // for SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, if r < 0, we will
+  // be called with op_event.on_start_ready not nullptr, see ExecuteOp::finish
   assert(op_event.on_start_ready == nullptr || (r < 0 && r != -ERESTART));
 
   if (op_event.on_start_ready != nullptr) {

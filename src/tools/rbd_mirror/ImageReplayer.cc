@@ -1075,6 +1075,7 @@ void ImageReplayer<I>::handle_replay_complete(int r, const std::string &error_de
     m_stop_requested = true;
   }
 
+  // call on_stop_journal_replay
   on_replay_interrupted();
 }
 
