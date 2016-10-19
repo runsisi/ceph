@@ -1681,6 +1681,7 @@ void ImageReplayer<I>::shut_down(int r) {
     ctx = new FunctionContext([this, ctx](int r) {
         delete m_remote_journaler;
         m_remote_journaler = nullptr;
+
         ctx->complete(0);
       });
 
@@ -1698,17 +1699,23 @@ void ImageReplayer<I>::shut_down(int r) {
 
   if (m_local_journal != nullptr) {
     ctx = new FunctionContext([this, ctx](int r) {
+        // m_local_journal was set to m_local_image_ctx->journal by ImageReplayer<I>::handle_bootstrap
         m_local_journal = nullptr;
+
         ctx->complete(0);
       });
 
     if (m_local_replay != nullptr) {
       ctx = new FunctionContext([this, ctx](int r) {
           m_local_journal->stop_external_replay();
+
+          // m_local_journal is a pointer to m_local_journal->m_journal_replay, which has
+          // been deleted by Journal<I>::stop_external_replay, see ImageReplayer<I>::start_replay
           m_local_replay = nullptr;
 
           delete m_event_preprocessor;
           m_event_preprocessor = nullptr;
+
           ctx->complete(0);
         });
     }
@@ -1736,13 +1743,21 @@ void ImageReplayer<I>::shut_down(int r) {
     ctx = new FunctionContext([this, ctx](int r) {
         delete m_replay_handler;
         m_replay_handler = nullptr;
+
         ctx->complete(0);
       });
 
     ctx = new FunctionContext([this, ctx](int r) {
+        // started by ImageReplayer<I>::handle_start_replay
         m_remote_journaler->stop_replay(ctx);
       });
   }
+
+  // m_remote_journaler->stop_replay -> delete m_replay_handler -> m_local_replay->shutdown
+  // -> m_local_journal->remove_listener -> m_local_journal->stop_external_replay
+  // -> m_remote_journaler->unregister_client -> m_remote_journaler->remove_listener
+  // -> m_remote_journaler->shut_down -> delete m_remote_journaler
+  // -> close m_local_image_ctx
 
   m_threads->work_queue->queue(ctx, 0);
 }
