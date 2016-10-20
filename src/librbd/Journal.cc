@@ -738,6 +738,11 @@ bool Journal<I>::is_tag_owner() const {
 template <typename I>
 bool Journal<I>::is_tag_owner(const Mutex &) const {
   assert(m_lock.is_locked());
+
+  // the m_tag_data was initialized when we opened the journal by
+  // Journal<I>::handle_initialized, and then be updated whenever a
+  // new tag has been create, i.e., Journal<I>::demote, Journal<I>::allocate_tag,
+  // Journal<I>::handle_refresh_metadata
   return (m_tag_data.mirror_uuid == LOCAL_MIRROR_UUID);
 }
 

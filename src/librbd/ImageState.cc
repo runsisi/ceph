@@ -41,8 +41,10 @@ public:
 
   void flush(Context *on_finish) {
     ldout(m_cct, 20) << "ImageUpdateWatchers::" << __func__ << dendl;
+
     {
       Mutex::Locker locker(m_lock);
+
       if (!m_in_flight.empty()) {
 	Context *ctx = new FunctionContext(
 	  [this, on_finish](int r) {
@@ -50,12 +52,16 @@ public:
 	                     << ": completing flush" << dendl;
 	    on_finish->complete(r);
 	  });
+
 	m_work_queue->queue(ctx, 0);
+
 	return;
       }
     }
+
     ldout(m_cct, 20) << "ImageUpdateWatchers::" << __func__
 		     << ": completing flush" << dendl;
+
     on_finish->complete(0);
   }
 
@@ -311,7 +317,7 @@ template <typename I>
 bool ImageState<I>::is_refresh_required() const {
   Mutex::Locker locker(m_lock);
 
-  // m_last_refresh is set in ImageState<I>::handle_refresh
+  // m_last_refresh was set in ImageState<I>::handle_refresh
   return (m_last_refresh != m_refresh_seq);
 }
 
@@ -415,6 +421,9 @@ void ImageState<I>::handle_prepare_lock_complete() {
   complete_action_unlock(STATE_OPEN, 0);
 }
 
+// called by
+// Image::update_watch
+// rbd_update_watch
 template <typename I>
 int ImageState<I>::register_update_watcher(UpdateWatchCtx *watcher,
 					 uint64_t *handle) {
@@ -679,9 +688,11 @@ void ImageState<I>::handle_refresh(int r) {
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
   m_lock.Lock();
+
   assert(!m_actions_contexts.empty());
 
   ActionContexts &action_contexts(m_actions_contexts.front());
+
   assert(action_contexts.first.action_type == ACTION_TYPE_REFRESH);
   assert(m_last_refresh <= action_contexts.first.refresh_seq);
 

@@ -98,6 +98,9 @@ ImageWatcher<I>::~ImageWatcher()
   }
 }
 
+// called by
+// ImageCtx::register_watch
+// librbd::Operations<I>::execute_rename for format 1
 template <typename I>
 void ImageWatcher<I>::register_watch(Context *on_finish) {
   ldout(m_image_ctx.cct, 10) << this << " registering image watcher" << dendl;
@@ -111,6 +114,7 @@ void ImageWatcher<I>::register_watch(Context *on_finish) {
     new C_RegisterWatch(this, on_finish));
 
   // m_watch_handle is address of current ioctx
+  // m_watch_ctx will notify by calling ImageWatcher<I>::handle_notify, ImageWatcher<I>::handle_error
   int r = m_image_ctx.md_ctx.aio_watch(m_image_ctx.header_oid, aio_comp,
                                        &m_watch_handle, &m_watch_ctx);
   assert(r == 0);
@@ -377,6 +381,8 @@ void ImageWatcher<I>::notify_update_features(uint64_t features, bool enabled,
   notify_lock_owner(std::move(bl), on_finish);
 }
 
+// called by
+// ImageCtx::notify_update(Context *on_finish)
 template <typename I>
 void ImageWatcher<I>::notify_header_update(Context *on_finish) {
   ldout(m_image_ctx.cct, 10) << this << ": " << __func__ << dendl;
@@ -418,10 +424,18 @@ void ImageWatcher<I>::cancel_async_requests() {
   m_async_requests.clear();
 }
 
+// called by
+// ImageWatcher<I>::notify_acquired_lock
+// ImageWatcher<I>::notify_released_lock
+// ImageWatcher<I>::handle_payload(AcquiredLockPayload)
+// ImageWatcher<I>::handle_payload(ReleasedLockPayload)
+// ImageWatcher<I>::handle_error
 template <typename I>
 void ImageWatcher<I>::set_owner_client_id(const ClientId& client_id) {
   assert(m_owner_client_id_lock.is_locked());
+
   m_owner_client_id = client_id;
+
   ldout(m_image_ctx.cct, 10) << this << " current lock owner: "
                              << m_owner_client_id << dendl;
 }
@@ -665,6 +679,8 @@ bool ImageWatcher<I>::handle_payload(const HeaderUpdatePayload &payload,
   m_image_ctx.perfcounter->inc(l_librbd_notify);
 
   if (ack_ctx != nullptr) {
+    // m_update_watchers->flush, these watchers are not for rbd internal usage,
+    // only rbd-nbd.cc:do_map registered a watcher
     m_image_ctx.state->flush_update_watchers(new C_ResponseMessage(ack_ctx));
     return false;
   }
@@ -686,15 +702,18 @@ bool ImageWatcher<I>::handle_payload(const AcquiredLockPayload &payload,
     if (payload.client_id == m_owner_client_id) {
       cancel_async_requests = false;
     }
+
     set_owner_client_id(payload.client_id);
   }
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     // potentially wake up the exclusive lock state machine now that
     // a lock owner has advertised itself
     m_image_ctx.exclusive_lock->handle_peer_notification();
   }
+
   if (cancel_async_requests &&
       (m_image_ctx.exclusive_lock == nullptr ||
        !m_image_ctx.exclusive_lock->is_lock_owner())) {
@@ -718,6 +737,7 @@ bool ImageWatcher<I>::handle_payload(const ReleasedLockPayload &payload,
       ldout(m_image_ctx.cct, 10) << this << " unexpected owner: "
                                  << payload.client_id << " != "
                                  << m_owner_client_id << dendl;
+
       cancel_async_requests = false;
     } else {
       set_owner_client_id(ClientId());
@@ -1020,6 +1040,7 @@ template <typename I>
 bool ImageWatcher<I>::handle_payload(const UpdateFeaturesPayload& payload,
                                      C_NotifyAck *ack_ctx) {
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
@@ -1035,6 +1056,7 @@ bool ImageWatcher<I>::handle_payload(const UpdateFeaturesPayload& payload,
       ::encode(ResponseMessage(r), ack_ctx->out);
     }
   }
+
   return true;
 }
 
@@ -1057,11 +1079,12 @@ void ImageWatcher<I>::process_payload(uint64_t notify_id, uint64_t handle,
                                       const Payload &payload, int r) {
   if (r < 0) {
     bufferlist out_bl;
+
+    // m_image_ctx.md_ctx.notify_ack
     acknowledge_notify(notify_id, handle, out_bl);
   } else {
     // call ImageWatcher::handle_payload to handle the payload of the
-    // notify message, in the handle_payload will create C_NotifyAck
-    // to ack the notify message
+    // notify message
     apply_visitor(HandlePayloadVisitor(this, notify_id, handle), payload);
   }
 }
@@ -1094,11 +1117,18 @@ void ImageWatcher<I>::handle_notify(uint64_t notify_id, uint64_t handle,
   if (notify_message.check_for_refresh() &&
       m_image_ctx.state->is_refresh_required()) {
 
+    // m_last_refresh != m_refresh_seq
+    // m_last_refresh was set by ImageState<I>::handle_refresh
+    // m_refresh_seq was increased by ImageState<I>::handle_update_notification for
+    // HeaderUpdatePayload, which was notified by ImageCtx::notify_update() and
+    // ImageCtx::notify_update(Context *on_finish)
+
     // CHECK_FOR_REFRESH == true:
     // FlattenPayload, ResizePayload, SnapCreatePayload, SnapRenamePayload,
     // SnapRemovePayload, SnapProtectPayload, SnapUnprotectPayload,
-    // RebuildObjectMapPayload, RenamePayload
+    // RebuildObjectMapPayload, RenamePayload, UpdateFeaturesPayload
 
+    // image_watcher->process_payload
     m_image_ctx.state->refresh(new C_ProcessPayload(this, notify_id, handle,
                                                     notify_message.payload));
   } else {
@@ -1210,6 +1240,7 @@ ImageWatcher<I>::C_NotifyAck::C_NotifyAck(ImageWatcher *image_watcher,
 template <typename I>
 void ImageWatcher<I>::C_NotifyAck::finish(int r) {
   assert(r == 0);
+
   CephContext *cct = image_watcher->m_image_ctx.cct;
   ldout(cct, 10) << this << " C_NotifyAck finish: id=" << notify_id << ", "
                  << "handle=" << handle << dendl;

@@ -105,6 +105,7 @@ private:
     watch_notify::AsyncRequestId m_async_request_id;
   };
 
+  // used by ImageWatcher<I>::register_watch
   struct WatchCtx : public librados::WatchCtx2 {
     ImageWatcher &image_watcher;
 
@@ -178,6 +179,8 @@ private:
 
     C_NotifyAck(ImageWatcher *image_watcher, uint64_t notify_id,
                 uint64_t handle);
+
+    // image_watcher->acknowledge_notify
     virtual void finish(int r);
   };
 
@@ -186,6 +189,8 @@ private:
 
     C_ResponseMessage(C_NotifyAck *notify_ack) : notify_ack(notify_ack) {
     }
+
+    // notify_ack->complete, i.e., image_watcher->acknowledge_notify
     virtual void finish(int r);
   };
 
@@ -227,7 +232,8 @@ private:
 
       if (image_watcher->handle_payload(payload, ctx)) {
 
-        // handle the payload finished, reply the notification directly
+        // handle the payload finished, reply the notification directly, i.e., no
+        // need to delay C_NotifyAck to ack the notify
 
         ctx->complete(0);
       }

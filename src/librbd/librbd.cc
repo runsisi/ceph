@@ -1503,6 +1503,8 @@ namespace librbd {
 					   status_size);
   }
 
+  // called by
+  // rbd-nbd.cc:do_map
   int Image::update_watch(UpdateWatchCtx *wctx, uint64_t *handle) {
     ImageCtx *ictx = (ImageCtx *)ctx;
     tracepoint(librbd, update_watch_enter, ictx, wctx);
