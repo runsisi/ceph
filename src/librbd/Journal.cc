@@ -1330,7 +1330,9 @@ typename Journal<I>::Future Journal<I>::wait_event(Mutex &lock, uint64_t tid,
 
 // STATE_READY -> STATE_REPLAYING
 
-// called by ImageReplayer<I>::start_replay or ImageReplayer<I>::replay_flush
+// called by
+// ImageReplayer<I>::start_replay
+// ImageReplayer<I>::replay_flush
 // pay attention to the difference between this and Journaler::start_replay
 template <typename I>
 void Journal<I>::start_external_replay(journal::Replay<I> **journal_replay,
@@ -1657,6 +1659,8 @@ void Journal<I>::handle_replay_ready() {
 
     // only one entry should be in-flight at a time
     assert(!m_processing_entry);
+
+    // will be set to false by Journal<I>::handle_replay_process_ready
     m_processing_entry = true;
   }
 
@@ -1779,6 +1783,7 @@ void Journal<I>::handle_replay_process_ready(int r) {
   {
     Mutex::Locker locker(m_lock);
 
+    // was set to true by Journal<I>::handle_replay_ready
     assert(m_processing_entry);
     m_processing_entry = false;
   }

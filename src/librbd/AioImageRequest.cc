@@ -150,6 +150,7 @@ protected:
       r = length;
     }
 
+    // m_completion->complete_request(r)
     C_AioRequest::finish(r);
   }
 
@@ -158,6 +159,7 @@ private:
   Extents m_image_extents;
 };
 
+// for object cache
 template <typename ImageCtxT>
 class C_ObjectCacheRead : public Context {
 public:
@@ -197,6 +199,7 @@ void AioImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
                                   bufferlist *pbl, int op_flags) {
   // std::vector<std::pair<uint64_t,uint64_t> >
   AioImageRead<I> req(*ictx, c, std::move(image_extents), buf, pbl, op_flags);
+
   req.send();
 }
 
@@ -205,6 +208,7 @@ template <typename I>
 void AioImageRequest<I>::aio_write(I *ictx, AioCompletion *c, uint64_t off,
                                    size_t len, const char *buf, int op_flags) {
   AioImageWrite<I> req(*ictx, c, off, len, buf, op_flags);
+
   req.send();
 }
 
@@ -243,6 +247,7 @@ void AioImageRequest<I>::send() {
   assert(m_aio_comp->is_started() ^ (get_aio_type() == AIO_TYPE_FLUSH));
 
   CephContext *cct = image_ctx.cct;
+
   AioCompletion *aio_comp = this->m_aio_comp;
 
   ldout(cct, 20) << get_request_type() << ": ictx=" << &image_ctx << ", "
@@ -360,6 +365,8 @@ void AioImageRead<I>::send_request() {
                      << extent.length << " from " << extent.buffer_extents
                      << dendl;
 
+      // it's a derived class of C_AioRequest, which is used to call
+      // aio_comp->complete_request
       C_AioRead<I> *req_comp = new C_AioRead<I>(aio_comp);
 
       AioObjectRead<I> *req = AioObjectRead<I>::create(
@@ -367,11 +374,14 @@ void AioImageRead<I>::send_request() {
         extent.length, extent.buffer_extents, snap_id, true, req_comp,
         m_op_flags);
 
-      // associate object request and object request completion
+      // req_comp->m_req = req
       req_comp->set_req(req);
 
       if (image_ctx.object_cacher) {
         // object cacher enabled, try to read from cache
+
+        // the callback will call cache_comp->m_req->complete, i.e.,
+        // req->complete, i.e., AioObjectRead<I>::complete
         C_ObjectCacheRead<I> *cache_comp = new C_ObjectCacheRead<I>(image_ctx,
                                                                     req);
         image_ctx.aio_read_from_cache(extent.oid, extent.objectno,
@@ -415,6 +425,7 @@ void AioImageRead<I>::send_image_cache_request() {
 template <typename I>
 void AbstractAioImageWrite<I>::send_request() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
 
   // image extents -> std::vector<ObjectExtent>
@@ -487,6 +498,7 @@ void AbstractAioImageWrite<I>::send_request() {
     aio_comp->set_request_count(
       object_extents.size() + get_object_cache_request_count(journaling));
 
+    // std::list<AioObjectRequestHandle *>
     AioObjectRequests requests;
 
     // divide AioImageRequest into AioObjectRequest(s) and stash or send them

@@ -142,6 +142,8 @@ Future JournalRecorder::append(uint64_t tag_tid,
   ::encode(Entry(future->get_tag_tid(), future->get_entry_tid(), payload_bl),
            entry_bl);
 
+  // Journal<I>::append_write_event has limit the journal::EventEntry size,
+  // see Journal<I>::append_write_event
   assert(entry_bl.length() <= m_journal_metadata->get_object_size());
 
   bool object_full = object_ptr->append_unlock({{future, entry_bl}});
@@ -193,6 +195,9 @@ ObjectRecorderPtr JournalRecorder::get_object(uint8_t splay_offset) {
   return object_recoder;
 }
 
+// called by
+// JournalRecorder::append
+// JournalRecorder::handle_overflow
 void JournalRecorder::close_and_advance_object_set(uint64_t object_set) {
   assert(m_lock.is_locked());
 
@@ -226,6 +231,9 @@ void JournalRecorder::close_and_advance_object_set(uint64_t object_set) {
   }
 }
 
+// called by
+// JournalRecorder::close_and_advance_object_set
+// JournalRecorder::handle_closed
 void JournalRecorder::advance_object_set() {
   assert(m_lock.is_locked());
 
@@ -318,6 +326,7 @@ ObjectRecorderPtr JournalRecorder::create_object_recorder(
     m_journal_metadata->get_timer(), m_journal_metadata->get_timer_lock(),
     &m_object_handler, m_journal_metadata->get_order(), m_flush_interval,
     m_flush_bytes, m_flush_age));
+
   return object_recorder;
 }
 
@@ -391,6 +400,8 @@ void JournalRecorder::handle_update() {
   }
 }
 
+// called by
+// journal::ObjectHandler::handle_closed, see journal::ObjectRecorder::notify_handler_unlock
 void JournalRecorder::handle_closed(ObjectRecorder *object_recorder) {
   ldout(m_cct, 10) << __func__ << ": " << object_recorder->get_oid() << dendl;
 
@@ -429,6 +440,8 @@ void JournalRecorder::handle_closed(ObjectRecorder *object_recorder) {
   }
 }
 
+// called by
+// journal::ObjectHandler::handle_closed, see journal::ObjectRecorder::notify_handler_unlock
 void JournalRecorder::handle_overflow(ObjectRecorder *object_recorder) {
   ldout(m_cct, 10) << __func__ << ": " << object_recorder->get_oid() << dendl;
 

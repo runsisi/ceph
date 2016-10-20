@@ -85,6 +85,8 @@ private:
   double m_flush_age;
 
   Listener m_listener;
+  // will be used by JournalRecorder::create_object_recorder, and
+  // notified by journal::ObjectRecorder::notify_handler_unlock
   ObjectHandler m_object_handler;
 
   Mutex m_lock;

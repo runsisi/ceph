@@ -923,7 +923,9 @@ int librados::IoCtxImpl::aio_write(const object_t &oid, AioCompletionImpl *c,
   if (snap_seq != CEPH_NOSNAP)
     return -EROFS;
 
+  // Op::onack
   Context *onack = c->wants_ack() ? new C_aio_Ack(c) : NULL;
+  // Op::oncommit
   Context *onsafe = new C_aio_Safe(c);
 
   c->io = this;

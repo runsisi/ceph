@@ -726,12 +726,16 @@ void JournalMetadata::set_minimum_set(uint64_t object_set) {
   m_minimum_set = object_set;
 }
 
+// never be called
 int JournalMetadata::set_active_set(uint64_t object_set) {
   C_SaferCond ctx;
   set_active_set(object_set, &ctx);
   return ctx.wait();
 }
 
+// called by
+// JournalMetadata::set_active_set, which never be called
+// JournalRecorder::advance_object_set
 void JournalMetadata::set_active_set(uint64_t object_set, Context *on_finish) {
   Mutex::Locker locker(m_lock);
 

@@ -617,7 +617,7 @@ void ImageReplayer<I>::start_replay() {
   Context *start_ctx = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_start_replay>(this);
 
-  // stop append and call journal::Replay<I>::create
+  // to create a librbd::journal::Replay instance
   m_local_journal->start_external_replay(&m_local_replay, start_ctx);
 }
 

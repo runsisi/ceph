@@ -1352,6 +1352,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 			 bool external_call)
 {
   assert(lock.is_locked());
+
   bool success = true;
   int error = 0;
   uint64_t bytes_in_cache = 0;

@@ -426,6 +426,9 @@ void Journaler::get_tags(uint64_t start_after_tag_tid, uint64_t tag_class,
   m_metadata->get_tags(start_after_tag_tid, tag_class, tags, on_finish);
 }
 
+// called by
+// Journal<I>::handle_get_tags
+// rbd::action::journal::JournalPlayer::exec
 void Journaler::start_replay(ReplayHandler *replay_handler) {
   // m_player = new JournalPlayer(replay_handler)
   create_player(replay_handler);
@@ -433,6 +436,8 @@ void Journaler::start_replay(ReplayHandler *replay_handler) {
   m_player->prefetch();
 }
 
+// called by
+// ImageReplayer<I>::handle_start_replay
 void Journaler::start_live_replay(ReplayHandler *replay_handler,
                                   double interval) {
   create_player(replay_handler); // m_player = new JournalPlayer
@@ -440,6 +445,10 @@ void Journaler::start_live_replay(ReplayHandler *replay_handler,
   m_player->prefetch_and_watch(interval);
 }
 
+// called by
+// Journal<I>::handle_replay_ready
+// rbd::action::journal::JournalPlayer::handle_replay_ready
+// ImageReplayer<I>::handle_replay_ready
 bool Journaler::try_pop_front(ReplayEntry *replay_entry,
 			      uint64_t *tag_tid) {
   assert(m_player != NULL);
@@ -452,6 +461,7 @@ bool Journaler::try_pop_front(ReplayEntry *replay_entry,
   }
 
   *replay_entry = ReplayEntry(entry.get_data(), commit_tid);
+
   if (tag_tid != nullptr) {
     *tag_tid = entry.get_tag_tid();
   }

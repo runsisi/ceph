@@ -3317,6 +3317,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
   };
 
+  // called by
+  // librbd::AioImageRead<I>::send_request
   void readahead(ImageCtx *ictx,
                  const vector<pair<uint64_t,uint64_t> >& image_extents)
   {

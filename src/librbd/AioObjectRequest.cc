@@ -83,6 +83,7 @@ AioObjectRequest<I>::AioObjectRequest(ImageCtx *ictx, const std::string &oid,
 
   RWLock::RLocker snap_locker(m_ictx->snap_lock);
   RWLock::RLocker parent_locker(m_ictx->parent_lock);
+
   // determines if we have a parent image, see AioObjectRequest::has_parent
   compute_parent_extents();
 }
@@ -97,6 +98,7 @@ void AioObjectRequest<I>::complete(int r)
       r = 0;
     }
 
+    // C_AioRequest/C_AioRead/C_ImageCacheRead
     m_completion->complete(r);
 
     delete this;
@@ -279,6 +281,7 @@ void AioObjectRead<I>::send() {
     // send read request to parent if the object doesn't exist locally
     if (image_ctx->object_map != nullptr &&
         !image_ctx->object_map->object_may_exist(this->m_object_no)) {
+      // the callback will call AioObjectRequest<I>::complete
       image_ctx->op_work_queue->queue(util::create_context_callback<
         AioObjectRequest<I> >(this), -ENOENT);
       return;

@@ -222,6 +222,7 @@ struct C_InvalidateCache : public Context {
     } else {
       exclusive_lock_policy = new exclusive_lock::StandardPolicy(this);
     }
+
     journal_policy = new journal::StandardPolicy<ImageCtx>(this);
   }
 
@@ -314,12 +315,16 @@ struct C_InvalidateCache : public Context {
       if (!obj) {
 	obj = MIN(2000, MAX(10, cache_size / 100 / sizeof(ObjectCacher::Object)));
       }
+
       ldout(cct, 10) << " cache bytes " << cache_size
 	<< " -> about " << obj << " objects" << dendl;
+
       object_cacher->set_max_objects(obj);
 
       object_set = new ObjectCacher::ObjectSet(NULL, data_ctx.get_id(), 0);
       object_set->return_enoent = true;
+
+      // start flusher_thread
       object_cacher->start();
     }
 
@@ -726,6 +731,9 @@ struct C_InvalidateCache : public Context {
     return -ENOENT;
   }
 
+  // called by
+  // librbd::AioImageRead<I>::send_request
+  // librbd::readahead
   void ImageCtx::aio_read_from_cache(object_t o, uint64_t object_no,
 				     bufferlist *bl, size_t len,
 				     uint64_t off, Context *onfinish,
@@ -733,13 +741,16 @@ struct C_InvalidateCache : public Context {
     snap_lock.get_read();
     ObjectCacher::OSDRead *rd = object_cacher->prepare_read(snap_id, bl, fadvise_flags);
     snap_lock.put_read();
+
     ObjectExtent extent(o, object_no, off, len, 0);
     extent.oloc.pool = data_ctx.get_id();
     extent.buffer_extents.push_back(make_pair(0, len));
     rd->extents.push_back(extent);
+
     cache_lock.Lock();
     int r = object_cacher->readx(rd, object_set, onfinish);
     cache_lock.Unlock();
+
     if (r != 0)
       onfinish->complete(r);
   }

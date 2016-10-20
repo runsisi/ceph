@@ -107,6 +107,8 @@ void JournalPlayer::prefetch() {
   
   m_state = STATE_PREFETCH;
 
+  // used for external replay, for local replay the m_journal_metadata->get_active_set
+  // should not be changed during the replay
   m_active_set = m_journal_metadata->get_active_set();
   uint8_t splay_width = m_journal_metadata->get_splay_width();
 
@@ -203,6 +205,7 @@ void JournalPlayer::shut_down(Context *on_finish) {
   m_async_op_tracker.wait_for_ops(on_finish);
 }
 
+// called by Journaler::try_pop_front
 // Journal<I>::handle_replay_ready will be notified by
 // JournalPlayer::notify_entries_available and try to pop an entry to
 // process
@@ -1062,7 +1065,7 @@ void JournalPlayer::notify_entries_available() {
 
   ldout(m_cct, 10) << __func__ << ": entries available" << dendl;
 
-  // Journal::handle_replay_ready
+  // replay_handler->handle_entries_available, i.e., Journal::handle_replay_ready
   m_journal_metadata->queue(new C_HandleEntriesAvailable(
     m_replay_handler), 0);
 }
