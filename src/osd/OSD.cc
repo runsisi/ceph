@@ -263,10 +263,10 @@ OSDService::OSDService(OSD *osd) :
   backfill_request_lock("OSDService::backfill_request_lock"),
   backfill_request_timer(cct, backfill_request_lock, false),
   reserver_finisher(cct),
-  local_reserver(&reserver_finisher, cct->_conf->osd_max_backfills,
-		 cct->_conf->osd_min_recovery_priority),
-  remote_reserver(&reserver_finisher, cct->_conf->osd_max_backfills,
-		  cct->_conf->osd_min_recovery_priority),
+  local_reserver(&reserver_finisher, cct->_conf->osd_max_backfills,     // default 1
+		 cct->_conf->osd_min_recovery_priority),                // default 0
+  remote_reserver(&reserver_finisher, cct->_conf->osd_max_backfills,    // default 1
+		  cct->_conf->osd_min_recovery_priority),               // default 0
   pg_temp_lock("OSDService::pg_temp_lock"),
   recovery_lock("OSDService::recovery_lock"),
   recovery_ops_active(0),
@@ -8190,6 +8190,7 @@ void OSD::handle_pg_backfill_reserve(OpRequestRef op)
 void OSD::handle_pg_recovery_reserve(OpRequestRef op)
 {
   MRecoveryReserve *m = static_cast<MRecoveryReserve*>(op->get_req());
+
   assert(m->get_type() == MSG_OSD_RECOVERY_RESERVE);
 
   if (!require_osd_peer(op->get_req()))
@@ -8199,18 +8200,21 @@ void OSD::handle_pg_recovery_reserve(OpRequestRef op)
 
   PG::CephPeeringEvtRef evt;
   if (m->type == MRecoveryReserve::REQUEST) {
+    // -> RepWaitRecoveryReserved
     evt = PG::CephPeeringEvtRef(
       new PG::CephPeeringEvt(
 	m->query_epoch,
 	m->query_epoch,
 	PG::RequestRecovery()));
   } else if (m->type == MRecoveryReserve::GRANT) {
+    // -> RepRecovering
     evt = PG::CephPeeringEvtRef(
       new PG::CephPeeringEvt(
 	m->query_epoch,
 	m->query_epoch,
 	PG::RemoteRecoveryReserved()));
   } else if (m->type == MRecoveryReserve::RELEASE) {
+    // -> RepNotRecovering
     evt = PG::CephPeeringEvtRef(
       new PG::CephPeeringEvt(
 	m->query_epoch,
@@ -8232,6 +8236,7 @@ void OSD::handle_pg_recovery_reserve(OpRequestRef op)
   }
 
   pg->queue_peering_event(evt);
+
   pg->unlock();
 }
 

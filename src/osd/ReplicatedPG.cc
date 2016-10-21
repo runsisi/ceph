@@ -3810,7 +3810,9 @@ void ReplicatedPG::do_backfill(OpRequestRef op)
 	m->query_epoch,
 	spg_t(info.pgid.pgid, primary.shard));
       reply->set_priority(get_recovery_op_priority());
+
       osd->send_message_osd_cluster(reply, m->get_connection());
+
       queue_peering_event(
 	CephPeeringEvtRef(
 	  std::make_shared<CephPeeringEvt>(

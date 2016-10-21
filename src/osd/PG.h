@@ -1642,6 +1642,7 @@ public:
 	boost::statechart::custom_reaction< IntervalFlush >,
 	boost::statechart::transition< boost::statechart::event_base, Crashed >
 	> reactions;
+
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const AdvMap&);
       boost::statechart::result react(const ActMap&);
@@ -1666,6 +1667,7 @@ public:
 	boost::statechart::custom_reaction< IntervalFlush >,
 	boost::statechart::transition< boost::statechart::event_base, Crashed >
 	> reactions;
+
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const AdvMap&);
       boost::statechart::result react(const FlushedEvt&);
@@ -1726,6 +1728,7 @@ public:
 	boost::statechart::custom_reaction< MInfoRec >,
 	boost::statechart::custom_reaction< MNotifyRec >
 	> reactions;
+
       explicit WaitActingChange(my_context ctx);
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const AdvMap&);
@@ -1750,6 +1753,7 @@ public:
 	boost::statechart::transition< Activate, Active >,
 	boost::statechart::custom_reaction< AdvMap >
 	> reactions;
+
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const AdvMap &advmap);
     };
@@ -1774,6 +1778,7 @@ public:
 	boost::statechart::custom_reaction< Backfilled >,
 	boost::statechart::custom_reaction< AllReplicasActivated >
 	> reactions;
+
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const ActMap&);
       boost::statechart::result react(const AdvMap&);
@@ -1790,6 +1795,7 @@ public:
       typedef boost::mpl::list<
 	boost::statechart::transition< DoRecovery, WaitLocalRecoveryReserved >
       > reactions;
+
       explicit Clean(my_context ctx);
       void exit();
     };
@@ -1799,6 +1805,7 @@ public:
 	boost::statechart::transition< GoClean, Clean >,
 	boost::statechart::custom_reaction< AllReplicasActivated >
       > reactions;
+
       explicit Recovered(my_context ctx);
       void exit();
       boost::statechart::result react(const AllReplicasActivated&) {
@@ -1812,6 +1819,7 @@ public:
 	boost::statechart::transition< Backfilled, Recovered >,
 	boost::statechart::custom_reaction< RemoteReservationRejected >
 	> reactions;
+
       explicit Backfilling(my_context ctx);
       boost::statechart::result react(const RemoteReservationRejected& evt);
       void exit();
@@ -1819,10 +1827,14 @@ public:
 
     struct WaitRemoteBackfillReserved : boost::statechart::state< WaitRemoteBackfillReserved, Active >, NamedState {
       typedef boost::mpl::list<
+        // will be queued by WaitRemoteBackfillReserved::WaitRemoteBackfillReserved
 	boost::statechart::custom_reaction< RemoteBackfillReserved >,
+	// will be queued by OSD::handle_pg_backfill_reserve
 	boost::statechart::custom_reaction< RemoteReservationRejected >,
+	// will be queued by WaitRemoteBackfillReserved::react(RemoteBackfillReserved)
 	boost::statechart::transition< AllBackfillsReserved, Backfilling >
 	> reactions;
+
       set<pg_shard_t>::const_iterator backfill_osd_it;
       explicit WaitRemoteBackfillReserved(my_context ctx);
       void exit();
@@ -1834,6 +1846,7 @@ public:
       typedef boost::mpl::list<
 	boost::statechart::transition< LocalBackfillReserved, WaitRemoteBackfillReserved >
 	> reactions;
+
       explicit WaitLocalBackfillReserved(my_context ctx);
       void exit();
     };
@@ -1844,6 +1857,7 @@ public:
 	boost::statechart::custom_reaction< RemoteBackfillReserved >,
 	boost::statechart::custom_reaction< RemoteReservationRejected >
 	> reactions;
+
       explicit NotBackfilling(my_context ctx);
       void exit();
       boost::statechart::result react(const RemoteBackfillReserved& evt);
@@ -1863,6 +1877,7 @@ public:
 	boost::statechart::custom_reaction< MLogRec >,
 	boost::statechart::custom_reaction< Activate >
 	> reactions;
+
       boost::statechart::result react(const QueryState& q);
       boost::statechart::result react(const MInfoRec& infoevt);
       boost::statechart::result react(const MLogRec& logevt);
@@ -1873,10 +1888,12 @@ public:
 
     struct RepRecovering : boost::statechart::state< RepRecovering, ReplicaActive >, NamedState {
       typedef boost::mpl::list<
+        // will be queued by OSD::handle_pg_recovery_reserve
 	boost::statechart::transition< RecoveryDone, RepNotRecovering >,
 	boost::statechart::transition< RemoteReservationRejected, RepNotRecovering >,
 	boost::statechart::custom_reaction< BackfillTooFull >
 	> reactions;
+
       explicit RepRecovering(my_context ctx);
       boost::statechart::result react(const BackfillTooFull &evt);
       void exit();
@@ -1884,9 +1901,12 @@ public:
 
     struct RepWaitBackfillReserved : boost::statechart::state< RepWaitBackfillReserved, ReplicaActive >, NamedState {
       typedef boost::mpl::list<
+        // will be queued by RepNotRecovering::react(RequestBackfillPrio)
 	boost::statechart::custom_reaction< RemoteBackfillReserved >,
+	// will be queued by RepNotRecovering::react(RequestBackfillPrio)
 	boost::statechart::custom_reaction< RemoteReservationRejected >
 	> reactions;
+
       explicit RepWaitBackfillReserved(my_context ctx);
       void exit();
       boost::statechart::result react(const RemoteBackfillReserved &evt);
@@ -1895,8 +1915,10 @@ public:
 
     struct RepWaitRecoveryReserved : boost::statechart::state< RepWaitRecoveryReserved, ReplicaActive >, NamedState {
       typedef boost::mpl::list<
+        // RemoteRecoveryReserved will be queued by OSD::handle_pg_recovery_reserve
 	boost::statechart::custom_reaction< RemoteRecoveryReserved >
 	> reactions;
+
       explicit RepWaitRecoveryReserved(my_context ctx);
       void exit();
       boost::statechart::result react(const RemoteRecoveryReserved &evt);
@@ -1904,10 +1926,14 @@ public:
 
     struct RepNotRecovering : boost::statechart::state< RepNotRecovering, ReplicaActive>, NamedState {
       typedef boost::mpl::list<
+        // will be queued by OSD::handle_pg_backfill_reserve
 	boost::statechart::custom_reaction< RequestBackfillPrio >,
+	// will be queued by OSD::handle_pg_recovery_reserve
         boost::statechart::transition< RequestRecovery, RepWaitRecoveryReserved >,
+        // will be queued by OSD::handle_pg_recovery_reserve
 	boost::statechart::transition< RecoveryDone, RepNotRecovering >  // for compat with pre-reservation peers
 	> reactions;
+
       explicit RepNotRecovering(my_context ctx);
       boost::statechart::result react(const RequestBackfillPrio &evt);
       void exit();
@@ -1927,9 +1953,12 @@ public:
 
     struct WaitRemoteRecoveryReserved : boost::statechart::state< WaitRemoteRecoveryReserved, Active >, NamedState {
       typedef boost::mpl::list <
+        // will be queued by WaitRemoteRecoveryReserved::WaitRemoteRecoveryReserved
 	boost::statechart::custom_reaction< RemoteRecoveryReserved >,
+	// will be queued by WaitRemoteRecoveryReserved::react(RemoteRecoveryReserved)
 	boost::statechart::transition< AllRemotesReserved, Recovering >
 	> reactions;
+
       set<pg_shard_t>::const_iterator remote_recovery_reservation_it;
       explicit WaitRemoteRecoveryReserved(my_context ctx);
       boost::statechart::result react(const RemoteRecoveryReserved &evt);
@@ -1938,8 +1967,10 @@ public:
 
     struct WaitLocalRecoveryReserved : boost::statechart::state< WaitLocalRecoveryReserved, Active >, NamedState {
       typedef boost::mpl::list <
+        // will be queued by WaitLocalRecoveryReserved::WaitLocalRecoveryReserved
 	boost::statechart::transition< LocalRecoveryReserved, WaitRemoteRecoveryReserved >
 	> reactions;
+
       explicit WaitLocalRecoveryReserved(my_context ctx);
       void exit();
     };
@@ -1967,6 +1998,7 @@ public:
 	boost::statechart::custom_reaction< ActMap >,
 	boost::statechart::custom_reaction< RecoveryDone >
 	> reactions;
+
       boost::statechart::result react(const MQuery& query);
       boost::statechart::result react(const MLogRec& logevt);
       boost::statechart::result react(const MInfoRec& infoevt);
