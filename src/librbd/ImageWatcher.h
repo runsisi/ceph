@@ -105,7 +105,8 @@ private:
     watch_notify::AsyncRequestId m_async_request_id;
   };
 
-  // used by ImageWatcher<I>::register_watch
+  // used by
+  // ImageWatcher<I>::register_watch
   struct WatchCtx : public librados::WatchCtx2 {
     ImageWatcher &image_watcher;
 
@@ -137,6 +138,8 @@ private:
     watch_notify::AsyncRequestId m_async_request_id;
   };
 
+  // used by
+  // ImageWatcher<I>::prepare_async_request
   class RemoteContext : public Context {
   public:
     RemoteContext(ImageWatcher &image_watcher,
@@ -159,6 +162,8 @@ private:
     ProgressContext *m_prog_ctx;
   };
 
+  // used by
+  // ImageWatcher<I>::register_watch
   struct C_RegisterWatch : public Context {
     ImageWatcher *image_watcher;
     Context *on_finish;
@@ -257,6 +262,8 @@ private:
   Mutex m_owner_client_id_lock;
   watch_notify::ClientId m_owner_client_id;
 
+  // initialized by ImageWatcher<I>::ImageWatcher, will be used to notify
+  // the image_ctx.header_oid object
   object_watcher::Notifier m_notifier;
 
   void handle_register_watch(int r);

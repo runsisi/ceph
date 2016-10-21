@@ -201,15 +201,20 @@ int ImageWatcher<I>::notify_async_progress(const AsyncRequestId &request,
   return 0;
 }
 
-// called by ImageWatcher::RemoteContext::finish
+// called by
+// ImageWatcher<I>::RemoteContext::finish
+// ImageWatcher<I>::handle_async_complete
 template <typename I>
 void ImageWatcher<I>::schedule_async_complete(const AsyncRequestId &request,
                                               int r) {
   FunctionContext *ctx = new FunctionContext(
     boost::bind(&ImageWatcher<I>::notify_async_complete, this, request, r));
+
   m_task_finisher->queue(ctx);
 }
 
+// called by
+// callback of ImageWatcher<I>::schedule_async_complete
 template <typename I>
 void ImageWatcher<I>::notify_async_complete(const AsyncRequestId &request,
                                             int r) {
@@ -367,8 +372,8 @@ void ImageWatcher<I>::notify_rename(const std::string &image_name,
   notify_lock_owner(std::move(bl), on_finish);
 }
 
-// called by ImageCtx::notify_update(Context *on_finish), which called by
-// Operations.cc:C_NotifyUpdate::complete
+// called by
+// librbd::Operations<I>::update_features
 template <typename I>
 void ImageWatcher<I>::notify_update_features(uint64_t features, bool enabled,
                                              Context *on_finish) {
@@ -378,6 +383,7 @@ void ImageWatcher<I>::notify_update_features(uint64_t features, bool enabled,
 
   bufferlist bl;
   ::encode(NotifyMessage(UpdateFeaturesPayload(features, enabled)), bl);
+
   notify_lock_owner(std::move(bl), on_finish);
 }
 
@@ -455,11 +461,13 @@ void ImageWatcher<I>::notify_acquired_lock() {
 
   {
     Mutex::Locker owner_client_id_locker(m_owner_client_id_lock);
+
     set_owner_client_id(client_id);
   }
 
   bufferlist bl;
   ::encode(NotifyMessage(AcquiredLockPayload(client_id)), bl);
+
   m_notifier.notify(bl, nullptr, nullptr);
 }
 
@@ -660,11 +668,13 @@ int ImageWatcher<I>::prepare_async_request(const AsyncRequestId& async_request_i
       *new_request = true;
 
       *prog_ctx = new RemoteProgressContext(*this, async_request_id);
+
       *ctx = new RemoteContext(*this, async_request_id, *prog_ctx);
     } else {
       *new_request = false;
     }
   }
+
   return 0;
 }
 
@@ -703,6 +713,8 @@ bool ImageWatcher<I>::handle_payload(const AcquiredLockPayload &payload,
       cancel_async_requests = false;
     }
 
+    // ImageWatcher<I>::m_owner_client_id records the current exclusive
+    // lock owner
     set_owner_client_id(payload.client_id);
   }
 
@@ -734,6 +746,10 @@ bool ImageWatcher<I>::handle_payload(const ReleasedLockPayload &payload,
     Mutex::Locker l(m_owner_client_id_lock);
 
     if (payload.client_id != m_owner_client_id) {
+
+      // we previously recorded exclusive lock owner does not match
+      // the current owner who released it
+
       ldout(m_image_ctx.cct, 10) << this << " unexpected owner: "
                                  << payload.client_id << " != "
                                  << m_owner_client_id << dendl;
@@ -745,6 +761,7 @@ bool ImageWatcher<I>::handle_payload(const ReleasedLockPayload &payload,
   }
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   if (cancel_async_requests &&
       (m_image_ctx.exclusive_lock == nullptr ||
        !m_image_ctx.exclusive_lock->is_lock_owner())) {

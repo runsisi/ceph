@@ -37,6 +37,7 @@ void NotifyLockOwner::send_notify() {
 
   assert(m_image_ctx.owner_lock.is_locked());
 
+  // ImageWatcher<I>::m_notifier, see ImageWatcher<I>::notify_lock_owner
   m_notifier.notify(m_bl, &m_out_bl, create_context_callback<
     NotifyLockOwner, &NotifyLockOwner::handle_notify>(this));
 }
@@ -55,6 +56,7 @@ void NotifyLockOwner::handle_notify(int r) {
   typedef std::map<std::pair<uint64_t, uint64_t>, bufferlist> responses_t;
 
   responses_t responses;
+
   if (m_out_bl.length() > 0) {
     try {
       bufferlist::iterator iter = m_out_bl.begin();
@@ -68,6 +70,7 @@ void NotifyLockOwner::handle_notify(int r) {
 
   bufferlist response;
   bool lock_owner_responded = false;
+
   for (responses_t::iterator i = responses.begin(); i != responses.end(); ++i) {
     if (i->second.length() > 0) {
       if (lock_owner_responded) {

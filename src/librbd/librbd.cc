@@ -754,6 +754,9 @@ namespace librbd {
     return r;
   }
 
+  // called by
+  // rbd::action::feature::execute
+  // rbd::action::journal::do_reset_journal
   int Image::update_features(uint64_t features, bool enabled)
   {
     ImageCtx *ictx = reinterpret_cast<ImageCtx *>(ctx);

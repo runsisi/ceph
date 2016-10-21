@@ -1353,7 +1353,9 @@ void Operations<I>::execute_snap_set_limit(const uint64_t limit,
   request->send();
 }
 
-// called by Operations<I>::snap_rollback, librbd::remove
+// called by
+// Image::update_features
+// rbd_update_features
 template <typename I>
 int Operations<I>::update_features(uint64_t features, bool enabled) {
   CephContext *cct = m_image_ctx.cct;

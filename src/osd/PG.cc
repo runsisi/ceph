@@ -6362,6 +6362,7 @@ boost::statechart::result
 PG::RecoveryState::RepWaitRecoveryReserved::react(const RemoteRecoveryReserved &evt)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   pg->osd->send_message_osd_cluster(
     pg->primary.osd,
     new MRecoveryReserve(
@@ -6369,6 +6370,7 @@ PG::RecoveryState::RepWaitRecoveryReserved::react(const RemoteRecoveryReserved &
       spg_t(pg->info.pgid.pgid, pg->primary.shard),
       pg->get_osdmap()->get_epoch()),
     pg->get_osdmap()->get_epoch());
+
   return transit<RepRecovering>();
 }
 
@@ -6542,8 +6544,10 @@ PG::RecoveryState::WaitRemoteRecoveryReserved::react(const RemoteRecoveryReserve
 
   if (remote_recovery_reservation_it != context< Active >().remote_shards_to_reserve_recovery.end()) {
     assert(*remote_recovery_reservation_it != pg->pg_whoami);
+
     ConnectionRef con = pg->osd->get_con_osd_cluster(
       remote_recovery_reservation_it->osd, pg->get_osdmap()->get_epoch());
+
     if (con) {
       pg->osd->send_message_osd_cluster(
         new MRecoveryReserve(
@@ -6552,10 +6556,12 @@ PG::RecoveryState::WaitRemoteRecoveryReserved::react(const RemoteRecoveryReserve
 	  pg->get_osdmap()->get_epoch()),
 	con.get());
     }
+
     ++remote_recovery_reservation_it;
   } else {
     post_event(AllRemotesReserved());
   }
+
   return discard_event();
 }
 
@@ -6591,8 +6597,10 @@ void PG::RecoveryState::Recovering::release_reservations()
         ++i) {
     if (*i == pg->pg_whoami) // skip myself
       continue;
+
     ConnectionRef con = pg->osd->get_con_osd_cluster(
       i->osd, pg->get_osdmap()->get_epoch());
+
     if (con) {
       pg->osd->send_message_osd_cluster(
         new MRecoveryReserve(
