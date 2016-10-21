@@ -2025,7 +2025,9 @@ int OSD::enable_disable_fuse(bool stop)
 int OSD::init()
 {
   CompatSet initial, diff;
+
   Mutex::Locker lock(osd_lock);
+
   if (is_stopping())
     return 0;
 
@@ -2036,6 +2038,7 @@ int OSD::init()
   // mount.
   dout(2) << "mounting " << dev_path << " "
 	  << (journal_path.empty() ? "(no journal)" : journal_path) << dendl;
+
   assert(store);  // call pre_init() first!
 
   store->set_cache_shards(g_conf->osd_op_num_shards);
@@ -2115,6 +2118,7 @@ int OSD::init()
   }
 
   assert_warn(whoami == superblock.whoami);
+
   if (whoami != superblock.whoami) {
     derr << "OSD::init: superblock says osd"
 	 << superblock.whoami << " but I am osd." << whoami << dendl;
@@ -3083,6 +3087,9 @@ PGPool OSD::_get_pool(int id, OSDMapRef createmap)
   return p;
 }
 
+// called by
+// OSD::_create_lock_pg
+// OSD::load_pgs
 PG *OSD::_open_lock_pg(
   OSDMapRef createmap,
   spg_t pgid, bool no_lockdep_check)
@@ -3090,25 +3097,35 @@ PG *OSD::_open_lock_pg(
   assert(osd_lock.is_locked());
 
   PG* pg = _make_pg(createmap, pgid);
+
   {
     RWLock::WLocker l(pg_map_lock);
+
     pg->lock(no_lockdep_check);
+
     pg_map[pgid] = pg;
     pg->get("PGMap");  // because it's in pg_map
+
     service.pg_add_epoch(pg->info.pgid, createmap->get_epoch());
   }
+
   return pg;
 }
 
+// called by
+// OSD::_open_lock_pg
+// OSD::split_pgs
 PG* OSD::_make_pg(
   OSDMapRef createmap,
   spg_t pgid)
 {
   dout(10) << "_open_lock_pg " << pgid << dendl;
+
   PGPool pool = _get_pool(pgid.pool(), createmap);
 
   // create
   PG *pg;
+
   if (createmap->get_pg_type(pgid.pgid) == pg_pool_t::TYPE_REPLICATED ||
       createmap->get_pg_type(pgid.pgid) == pg_pool_t::TYPE_ERASURE)
     pg = new ReplicatedPG(&service, createmap, pool, pgid);
@@ -3122,16 +3139,24 @@ PG* OSD::_make_pg(
 void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
 {
   epoch_t e(service.get_osdmap()->get_epoch());
+
   pg->get("PGMap");  // For pg_map
   pg_map[pg->info.pgid] = pg;
+
   service.pg_add_epoch(pg->info.pgid, pg->get_osdmap()->get_epoch());
 
   dout(10) << "Adding newly split pg " << *pg << dendl;
+
   pg->handle_loaded(rctx);
+
   pg->write_if_dirty(*(rctx->transaction));
+
+  // queue NullEvt event
   pg->queue_null(e, e);
+
   map<spg_t, list<PG::CephPeeringEvtRef> >::iterator to_wake =
     peering_wait_for_split.find(pg->info.pgid);
+
   if (to_wake != peering_wait_for_split.end()) {
     for (list<PG::CephPeeringEvtRef>::iterator i =
 	   to_wake->second.begin();
@@ -3139,8 +3164,10 @@ void OSD::add_newly_split_pg(PG *pg, PG::RecoveryCtx *rctx)
 	 ++i) {
       pg->queue_peering_event(*i);
     }
+
     peering_wait_for_split.erase(to_wake);
   }
+
   if (!service.get_osdmap()->have_pg_pool(pg->info.pgid.pool()))
     _remove_pg(pg);
 }
@@ -3203,6 +3230,8 @@ OSD::res_result OSD::_try_resurrect_pg(
   return RES_NONE;
 }
 
+// called by
+// OSD::handle_pg_peering_evt
 PG *OSD::_create_lock_pg(
   OSDMapRef createmap,
   spg_t pgid,
@@ -3216,6 +3245,7 @@ PG *OSD::_create_lock_pg(
   ObjectStore::Transaction& t)
 {
   assert(osd_lock.is_locked());
+
   dout(20) << "_create_lock_pg pgid " << pgid << dendl;
 
   PG *pg = _open_lock_pg(createmap, pgid, true);
@@ -3234,6 +3264,7 @@ PG *OSD::_create_lock_pg(
     &t);
 
   dout(7) << "_create_lock_pg " << *pg << dendl;
+
   return pg;
 }
 
@@ -3286,10 +3317,14 @@ PG *OSD::_lookup_lock_pg_with_map_lock_held(spg_t pgid)
   return pg;
 }
 
+// called by
+// OSD::init
 void OSD::load_pgs()
 {
   assert(osd_lock.is_locked());
+
   dout(0) << "load_pgs" << dendl;
+
   {
     RWLock::RLocker l(pg_map_lock);
     assert(pg_map.empty());
@@ -3307,10 +3342,13 @@ void OSD::load_pgs()
        it != ls.end();
        ++it) {
     spg_t pgid;
+
     if (it->is_temp(&pgid) ||
        (it->is_pg(&pgid) && PG::_has_removal_flag(store, pgid))) {
       dout(10) << "load_pgs " << *it << " clearing temp" << dendl;
+
       recursive_remove_collection(store, pgid, *it);
+
       continue;
     }
 
@@ -3326,8 +3364,12 @@ void OSD::load_pgs()
     }
 
     dout(10) << "pgid " << pgid << " coll " << coll_t(pgid) << dendl;
+
     bufferlist bl;
+    // __u32
     epoch_t map_epoch = 0;
+
+    // get pg current osdmap epoch from omap of pg meta object
     int r = PG::peek_map_epoch(store, pgid, &map_epoch, &bl);
     if (r < 0) {
       derr << __func__ << " unable to peek at " << pgid << " metadata, skipping"
@@ -3353,10 +3395,13 @@ void OSD::load_pgs()
 	  assert(0 == "Missing map in load_pgs");
 	}
       }
+
       pg = _open_lock_pg(pgosdmap, pgid);
     } else {
+      // map_epoch == 0
       pg = _open_lock_pg(osdmap, pgid);
     }
+
     // there can be no waiters here, so we don't call wake_pg_waiters
 
     pg->ch = store->open_collection(pg->coll);
@@ -3384,14 +3429,18 @@ void OSD::load_pgs()
     // generate state for PG's current mapping
     int primary, up_primary;
     vector<int> acting, up;
+
     pg->get_osdmap()->pg_to_up_acting_osds(
       pgid.pgid, &up, &up_primary, &acting, &primary);
+
     pg->init_primary_up_acting(
       up,
       acting,
       up_primary,
       primary);
+
     int role = OSDMap::calc_pg_role(whoami, pg->acting);
+
     if (pg->pool.info.is_replicated() || role == pg->pg_whoami.shard)
       pg->set_role(role);
     else
@@ -3400,16 +3449,20 @@ void OSD::load_pgs()
     pg->reg_next_scrub();
 
     PG::RecoveryCtx rctx(0, 0, 0, 0, 0, 0);
+    // handle Load event
     pg->handle_loaded(&rctx);
 
     dout(10) << "load_pgs loaded " << *pg << " " << pg->pg_log.get_log() << dendl;
+
     if (pg->pg_log.is_dirty()) {
       ObjectStore::Transaction t;
       pg->write_if_dirty(t);
       store->apply_transaction(pg->osr.get(), std::move(t));
     }
+
     pg->unlock();
   }
+
   {
     RWLock::RLocker l(pg_map_lock);
     dout(0) << "load_pgs opened " << pg_map.size() << " pgs" << dendl;
@@ -3418,7 +3471,9 @@ void OSD::load_pgs()
   // clean up old infos object?
   if (has_upgraded && store->exists(coll_t::meta(), OSD::make_infos_oid())) {
     dout(1) << __func__ << " removing legacy infos object" << dendl;
+
     ObjectStore::Transaction t;
+
     t.remove(coll_t::meta(), OSD::make_infos_oid());
     int r = store->apply_transaction(service.meta_osr.get(), std::move(t));
     if (r != 0) {

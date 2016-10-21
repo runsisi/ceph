@@ -987,14 +987,17 @@ public:
       }
     }
   }
+
   // replay / delayed pg activation
   void queue_for_recovery(PG *pg, bool front = false) {
     Mutex::Locker l(recovery_lock);
+
     if (front) {
       awaiting_throttle.push_front(make_pair(pg->get_osdmap()->get_epoch(), pg));
     } else {
       awaiting_throttle.push_back(make_pair(pg->get_osdmap()->get_epoch(), pg));
     }
+
     _maybe_queue_recovery();
   }
 

@@ -2140,6 +2140,7 @@ void PG::queue_recovery(bool front)
     dout(10) << "queue_recovery -- queuing" << dendl;
 
     recovery_queued = true;
+
     osd->queue_for_recovery(this, front);
   }
 }
@@ -3016,6 +3017,7 @@ int PG::peek_map_epoch(ObjectStore *store,
   epoch_t cur_epoch = 0;
 
   assert(bl);
+
   {
     // validate collection name
     assert(coll.is_pg());
@@ -3026,6 +3028,7 @@ int PG::peek_map_epoch(ObjectStore *store,
   keys.insert(infover_key);
   keys.insert(epoch_key);
   map<string,bufferlist> values;
+
   int r = store->omap_get_values(coll, pgmeta_oid, keys, &values);
   if (r == 0) {
     assert(values.size() == 2);
@@ -3045,6 +3048,7 @@ int PG::peek_map_epoch(ObjectStore *store,
   }
 
   *pepoch = cur_epoch;
+
   return 0;
 }
 
@@ -5053,6 +5057,8 @@ void PG::reset_interval_flush()
   }
 }
 
+// called by
+// Reset::react(AdvMap)
 /* Called before initializing peering during advance_map */
 void PG::start_peering_interval(
   const OSDMapRef lastmap,
@@ -5663,6 +5669,7 @@ void PG::queue_null(epoch_t msg_epoch,
 		    epoch_t query_epoch)
 {
   dout(10) << "null" << dendl;
+
   queue_peering_event(
     CephPeeringEvtRef(std::make_shared<CephPeeringEvt>(msg_epoch, query_epoch,
 					 NullEvt())));
@@ -5729,19 +5736,30 @@ void PG::handle_activate_map(RecoveryCtx *rctx)
   if (osdmap_ref->check_new_blacklist_entries()) check_blacklisted_watchers();
 }
 
+// called by
+// OSD::add_newly_split_pg
+// OSD::load_pgs
 void PG::handle_loaded(RecoveryCtx *rctx)
 {
   dout(10) << "handle_loaded" << dendl;
+
   Load evt;
+
+  // transit into Reset
   recovery_state.handle_event(evt, rctx);
 }
 
+// called by
+// OSD::handle_pg_peering_evt
 void PG::handle_create(RecoveryCtx *rctx)
 {
   dout(10) << "handle_create" << dendl;
+
   rctx->created_pgs.insert(this);
+
   Initialize evt;
   recovery_state.handle_event(evt, rctx);
+
   ActMap evt2;
   recovery_state.handle_event(evt2, rctx);
 }
@@ -5807,25 +5825,34 @@ boost::statechart::result PG::RecoveryState::Initial::react(const Load& l)
 boost::statechart::result PG::RecoveryState::Initial::react(const MNotifyRec& notify)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   pg->proc_replica_info(
     notify.from, notify.notify.info, notify.notify.epoch_sent);
+
   pg->set_last_peering_reset();
+
   return transit< Primary >();
 }
 
 boost::statechart::result PG::RecoveryState::Initial::react(const MInfoRec& i)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   assert(!pg->is_primary());
+
   post_event(i);
+
   return transit< Stray >();
 }
 
 boost::statechart::result PG::RecoveryState::Initial::react(const MLogRec& i)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   assert(!pg->is_primary());
+
   post_event(i);
+
   return transit< Stray >();
 }
 
@@ -5849,7 +5876,9 @@ boost::statechart::result
 PG::RecoveryState::Started::react(const IntervalFlush&)
 {
   dout(10) << "Ending blocked outgoing recovery messages" << dendl;
+
   context< RecoveryMachine >().pg->recovery_state.end_block_outgoing();
+
   return discard_event();
 }
 
@@ -5858,7 +5887,9 @@ boost::statechart::result
 PG::RecoveryState::Started::react(const FlushedEvt&)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   pg->on_flushed();
+
   return discard_event();
 }
 
@@ -5866,8 +5897,11 @@ PG::RecoveryState::Started::react(const FlushedEvt&)
 boost::statechart::result PG::RecoveryState::Started::react(const AdvMap& advmap)
 {
   dout(10) << "Started advmap" << dendl;
+
   PG *pg = context< RecoveryMachine >().pg;
+
   pg->check_full_transition(advmap.lastmap, advmap.osdmap);
+
   if (pg->should_restart_peering(
 	advmap.up_primary,
 	advmap.acting_primary,
@@ -5876,10 +5910,14 @@ boost::statechart::result PG::RecoveryState::Started::react(const AdvMap& advmap
 	advmap.lastmap,
 	advmap.osdmap)) {
     dout(10) << "should_restart_peering, transitioning to Reset" << dendl;
+
     post_event(advmap);
+
     return transit< Reset >();
   }
+
   pg->remove_down_peer_info(advmap.osdmap);
+
   return discard_event();
 }
 
@@ -5906,6 +5944,7 @@ PG::RecoveryState::Reset::Reset(my_context ctx)
     NamedState(context< RecoveryMachine >().pg->cct, "Reset")
 {
   context< RecoveryMachine >().log_enter(state_name);
+
   PG *pg = context< RecoveryMachine >().pg;
 
   pg->flushes_in_progress = 0;
@@ -5931,6 +5970,7 @@ PG::RecoveryState::Reset::react(const IntervalFlush&)
 boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   dout(10) << "Reset advmap" << dendl;
 
   // make sure we have past_intervals filled in.  hopefully this will happen
@@ -5948,20 +5988,27 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
 	advmap.osdmap)) {
     dout(10) << "should restart peering, calling start_peering_interval again"
 	     << dendl;
+
     pg->start_peering_interval(
       advmap.lastmap,
       advmap.newup, advmap.up_primary,
       advmap.newacting, advmap.acting_primary,
       context< RecoveryMachine >().get_cur_transaction());
   }
+
   pg->remove_down_peer_info(advmap.osdmap);
+
   return discard_event();
 }
 
 boost::statechart::result PG::RecoveryState::Reset::react(const ActMap&)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   if (pg->should_send_notify() && pg->get_primary().osd >= 0) {
+
+    // non-primary, see PG::start_peering_interval or Initial::react(Load)
+
     context< RecoveryMachine >().send_notify(
       pg->get_primary(),
       pg_notify_t(
@@ -6003,11 +6050,14 @@ PG::RecoveryState::Start::Start(my_context ctx)
   context< RecoveryMachine >().log_enter(state_name);
 
   PG *pg = context< RecoveryMachine >().pg;
+
   if (pg->is_primary()) {
     dout(1) << "transitioning to Primary" << dendl;
+
     post_event(MakePrimary());
   } else { //is_stray
     dout(1) << "transitioning to Stray" << dendl; 
+
     post_event(MakeStray());
   }
 }
@@ -6677,8 +6727,10 @@ PG::RecoveryState::Recovering::Recovering(my_context ctx)
   context< RecoveryMachine >().log_enter(state_name);
 
   PG *pg = context< RecoveryMachine >().pg;
+
   pg->state_clear(PG_STATE_RECOVERY_WAIT);
   pg->state_set(PG_STATE_RECOVERING);
+
   pg->queue_recovery();
 }
 
@@ -7331,6 +7383,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MQuery& query)
 boost::statechart::result PG::RecoveryState::Stray::react(const ActMap&)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   if (pg->should_send_notify() && pg->get_primary().osd >= 0) {
     context< RecoveryMachine >().send_notify(
       pg->get_primary(),
@@ -7341,7 +7394,9 @@ boost::statechart::result PG::RecoveryState::Stray::react(const ActMap&)
 	pg->info),
       pg->past_intervals);
   }
+
   pg->take_waiters();
+
   return discard_event();
 }
 

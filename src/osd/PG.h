@@ -240,6 +240,7 @@ public:
   OSDMapRef get_osdmap() const {
     assert(is_locked());
     assert(osdmap_ref);
+
     return osdmap_ref;
   }
 protected:
@@ -515,6 +516,8 @@ protected:
   int         role;    // 0 = primary, 1 = replica, -1=none.
   unsigned    state;   // PG_STATE_*
 
+  // will be set to true by PG::start_peering_interval or Initial::react(Load) if we
+  // are not primary pg
   bool send_notify;    ///< true if we are non-primary and should notify the primary
 
 public:
@@ -1683,6 +1686,7 @@ public:
     struct MakeStray : boost::statechart::event< MakeStray > {
       MakeStray() : boost::statechart::event< MakeStray >() {}
     };
+
     struct Primary;
     struct Stray;
 
@@ -1691,7 +1695,9 @@ public:
       void exit();
 
       typedef boost::mpl::list <
+        // will be queued by Start::Start
 	boost::statechart::transition< MakePrimary, Primary >,
+	// will be queued by Start::Start
 	boost::statechart::transition< MakeStray, Stray >
 	> reactions;
     };
@@ -1865,6 +1871,7 @@ public:
     };
 
     struct RepNotRecovering;
+    // was transit from Stray::react(MLogRec) or Stray::react(MInfoRec)
     struct ReplicaActive : boost::statechart::state< ReplicaActive, Started, RepNotRecovering >, NamedState {
       explicit ReplicaActive(my_context ctx);
       void exit();
