@@ -2120,6 +2120,15 @@ bool PG::requeue_scrub()
   }
 }
 
+// called by
+// OSD::do_recovery
+// PG::finish_recovery_op
+// Backfilling::Backfilling
+// Recovering::Recovering
+// Active::react(ActMap)
+// Active::react(MLogRec)
+// ReplicatedPG::mark_all_unfound_lost
+// ReplicatedPG::release_object_locks
 // front default to false
 void PG::queue_recovery(bool front)
 {

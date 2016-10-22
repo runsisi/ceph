@@ -8580,7 +8580,8 @@ bool OSDService::_recover_now(uint64_t *available_pushes)
   return true;
 }
 
-// called by PGQueueable::RunVis::operator()(PGRecovery &op)
+// called by
+// PGQueueable::RunVis::operator()(PGRecovery &op)
 void OSD::do_recovery(
   PG *pg, epoch_t queued, uint64_t reserved_pushes,
   ThreadPool::TPHandle &handle)
