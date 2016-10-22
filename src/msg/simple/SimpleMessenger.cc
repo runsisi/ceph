@@ -341,6 +341,7 @@ Pipe *SimpleMessenger::add_accept_pipe(int sd)
   lock.Lock();
 
   Pipe *p = new Pipe(this, Pipe::STATE_ACCEPTING, NULL);
+
   p->sd = sd;
 
   p->pipe_lock.Lock();

@@ -181,6 +181,7 @@ Pipe::~Pipe()
 {
   assert(out_q.empty());
   assert(sent.empty());
+
   delete delay_thread;
   delete[] recv_buf;
 }
@@ -203,6 +204,7 @@ void Pipe::handle_ack(uint64_t seq)
 void Pipe::start_reader()
 {
   assert(pipe_lock.is_locked());
+
   assert(!reader_running);
 
   if (reader_needs_join) {
@@ -211,6 +213,8 @@ void Pipe::start_reader()
   }
 
   reader_running = true;
+
+  // default 1024 << 10
   reader_thread.create("ms_pipe_read", msgr->cct->_conf->ms_rwthread_stack_bytes);
 }
 
@@ -331,6 +335,7 @@ int Pipe::accept()
   ldout(msgr->cct,10) << "accept" << dendl;
 
   assert(pipe_lock.is_locked());
+
   assert(state == STATE_ACCEPTING);
 
   pipe_lock.Unlock();
@@ -391,6 +396,7 @@ int Pipe::accept()
     ldout(msgr->cct,0) << "accept failed to getpeername " << cpp_strerror(errno) << dendl;
     goto fail_unlocked;
   }
+
   socket_addr.set_sockaddr((sockaddr*)&ss);
 
   // peer's addr
@@ -1351,6 +1357,7 @@ int Pipe::connect()
 
     if (state != STATE_CONNECTING) {
       ldout(msgr->cct,0) << "connect got RESETSESSION but no longer connecting" << dendl;
+
       goto stop_locked;
     }
 
@@ -1484,10 +1491,14 @@ int Pipe::connect()
       // hooray!
       peer_global_seq = reply.global_seq;
       policy.lossy = reply.flags & CEPH_MSG_CONNECT_LOSSY;
+
       state = STATE_OPEN;
       connect_seq = cseq + 1;
+
       assert(connect_seq == reply.connect_seq);
+
       backoff = utime_t();
+
       connection_state->set_features((uint64_t)reply.features & (uint64_t)connect.features);
 
       ldout(msgr->cct,10) << "connect success " << connect_seq << ", lossy = " << policy.lossy
@@ -1513,6 +1524,7 @@ int Pipe::connect()
       
       if (!reader_running) {
 	ldout(msgr->cct,20) << "connect starting reader" << dendl;
+
 	start_reader();
       }
 
@@ -1705,7 +1717,9 @@ void Pipe::fault(bool onread)
     // disconnect from Connection, and mark it failed.  future messages
     // will be dropped.
     assert(connection_state);
+
     stop();
+
     bool cleared = connection_state->clear_pipe(this);
 
     // crib locks, blech.  note that Pipe is now STATE_CLOSED and the
@@ -1721,15 +1735,20 @@ void Pipe::fault(bool onread)
 
     msgr->lock.Lock();
     pipe_lock.Lock();
+
     unregister_pipe();
+
     msgr->lock.Unlock();
 
     if (delay_thread)
       delay_thread->discard();
+
     in_q->discard_queue(conn_id);
     discard_out_queue();
+
     if (cleared)
       msgr->dispatch_queue.queue_reset(connection_state.get());
+
     return;
   }
 
@@ -1751,6 +1770,7 @@ void Pipe::fault(bool onread)
   if (state != STATE_CONNECTING) {
     if (policy.server) {
       ldout(msgr->cct,0) << "fault, server, going to standby" << dendl;
+
       state = STATE_STANDBY;
     } else {
       ldout(msgr->cct,0) << "fault, initiating reconnect" << dendl;
@@ -1911,7 +1931,9 @@ void Pipe::reader()
 
     if (tcp_read((char*)&tag, 1) < 0) {
       pipe_lock.Lock();
+
       ldout(msgr->cct,2) << "reader couldn't read tag, " << cpp_strerror(errno) << dendl;
+
       fault(true);
       continue;
     }
@@ -2060,19 +2082,25 @@ void Pipe::reader()
     
     else if (tag == CEPH_MSGR_TAG_CLOSE) {
       ldout(msgr->cct,20) << "reader got CLOSE" << dendl;
+
       pipe_lock.Lock();
+
       if (state == STATE_CLOSING) {
 	state = STATE_CLOSED;
 	state_closed.set(1);
       } else {
 	state = STATE_CLOSING;
       }
+
       cond.Signal();
+
       break;
     }
     else {
       ldout(msgr->cct,0) << "reader bad tag " << (int)tag << dendl;
+
       pipe_lock.Lock();
+
       fault(true);
     }
   }
@@ -2101,13 +2129,16 @@ void Pipe::writer()
 
     // standby?
     if (is_queued() && state == STATE_STANDBY && !policy.server)
+      // we have been notified just now, becoz we need something to send out
       state = STATE_CONNECTING;
 
     // connect?
     if (state == STATE_CONNECTING) {
       assert(!policy.server);
 
+      // neigotiate with the peer to open the connection
       connect();
+
       continue;
     }
     
@@ -2135,6 +2166,8 @@ void Pipe::writer()
     if (state != STATE_CONNECTING && state != STATE_WAIT && state != STATE_STANDBY &&
 	(is_queued() || in_seq > in_seq_acked)) {
 
+      // already connected, and has something to send, i.e., keepalive, keepalive ack, ack, message
+
       // keepalive?
       if (send_keepalive) {
 
@@ -2142,16 +2175,20 @@ void Pipe::writer()
         // keepalive periodically
 
 	int rc;
+
 	if (connection_state->has_feature(CEPH_FEATURE_MSGR_KEEPALIVE2)) {
 	  pipe_lock.Unlock();
+
 	  rc = write_keepalive2(CEPH_MSGR_TAG_KEEPALIVE2,
 				ceph_clock_now(msgr->cct));
 	} else {
 	  pipe_lock.Unlock();
+
 	  rc = write_keepalive();
 	}
 
 	pipe_lock.Lock();
+
 	if (rc < 0) {
 	  ldout(msgr->cct,2) << "writer couldn't write keepalive[2], "
 			     << cpp_strerror(errno) << dendl;
@@ -2164,11 +2201,16 @@ void Pipe::writer()
 
       if (send_keepalive_ack) {
 	utime_t t = keepalive_ack_stamp;
+
 	pipe_lock.Unlock();
+
 	int rc = write_keepalive2(CEPH_MSGR_TAG_KEEPALIVE2_ACK, t);
+
 	pipe_lock.Lock();
+
 	if (rc < 0) {
 	  ldout(msgr->cct,2) << "writer couldn't write keepalive_ack, " << cpp_strerror(errno) << dendl;
+
 	  fault();
 	  continue;
 	}
@@ -2181,10 +2223,13 @@ void Pipe::writer()
 	uint64_t send_seq = in_seq;
 
 	pipe_lock.Unlock();
+
 	int rc = write_ack(send_seq);
+
 	pipe_lock.Lock();
 	if (rc < 0) {
 	  ldout(msgr->cct,2) << "writer couldn't write ack, " << cpp_strerror(errno) << dendl;
+
 	  fault();
  	  continue;
 	}
@@ -2203,7 +2248,8 @@ void Pipe::writer()
 	  // will be popped by Pipe::handle_ack or Pipe::discard_out_queue or
 	  // requeued to Pipe::out_q by Pipe::requeue_sent
 	  // if requeued, the out_seq will be decreased
-	  sent.push_back(m); 
+	  sent.push_back(m);
+
 	  m->get();
 	}
 
@@ -2250,14 +2296,18 @@ void Pipe::writer()
         pipe_lock.Unlock();
 
         ldout(msgr->cct,20) << "writer sending " << m->get_seq() << " " << m << dendl;
-	int rc = write_message(header, footer, blist);
+
+        int rc = write_message(header, footer, blist);
 
 	pipe_lock.Lock();
+
 	if (rc < 0) {
           ldout(msgr->cct,1) << "writer error sending " << m << ", "
 		  << cpp_strerror(errno) << dendl;
-	  fault();
+
+          fault();
         }
+
 	m->put();
       }
 
@@ -2330,17 +2380,21 @@ int Pipe::read_message(Message **pm, AuthSessionHandler* auth_handler)
   if (connection_state->has_feature(CEPH_FEATURE_NOSRCADDR)) {
     if (tcp_read((char*)&header, sizeof(header)) < 0)
       return -1;
+
     if (msgr->crcflags & MSG_CRC_HEADER) {
       header_crc = ceph_crc32c(0, (unsigned char *)&header, sizeof(header) - sizeof(header.crc));
     }
   } else {
     ceph_msg_header_old oldheader;
+
     if (tcp_read((char*)&oldheader, sizeof(oldheader)) < 0)
       return -1;
+
     // this is fugly
     memcpy(&header, &oldheader, sizeof(header));
     header.src = oldheader.src.name;
     header.reserved = oldheader.reserved;
+
     if (msgr->crcflags & MSG_CRC_HEADER) {
       header.crc = oldheader.crc;
       header_crc = ceph_crc32c(0, (unsigned char *)&oldheader, sizeof(oldheader) - sizeof(oldheader.crc));
@@ -2381,6 +2435,7 @@ int Pipe::read_message(Message **pm, AuthSessionHandler* auth_handler)
       ldout(msgr->cct,10) << "reader wants " << message_size << " bytes from policy throttler "
 	       << policy.throttler_bytes->get_current() << "/"
 	       << policy.throttler_bytes->get_max() << dendl;
+
       policy.throttler_bytes->get(message_size);
     }
 
@@ -2391,6 +2446,7 @@ int Pipe::read_message(Message **pm, AuthSessionHandler* auth_handler)
     ldout(msgr->cct,10) << "reader wants " << message_size << " from dispatch throttler "
 	     << in_q->dispatch_throttler.get_current() << "/"
 	     << in_q->dispatch_throttler.get_max() << dendl;
+
     in_q->dispatch_throttler.get(message_size);
   }
 
@@ -2400,9 +2456,12 @@ int Pipe::read_message(Message **pm, AuthSessionHandler* auth_handler)
   front_len = header.front_len;
   if (front_len) {
     bufferptr bp = buffer::create(front_len);
+
     if (tcp_read(bp.c_str(), front_len) < 0)
       goto out_dethrottle;
+
     front.push_back(std::move(bp));
+
     ldout(msgr->cct,20) << "reader got front " << front.length() << dendl;
   }
 
@@ -2410,9 +2469,12 @@ int Pipe::read_message(Message **pm, AuthSessionHandler* auth_handler)
   middle_len = header.middle_len;
   if (middle_len) {
     bufferptr bp = buffer::create(middle_len);
+
     if (tcp_read(bp.c_str(), middle_len) < 0)
       goto out_dethrottle;
+
     middle.push_back(std::move(bp));
+
     ldout(msgr->cct,20) << "reader got middle " << middle.length() << dendl;
   }
 
@@ -2435,39 +2497,58 @@ int Pipe::read_message(Message **pm, AuthSessionHandler* auth_handler)
 
       // get a buffer
       connection_state->lock.Lock();
+
       map<ceph_tid_t,pair<bufferlist,int> >::iterator p = connection_state->rx_buffers.find(header.tid);
+
       if (p != connection_state->rx_buffers.end()) {
 	if (rxbuf.length() == 0 || p->second.second != rxbuf_version) {
 	  ldout(msgr->cct,10) << "reader seleting rx buffer v " << p->second.second
 		   << " at offset " << offset
 		   << " len " << p->second.first.length() << dendl;
+
 	  rxbuf = p->second.first;
 	  rxbuf_version = p->second.second;
+
 	  // make sure it's big enough
 	  if (rxbuf.length() < data_len)
 	    rxbuf.push_back(buffer::create(data_len - rxbuf.length()));
+
 	  blp = p->second.first.begin();
+
 	  blp.advance(offset);
 	}
       } else {
 	if (!newbuf.length()) {
 	  ldout(msgr->cct,20) << "reader allocating new rx buffer at offset " << offset << dendl;
+
 	  alloc_aligned_buffer(newbuf, data_len, data_off);
+
 	  blp = newbuf.begin();
+
 	  blp.advance(offset);
 	}
       }
+
       bufferptr bp = blp.get_current_ptr();
+
       int read = MIN(bp.length(), left);
+
       ldout(msgr->cct,20) << "reader reading nonblocking into " << (void*)bp.c_str() << " len " << bp.length() << dendl;
+
       ssize_t got = tcp_read_nonblocking(bp.c_str(), read);
+
       ldout(msgr->cct,30) << "reader read " << got << " of " << read << dendl;
+
       connection_state->lock.Unlock();
+
       if (got < 0)
 	goto out_dethrottle;
+
       if (got > 0) {
 	blp.advance(got);
+
 	data.append(bp, 0, got);
+
 	offset += got;
 	left -= got;
       } // else we got a signal or something; just loop.
@@ -2619,15 +2700,23 @@ void Pipe::restore_sigpipe()
 #endif  /* !defined(MSG_NOSIGNAL) && !defined(SO_NOSIGPIPE) */
 }
 
-
+// called by
+// Pipe::connect
+// Pipe::write_ack
+// Pipe::write_keepalive
+// Pipe::write_keepalive2
+// Pipe::write_message
 int Pipe::do_sendmsg(struct msghdr *msg, unsigned len, bool more)
 {
   suppress_sigpipe();
+
   while (len > 0) {
     if (0) { // sanity
       unsigned l = 0;
+
       for (unsigned i=0; i<msg->msg_iovlen; i++)
 	l += msg->msg_iov[i].iov_len;
+
       assert(l == len);
     }
 
@@ -2637,14 +2726,18 @@ int Pipe::do_sendmsg(struct msghdr *msg, unsigned len, bool more)
 #else
     r = ::sendmsg(sd, msg, (more ? MSG_MORE : 0));
 #endif
+
     if (r == 0) 
       ldout(msgr->cct,10) << "do_sendmsg hmm do_sendmsg got r==0!" << dendl;
+
     if (r < 0) {
       r = -errno; 
       ldout(msgr->cct,1) << "do_sendmsg error " << cpp_strerror(r) << dendl;
+
       restore_sigpipe();
       return r;
     }
+
     if (state == STATE_CLOSED) {
       ldout(msgr->cct,10) << "do_sendmsg oh look, state == CLOSED, giving up" << dendl;
       restore_sigpipe();
@@ -2656,11 +2749,13 @@ int Pipe::do_sendmsg(struct msghdr *msg, unsigned len, bool more)
     
     // hrmph.  trim r bytes off the front of our message.
     ldout(msgr->cct,20) << "do_sendmsg short write did " << r << ", still have " << len << dendl;
+
     while (r > 0) {
       if (msg->msg_iov[0].iov_len <= (size_t)r) {
 	// lose this whole item
 	//ldout(msgr->cct,30) << "skipping " << msg->msg_iov[0].iov_len << ", " << (msg->msg_iovlen-1) << " v, " << r << " left" << dendl;
 	r -= msg->msg_iov[0].iov_len;
+
 	msg->msg_iov++;
 	msg->msg_iovlen--;
       } else {
@@ -2668,11 +2763,14 @@ int Pipe::do_sendmsg(struct msghdr *msg, unsigned len, bool more)
 	//ldout(msgr->cct,30) << "adjusting " << msg->msg_iov[0].iov_len << ", " << msg->msg_iovlen << " v, " << r << " left" << dendl;
 	msg->msg_iov[0].iov_base = (char *)msg->msg_iov[0].iov_base + r;
 	msg->msg_iov[0].iov_len -= r;
+
 	break;
       }
     }
   }
+
   restore_sigpipe();
+
   return 0;
 }
 
@@ -2697,6 +2795,7 @@ int Pipe::write_ack(uint64_t seq)
   
   if (do_sendmsg(&msg, 1 + sizeof(s), true) < 0)
     return -1;	
+
   return 0;
 }
 
@@ -2716,6 +2815,7 @@ int Pipe::write_keepalive()
   
   if (do_sendmsg(&msg, 1) < 0)
     return -1;	
+
   return 0;
 }
 
@@ -2739,7 +2839,8 @@ int Pipe::write_keepalive2(char tag, const utime_t& t)
   return 0;
 }
 
-
+// called by
+// Pipe::writer
 int Pipe::write_message(const ceph_msg_header& header, const ceph_msg_footer& footer, bufferlist& blist)
 {
   int ret;
@@ -2790,11 +2891,14 @@ int Pipe::write_message(const ceph_msg_header& header, const ceph_msg_footer& fo
 
   while (left > 0) {
     unsigned donow = MIN(left, pb->length()-b_off);
+
     if (donow == 0) {
       ldout(msgr->cct,0) << "donow = " << donow << " left " << left << " pb->length " << pb->length()
                          << " b_off " << b_off << dendl;
     }
+
     assert(donow > 0);
+
     ldout(msgr->cct,30) << " bl_pos " << bl_pos << " b_off " << b_off
 	     << " leftinchunk " << left
 	     << " buffer len " << pb->length()
@@ -2802,6 +2906,9 @@ int Pipe::write_message(const ceph_msg_header& header, const ceph_msg_footer& fo
 	     << dendl;
     
     if (msg.msg_iovlen >= SM_IOV_MAX-2) {
+
+      // do not send too much at a time
+
       if (do_sendmsg(&msg, msglen, true))
 	goto fail;
       
@@ -2817,16 +2924,20 @@ int Pipe::write_message(const ceph_msg_header& header, const ceph_msg_footer& fo
     msg.msg_iovlen++;
     
     assert(left >= donow);
+
     left -= donow;
     b_off += donow;
     bl_pos += donow;
+
     if (left == 0)
       break;
+
     while (b_off == pb->length()) {
       ++pb;
       b_off = 0;
     }
-  }
+  } // while (left > 0)
+
   assert(left == 0);
 
   // send footer; if receiver doesn't support signatures, use the old footer format
@@ -2931,17 +3042,22 @@ ssize_t Pipe::do_recv(char *buf, size_t len, int flags)
 {
 again:
   ssize_t got = ::recv( sd, buf, len, flags );
+
   if (got < 0) {
     if (errno == EINTR) {
       goto again;
     }
+
     ldout(msgr->cct, 10) << __func__ << " socket " << sd << " returned "
 		     << got << " " << cpp_strerror(errno) << dendl;
+
     return -1;
   }
+
   if (got == 0) {
     return -1;
   }
+
   return got;
 }
 
@@ -3000,6 +3116,7 @@ ssize_t Pipe::tcp_read_nonblocking(char *buf, unsigned len)
 		         << got << " " << cpp_strerror(errno) << dendl;
     return -1;
   }
+
   if (got == 0) {
     /* poll() said there was data, but we didn't read any - peer
      * sent a FIN.  Maybe POLLRDHUP signals this, but this is
@@ -3007,6 +3124,7 @@ ssize_t Pipe::tcp_read_nonblocking(char *buf, unsigned len)
      */
     return -1;
   }
+
   return got;
 }
 
