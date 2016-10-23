@@ -275,6 +275,8 @@ public:
       PK11_FreeSlot(slot);
   }
 
+  // called by
+  // CryptoAES::get_key_handler
   int init(const bufferptr& s, ostringstream& err) {
     secret = s;
 
@@ -288,6 +290,7 @@ public:
     keyItem.type = siBuffer;
     keyItem.data = (unsigned char*)secret.c_str();
     keyItem.len = secret.length();
+
     key = PK11_ImportSymKey(slot, mechanism, PK11_OriginUnwrap, CKA_ENCRYPT,
 			    &keyItem, NULL);
     if (!key) {
@@ -348,16 +351,21 @@ int CryptoAES::validate_secret(const bufferptr& secret)
   return 0;
 }
 
+// called by
+// CryptoKey::_set_secret
 CryptoKeyHandler *CryptoAES::get_key_handler(const bufferptr& secret,
 					     string& error)
 {
   CryptoAESKeyHandler *ckh = new CryptoAESKeyHandler;
+
   ostringstream oss;
+
   if (ckh->init(secret, oss) < 0) {
     error = oss.str();
     delete ckh;
     return NULL;
   }
+
   return ckh;
 }
 
@@ -409,23 +417,29 @@ int CryptoKey::_set_secret(int t, const bufferptr& s)
   }
 
   CryptoHandler *ch = CryptoHandler::create(t);
+
   if (ch) {
     int ret = ch->validate_secret(s);
     if (ret < 0) {
       delete ch;
       return ret;
     }
+
     string error;
     ckh.reset(ch->get_key_handler(s, error));
+
     delete ch;
+
     if (error.length()) {
       return -EIO;
     }
   } else {
       return -EOPNOTSUPP;
   }
+
   type = t;
   secret = s;
+
   return 0;
 }
 
@@ -479,6 +493,10 @@ void CryptoKey::encode_plaintext(bufferlist &bl)
 
 // ------------------
 
+// called by
+// CryptoKey::_set_secret
+// CryptoKey::create
+// CephContext::CephContext
 CryptoHandler *CryptoHandler::create(int type)
 {
   switch (type) {

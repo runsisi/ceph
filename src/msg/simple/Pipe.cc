@@ -1590,9 +1590,11 @@ void Pipe::unregister_pipe()
 
   if (p != msgr->rank_pipe.end() && p->second == this) {
     ldout(msgr->cct,10) << "unregister_pipe" << dendl;
+
     msgr->rank_pipe.erase(p);
   } else {
     ldout(msgr->cct,10) << "unregister_pipe - not registered" << dendl;
+
     msgr->accepting_pipes.erase(this);  // somewhat overkill, but safe.
   }
 }
@@ -1600,18 +1602,24 @@ void Pipe::unregister_pipe()
 void Pipe::join()
 {
   ldout(msgr->cct, 20) << "join" << dendl;
+
   if (writer_thread.is_started())
     writer_thread.join();
+
   if (reader_thread.is_started())
     reader_thread.join();
+
   if (delay_thread) {
     ldout(msgr->cct, 20) << "joining delay_thread" << dendl;
+
     delay_thread->stop();
     delay_thread->join();
   }
 }
 
-// called by Pipe::accept or Pipe::fault
+// called by
+// Pipe::accept
+// Pipe::fault
 void Pipe::requeue_sent()
 {
   // only !policy.lossy will push sent messages on Pipe::sent, see Pipe::writer
