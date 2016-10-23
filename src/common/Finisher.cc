@@ -18,30 +18,41 @@ void Finisher::start()
 void Finisher::stop()
 {
   ldout(cct, 10) << __func__ << dendl;
+
   finisher_lock.Lock();
+
   finisher_stop = true;
+
   // we don't have any new work to do, but we want the worker to wake up anyway
   // to process the stop condition.
   finisher_cond.Signal();
+
   finisher_lock.Unlock();
+
   finisher_thread.join(); // wait until the worker exits completely
+
   ldout(cct, 10) << __func__ << " finish" << dendl;
 }
 
 void Finisher::wait_for_empty()
 {
   finisher_lock.Lock();
+
   while (!finisher_queue.empty() || finisher_running) {
     ldout(cct, 10) << "wait_for_empty waiting" << dendl;
+
     finisher_empty_cond.Wait(finisher_lock);
   }
+
   ldout(cct, 10) << "wait_for_empty empty" << dendl;
+
   finisher_lock.Unlock();
 }
 
 void *Finisher::finisher_thread_entry()
 {
   finisher_lock.Lock();
+
   ldout(cct, 10) << "finisher_thread start" << dendl;
 
   utime_t start, end;
@@ -55,7 +66,9 @@ void *Finisher::finisher_thread_entry()
       ls.swap(finisher_queue);
       ls_rval.swap(finisher_queue_rval);
       finisher_running = true;
+
       finisher_lock.Unlock();
+
       ldout(cct, 10) << "finisher_thread doing " << ls << dendl;
 
       if (logger)
@@ -73,10 +86,14 @@ void *Finisher::finisher_thread_entry()
 	  // which has a parameter for complete() other than zero.
 	  // This preserves the order while saving some storage.
 	  assert(!ls_rval.empty());
+
 	  Context *c = ls_rval.front().first;
+
 	  c->complete(ls_rval.front().second);
+
 	  ls_rval.pop_front();
 	}
+
 	if (logger) {
 	  logger->dec(l_finisher_queue_len);
           end = ceph_clock_now(cct);
@@ -84,27 +101,39 @@ void *Finisher::finisher_thread_entry()
 	  start = end;
         }
       }
+
       ldout(cct, 10) << "finisher_thread done with " << ls << dendl;
+
       ls.clear();
 
       finisher_lock.Lock();
       finisher_running = false;
     }
+
     ldout(cct, 10) << "finisher_thread empty" << dendl;
+
     finisher_empty_cond.Signal();
+
     if (finisher_stop)
       break;
     
     ldout(cct, 10) << "finisher_thread sleeping" << dendl;
+
+    // wait for callbacks to complete, Finisher::queue will notify us for new callbacks,
+    // Finisher::stop also notifies us to wake up from sleep to stop
     finisher_cond.Wait(finisher_lock);
   }
+
   // If we are exiting, we signal the thread waiting in stop(),
   // otherwise it would never unblock
   finisher_empty_cond.Signal();
 
   ldout(cct, 10) << "finisher_thread stop" << dendl;
+
   finisher_stop = false;
+
   finisher_lock.Unlock();
+
   return 0;
 }
 

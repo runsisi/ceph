@@ -26,12 +26,15 @@ struct TaskFinisherSingleton {
     m_finisher = new Finisher(cct, "librbd::TaskFinisher::m_finisher", "taskfin_librbd");
     m_finisher->start();
   }
+
   virtual ~TaskFinisherSingleton() {
     {
       Mutex::Locker l(m_lock);
+
       m_safe_timer->shutdown();
       delete m_safe_timer;
     }
+
     m_finisher->wait_for_empty();
     m_finisher->stop();
     delete m_finisher;
@@ -44,8 +47,10 @@ class TaskFinisher {
 public:
   TaskFinisher(CephContext &cct) : m_cct(cct) {
     TaskFinisherSingleton *singleton;
+
     cct.lookup_or_create_singleton_object<TaskFinisherSingleton>(
       singleton, "librbd::TaskFinisher::m_safe_timer");
+
     m_lock = &singleton->m_lock;
     m_safe_timer = singleton->m_safe_timer;
     m_finisher = singleton->m_finisher;
@@ -57,6 +62,7 @@ public:
     typename TaskContexts::iterator it = m_task_contexts.find(task);
     if (it != m_task_contexts.end()) {
       delete it->second.first;
+
       m_safe_timer->cancel_event(it->second.second);
 
       m_task_contexts.erase(it);
@@ -66,9 +72,11 @@ public:
   void cancel_all(Context *comp) {
     {
       Mutex::Locker l(*m_lock);
+
       for (typename TaskContexts::iterator it = m_task_contexts.begin();
            it != m_task_contexts.end(); ++it) {
         delete it->second.first;
+
         m_safe_timer->cancel_event(it->second.second);
       }
 
@@ -80,12 +88,14 @@ public:
 
   bool add_event_after(const Task& task, double seconds, Context *ctx) {
     Mutex::Locker l(*m_lock);
+
     if (m_task_contexts.count(task) != 0) {
       // task already scheduled on finisher or timer
       delete ctx;
       return false;
     }
 
+    // m_task_finisher->complete(m_task)
     C_Task *timer_ctx = new C_Task(this, task);
 
     m_task_contexts[task] = std::make_pair(ctx, timer_ctx);
@@ -103,17 +113,21 @@ public:
   bool queue(const Task& task, Context *ctx) {
     Mutex::Locker l(*m_lock);
 
+    // std::map<Task, std::pair<Context *, Context *> >
     typename TaskContexts::iterator it = m_task_contexts.find(task);
+
     if (it != m_task_contexts.end()) {
       if (it->second.second != NULL) {
 
         // the second callback is either null or a timer callback
 
         assert(m_safe_timer->cancel_event(it->second.second));
+
         delete it->second.first;
       } else {
         // task already scheduled on the finisher
         delete ctx;
+
         return false;
       }
     }
@@ -161,6 +175,7 @@ private:
 
       // find the task to complete
       typename TaskContexts::iterator it = m_task_contexts.find(task);
+
       if (it != m_task_contexts.end()) {
         // the user callback
         ctx = it->second.first;
