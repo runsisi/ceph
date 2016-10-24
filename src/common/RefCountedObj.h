@@ -39,8 +39,10 @@ public:
 			     << dendl;
     return this;
   }
+
   void put() {
     CephContext *local_cct = cct;
+
     int v = nref.dec();
     if (v == 0) {
       ANNOTATE_HAPPENS_AFTER(&nref);
@@ -49,11 +51,13 @@ public:
     } else {
       ANNOTATE_HAPPENS_BEFORE(&nref);
     }
+
     if (local_cct)
       lsubdout(local_cct, refs, 1) << "RefCountedObject::put " << this << " "
 				   << (v + 1) << " -> " << v
 				   << dendl;
   }
+
   void set_cct(CephContext *c) {
     cct = c;
   }

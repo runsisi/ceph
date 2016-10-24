@@ -384,16 +384,21 @@ typedef md_config_t::config_option config_option;
 
 enum config_subsys_id {
   ceph_subsys_,   // default
+
 #define OPTION(a,b,c)
 #define SAFE_OPTION(a,b,c)
 #define SUBSYS(name, log, gather) \
   ceph_subsys_##name,
 #define DEFAULT_SUBSYS(log, gather)
+
+// only SUBSYS will be included, and the subsys id starts from 1
 #include "common/config_opts.h"
+
 #undef SUBSYS
 #undef OPTION
 #undef SAFE_OPTION
 #undef DEFAULT_SUBSYS
+
   ceph_subsys_max
 };
 

@@ -43,23 +43,27 @@ public:
   int get_log_level(unsigned subsys) const {
     if (subsys >= m_subsys.size())
       subsys = 0;
+
     return m_subsys[subsys].log_level;
   }
 
   int get_gather_level(unsigned subsys) const {
     if (subsys >= m_subsys.size())
       subsys = 0;
+
     return m_subsys[subsys].gather_level;
   }
 
   const std::string& get_name(unsigned subsys) const {
     if (subsys >= m_subsys.size())
       subsys = 0;
+
     return m_subsys[subsys].name;
   }
 
   bool should_gather(unsigned sub, int level) {
     assert(sub < m_subsys.size());
+
     return level <= m_subsys[sub].gather_level ||
       level <= m_subsys[sub].log_level;
   }

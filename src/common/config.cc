@@ -134,8 +134,10 @@ md_config_t::md_config_t()
 #undef SUBSYS
 #undef DEFAULT_SUBSYS
   };
+
   static std::shared_ptr<decltype(s_config_options)>
     s_tbl(new std::vector<md_config_t::config_option>(std::move(s_config_options)));
+
   config_options = s_tbl;
 
   init_subsys();

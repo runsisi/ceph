@@ -2128,6 +2128,7 @@ public:
 		  const bufferlist& inbl, ceph_tid_t *ptid,
 		  bufferlist *poutbl, string *prs, Context *onfinish) {
     assert(osd >= 0);
+
     CommandOp *c = new CommandOp;
     c->cmd = cmd;
     c->inbl = inbl;
@@ -2137,6 +2138,7 @@ public:
     c->target_osd = osd;
     return submit_command(c, ptid);
   }
+
   int pg_command(pg_t pgid, vector<string>& cmd,
 		 const bufferlist& inbl, ceph_tid_t *ptid,
 		 bufferlist *poutbl, string *prs, Context *onfinish) {

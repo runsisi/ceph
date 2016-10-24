@@ -534,6 +534,7 @@ CephContext::CephContext(uint32_t module_type_, int init_flags_)
   ceph_spin_init(&_feature_lock);
   ceph_spin_init(&_cct_perf_lock);
 
+  // _conf->subsys was initialized by md_config_t::init_subsys
   _log = new ceph::logging::Log(&_conf->subsys);
   _log->start();
 

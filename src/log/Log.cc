@@ -38,6 +38,8 @@ static void log_on_exit(void *p)
   delete (Log **)p;// Delete allocated pointer (not Log object, the pointer only!)
 }
 
+// called by
+// CephContext::CephContext
 Log::Log(SubsystemMap *s)
   : m_indirect_this(NULL),
     m_subs(s),
@@ -435,11 +437,15 @@ void Log::start()
 void Log::stop()
 {
   assert(is_started());
+
   pthread_mutex_lock(&m_queue_mutex);
+
   m_stop = true;
   pthread_cond_signal(&m_cond_flusher);
   pthread_cond_broadcast(&m_cond_loggers);
+
   pthread_mutex_unlock(&m_queue_mutex);
+
   join();
 }
 
