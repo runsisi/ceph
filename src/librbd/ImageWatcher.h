@@ -176,6 +176,7 @@ private:
       on_finish->complete(r);
     }
   };
+
   struct C_NotifyAck : public Context {
     ImageWatcher *image_watcher;
     uint64_t notify_id;
@@ -189,6 +190,8 @@ private:
     virtual void finish(int r);
   };
 
+  // used by
+  // ImageWatcher<I>::handle_payload, not all, but for some payload type
   struct C_ResponseMessage : public Context {
     C_NotifyAck *notify_ack;
 
@@ -199,6 +202,9 @@ private:
     virtual void finish(int r);
   };
 
+  // used by
+  // ImageWatcher<I>::handle_notify, to delay handling the payload of
+  // the notify, i.e., the image has to be refreshed first
   struct C_ProcessPayload : public Context {
     ImageWatcher *image_watcher;
     uint64_t notify_id;
@@ -216,6 +222,8 @@ private:
     }
   };
 
+  // used by
+  // ImageWatcher<I>::process_payload, to handle each type of payload
   struct HandlePayloadVisitor : public boost::static_visitor<void> {
     ImageWatcher *image_watcher;
     uint64_t notify_id;
@@ -229,16 +237,16 @@ private:
 
     template <typename Payload>
     inline void operator()(const Payload &payload) const {
+      // C_NotifyAck::finish will call image_watcher->acknowledge_notify
       C_NotifyAck *ctx = new C_NotifyAck(image_watcher, notify_id,
                                                 handle);
 
       // if handle_payload returns false, then the notify will be
-      // acked by ImageWatcher::handle_payload indirectly
+      // acked by ImageWatcher::handle_payload
 
       if (image_watcher->handle_payload(payload, ctx)) {
 
-        // handle the payload finished, reply the notification directly, i.e., no
-        // need to delay C_NotifyAck to ack the notify
+        // handle the payload finished, ack directly
 
         ctx->complete(0);
       }

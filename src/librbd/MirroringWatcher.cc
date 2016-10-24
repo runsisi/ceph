@@ -21,6 +21,7 @@ static const uint64_t NOTIFY_TIMEOUT_MS = 5000;
 
 } // anonymous namespace
 
+// never be instanced, others always call its static methods
 template <typename I>
 MirroringWatcher<I>::MirroringWatcher(librados::IoCtx &io_ctx,
                                       ContextWQT *work_queue)

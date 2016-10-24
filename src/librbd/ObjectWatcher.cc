@@ -53,6 +53,9 @@ struct C_UnwatchAndFlush : public Context {
 
 } // anonymous namespace
 
+// overrided by
+// librbd::MirroringWatcher
+// rbd::mirror::MirrorStatusWatchCtx::Watcher
 template <typename I>
 ObjectWatcher<I>::ObjectWatcher(librados::IoCtx &io_ctx, ContextWQT *work_queue)
   : m_io_ctx(io_ctx), m_cct(reinterpret_cast<CephContext*>(io_ctx.cct())),
@@ -73,6 +76,7 @@ void ObjectWatcher<I>::register_watch(Context *on_finish) {
 
   {
     RWLock::WLocker watch_locker(m_watch_lock);
+
     assert(on_finish != nullptr);
     assert(m_on_register_watch == nullptr);
     assert(m_watch_state == WATCH_STATE_UNREGISTERED);
@@ -112,6 +116,8 @@ void ObjectWatcher<I>::handle_register_watch(int r) {
   on_register_watch->complete(r);
 }
 
+// called by
+// rbd::mirror::MirrorStatusWatchCtx::unregister_watch
 template <typename I>
 void ObjectWatcher<I>::unregister_watch(Context *on_finish) {
   ldout(m_cct, 5) << dendl;

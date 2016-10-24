@@ -762,6 +762,8 @@ void Replayer::set_sources(const ImageIds &image_ids)
   }
 }
 
+// called by
+// Replayer::set_sources
 int Replayer::mirror_image_status_init() {
   assert(!m_status_watcher);
 

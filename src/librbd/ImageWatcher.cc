@@ -134,6 +134,9 @@ void ImageWatcher<I>::handle_register_watch(int r) {
   }
 }
 
+// called by
+// librbd::image::CloseRequest<I>::send_unregister_image_watcher
+// librbd::Operations<I>::execute_rename, for image format 1
 template <typename I>
 void ImageWatcher<I>::unregister_watch(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -142,21 +145,26 @@ void ImageWatcher<I>::unregister_watch(Context *on_finish) {
   cancel_async_requests();
 
   C_Gather *gather_ctx = nullptr;
+
   {
     RWLock::WLocker watch_locker(m_watch_lock);
+
     if (m_watch_state == WATCH_STATE_REWATCHING) {
       ldout(cct, 10) << this << " delaying unregister until rewatch completed"
                      << dendl;
 
       assert(m_unregister_watch_ctx == nullptr);
+
       m_unregister_watch_ctx = new FunctionContext([this, on_finish](int r) {
           unregister_watch(on_finish);
         });
+
       return;
     }
 
     gather_ctx = new C_Gather(m_image_ctx.cct, create_async_context_callback(
       m_image_ctx, on_finish));
+
     if (m_watch_state == WATCH_STATE_REGISTERED ||
         m_watch_state == WATCH_STATE_ERROR) {
       m_watch_state = WATCH_STATE_UNREGISTERED;
@@ -170,6 +178,7 @@ void ImageWatcher<I>::unregister_watch(Context *on_finish) {
   }
 
   assert(gather_ctx != nullptr);
+
   m_task_finisher->cancel_all(gather_ctx->new_sub());
   gather_ctx->activate();
 }
@@ -692,8 +701,12 @@ bool ImageWatcher<I>::handle_payload(const HeaderUpdatePayload &payload,
     // m_update_watchers->flush, these watchers are not for rbd internal usage,
     // only rbd-nbd.cc:do_map registered a watcher
     m_image_ctx.state->flush_update_watchers(new C_ResponseMessage(ack_ctx));
+
     return false;
   }
+
+  // ImageWatcher<I>::handle_rewatch calls us with ack_ctx set to nullptr,
+  // so this is the case
 
   return true;
 }
@@ -1184,9 +1197,11 @@ void ImageWatcher<I>::rewatch() {
   ldout(m_image_ctx.cct, 10) << this << " re-registering image watch" << dendl;
 
   RWLock::WLocker l(m_watch_lock);
+
   if (m_watch_state != WATCH_STATE_ERROR) {
     return;
   }
+
   m_watch_state = WATCH_STATE_REWATCHING;
 
   Context *ctx = create_context_callback<
@@ -1203,6 +1218,7 @@ void ImageWatcher<I>::handle_rewatch(int r) {
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
 
   WatchState next_watch_state = WATCH_STATE_REGISTERED;
+
   if (r < 0) {
     // only EBLACKLISTED or ENOENT can be returned
     assert(r == -EBLACKLISTED || r == -ENOENT);
@@ -1210,8 +1226,10 @@ void ImageWatcher<I>::handle_rewatch(int r) {
   }
 
   Context *unregister_watch_ctx = nullptr;
+
   {
     RWLock::WLocker watch_locker(m_watch_lock);
+
     assert(m_watch_state == WATCH_STATE_REWATCHING);
     m_watch_state = next_watch_state;
 

@@ -3012,6 +3012,7 @@ int Pipe::tcp_read(char *buf, unsigned len)
     buf += got;
     //lgeneric_dout(cct, DBL) << "tcp_read got " << got << ", " << len << " left" << dendl;
   }
+
   return 0;
 }
 
@@ -3019,9 +3020,12 @@ int Pipe::tcp_read_wait()
 {
   if (sd < 0)
     return -EINVAL;
+
   struct pollfd pfd;
   short evmask;
+
   pfd.fd = sd;
+
   pfd.events = POLLIN;
 #if defined(__linux__)
   pfd.events |= POLLRDHUP;
@@ -3030,6 +3034,7 @@ int Pipe::tcp_read_wait()
   if (has_pending_data())
     return 0;
 
+  // default 900, see Pipe::Pipe
   if (poll(&pfd, 1, msgr->timeout) <= 0)
     return -errno;
 
@@ -3037,10 +3042,13 @@ int Pipe::tcp_read_wait()
 #if defined(__linux__)
   evmask |= POLLRDHUP;
 #endif
+
   if (pfd.revents & evmask)
+    // socket disconnected or error occurred
     return -1;
 
   if (!(pfd.revents & POLLIN))
+    // no data, so must be timeout from poll called above
     return -1;
 
   return 0;
