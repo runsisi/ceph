@@ -45,7 +45,8 @@ public:
 typedef std::multimap < utime_t, Context *> scheduled_map_t;
 typedef std::map < Context*, scheduled_map_t::iterator > event_lookup_map_t;
 
-// safe_callbacks default to true
+// safe_callbacks default to true, safe callbacks determines whether callbacks are
+// called with the lock held, see SafeTimer::timer_thread
 SafeTimer::SafeTimer(CephContext *cct_, Mutex &l, bool safe_callbacks)
   : cct(cct_), lock(l),
     safe_callbacks(safe_callbacks),
@@ -148,7 +149,9 @@ void SafeTimer::add_event_after(double seconds, Context *callback)
   assert(lock.is_locked());
 
   utime_t when = ceph_clock_now(cct);
+
   when += seconds;
+
   add_event_at(when, callback);
 }
 
@@ -206,6 +209,7 @@ void SafeTimer::cancel_all_events()
     ldout(cct,10) << " cancelled " << p->second->first << " -> " << p->first << dendl;
 
     delete p->first;
+
     schedule.erase(p->second);
     events.erase(p);
   }

@@ -63,8 +63,10 @@ void *Finisher::finisher_thread_entry()
       // This way other threads can submit new contexts to complete while we are working.
       vector<Context*> ls;
       list<pair<Context*,int> > ls_rval;
+
       ls.swap(finisher_queue);
       ls_rval.swap(finisher_queue_rval);
+
       finisher_running = true;
 
       finisher_lock.Unlock();
@@ -107,6 +109,7 @@ void *Finisher::finisher_thread_entry()
       ls.clear();
 
       finisher_lock.Lock();
+
       finisher_running = false;
     }
 

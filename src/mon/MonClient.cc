@@ -104,6 +104,8 @@ int MonClient::get_monmap()
   return 0;
 }
 
+// called by
+// ceph_osd.cc:main
 int MonClient::get_monmap_privately()
 {
   ldout(cct, 10) << "get_monmap_privately" << dendl;
@@ -166,11 +168,13 @@ int MonClient::get_monmap_privately()
   }
 
   hunting = true;  // reset this to true!
+
   cur_mon.clear();
   cur_con.reset(NULL);
 
   if (!monmap.fsid.is_zero())
     return 0;
+
   return -1;
 }
 
@@ -209,6 +213,7 @@ int MonClient::ping_monitor(const string &mon_id, string *result_reply)
   ldout(cct, 10) << __func__ << dendl;
 
   string new_mon_id;
+
   if (monmap.contains("noname-"+mon_id)) {
     new_mon_id = "noname-"+mon_id;
   } else {
@@ -217,38 +222,47 @@ int MonClient::ping_monitor(const string &mon_id, string *result_reply)
 
   if (new_mon_id.empty()) {
     ldout(cct, 10) << __func__ << " specified mon id is empty!" << dendl;
+
     return -EINVAL;
   } else if (!monmap.contains(new_mon_id)) {
     ldout(cct, 10) << __func__ << " no such monitor 'mon." << new_mon_id << "'"
                    << dendl;
+
     return -ENOENT;
   }
 
   MonClientPinger *pinger = new MonClientPinger(cct, result_reply);
 
   Messenger *smsgr = Messenger::create_client_messenger(cct, "temp_ping_client");
+
   smsgr->add_dispatcher_head(pinger);
   smsgr->start();
 
   ConnectionRef con = smsgr->get_connection(monmap.get_inst(new_mon_id));
+
   ldout(cct, 10) << __func__ << " ping mon." << new_mon_id
                  << " " << con->get_peer_addr() << dendl;
+
   con->send_message(new MPing);
 
   pinger->lock.Lock();
+
   int ret = pinger->wait_for_reply(cct->_conf->client_mount_timeout);
   if (ret == 0) {
     ldout(cct,10) << __func__ << " got ping reply" << dendl;
   } else {
     ret = -ret;
   }
+
   pinger->lock.Unlock();
 
   con->mark_down();
+
   smsgr->shutdown();
   smsgr->wait();
   delete smsgr;
   delete pinger;
+
   return ret;
 }
 
@@ -717,6 +731,7 @@ void MonClient::_reopen_session(int rank, string name)
 
   // restart authentication handshake
   state = MC_STATE_NEGOTIATING;
+
   // set to false by MonClient::_finish_hunting
   hunting = true;
 
@@ -774,6 +789,8 @@ bool MonClient::ms_handle_reset(Connection *con)
   return false;
 }
 
+// called by
+// MonClient::handle_auth
 void MonClient::_finish_hunting()
 {
   assert(monc_lock.is_locked());
@@ -818,13 +835,17 @@ void MonClient::tick()
     cur_con->send_keepalive();
 
     if (state == MC_STATE_HAVE_SESSION) {
+      // default 30.0
       if (cct->_conf->mon_client_ping_timeout > 0 &&
 	  cur_con->has_feature(CEPH_FEATURE_MSGR_KEEPALIVE2)) {
 	utime_t lk = cur_con->get_last_keepalive_ack();
 	utime_t interval = now - lk;
+
+	// default 30.0
 	if (interval > cct->_conf->mon_client_ping_timeout) {
 	  ldout(cct, 1) << "no keepalive since " << lk << " (" << interval
 			<< " seconds), reconnecting" << dendl;
+
 	  _reopen_session();
 	}
       }
@@ -851,9 +872,11 @@ void MonClient::schedule_tick()
   };
 
   if (hunting)
+    // default 3.0
     timer.add_event_after(cct->_conf->mon_client_hunt_interval
                           * reopen_interval_multiplier, new C_Tick(this));
   else
+    // default 10.0
     timer.add_event_after(cct->_conf->mon_client_ping_interval, new C_Tick(this));
 }
 
@@ -947,36 +970,49 @@ int MonClient::_check_auth_rotating()
 
   utime_t now = ceph_clock_now(cct);
   utime_t cutoff = now;
+
   cutoff -= MIN(30.0, cct->_conf->auth_service_ticket_ttl / 4.0);
+
   utime_t issued_at_lower_bound = now;
+
   issued_at_lower_bound -= cct->_conf->auth_service_ticket_ttl;
+
   if (!rotating_secrets->need_new_secrets(cutoff)) {
     ldout(cct, 10) << "_check_auth_rotating have uptodate secrets (they expire after " << cutoff << ")" << dendl;
+
     rotating_secrets->dump_rotating();
+
     return 0;
   }
 
   ldout(cct, 10) << "_check_auth_rotating renewing rotating keys (they expired before " << cutoff << ")" << dendl;
+
   if (!rotating_secrets->need_new_secrets() &&
       rotating_secrets->need_new_secrets(issued_at_lower_bound)) {
     // the key has expired before it has been issued?
     lderr(cct) << __func__ << " possible clock skew, rotating keys expired way too early"
                << " (before " << issued_at_lower_bound << ")" << dendl;
   }
+
   if ((now > last_rotating_renew_sent) &&
       double(now - last_rotating_renew_sent) < 1) {
     ldout(cct, 10) << __func__ << " called too often (last: "
                    << last_rotating_renew_sent << "), skipping refresh" << dendl;
+
     return 0;
   }
+
   MAuth *m = new MAuth;
+
   m->protocol = auth->get_protocol();
   if (auth->build_rotating_request(m->auth_payload)) {
     last_rotating_renew_sent = now;
+
     _send_mon_message(m);
   } else {
     m->put();
   }
+
   return 0;
 }
 
@@ -1059,6 +1095,7 @@ void MonClient::_send_command(MonCommand *r)
   ldout(cct, 10) << "_send_command " << r->tid << " " << r->cmd << dendl;
 
   MMonCommand *m = new MMonCommand(monmap.fsid);
+
   m->set_tid(r->tid);
   m->cmd = r->cmd;
   m->set_data(r->inbl);
@@ -1089,11 +1126,14 @@ void MonClient::handle_mon_command_ack(MMonCommandAck *ack)
     ldout(cct, 10) << "handle_mon_command_ack has tid 0, assuming it is " << r->tid << dendl;
   } else {
     map<uint64_t,MonCommand*>::iterator p = mon_commands.find(tid);
+
     if (p == mon_commands.end()) {
       ldout(cct, 10) << "handle_mon_command_ack " << ack->get_tid() << " not found" << dendl;
+
       ack->put();
       return;
     }
+
     r = p->second;
   }
 
