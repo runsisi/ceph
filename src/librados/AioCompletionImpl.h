@@ -164,8 +164,10 @@ struct librados::AioCompletionImpl {
   }
   void put_unlock() {
     assert(ref > 0);
+
     int n = --ref;
     lock.Unlock();
+
     if (!n)
       delete this;
   }

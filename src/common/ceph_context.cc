@@ -609,6 +609,7 @@ CephContext::~CephContext()
   _admin_socket->unregister_command("log flush");
   _admin_socket->unregister_command("log dump");
   _admin_socket->unregister_command("log reopen");
+
   delete _admin_hook;
   delete _admin_socket;
 
@@ -637,6 +638,7 @@ CephContext::~CephContext()
   _log = NULL;
 
   delete _conf;
+
   ceph_spin_destroy(&_service_thread_lock);
   ceph_spin_destroy(&_fork_watchers_lock);
   ceph_spin_destroy(&_associated_objs_lock);
@@ -667,7 +669,8 @@ void CephContext::init_crypto()
   }
 }
 
-// called by common_init_finish
+// called by
+// common_init_finish
 void CephContext::start_service_thread()
 {
   ceph_spin_lock(&_service_thread_lock);
@@ -701,24 +704,33 @@ void CephContext::start_service_thread()
 void CephContext::reopen_logs()
 {
   ceph_spin_lock(&_service_thread_lock);
+
   if (_service_thread)
     _service_thread->reopen_logs();
+
   ceph_spin_unlock(&_service_thread_lock);
 }
 
+// called by
+// CephContext::~CephContext
 void CephContext::join_service_thread()
 {
   ceph_spin_lock(&_service_thread_lock);
+
   CephContextServiceThread *thread = _service_thread;
+
   if (!thread) {
     ceph_spin_unlock(&_service_thread_lock);
     return;
   }
+
   _service_thread = NULL;
+
   ceph_spin_unlock(&_service_thread_lock);
 
   thread->exit_thread();
   thread->join();
+
   delete thread;
 }
 

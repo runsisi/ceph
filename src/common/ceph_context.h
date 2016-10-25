@@ -64,10 +64,20 @@ private:
   ~CephContext();
   atomic_t nref;
 public:
+  // called by
+  // CephLevelDBLogger::CephLevelDBLogger
+  // CephRocksdbLogger::CephRocksdbLogger
+  // RadosClient::RadosClient
+  // XioInit::package_init
+  // librgw_create
+  // rgw_main.c:intrusive_ptr_add_ref
+  // ceph_mount_info::ceph_mount_info
+  // ceph_create_from_rados
   CephContext *get() {
     nref.inc();
     return this;
   }
+
   void put();
 
   md_config_t *_conf;

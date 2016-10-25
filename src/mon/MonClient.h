@@ -113,6 +113,8 @@ private:
   Messenger *messenger;
 
   string cur_mon;
+
+  // boost::intrusive_ptr<Connection>
   ConnectionRef cur_con;
 
   SimpleRNG rng;
@@ -175,6 +177,14 @@ private:
   void _finish_hunting();
   void _reopen_session(int rank, string name);
 
+  // called by
+  // MonClient::reopen_session
+  // MonClient::get_monmap
+  // MonClient::handle_monmap
+  // MonClient::authenticate
+  // MonClient::ms_handle_reset
+  // MonClient::tick
+  // MonClient::_renew_subs
   void _reopen_session() {
     _reopen_session(-1, string());
   }

@@ -129,6 +129,7 @@ void common_init_finish(CephContext *cct)
 
   int flags = cct->get_init_flags();
 
+  // this flag was set only by ceph-conf and ceph-mon
   if (!(flags & CINIT_FLAG_NO_DAEMON_ACTIONS))
     // create service thread to reopen log files, heart beat and refresh perf counter,
     // init admin socket

@@ -510,6 +510,7 @@ void Objecter::shutdown()
 
   if (logger) {
     cct->get_perfcounters_collection()->remove(logger);
+
     delete logger;
     logger = NULL;
   }

@@ -82,6 +82,7 @@ void PerfCountersCollection::remove(class PerfCounters *l)
   }
 
   perf_counters_set_t::iterator i = m_loggers.find(l);
+
   assert(i != m_loggers.end());
   m_loggers.erase(i);
 }

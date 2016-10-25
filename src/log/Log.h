@@ -58,6 +58,7 @@ class Log : private Thread
   void _log_message(const char *s, bool crash);
 
 public:
+  // called by CephContext::CephContext
   explicit Log(SubsystemMap *s);
   virtual ~Log();
 

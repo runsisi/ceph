@@ -2181,7 +2181,9 @@ librados::Rados::Rados() : client(NULL)
 librados::Rados::Rados(IoCtx &ioctx)
 {
   client = ioctx.io_ctx_impl->client;
+
   assert(client != NULL);
+
   client->get();
 }
 
@@ -2234,8 +2236,10 @@ void librados::Rados::shutdown()
 {
   if (!client)
     return;
+
   if (client->put()) {
     client->shutdown();
+
     delete client;
     client = NULL;
   }

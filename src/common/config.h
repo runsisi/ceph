@@ -289,6 +289,7 @@ private:
   changed_set_t changed;
 
 public:
+  // will be passed to ceph::logging::Log::m_subs
   ceph::logging::SubsystemMap subsys;
 
   EntityName name;

@@ -170,15 +170,21 @@ class Finisher {
     finisher_thread(this) {
     PerfCountersBuilder b(cct, string("finisher-") + name,
 			  l_finisher_first, l_finisher_last);
+
     b.add_u64(l_finisher_queue_len, "queue_len");
     b.add_time_avg(l_finisher_complete_lat, "complete_latency");
+
     logger = b.create_perf_counters();
+
     cct->get_perfcounters_collection()->add(logger);
+
     logger->set(l_finisher_queue_len, 0);
     logger->set(l_finisher_complete_lat, 0);
   }
 
   ~Finisher() {
+    // for MonClient, the MonClient::finisher is an anonymous finsher, so
+    // the logger is NULL
     if (logger && cct) {
       cct->get_perfcounters_collection()->remove(logger);
       delete logger;

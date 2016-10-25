@@ -19,6 +19,7 @@ struct Subsystem {
   Subsystem() : log_level(0), gather_level(0) {}     
 };
 
+// used as a member variable of md_config_t
 class SubsystemMap {
   std::vector<Subsystem> m_subsys;
   unsigned m_max_name_len;
