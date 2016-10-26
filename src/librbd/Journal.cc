@@ -316,6 +316,7 @@ Journal<I>::Journal(I &image_ctx)
   m_work_queue = new ContextWQ("librbd::journal::work_queue",
                                cct->_conf->rbd_op_thread_timeout,
                                thread_pool_singleton);
+
   ImageCtx::get_timer_instance(cct, &m_timer, &m_timer_lock);
 }
 

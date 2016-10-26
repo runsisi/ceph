@@ -1266,6 +1266,7 @@ AioCompletion *Replay<I>::create_aio_flush_completion(Context *on_safe) {
       new C_AioFlushComplete(this, on_safe,
                              std::move(m_aio_modify_unsafe_contexts)),
       util::get_image_ctx(&m_image_ctx), AIO_TYPE_FLUSH);
+
   m_aio_modify_unsafe_contexts.clear();
 
   return aio_comp;

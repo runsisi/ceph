@@ -259,8 +259,8 @@ int librados::RadosClient::connect()
 
   objecter = new (std::nothrow) Objecter(cct, messenger, &monclient,
 			  &finisher,
-			  cct->_conf->rados_mon_op_timeout,
-			  cct->_conf->rados_osd_op_timeout);
+			  cct->_conf->rados_mon_op_timeout,     // default 0
+			  cct->_conf->rados_osd_op_timeout);    // default 0
   if (!objecter)
     goto out;
 
@@ -287,14 +287,19 @@ int librados::RadosClient::connect()
   err = monclient.init();
   if (err) {
     ldout(cct, 0) << conf->name << " initialization error " << cpp_strerror(-err) << dendl;
+
     shutdown();
+
     goto out;
   }
 
+  // default 300.0
   err = monclient.authenticate(conf->client_mount_timeout);
   if (err) {
     ldout(cct, 0) << conf->name << " authentication error " << cpp_strerror(-err) << dendl;
+
     shutdown();
+
     goto out;
   }
 
@@ -830,6 +835,11 @@ int librados::RadosClient::blacklist_add(const string& client_address,
   return r;
 }
 
+// called by
+// librados.cc:anon::get_inconsistent_pgs
+// librados::RadosClient::blacklist_add
+// librados::Rados::mon_command
+// rados_mon_command
 int librados::RadosClient::mon_command(const vector<string>& cmd,
 				       const bufferlist &inbl,
 				       bufferlist *outbl, string *outs)
@@ -838,14 +848,19 @@ int librados::RadosClient::mon_command(const vector<string>& cmd,
   Cond cond;
   bool done;
   int rval;
+
   lock.Lock();
+
   monclient.start_mon_command(cmd, inbl, outbl, outs,
 			       new C_SafeCond(&mylock, &cond, &done, &rval));
+
   lock.Unlock();
+
   mylock.Lock();
   while (!done)
     cond.Wait(mylock);
   mylock.Unlock();
+
   return rval;
 }
 

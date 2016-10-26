@@ -1536,7 +1536,9 @@ void Objecter::_send_op_map_check(Op *op)
   // ask the monitor
   if (check_latest_map_ops.count(op->tid) == 0) {
     op->get();
+
     check_latest_map_ops[op->tid] = op;
+
     C_Op_Map_Latest *c = new C_Op_Map_Latest(this, op->tid);
     monc->get_version("osdmap", &c->latest, NULL, c);
   }
@@ -1621,7 +1623,9 @@ void Objecter::_send_linger_map_check(LingerOp *op)
   // ask the monitor
   if (check_latest_map_lingers.count(op->linger_id) == 0) {
     op->get();
+
     check_latest_map_lingers[op->linger_id] = op;
+
     C_Linger_Map_Latest *c = new C_Linger_Map_Latest(this, op->linger_id);
     monc->get_version("osdmap", &c->latest, NULL, c);
   }
@@ -1692,7 +1696,9 @@ void Objecter::_send_command_map_check(CommandOp *c)
   // ask the monitor
   if (check_latest_map_commands.count(c->tid) == 0) {
     c->get();
+
     check_latest_map_commands[c->tid] = c;
+
     C_Command_Map_Latest *f = new C_Command_Map_Latest(this, c->tid);
     monc->get_version("osdmap", &f->latest, NULL, f);
   }
@@ -1905,6 +1911,7 @@ struct C_Objecter_GetVersion : public Context {
 void Objecter::wait_for_latest_osdmap(Context *fin)
 {
   ldout(cct, 10) << __func__ << dendl;
+
   C_Objecter_GetVersion *c = new C_Objecter_GetVersion(this, fin);
   monc->get_version("osdmap", &c->newest, &c->oldest, c);
 }
@@ -2792,12 +2799,15 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,
   pg_t pgid;
   if (t->precalc_pgid) {
     assert(t->base_oid.name.empty()); // make sure this is a listing op
+
     ldout(cct, 10) << __func__ << " have " << t->base_pgid << " pool "
 		   << osdmap->have_pg_pool(t->base_pgid.pool()) << dendl;
+
     if (!osdmap->have_pg_pool(t->base_pgid.pool())) {
       t->osd = -1;
       return RECALC_OP_TARGET_POOL_DNE;
     }
+
     if (osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE)) {
       // if the SORTBITWISE flag is set, we know all OSDs are running
       // jewel+.
@@ -2821,9 +2831,12 @@ int Objecter::_calc_target(op_target_t *t, epoch_t *last_force_resend,
   unsigned pg_num = pi->get_pg_num();
   int up_primary, acting_primary;
   vector<int> up, acting;
+
   osdmap->pg_to_up_acting_osds(pgid, &up, &up_primary,
 			       &acting, &acting_primary);
+
   bool sort_bitwise = osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE);
+
   unsigned prev_seed = ceph_stable_mod(pgid.ps(), t->pg_num, t->pg_num_mask);
   if (any_change && pg_interval_t::is_new_interval(
 	t->acting_primary,
@@ -3765,6 +3778,7 @@ void Objecter::list_objects(ListContext *list_context, Context *onfinish)
   }
 
   shared_lock rl(rwlock);
+
   const pg_pool_t *pool = osdmap->get_pg_pool(list_context->pool_id);
   if (!pool) { // pool is gone
     rl.unlock();
@@ -3772,29 +3786,37 @@ void Objecter::list_objects(ListContext *list_context, Context *onfinish)
     onfinish->complete(-ENOENT);
     return;
   }
+
   int pg_num = pool->get_pg_num();
   bool sort_bitwise = osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE);
+
   rl.unlock();
 
   if (list_context->starting_pg_num == 0) {     // there can't be zero pgs!
     list_context->starting_pg_num = pg_num;
     list_context->sort_bitwise = sort_bitwise;
+
     ldout(cct, 20) << pg_num << " placement groups" << dendl;
   }
+
   if (list_context->sort_bitwise != sort_bitwise) {
     ldout(cct, 10) << " hobject sort order changed, restarting this pg"
 		   << dendl;
+
     list_context->cookie = collection_list_handle_t();
     list_context->sort_bitwise = sort_bitwise;
   }
+
   if (list_context->starting_pg_num != pg_num) {
     // start reading from the beginning; the pgs have changed
     ldout(cct, 10) << " pg_num changed; restarting with " << pg_num << dendl;
+
     list_context->current_pg = 0;
     list_context->cookie = collection_list_handle_t();
     list_context->current_pg_epoch = 0;
     list_context->starting_pg_num = pg_num;
   }
+
   assert(list_context->current_pg < pg_num);
 
   ObjectOperation op;
@@ -5145,7 +5167,9 @@ void Objecter::enumerate_objects(
   }
 
   shared_lock rl(rwlock);
+
   assert(osdmap->get_epoch());
+
   if (!osdmap->test_flag(CEPH_OSDMAP_SORTBITWISE)) {
     rl.unlock();
     lderr(cct) << __func__ << ": SORTBITWISE cluster flag not set" << dendl;

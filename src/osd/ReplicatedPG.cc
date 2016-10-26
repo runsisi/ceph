@@ -1262,10 +1262,14 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 	} else {
           response.handle = next;
         }
-        dout(10) << "pgnls handle=" << response.handle << dendl;
+
+	dout(10) << "pgnls handle=" << response.handle << dendl;
+
 	::encode(response, osd_op.outdata);
+
 	if (filter)
 	  ::encode(filter_out, osd_op.outdata);
+
 	dout(10) << " pgnls result=" << result << " outdata.length()="
 		 << osd_op.outdata.length() << dendl;
       }
@@ -1281,11 +1285,14 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 	result = -EINVAL;
 	break;
       }
+
       if (filter) {
 	delete filter;
 	filter = NULL;
       }
+
       result = get_pgls_filter(bp, &filter);
+
       if (result < 0)
         break;
 
@@ -12227,6 +12234,7 @@ uint64_t ReplicatedPG::recover_backfill(
     }
     new_last_backfill = i->first;
   }
+
   dout(10) << "possible new_last_backfill at " << new_last_backfill << dendl;
 
   assert(!pending_backfill_updates.empty() ||
@@ -12250,19 +12258,23 @@ uint64_t ReplicatedPG::recover_backfill(
 
     if (cmp(new_last_backfill, pinfo.last_backfill, get_sort_bitwise()) > 0) {
       pinfo.set_last_backfill(new_last_backfill, get_sort_bitwise());
+
       epoch_t e = get_osdmap()->get_epoch();
       MOSDPGBackfill *m = NULL;
+
       if (pinfo.last_backfill.is_max()) {
         m = new MOSDPGBackfill(
 	  MOSDPGBackfill::OP_BACKFILL_FINISH,
 	  e,
 	  e,
 	  spg_t(info.pgid.pgid, bt.shard));
+
         // Use default priority here, must match sub_op priority
         /* pinfo.stats might be wrong if we did log-based recovery on the
          * backfilled portion in addition to continuing backfill.
          */
         pinfo.stats = info.stats;
+
         start_recovery_op(hobject_t::get_max());
       } else {
         m = new MOSDPGBackfill(

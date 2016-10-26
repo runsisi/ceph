@@ -822,14 +822,18 @@ protected:
   void release_object_locks(
     ObcLockManager &lock_manager) {
     list<pair<hobject_t, list<OpRequestRef> > > to_req;
+
     bool requeue_recovery = false;
     bool requeue_snaptrim = false;
+
     lock_manager.put_locks(
       &to_req,
       &requeue_recovery,
       &requeue_snaptrim);
+
     if (requeue_recovery)
       queue_recovery();
+
     if (requeue_snaptrim)
       queue_snap_trim();
 

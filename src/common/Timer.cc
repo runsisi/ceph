@@ -131,6 +131,7 @@ void SafeTimer::timer_thread()
 
     ldout(cct,20) << "timer_thread going to sleep" << dendl;
 
+    // will be notified by SafeTimer::add_event_at, SafeTimer::shutdown
     if (schedule.empty())
       cond.Wait(lock);
     else

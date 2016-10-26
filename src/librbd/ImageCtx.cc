@@ -1199,11 +1199,17 @@ struct C_InvalidateCache : public Context {
     return thread_pool_singleton;
   }
 
+  // called by
+  // librbd::journal::CreateRequest<I>::create_journal
+  // librbd::journal::RemoveRequest<I>::stat_journal
+  // librbd::Journal<I>::Journal
   void ImageCtx::get_timer_instance(CephContext *cct, SafeTimer **timer,
                                     Mutex **timer_lock) {
     SafeTimerSingleton *safe_timer_singleton;
+
     cct->lookup_or_create_singleton_object<SafeTimerSingleton>(
       safe_timer_singleton, "librbd::journal::safe_timer");
+
     *timer = safe_timer_singleton;
     *timer_lock = &safe_timer_singleton->lock;
   }

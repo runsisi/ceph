@@ -3081,8 +3081,14 @@ void OSDMonitor::get_health(list<pair<health_status_t,string> >& summary,
     if (!osdmap.test_flag(CEPH_OSDMAP_SORTBITWISE) &&
 	(osdmap.get_features(CEPH_ENTITY_TYPE_OSD, NULL) &
 	 CEPH_FEATURE_OSD_BITWISE_HOBJ_SORT)) {
+
+      // osdmap has the OSD_BITWISE_HOBJ_SORT feature but without
+      // OSD_BITWISE_HOBJ_SORT flag set
+
       ostringstream ss;
+
       ss << "no legacy OSD present but 'sortbitwise' flag is not set";
+
       summary.push_back(make_pair(HEALTH_WARN, ss.str()));
     }
 

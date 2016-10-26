@@ -4975,16 +4975,23 @@ void OSD::start_boot()
   if (!_is_healthy()) {
     // if we are not healthy, do not mark ourselves up (yet)
     dout(1) << "not healthy; waiting to boot" << dendl;
+
     if (!is_waiting_for_healthy())
       start_waiting_for_healthy();
+
     // send pings sooner rather than later
     heartbeat_kick();
+
     return;
   }
+
   dout(1) << "We are healthy, booting" << dendl;
+
   set_state(STATE_PREBOOT);
+
   dout(10) << "start_boot - have maps " << superblock.oldest_map
 	   << ".." << superblock.newest_map << dendl;
+
   C_OSD_GetVersion *c = new C_OSD_GetVersion(this);
   monc->get_version("osdmap", &c->newest, &c->oldest, c);
 }
@@ -5000,6 +5007,7 @@ void OSD::_got_mon_epochs(epoch_t oldest, epoch_t newest)
 void OSD::_preboot(epoch_t oldest, epoch_t newest)
 {
   assert(is_preboot());
+
   dout(10) << __func__ << " _preboot mon has osdmaps "
 	   << oldest << ".." << newest << dendl;
 
@@ -5019,6 +5027,7 @@ void OSD::_preboot(epoch_t oldest, epoch_t newest)
   } else if (osdmap->get_epoch() >= oldest - 1 &&
 	     osdmap->get_epoch() + cct->_conf->osd_map_message_max > newest) {
     _send_boot();
+
     return;
   }
 
@@ -5119,13 +5128,17 @@ void OSD::_send_boot()
   MOSDBoot *mboot = new MOSDBoot(superblock, service.get_boot_epoch(),
                                  hb_back_addr, hb_front_addr, cluster_addr,
 				 CEPH_FEATURES_ALL);
+
   dout(10) << " client_addr " << client_messenger->get_myaddr()
 	   << ", cluster_addr " << cluster_addr
 	   << ", hb_back_addr " << hb_back_addr
 	   << ", hb_front_addr " << hb_front_addr
 	   << dendl;
+
   _collect_metadata(&mboot->metadata);
+
   monc->send_mon_message(mboot);
+
   set_state(STATE_BOOTING);
 }
 
