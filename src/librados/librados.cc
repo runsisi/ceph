@@ -2710,6 +2710,7 @@ extern "C" int rados_create(rados_t *pcluster, const char * const id)
   if (id) {
     iparams.name.set(CEPH_ENTITY_TYPE_CLIENT, id);
   }
+
   CephContext *cct = rados_create_cct("", &iparams);
 
   tracepoint(librados, rados_create_enter, id);

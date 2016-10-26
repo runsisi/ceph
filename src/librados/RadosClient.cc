@@ -338,6 +338,7 @@ int librados::RadosClient::connect()
       delete objecter;
       objecter = NULL;
     }
+
     if (messenger) {
       delete messenger;
       messenger = NULL;
@@ -890,14 +891,19 @@ int librados::RadosClient::mon_command(int rank, const vector<string>& cmd,
   Cond cond;
   bool done;
   int rval;
+
   lock.Lock();
+
   monclient.start_mon_command(rank, cmd, inbl, outbl, outs,
 			       new C_SafeCond(&mylock, &cond, &done, &rval));
+
   lock.Unlock();
+
   mylock.Lock();
   while (!done)
     cond.Wait(mylock);
   mylock.Unlock();
+
   return rval;
 }
 

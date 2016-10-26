@@ -92,8 +92,10 @@ int SimpleMessenger::shutdown()
   local_connection->set_priv(NULL);
 
   lock.Lock();
+
   stop_cond.Signal();
   stopped = true;
+
   lock.Unlock();
 
   return 0;
@@ -652,28 +654,35 @@ void SimpleMessenger::wait()
 
   // close+reap all pipes
   lock.Lock();
+
   {
     ldout(cct,10) << "wait: closing pipes" << dendl;
 
     while (!rank_pipe.empty()) {
       Pipe *p = rank_pipe.begin()->second;
+
       p->unregister_pipe();
+
       p->pipe_lock.Lock();
       p->stop_and_wait();
       p->pipe_lock.Unlock();
     }
 
     reaper();
+
     ldout(cct,10) << "wait: waiting for pipes " << pipes << " to close" << dendl;
+
     while (!pipes.empty()) {
       reaper_cond.Wait(lock);
       reaper();
     }
   }
+
   lock.Unlock();
 
   ldout(cct,10) << "wait: done." << dendl;
   ldout(cct,1) << "shutdown complete." << dendl;
+
   started = false;
 }
 
