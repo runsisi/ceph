@@ -141,8 +141,10 @@ void OSDMonitor::create_initial()
 void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 {
   version_t version = get_last_committed();
+
   if (version == osdmap.epoch)
     return;
+
   assert(version > osdmap.epoch);
 
   dout(15) << "update_from_paxos paxos e " << version
@@ -161,6 +163,7 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
    * that the following conditions find whichever full map version is newer.
    */
   version_t latest_full = get_version_latest_full();
+
   if (latest_full == 0 && get_first_committed() > 1)
     latest_full = get_first_committed();
 
@@ -168,12 +171,16 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
     // make sure we can really believe get_version_latest_full(); see
     // 76cd7ac1c2094b34ad36bea89b2246fa90eb2f6d
     bufferlist test;
+
     get_version_full(latest_full, test);
+
     if (test.length() == 0) {
       dout(10) << __func__ << " ignoring recorded latest_full as it is missing; fallback to search" << dendl;
+
       latest_full = 0;
     }
   }
+
   if (get_first_committed() > 1 &&
       latest_full < get_first_committed()) {
     /* a bug introduced in 7fb3804fb860dcd0340dd3f7c39eec4315f8e4b6 would lead
@@ -188,11 +195,15 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
              << " [" << fc << ", " << lc << "]" << dendl;
 
     latest_full = 0;
+
     for (version_t v = lc; v >= fc; v--) {
       string full_key = "full_" + stringify(v);
+
       if (mon->store->exists(get_service_name(), full_key)) {
         dout(10) << __func__ << " found latest full map v " << v << dendl;
+
         latest_full = v;
+
         break;
       }
     }
@@ -201,33 +212,47 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
     // state, and we shouldn't want to work around it without knowing what
     // exactly happened.
     assert(latest_full > 0);
+
     MonitorDBStore::TransactionRef t(new MonitorDBStore::Transaction);
     put_version_latest_full(t, latest_full);
+
     mon->store->apply_transaction(t);
+
     dout(10) << __func__ << " updated the on-disk full map version to "
              << latest_full << dendl;
   }
 
   if ((latest_full > 0) && (latest_full > osdmap.epoch)) {
     bufferlist latest_bl;
+
     get_version_full(latest_full, latest_bl);
+
     assert(latest_bl.length() != 0);
+
     dout(7) << __func__ << " loading latest full map e" << latest_full << dendl;
+
     osdmap.decode(latest_bl);
   }
 
   // walk through incrementals
   MonitorDBStore::TransactionRef t;
+
   size_t tx_size = 0;
+
   while (version > osdmap.epoch) {
     bufferlist inc_bl;
+
     int err = get_version(osdmap.epoch+1, inc_bl);
+
     assert(err == 0);
     assert(inc_bl.length());
 
     dout(7) << "update_from_paxos  applying incremental " << osdmap.epoch+1 << dendl;
+
     OSDMap::Incremental inc(inc_bl);
+
     err = osdmap.apply_incremental(inc);
+
     assert(err == 0);
 
     if (!t)
@@ -242,15 +267,18 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
       f = mon->get_quorum_con_features();
     if (!f)
       f = -1;
+
     bufferlist full_bl;
     osdmap.encode(full_bl, f | CEPH_FEATURE_RESERVED);
     tx_size += full_bl.length();
 
     bufferlist orig_full_bl;
     get_version_full(osdmap.epoch, orig_full_bl);
+
     if (orig_full_bl.length()) {
       // the primary provided the full map
       assert(inc.have_crc);
+
       if (inc.full_crc != osdmap.crc) {
 	// This will happen if the mons were running mixed versions in
 	// the past or some other circumstance made the full encoded
@@ -260,13 +288,16 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 	// crc mismatch and request a full map from a mon.
 	derr << __func__ << " full map CRC mismatch, resetting to canonical"
 	     << dendl;
+
 	osdmap = OSDMap();
 	osdmap.decode(orig_full_bl);
       }
     } else {
       assert(!inc.have_crc);
+
       put_version_full(t, osdmap.epoch, full_bl);
     }
+
     put_version_latest_full(t, osdmap.epoch);
 
     // share
@@ -278,6 +309,7 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 
     if (tx_size > g_conf->mon_sync_max_payload_size*2) {
       mon->store->apply_transaction(t);
+
       t = MonitorDBStore::TransactionRef();
       tx_size = 0;
     }
@@ -1740,6 +1772,8 @@ bool OSDMonitor::can_mark_out(int i)
   return true;
 }
 
+// called by
+// OSDMonitor::prepare_boot
 bool OSDMonitor::can_mark_in(int i)
 {
   if (osdmap.test_flag(CEPH_OSDMAP_NOIN)) {
@@ -2145,6 +2179,7 @@ bool OSDMonitor::preprocess_boot(MonOpRequestRef op)
 bool OSDMonitor::prepare_boot(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
+
   MOSDBoot *m = static_cast<MOSDBoot*>(op->get_req());
   dout(7) << __func__ << " from " << m->get_orig_source_inst() << " sb " << m->sb
 	  << " cluster_addr " << m->cluster_addr
@@ -2153,6 +2188,7 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
 	  << dendl;
 
   assert(m->get_orig_source().is_osd());
+
   int from = m->get_orig_source().num();
 
   // does this osd exist?
@@ -2163,6 +2199,7 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
   }
 
   int oldstate = osdmap.exists(from) ? osdmap.get_state(from) : CEPH_OSD_NEW;
+
   if (pending_inc.new_state.count(from))
     oldstate ^= pending_inc.new_state[from];
 
@@ -2179,6 +2216,7 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
       // mark previous guy down
       pending_inc.new_state[from] = CEPH_OSD_UP;
     }
+
     wait_for_finished_proposal(op, new C_RetryMessage(this, op));
   } else if (pending_inc.new_up_client.count(from)) {
     // already prepared, just wait
@@ -2188,9 +2226,12 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
   } else {
     // mark new guy up.
     pending_inc.new_up_client[from] = m->get_orig_source_addr();
+
     if (!m->cluster_addr.is_blank_ip())
       pending_inc.new_up_cluster[from] = m->cluster_addr;
+
     pending_inc.new_hb_back_up[from] = m->hb_back_addr;
+
     if (!m->hb_front_addr.is_blank_ip())
       pending_inc.new_hb_front_up[from] = m->hb_front_addr;
 
@@ -2205,14 +2246,17 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
     if (!osdmap.exists(from) || osdmap.get_uuid(from) != m->sb.osd_fsid) {
       // preprocess should have caught this;  if not, assert.
       assert(!osdmap.exists(from) || osdmap.get_uuid(from).is_zero());
+
       pending_inc.new_uuid[from] = m->sb.osd_fsid;
     }
 
     // fresh osd?
     if (m->sb.newest_map == 0 && osdmap.exists(from)) {
       const osd_info_t& i = osdmap.get_info(from);
+
       if (i.up_from > i.lost_at) {
 	dout(10) << " fresh osd; marking lost_at too" << dendl;
+
 	pending_inc.new_lost[from] = osdmap.get_epoch();
       }
     }
@@ -2220,11 +2264,14 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
     // metadata
     bufferlist osd_metadata;
     ::encode(m->metadata, osd_metadata);
+
     pending_metadata[from] = osd_metadata;
 
     // adjust last clean unmount epoch?
     const osd_info_t& info = osdmap.get_info(from);
+
     dout(10) << " old osd_info: " << info << dendl;
+
     if (m->sb.mounted > info.last_clean_begin ||
 	(m->sb.mounted == info.last_clean_begin &&
 	 m->sb.clean_thru > info.last_clean_end)) {
@@ -2240,9 +2287,11 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
     }
 
     osd_xinfo_t xi = osdmap.get_xinfo(from);
+
     if (m->boot_epoch == 0) {
       xi.laggy_probability *= (1.0 - g_conf->mon_osd_laggy_weight);
       xi.laggy_interval *= (1.0 - g_conf->mon_osd_laggy_weight);
+
       dout(10) << " not laggy, new xi " << xi << dendl;
     } else {
       if (xi.down_stamp.sec()) {
@@ -2252,13 +2301,16 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
 	    (interval > g_conf->mon_osd_laggy_max_interval)) {
           interval =  g_conf->mon_osd_laggy_max_interval;
         }
+
         xi.laggy_interval =
 	  interval * g_conf->mon_osd_laggy_weight +
 	  xi.laggy_interval * (1.0 - g_conf->mon_osd_laggy_weight);
       }
+
       xi.laggy_probability =
 	g_conf->mon_osd_laggy_weight +
 	xi.laggy_probability * (1.0 - g_conf->mon_osd_laggy_weight);
+
       dout(10) << " laggy, now xi " << xi << dendl;
     }
 
@@ -2291,6 +2343,7 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
     // wait
     wait_for_finished_proposal(op, new C_Booted(this, op));
   }
+
   return true;
 }
 
