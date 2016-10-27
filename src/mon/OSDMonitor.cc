@@ -1744,8 +1744,10 @@ bool OSDMonitor::can_mark_in(int i)
 {
   if (osdmap.test_flag(CEPH_OSDMAP_NOIN)) {
     dout(5) << "can_mark_in NOIN flag set, will not mark osd." << i << " in" << dendl;
+
     return false;
   }
+
   return true;
 }
 
@@ -3019,8 +3021,11 @@ void OSDMonitor::get_health(list<pair<health_status_t,string> >& summary,
 			 CEPH_OSDMAP_NODEEP_SCRUB |
 			 CEPH_OSDMAP_NOTIERAGENT)) {
       ostringstream ss;
+
       ss << osdmap.get_flag_string() << " flag(s) set";
+
       summary.push_back(make_pair(HEALTH_WARN, ss.str()));
+
       if (detail)
 	detail->push_back(make_pair(HEALTH_WARN, ss.str()));
     }
