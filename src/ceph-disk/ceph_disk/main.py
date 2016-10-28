@@ -670,12 +670,15 @@ def list_all_partitions():
     Return a list of devices and partitions
     """
     names = os.listdir('/sys/block')
+
     dev_part_list = {}
     for name in names:
         # /dev/fd0 may hang http://tracker.ceph.com/issues/6827
         if re.match(r'^fd\d$', name):
             continue
+
         dev_part_list[name] = list_partitions(get_dev_path(name))
+
     return dev_part_list
 
 
@@ -1419,6 +1422,11 @@ def check_journal_reqs(args):
     return (not allows_journal, not wants_journal, not needs_journal)
 
 
+# called by
+# zap
+# Device.create_partition
+# PrepareSpace.prepare_device
+# PrepareData.populate_data_path_device
 def update_partition(dev, description):
     """
     Must be called after modifying a partition table so the kernel
@@ -1432,11 +1440,14 @@ def update_partition(dev, description):
     group changes etc. are complete.
     """
     LOG.debug('Calling partprobe on %s device %s', description, dev)
+
     partprobe_ok = False
     error = 'unknown error'
     partprobe = _get_command_executable(['partprobe'])[0]
+
     for i in range(5):
         command_check_call(['udevadm', 'settle', '--timeout=600'])
+
         try:
             _check_output(['flock', '-s', dev, partprobe, dev])
             partprobe_ok = True
@@ -1449,8 +1460,10 @@ def update_partition(dev, description):
             LOG.debug('partprobe %s failed : %s (ignored, waiting 60s)'
                       % (dev, error))
             time.sleep(60)
+
     if not partprobe_ok:
         raise Error('partprobe %s failed : %s' % (dev, error))
+
     command_check_call(['udevadm', 'settle', '--timeout=600'])
 
 
@@ -1533,10 +1546,16 @@ class Device(object):
         self.ptype_map = None
         assert not is_partition(self.path)
 
+    # called by
+    # PrepareSpace.prepare_device
+    # PrepareData.create_data_partition
+    # Lockbox.create_partition
     def create_partition(self, uuid, name, size=0, num=0):
         ptype = self.ptype_tobe_for_name(name)
+
         if num == 0:
             num = get_free_partition_index(dev=self.path)
+
         if size > 0:
             new = '--new={num}:0:+{size}M'.format(num=num, size=size)
             if size > self.get_dev_size():
@@ -1550,6 +1569,7 @@ class Device(object):
 
         LOG.debug('Creating %s partition num %d size %d on %s',
                   name, num, size, self.path)
+
         command_check_call(
             [
                 'sgdisk',
@@ -1562,31 +1582,49 @@ class Device(object):
                 self.path,
             ]
         )
+
+        # udevadm settle
         update_partition(self.path, 'created')
+
         return num
 
     def ptype_tobe_for_name(self, name):
         LOG.debug("name = " + name)
+
         if name == 'data':
             name = 'osd'
+
         if name == 'lockbox':
             if is_mpath(self.path):
                 return PTYPE['mpath']['lockbox']['tobe']
             else:
                 return PTYPE['regular']['lockbox']['tobe']
+
         if self.ptype_map is None:
             partition = DevicePartition.factory(
                 path=self.path, dev=None, args=self.args)
+
             self.ptype_map = partition.ptype_map
+
         return self.ptype_map[name]['tobe']
 
+    # called by
+    # PrepareSpace.prepare_device
+    # PrepareData.create_data_partition
+    # Lockbox.create_partition
     def get_partition(self, num):
         if num not in self.partitions:
             dev = get_partition_dev(self.path, num)
+
+            # DevicePartitionMultipath/DevicePartitionCryptLuks/
+            # DevicePartitionCryptPlain/DevicePartition
             partition = DevicePartition.factory(
                 path=self.path, dev=dev, args=self.args)
+
             partition.set_partition_number(num)
+
             self.partitions[num] = partition
+
         return self.partitions[num]
 
     def get_dev_size(self):
@@ -1609,6 +1647,8 @@ class DevicePartition(object):
         self.uuid = None
         self.ptype_map = None
         self.ptype = None
+
+        # update self.ptype_map
         self.set_variables_ptype()
 
     def get_uuid(self):
@@ -1643,9 +1683,15 @@ class DevicePartition(object):
     def ptype_for_name(self, name):
         return self.ptype_map[name]['ready']
 
+    # called by
+    # PrepareSpace.prepare_device
+    # PrepareData.set_data_partition
+    # Lockbox.set_or_create_partition
+    # main_activate_lockbox_protected
     @staticmethod
     def factory(path, dev, args):
         dmcrypt_type = CryptHelpers.get_dmcrypt_type(args)
+
         if ((path is not None and is_mpath(path)) or
                 (dev is not None and is_mpath(dev))):
             partition = DevicePartitionMultipath(args)
@@ -1655,7 +1701,9 @@ class DevicePartition(object):
             partition = DevicePartitionCryptPlain(args)
         else:
             partition = DevicePartition(args)
+
         partition.set_dev(dev)
+
         return partition
 
 
@@ -1744,6 +1792,9 @@ class DevicePartitionCryptLuks(DevicePartitionCrypt):
         self.ptype_map = PTYPE['luks']
 
 
+# overrided by
+# PrepareFilestore
+# PrepareBluestore
 class Prepare(object):
 
     @staticmethod
@@ -1806,6 +1857,7 @@ class Prepare(object):
 
     def prepare(self):
         with prepare_lock:
+            # PrepareFilestore.prepare_locked or PrepareBluestore.prepare_locked
             self.prepare_locked()
 
     @staticmethod
@@ -1825,6 +1877,7 @@ class PrepareFilestore(Prepare):
     def __init__(self, args):
         if args.dmcrypt:
             self.lockbox = Lockbox(args)
+
         self.data = PrepareFilestoreData(args)
         self.journal = PrepareJournal(args)
 
@@ -1837,6 +1890,8 @@ class PrepareFilestore(Prepare):
     def prepare_locked(self):
         if self.data.args.dmcrypt:
             self.lockbox.prepare()
+
+        # PrepareFilestoreData.prepare
         self.data.prepare(self.journal)
 
 
@@ -1880,6 +1935,11 @@ class Space(object):
     NAMES = ('block', 'journal', 'block.db', 'block.wal')
 
 
+# derived by
+# PrepareJournal
+# PrepareBluestoreBlock
+# PrepareBluestoreBlockDB
+# PrepareBluestoreBlockWAL
 class PrepareSpace(object):
 
     NONE = 0
@@ -1981,6 +2041,8 @@ class PrepareSpace(object):
     def wants_space(self):
         return True
 
+    # called by
+    # PrepareData.populate_data_path
     def populate_data_path(self, path):
         if self.type == self.DEVICE:
             self.populate_data_path_device(path)
@@ -1991,8 +2053,11 @@ class PrepareSpace(object):
         else:
             raise Error('unexpected type ', self.type)
 
+    # called by
+    # self.populate_data_path
     def populate_data_path_file(self, path):
         space_uuid = self.name + '_uuid'
+
         if getattr(self.args, space_uuid) is not None:
             write_one_line(path, space_uuid,
                            getattr(self.args, space_uuid))
@@ -2000,6 +2065,8 @@ class PrepareSpace(object):
             adjust_symlink(self.space_symlink,
                            os.path.join(path, self.name))
 
+    # called by
+    # self.populate_data_path
     def populate_data_path_device(self, path):
         self.populate_data_path_file(path)
 
@@ -2012,6 +2079,9 @@ class PrepareSpace(object):
             except OSError:
                 pass
 
+    # called by
+    # PrepareFilestoreData.prepare_device
+    # PrepareBluestoreData.prepare_device
     def prepare(self):
         if self.type == self.DEVICE:
             self.prepare_device()
@@ -2047,27 +2117,36 @@ class PrepareSpace(object):
         if is_partition(getattr(self.args, self.name)):
             LOG.debug('%s %s is a partition',
                       self.name.capitalize(), getattr(self.args, self.name))
+
+            # DevicePartitionMultipath/DevicePartitionCryptLuks/
+            # DevicePartitionCryptPlain/DevicePartition
             partition = DevicePartition.factory(
                 path=None, dev=getattr(self.args, self.name), args=self.args)
+
             if isinstance(partition, DevicePartitionCrypt):
                 raise Error(getattr(self.args, self.name) +
                             ' partition already exists'
                             ' and --dmcrypt specified')
+
             LOG.warning('OSD will not be hot-swappable' +
                         ' if ' + self.name + ' is not' +
                         ' the same device as the osd data')
+
             if partition.get_ptype() == partition.ptype_for_name(self.name):
                 LOG.debug('%s %s was previously prepared with '
                           'ceph-disk. Reusing it.',
                           self.name.capitalize(),
                           getattr(self.args, self.name))
+
                 reusing_partition = True
+
                 # Read and reuse the partition uuid from this journal's
                 # previous life. We reuse the uuid instead of changing it
                 # because udev does not reliably notice changes to an
                 # existing partition's GUID.  See
                 # http://tracker.ceph.com/issues/10146
                 setattr(self.args, self.name + '_uuid', partition.get_uuid())
+
                 LOG.debug('Reusing %s with uuid %s',
                           self.name,
                           getattr(self.args, self.name + '_uuid'))
@@ -2076,7 +2155,9 @@ class PrepareSpace(object):
                             'ceph-disk. Symlinking directly.',
                             self.name.capitalize(),
                             getattr(self.args, self.name))
+
                 self.space_symlink = getattr(self.args, self.name)
+
                 return
 
         self.space_symlink = '/dev/disk/by-partuuid/{uuid}'.format(
@@ -2092,7 +2173,10 @@ class PrepareSpace(object):
             # this was an active space
             # in the past. Continuing otherwise would be futile.
             assert os.path.exists(self.space_symlink)
+
             return
+
+        # not a partition, need to create
 
         num = self.desired_partition_number()
 
@@ -2101,7 +2185,9 @@ class PrepareSpace(object):
                         'is not the same device as the osd data',
                         self.name)
 
+        # Device
         device = Device.factory(getattr(self.args, self.name), self.args)
+
         num = device.create_partition(
             uuid=getattr(self.args, self.name + '_uuid'),
             name=self.name,
@@ -2129,6 +2215,7 @@ class PrepareSpace(object):
                 getattr(self.args, self.name),
             ],
         )
+
         update_partition(getattr(self.args, self.name), 'prepared')
 
         LOG.debug('%s is GPT partition %s',
@@ -2136,6 +2223,7 @@ class PrepareSpace(object):
                   self.space_symlink)
 
 
+# member variable of PrepareFilestore
 class PrepareJournal(PrepareSpace):
 
     def __init__(self, args):
@@ -2360,29 +2448,42 @@ class Lockbox(object):
         )
         return parser
 
+    # called by
+    # self.set_or_create_partition
     def create_partition(self):
+        # Device
         self.device = Device.factory(self.args.lockbox, argparse.Namespace())
+
         partition_number = 3
+
         self.device.create_partition(uuid=self.args.lockbox_uuid,
                                      name='lockbox',
                                      num=partition_number,
                                      size=10)  # MB
         return self.device.get_partition(partition_number)
 
+    # called by
+    # self.prepare
     def set_or_create_partition(self):
         if is_partition(self.args.lockbox):
             LOG.debug('OSD lockbox device %s is a partition',
                       self.args.lockbox)
+
+            # DevicePartitionMultipath/DevicePartitionCryptLuks/
+            # DevicePartitionCryptPlain/DevicePartition
             self.partition = DevicePartition.factory(
                 path=None, dev=self.args.lockbox, args=self.args)
+
             ptype = self.partition.get_ptype()
             ready = Ptype.get_ready_by_name('lockbox')
+
             if ptype not in ready:
                 LOG.warning('incorrect partition UUID: %s, expected %s'
                             % (ptype, str(ready)))
         else:
             LOG.debug('Creating osd partition on %s',
                       self.args.lockbox)
+
             self.partition = self.create_partition()
 
     def create_key(self):
@@ -2403,6 +2504,7 @@ class Lockbox(object):
                 base64_key,
             ],
         )
+
         keyring, stderr, ret = command(
             [
                 'ceph',
@@ -2416,10 +2518,15 @@ class Lockbox(object):
                  self.args.osd_uuid + '/luks"'),
             ],
         )
+
         LOG.debug("stderr " + stderr)
+
         assert ret == 0
+
         path = self.get_mount_point()
+
         open(os.path.join(path, 'keyring'), 'w').write(keyring)
+
         write_one_line(path, 'key-management-mode', KEY_MANAGEMENT_MODE_V1)
 
     def symlink_spaces(self, path):
@@ -2562,9 +2669,16 @@ class PrepareData(object):
         )
         return parser
 
+    # called by
+    # self.prepare_file
     def populate_data_path_file(self, path, *to_prepare_list):
         self.populate_data_path(path, *to_prepare_list)
 
+    # called by
+    # self.populate_data_path_file
+    # self.populate_data_path_device
+    # overrided by
+    # PrepareBluestoreData.populate_data_path
     def populate_data_path(self, path, *to_prepare_list):
         if os.path.exists(os.path.join(path, 'magic')):
             LOG.debug('Data dir %s already exists', path)
@@ -2579,17 +2693,27 @@ class PrepareData(object):
         write_one_line(path, 'fsid', self.args.osd_uuid)
         write_one_line(path, 'magic', CEPH_OSD_ONDISK_MAGIC)
 
+        # for journal
         for to_prepare in to_prepare_list:
+            # call PrepareSpace.populate_data_path, i.e., write journal_uuid tag
             to_prepare.populate_data_path(path)
 
+    # called by
+    # PrepareFilestore.prepare_locked
+    # PrepareBluestore.prepare_locked
+    # to_prepare_list is PrepareFilestore.journal or
+    # PrepareBluestore.blockdb, PrepareBluestore.blockwal, PrepareBluestore.block
     def prepare(self, *to_prepare_list):
         if self.type == self.DEVICE:
+            # call PrepareFilestoreData.prepare_device or PrepareBluestoreData.prepare_device
             self.prepare_device(*to_prepare_list)
         elif self.type == self.FILE:
             self.prepare_file(*to_prepare_list)
         else:
             raise Error('unexpected type ', self.type)
 
+    # called by
+    # self.prepare
     def prepare_file(self, *to_prepare_list):
 
         if not os.path.exists(self.args.data):
@@ -2659,37 +2783,62 @@ class PrepareData(object):
         if self.args.osd_uuid is None:
             self.args.osd_uuid = str(uuid.uuid4())
 
+    # called by
+    # self.prepare
+    # will be overided by 
+    # PrepareFilestoreData.prepare_device
+    # PrepareBluestoreData.prepare_device
     def prepare_device(self, *to_prepare_list):
         self.sanity_checks()
         self.set_variables()
+
         if self.args.zap_disk is not None:
             zap(self.args.data)
 
+    # called by
+    # self.set_data_partition
     def create_data_partition(self):
+        # Device
         device = Device.factory(self.args.data, self.args)
+
         partition_number = 1
+
         device.create_partition(uuid=self.args.osd_uuid,
                                 name='data',
                                 num=partition_number,
                                 size=self.get_space_size())
+
+        # return DevicePartition.factory()
         return device.get_partition(partition_number)
 
+    # called by
+    # PrepareFilestoreData.prepare_device
+    # PrepareBluestoreData.prepare_device
     def set_data_partition(self):
         if is_partition(self.args.data):
             LOG.debug('OSD data device %s is a partition',
                       self.args.data)
+
+            # DevicePartitionMultipath/DevicePartitionCryptLuks/
+            # DevicePartitionCryptPlain/DevicePartition
             self.partition = DevicePartition.factory(
                 path=None, dev=self.args.data, args=self.args)
+
             ptype = self.partition.get_ptype()
             ready = Ptype.get_ready_by_name('osd')
+
             if ptype not in ready:
                 LOG.warning('incorrect partition UUID: %s, expected %s'
                             % (ptype, str(ready)))
         else:
             LOG.debug('Creating osd partition on %s',
                       self.args.data)
+
             self.partition = self.create_data_partition()
 
+    # called by
+    # PrepareFilestoreData.prepare_device
+    # PrepareBluestoreData.prepare_device
     def populate_data_path_device(self, *to_prepare_list):
         partition = self.partition
 
@@ -2712,9 +2861,11 @@ class PrepareData(object):
                 '--',
                 partition.get_dev(),
             ])
+
             try:
                 LOG.debug('Creating %s fs on %s',
                           self.args.fs_type, partition.get_dev())
+
                 command_check_call(args)
             except subprocess.CalledProcessError as e:
                 raise Error(e)
@@ -2724,15 +2875,20 @@ class PrepareData(object):
                          options=self.mount_options)
 
             try:
+                # write tag files
                 self.populate_data_path(path, *to_prepare_list)
             finally:
+                # chown to ceph:ceph
                 path_set_context(path)
+
                 unmount(path)
         finally:
             if isinstance(partition, DevicePartitionCrypt):
                 partition.unmap()
 
         if not is_partition(self.args.data):
+            # update the partion type uuid to the final uuid, i.e., not the
+            # ptype get from Device.ptype_tobe_for_name()
             try:
                 command_check_call(
                     [
@@ -2745,7 +2901,9 @@ class PrepareData(object):
                 )
             except subprocess.CalledProcessError as e:
                 raise Error(e)
+
             update_partition(self.args.data, 'prepared')
+
             command_check_call(['udevadm', 'trigger',
                                 '--action=add',
                                 '--sysname-match',
@@ -2759,9 +2917,18 @@ class PrepareFilestoreData(PrepareData):
 
     def prepare_device(self, *to_prepare_list):
         super(PrepareFilestoreData, self).prepare_device(*to_prepare_list)
+        
+        # to prepare PrepareFilestore.journal or
+        # PrepareBluestore.blockdb, PrepareBluestore.blockwal, PrepareBluestore.block
         for to_prepare in to_prepare_list:
             to_prepare.prepare()
+
+        # call PrepareData.set_data_partition to set self.partition, i.e., if
+        # data partion does not exist, then create it
         self.set_data_partition()
+
+        # call PrepareData.populate_data_path_device to format the data partition
+        # and write tag files
         self.populate_data_path_device(*to_prepare_list)
 
 
@@ -2772,9 +2939,12 @@ class PrepareBluestoreData(PrepareData):
 
     def prepare_device(self, *to_prepare_list):
         super(PrepareBluestoreData, self).prepare_device(*to_prepare_list)
+
         self.set_data_partition()
+
         for to_prepare in to_prepare_list:
             to_prepare.prepare()
+
         self.populate_data_path_device(*to_prepare_list)
 
     def populate_data_path(self, path, *to_prepare_list):
@@ -3436,6 +3606,7 @@ def main_activate(args):
     osd_id = None
 
     LOG.info('path = ' + str(args.path))
+
     if not os.path.exists(args.path):
         raise Error('%s does not exist' % args.path)
 
@@ -3445,6 +3616,7 @@ def main_activate(args):
 
     with activate_lock:
         mode = os.stat(args.path).st_mode
+
         if stat.S_ISBLK(mode):
             if (is_partition(args.path) and
                     (get_partition_type(args.path) ==
@@ -3452,6 +3624,7 @@ def main_activate(args):
                     not is_mpath(args.path)):
                 raise Error('%s is not a multipath block device' %
                             args.path)
+
             (cluster, osd_id) = mount_activate(
                 dev=args.path,
                 activate_key_template=args.activate_key_template,
@@ -3460,6 +3633,7 @@ def main_activate(args):
                 dmcrypt_key_dir=args.dmcrypt_key_dir,
                 reactivate=args.reactivate,
             )
+
             osd_data = get_mount_point(cluster, osd_id)
 
         elif stat.S_ISDIR(mode):
@@ -3468,6 +3642,7 @@ def main_activate(args):
                 activate_key_template=args.activate_key_template,
                 init=args.mark_init,
             )
+
             osd_data = args.path
 
         else:
@@ -3476,6 +3651,7 @@ def main_activate(args):
         # exit with 0 if the journal device is not up, yet
         # journal device will do the activation
         osd_journal = '{path}/journal'.format(path=osd_data)
+
         if os.path.islink(osd_journal) and not os.access(osd_journal, os.F_OK):
             LOG.info("activate: Journal not present, not starting, yet")
             return
@@ -3506,10 +3682,13 @@ def main_activate_lockbox(args):
 
 
 def main_activate_lockbox_protected(args):
+    # DevicePartitionMultipath/DevicePartitionCryptLuks/
+    # DevicePartitionCryptPlain/DevicePartition
     partition = DevicePartition.factory(
         path=None, dev=args.path, args=args)
 
     lockbox = Lockbox(args)
+
     lockbox.set_partition(partition)
     lockbox.activate()
 
@@ -3840,8 +4019,11 @@ def get_space_osd_uuid(name, path):
             'failed to get osd uuid/fsid from %s' % name,
             e,
         )
+
     value = str(out).split('\n', 1)[0]
+
     LOG.debug('%s %s has OSD UUID %s', name.capitalize(), path, value)
+
     return value
 
 
@@ -3853,16 +4035,19 @@ def main_activate_space(name, args):
     osd_id = None
     osd_uuid = None
     dev = None
+
     with activate_lock:
         if args.dmcrypt:
             dev = dmcrypt_map(args.dev, args.dmcrypt_key_dir)
         else:
             dev = args.dev
+
         # FIXME: For an encrypted journal dev, does this return the
         # cyphertext or plaintext dev uuid!? Also, if the journal is
         # encrypted, is the data partition also always encrypted, or
         # are mixed pairs supported!?
         osd_uuid = get_space_osd_uuid(name, dev)
+
         path = os.path.join('/dev/disk/by-partuuid/', osd_uuid.lower())
 
         if is_suppressed(path):
@@ -4025,13 +4210,18 @@ def get_blkid_partition_info(dev, what=None):
 
 def more_osd_info(path, uuid_map, desc):
     desc['ceph_fsid'] = get_oneliner(path, 'ceph_fsid')
+
     if desc['ceph_fsid']:
         desc['cluster'] = find_cluster_by_uuid(desc['ceph_fsid'])
+
     desc['whoami'] = get_oneliner(path, 'whoami')
+
     for name in Space.NAMES:
         uuid = get_oneliner(path, name + '_uuid')
+
         if uuid:
             desc[name + '_uuid'] = uuid.lower()
+
             if desc[name + '_uuid'] in uuid_map:
                 desc[name + '_dev'] = uuid_map[desc[name + '_uuid']]
 
@@ -4040,8 +4230,10 @@ def list_dev_osd(dev, uuid_map, desc):
     desc['mount'] = is_mounted(dev)
     desc['fs_type'] = get_dev_fs(dev)
     desc['state'] = 'unprepared'
+
     if desc['mount']:
         desc['state'] = 'active'
+
         more_osd_info(desc['mount'], uuid_map, desc)
     elif desc['fs_type']:
         try:
@@ -4094,23 +4286,30 @@ def list_format_lockbox_plain(dev):
 
 
 def list_format_more_osd_info_plain(dev):
+    # e.g., /dev/sdc1 ceph data, active, cluster ceph, osd.4, journal /dev/sda5
     desc = []
+
     if dev.get('ceph_fsid'):
         if dev.get('cluster'):
             desc.append('cluster ' + dev['cluster'])
         else:
             desc.append('unknown cluster ' + dev['ceph_fsid'])
+
     if dev.get('whoami'):
         desc.append('osd.%s' % dev['whoami'])
+
     for name in Space.NAMES:
         if dev.get(name + '_dev'):
             desc.append(name + ' %s' % dev[name + '_dev'])
+
     return desc
 
 
 def list_format_dev_plain(dev, prefix=''):
     desc = []
+
     if dev['ptype'] == PTYPE['regular']['osd']['ready']:
+        # e.g., /dev/sdc1 ceph data, active, cluster ceph, osd.4, journal /dev/sda5
         desc = (['ceph data', dev['state']] +
                 list_format_more_osd_info_plain(dev))
     elif dev['ptype'] in (PTYPE['regular']['lockbox']['ready'],
@@ -4154,20 +4353,24 @@ def list_format_dev_plain(dev, prefix=''):
             desc.append(dev['ptype'])
         if dev.get('mount'):
             desc.append('mounted on %s' % dev['mount'])
+
     return '%s%s %s' % (prefix, dev['path'], ', '.join(desc))
 
 
 def list_format_plain(devices):
     lines = []
+
     for device in devices:
         if device.get('partitions'):
             lines.append('%s :' % device['path'])
+
             for p in sorted(device['partitions'], key=lambda x: x['path']):
                 lines.append(list_format_dev_plain(dev=p,
                                                    prefix=' '))
         else:
             lines.append(list_format_dev_plain(dev=device,
                                                prefix=''))
+
     return "\n".join(lines)
 
 
@@ -4178,18 +4381,25 @@ def list_dev(dev, uuid_map, space_map):
     }
 
     info['is_partition'] = is_partition(dev)
+
     if info['is_partition']:
         ptype = get_partition_type(dev)
+
         info['uuid'] = get_partition_uuid(dev)
     else:
         ptype = 'unknown'
+
     info['ptype'] = ptype
+
     LOG.info("list_dev(dev = " + dev + ", ptype = " + str(ptype) + ")")
+
     if ptype in (PTYPE['regular']['osd']['ready'],
                  PTYPE['mpath']['osd']['ready']):
         info['type'] = 'data'
+
         if ptype == PTYPE['mpath']['osd']['ready']:
             info['multipath'] = True
+
         list_dev_osd(dev, uuid_map, info)
     elif ptype in (PTYPE['regular']['lockbox']['ready'],
                    PTYPE['mpath']['lockbox']['ready']):
@@ -4250,6 +4460,7 @@ def list_dev(dev, uuid_map, space_map):
 
 
 def list_devices():
+    # <dev, parts>
     partmap = list_all_partitions()
 
     uuid_map = {}
@@ -4257,13 +4468,17 @@ def list_devices():
     for base, parts in sorted(partmap.items()):
         for p in parts:
             dev = get_dev_path(p)
+
             part_uuid = get_partition_uuid(dev)
             if part_uuid:
                 uuid_map[part_uuid] = dev
+
             ptype = get_partition_type(dev)
+
             LOG.debug("main_list: " + dev +
                       " ptype = " + str(ptype) +
                       " uuid = " + str(part_uuid))
+
             if ptype in Ptype.get_ready_by_name('osd'):
                 if Ptype.is_dmcrypt(ptype, 'osd'):
                     holders = is_held(dev)
@@ -4296,18 +4511,22 @@ def list_devices():
     for base, parts in sorted(partmap.items()):
         if parts:
             disk = {'path': get_dev_path(base)}
+
             partitions = []
             for p in sorted(parts):
                 partitions.append(list_dev(get_dev_path(p),
                                            uuid_map,
                                            space_map))
             disk['partitions'] = partitions
+
             devices.append(disk)
         else:
             device = list_dev(get_dev_path(base), uuid_map, space_map)
             device['path'] = get_dev_path(base)
             devices.append(device)
+
     LOG.debug("list_devices: " + str(devices))
+
     return devices
 
 
@@ -4318,6 +4537,7 @@ def main_list(args):
 
 def main_list_protected(args):
     devices = list_devices()
+
     if args.path:
         paths = []
         for path in args.path:
@@ -4325,6 +4545,7 @@ def main_list_protected(args):
                 paths.append(os.path.realpath(path))
             else:
                 paths.append(path)
+
         selected_devices = []
         for device in devices:
             for path in paths:
@@ -4332,6 +4553,7 @@ def main_list_protected(args):
                     selected_devices.append(device)
     else:
         selected_devices = devices
+
     if args.format == 'json':
         print(json.dumps(selected_devices))
     else:
@@ -4415,11 +4637,15 @@ def main_zap(args):
 
 def main_trigger(args):
     LOG.debug("main_trigger: " + str(args))
+
     if is_systemd() and not args.sync:
         # http://www.freedesktop.org/software/systemd/man/systemd-escape.html
         escaped_dev = args.dev[1:].replace('-', '\\x2d')
+
         service = 'ceph-disk@{dev}.service'.format(dev=escaped_dev)
+
         LOG.info('systemd detected, triggering %s' % service)
+
         command(
             [
                 'systemctl',
@@ -4428,7 +4654,9 @@ def main_trigger(args):
                 service,
             ]
         )
+
         return
+
     if is_upstart() and not args.sync:
         LOG.info('upstart detected, triggering ceph-disk task')
         command(
@@ -4452,6 +4680,7 @@ def main_trigger(args):
     ))
 
     ceph_disk = ['ceph-disk']
+
     if args.verbose:
         ceph_disk.append('--verbose')
 
@@ -4633,7 +4862,9 @@ def parse_args(argv):
         help='sub-command help',
     )
 
+    # ceph-disk prepare
     Prepare.set_subparser(subparsers)
+    
     make_activate_parser(subparsers)
     make_activate_lockbox_parser(subparsers)
     make_activate_block_parser(subparsers)
