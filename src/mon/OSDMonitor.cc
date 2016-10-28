@@ -1750,13 +1750,18 @@ bool OSDMonitor::can_mark_out(int i)
     dout(5) << "can_mark_out NOOUT flag set, will not mark osds out" << dendl;
     return false;
   }
+
   int num_osds = osdmap.get_num_osds();
   if (num_osds == 0) {
     dout(5) << "can_mark_out no osds" << dendl;
     return false;
   }
+
   int in = osdmap.get_num_in_osds() - pending_inc.get_net_marked_out(&osdmap);
+
   float in_ratio = (float)in / (float)num_osds;
+
+  // default 0.3
   if (in_ratio < g_conf->mon_osd_min_in_ratio) {
     if (i >= 0)
       dout(5) << "can_mark_down current in_ratio " << in_ratio << " < min "
@@ -1766,6 +1771,7 @@ bool OSDMonitor::can_mark_out(int i)
       dout(5) << "can_mark_down current in_ratio " << in_ratio << " < min "
 	      << g_conf->mon_osd_min_in_ratio
 	      << ", will not mark osds out" << dendl;
+
     return false;
   }
 
@@ -1816,6 +1822,7 @@ bool OSDMonitor::check_failure(utime_t now, int target_osd, failure_info_t& fi)
   utime_t grace = orig_grace;
   double my_grace = 0, peer_grace = 0;
   double decay_k = 0;
+
   if (g_conf->mon_osd_adjust_heartbeat_grace) {
     double halflife = (double)g_conf->mon_osd_laggy_halflife;
     decay_k = ::log(.5) / halflife;
@@ -1823,9 +1830,12 @@ bool OSDMonitor::check_failure(utime_t now, int target_osd, failure_info_t& fi)
     // scale grace period based on historical probability of 'lagginess'
     // (false positive failures due to slowness).
     const osd_xinfo_t& xi = osdmap.get_xinfo(target_osd);
+
     double decay = exp((double)failed_for * decay_k);
+
     dout(20) << " halflife " << halflife << " decay_k " << decay_k
 	     << " failed_for " << failed_for << " decay " << decay << dendl;
+
     my_grace = decay * (double)xi.laggy_interval * xi.laggy_probability;
     grace += my_grace;
   }
@@ -1836,6 +1846,7 @@ bool OSDMonitor::check_failure(utime_t now, int target_osd, failure_info_t& fi)
   // help us localize the grace correction to a subset of the system
   // (say, a rack with a bad switch) that is unhappy.
   assert(fi.reporters.size());
+
   for (map<int,failure_reporter_t>::iterator p = fi.reporters.begin();
 	p != fi.reporters.end();
 	++p) {
@@ -1843,11 +1854,13 @@ bool OSDMonitor::check_failure(utime_t now, int target_osd, failure_info_t& fi)
     // fall back to OSD if the level doesn't exist.
     map<string, string> reporter_loc = osdmap.crush->get_full_location(p->first);
     map<string, string>::iterator iter = reporter_loc.find(reporter_subtree_level);
+
     if (iter == reporter_loc.end()) {
       reporters_by_subtree.insert("osd." + to_string(p->first));
     } else {
       reporters_by_subtree.insert(iter->second);
     }
+
     if (g_conf->mon_osd_adjust_heartbeat_grace) {
       const osd_xinfo_t& xi = osdmap.get_xinfo(p->first);
       utime_t elapsed = now - xi.down_stamp;
@@ -1871,14 +1884,17 @@ bool OSDMonitor::check_failure(utime_t now, int target_osd, failure_info_t& fi)
       (int)reporters_by_subtree.size() >= g_conf->mon_osd_min_down_reporters) {
     dout(1) << " we have enough reporters to mark osd." << target_osd
 	    << " down" << dendl;
+
     pending_inc.new_state[target_osd] = CEPH_OSD_UP;
 
     mon->clog->info() << osdmap.get_inst(target_osd) << " failed ("
 		      << (int)reporters_by_subtree.size() << " reporters from different "
 		      << reporter_subtree_level << " after "
 		      << failed_for << " >= grace " << grace << ")\n";
+
     return true;
   }
+
   return false;
 }
 
@@ -2289,6 +2305,7 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
     osd_xinfo_t xi = osdmap.get_xinfo(from);
 
     if (m->boot_epoch == 0) {
+      // default 0.3
       xi.laggy_probability *= (1.0 - g_conf->mon_osd_laggy_weight);
       xi.laggy_interval *= (1.0 - g_conf->mon_osd_laggy_weight);
 
@@ -2297,11 +2314,13 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
       if (xi.down_stamp.sec()) {
         int interval = ceph_clock_now(g_ceph_context).sec() -
 	  xi.down_stamp.sec();
+        // default 300
         if (g_conf->mon_osd_laggy_max_interval &&
 	    (interval > g_conf->mon_osd_laggy_max_interval)) {
           interval =  g_conf->mon_osd_laggy_max_interval;
         }
 
+        // default 0.3
         xi.laggy_interval =
 	  interval * g_conf->mon_osd_laggy_weight +
 	  xi.laggy_interval * (1.0 - g_conf->mon_osd_laggy_weight);
@@ -2825,13 +2844,16 @@ epoch_t OSDMonitor::blacklist(const entity_addr_t& a, utime_t until)
 void OSDMonitor::check_subs()
 {
   dout(10) << __func__ << dendl;
+
   string type = "osdmap";
   if (mon->session_map.subs.count(type) == 0)
     return;
+
   xlist<Subscription*>::iterator p = mon->session_map.subs[type]->begin();
   while (!p.end()) {
     Subscription *sub = *p;
     ++p;
+
     check_sub(sub);
   }
 }
@@ -2885,34 +2907,43 @@ void OSDMonitor::tick()
       int o = i->first;
       utime_t down = now;
       down -= i->second;
+
       ++i;
 
       if (osdmap.is_down(o) &&
 	  osdmap.is_in(o) &&
 	  can_mark_out(o)) {
+        // default 600
 	utime_t orig_grace(g_conf->mon_osd_down_out_interval, 0);
 	utime_t grace = orig_grace;
 	double my_grace = 0.0;
 
+	// default true
 	if (g_conf->mon_osd_adjust_down_out_interval) {
 	  // scale grace period the same way we do the heartbeat grace.
 	  const osd_xinfo_t& xi = osdmap.get_xinfo(o);
+
+	  // default 60*60 seconds
 	  double halflife = (double)g_conf->mon_osd_laggy_halflife;
 	  double decay_k = ::log(.5) / halflife;
 	  double decay = exp((double)down * decay_k);
+
 	  dout(20) << "osd." << o << " laggy halflife " << halflife << " decay_k " << decay_k
 		   << " down for " << down << " decay " << decay << dendl;
+
 	  my_grace = decay * (double)xi.laggy_interval * xi.laggy_probability;
 	  grace += my_grace;
 	}
 
 	// is this an entire large subtree down?
 	if (g_conf->mon_osd_down_out_subtree_limit.length()) {
+	  // default "rack"
 	  int type = osdmap.crush->get_type_id(g_conf->mon_osd_down_out_subtree_limit);
 	  if (type > 0) {
 	    if (osdmap.containing_subtree_is_down(g_ceph_context, o, type, &down_cache)) {
 	      dout(10) << "tick entire containing " << g_conf->mon_osd_down_out_subtree_limit
 		       << " subtree for osd." << o << " is down; resetting timer" << dendl;
+
 	      // reset timer, too.
 	      down_pending_out[o] = now;
 	      continue;
@@ -2924,16 +2955,19 @@ void OSDMonitor::tick()
 	    down.sec() >= grace) {
 	  dout(10) << "tick marking osd." << o << " OUT after " << down
 		   << " sec (target " << grace << " = " << orig_grace << " + " << my_grace << ")" << dendl;
+
 	  pending_inc.new_weight[o] = CEPH_OSD_OUT;
 
 	  // set the AUTOOUT bit.
 	  if (pending_inc.new_state.count(o) == 0)
 	    pending_inc.new_state[o] = 0;
+
 	  pending_inc.new_state[o] |= CEPH_OSD_AUTOOUT;
 
 	  // remember previous weight
 	  if (pending_inc.new_xinfo.count(o) == 0)
 	    pending_inc.new_xinfo[o] = osdmap.osd_xinfo[o];
+
 	  pending_inc.new_xinfo[o].old_weight = osdmap.osd_weight[o];
 
 	  do_propose = true;
