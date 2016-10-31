@@ -1261,6 +1261,7 @@ int Pipe::connect()
   while (1) {
     delete authorizer;
     authorizer = msgr->get_authorizer(peer_type, false);
+
     bufferlist authorizer_reply;
 
     ceph_msg_connect connect;

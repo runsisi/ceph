@@ -197,6 +197,7 @@ struct RotatingSecrets {
   bool need_new_secrets() const {
     return secrets.size() < KEY_ROTATE_NUM;
   }
+
   bool need_new_secrets(utime_t now) const {
     return secrets.size() < KEY_ROTATE_NUM || current().expiration <= now;
   }
@@ -226,7 +227,10 @@ struct RotatingSecrets {
 WRITE_CLASS_ENCODER(RotatingSecrets)
 
 
-
+// overrided by
+// KeyServer, member of Monitor
+// RotatingKeyRing, member of MonClient
+// KeyRing
 class KeyStore {
 public:
   virtual ~KeyStore() {}

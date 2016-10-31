@@ -5,7 +5,10 @@
 #define dout_subsys ceph_subsys_auth
 
 
-
+// called by
+// MDSDaemon::ms_verify_authorizer
+// DaemonServer::ms_verify_authorizer
+// OSD::ms_verify_authorizer
 bool CephxAuthorizeHandler::verify_authorizer(CephContext *cct, KeyStore *keys,
 					      bufferlist& authorizer_data, bufferlist& authorizer_reply,
                                               EntityName& entity_name, uint64_t& global_id, AuthCapsInfo& caps_info, CryptoKey& session_key,  uint64_t *auid)

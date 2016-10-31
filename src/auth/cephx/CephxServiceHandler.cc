@@ -46,6 +46,7 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
   int ret = 0;
 
   struct CephXRequestHeader cephx_header;
+
   ::decode(cephx_header, indata);
 
 

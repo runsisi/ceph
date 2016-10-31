@@ -6197,6 +6197,7 @@ bool OSD::ms_get_authorizer(int dest_type, AuthAuthorizer **authorizer, bool for
   }
 
   *authorizer = monc->auth->build_authorizer(dest_type);
+
   return *authorizer != NULL;
 }
 
@@ -6206,6 +6207,7 @@ bool OSD::ms_verify_authorizer(Connection *con, int peer_type,
 			       bool& isvalid, CryptoKey& session_key)
 {
   AuthAuthorizeHandler *authorize_handler = 0;
+
   switch (peer_type) {
   case CEPH_ENTITY_TYPE_MDS:
     /*
@@ -6219,6 +6221,7 @@ bool OSD::ms_verify_authorizer(Connection *con, int peer_type,
   default:
     authorize_handler = authorize_handler_service_registry->get_handler(protocol);
   }
+
   if (!authorize_handler) {
     dout(0) << "No AuthAuthorizeHandler found for protocol " << protocol << dendl;
     isvalid = false;

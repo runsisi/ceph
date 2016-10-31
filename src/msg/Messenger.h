@@ -737,12 +737,14 @@ public:
    */
   AuthAuthorizer *ms_deliver_get_authorizer(int peer_type, bool force_new) {
     AuthAuthorizer *a = 0;
+
     for (list<Dispatcher*>::iterator p = dispatchers.begin();
 	 p != dispatchers.end();
 	 ++p) {
       if ((*p)->ms_get_authorizer(peer_type, &a, force_new))
 	return a;
     }
+
     return NULL;
   }
   /**

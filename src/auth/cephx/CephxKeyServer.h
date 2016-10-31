@@ -183,7 +183,8 @@ WRITE_CLASS_ENCODER(KeyServerData::Incremental)
 
 
 
-
+// used as a member variable of Monitor
+// see get_auth_service_handler and its caller AuthMonitor::prep_auth
 class KeyServer : public KeyStore {
   CephContext *cct;
   KeyServerData data;

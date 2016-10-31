@@ -287,6 +287,10 @@ bool CephXTicketManager::verify_service_ticket_reply(CryptoKey& secret,
   return true;
 }
 
+// called by
+// CephxClientHandler::build_request
+// CephXTicketManager::build_authorizer
+// Monitor::ms_get_authorizer
 /*
  * PRINCIPAL: build authorizer to access the service.
  *
@@ -314,6 +318,7 @@ CephXAuthorizer *CephXTicketHandler::build_authorizer(uint64_t global_id) const
     delete a;
     return 0;
   }
+
   return a;
 }
 
@@ -332,6 +337,7 @@ CephXAuthorizer *CephXTicketManager::build_authorizer(uint32_t service_id) const
   }
 
   const CephXTicketHandler& handler = iter->second;
+
   return handler.build_authorizer(global_id);
 }
 
@@ -383,6 +389,10 @@ bool cephx_decode_ticket(CephContext *cct, KeyStore *keys, uint32_t service_id,
   return true;
 }
 
+// called by
+// CephxAuthorizeHandler::verify_authorizer
+// CephxServiceHandler::handle_request
+// Monitor::ms_verify_authorizer
 /*
  * SERVICE: verify authorizer and generate reply authorizer
  *
@@ -409,13 +419,16 @@ bool cephx_verify_authorizer(CephContext *cct, KeyStore *keys,
     // Unable to decode!
     return false;
   }
+
   ldout(cct, 10) << "verify_authorizer decrypted service "
 	   << ceph_entity_type_name(service_id)
 	   << " secret_id=" << ticket.secret_id << dendl;
 
   if (ticket.secret_id == (uint64_t)-1) {
     EntityName name;
+
     name.set_type(service_id);
+
     if (!keys->get_secret(name, service_secret)) {
       ldout(cct, 0) << "verify_authorizer could not get general service secret for service "
 	      << ceph_entity_type_name(service_id) << " secret_id=" << ticket.secret_id << dendl;
@@ -425,16 +438,20 @@ bool cephx_verify_authorizer(CephContext *cct, KeyStore *keys,
     if (!keys->get_service_secret(service_id, ticket.secret_id, service_secret)) {
       ldout(cct, 0) << "verify_authorizer could not get service secret for service "
 	      << ceph_entity_type_name(service_id) << " secret_id=" << ticket.secret_id << dendl;
+
       if (cct->_conf->auth_debug && ticket.secret_id == 0)
 	assert(0 == "got secret_id=0");
+
       return false;
     }
   }
+
   std::string error;
   if (!service_secret.get_secret().length())
     error = "invalid key";  // Bad key?
   else
     decode_decrypt_enc_bl(cct, ticket_info, service_secret, ticket.blob, error);
+
   if (!error.empty()) {
     ldout(cct, 0) << "verify_authorizer could not decrypt ticket info: error: "
       << error << dendl;

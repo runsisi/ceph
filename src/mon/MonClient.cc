@@ -547,6 +547,7 @@ void MonClient::handle_auth(MAuthReply *m)
     if (!auth || (int)m->protocol != auth->get_protocol()) {
       delete auth;
 
+      // rotating_secrets was initialized by Monitor::init
       auth = get_auth_client_handler(cct, m->protocol, rotating_secrets);
       if (!auth) {
 	ldout(cct, 10) << "no handler for protocol " << m->protocol << dendl;

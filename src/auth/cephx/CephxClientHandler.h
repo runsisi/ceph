@@ -22,6 +22,8 @@
 class CephContext;
 class KeyRing;
 
+// used by
+// get_auth_client_handler, which called by MonClient::handle_auth
 class CephxClientHandler : public AuthClientHandler {
   bool starting;
 
