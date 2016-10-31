@@ -108,6 +108,7 @@ bool CephxClientHandler::_need_tickets() const
 int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
 {
   ldout(cct, 10) << "handle_response ret = " << ret << dendl;
+
   RWLock::WLocker l(lock);
   
   if (ret < 0)
@@ -116,11 +117,15 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
   if (starting) {
     CephXServerChallenge ch;
     ::decode(ch, indata);
+
     server_challenge = ch.server_challenge;
+
     ldout(cct, 10) << " got initial server challenge " << server_challenge << dendl;
+
     starting = false;
 
     tickets.invalidate_ticket(CEPH_ENTITY_TYPE_AUTH);
+
     return -EAGAIN;
   }
 
@@ -154,13 +159,16 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
   case CEPHX_GET_PRINCIPAL_SESSION_KEY:
     {
       CephXTicketHandler& ticket_handler = tickets.get_handler(CEPH_ENTITY_TYPE_AUTH);
+
       ldout(cct, 10) << " get_principal_session_key session_key " << ticket_handler.session_key << dendl;
   
       if (!tickets.verify_service_ticket_reply(ticket_handler.session_key, indata)) {
         ldout(cct, 0) << "could not verify service_ticket reply" << dendl;
         return -EPERM;
       }
+
       validate_tickets();
+
       if (!_need_tickets()) {
 	ret = 0;
       }
@@ -170,15 +178,18 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
   case CEPHX_GET_ROTATING_KEY:
     {
       ldout(cct, 10) << " get_rotating_key" << dendl;
+
       if (rotating_secrets) {
 	RotatingSecrets secrets;
 	CryptoKey secret_key;
+
 	const bool got = keyring->get_secret(cct->_conf->name, secret_key);
         if (!got) {
           ldout(cct, 0) << "key not found for " << cct->_conf->name << dendl;
           return -ENOENT;
         }
-	std::string error;
+
+        std::string error;
 	if (decode_decrypt(cct, secrets, secret_key, indata, error)) {
 	  ldout(cct, 0) << "could not set rotating key: decode_decrypt failed. error:"
 	    << error << dendl;
@@ -202,7 +213,9 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
 AuthAuthorizer *CephxClientHandler::build_authorizer(uint32_t service_id) const
 {
   RWLock::RLocker l(lock);
+
   ldout(cct, 10) << "build_authorizer for service " << ceph_entity_type_name(service_id) << dendl;
+
   return tickets.build_authorizer(service_id);
 }
 
@@ -219,9 +232,12 @@ bool CephxClientHandler::build_rotating_request(bufferlist& bl) const
 void CephxClientHandler::prepare_build_request()
 {
   RWLock::WLocker l(lock);
+
   ldout(cct, 10) << "validate_tickets: want=" << want << " need=" << need
 		 << " have=" << have << dendl;
+
   validate_tickets();
+
   ldout(cct, 10) << "want=" << want << " need=" << need << " have=" << have
 		 << dendl;
 

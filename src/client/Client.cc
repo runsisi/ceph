@@ -12684,7 +12684,9 @@ bool Client::ms_get_authorizer(int dest_type, AuthAuthorizer **authorizer, bool 
 {
   if (dest_type == CEPH_ENTITY_TYPE_MON)
     return true;
+
   *authorizer = monclient->auth->build_authorizer(dest_type);
+
   return true;
 }
 

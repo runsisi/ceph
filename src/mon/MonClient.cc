@@ -405,6 +405,7 @@ int MonClient::init()
   keyring = new KeyRing; // initializing keyring anyway
 
   if (auth_supported->is_supported_auth(CEPH_AUTH_CEPHX)) {
+    // load my own keyring from configured keyring/key/keyfile
     r = keyring->from_ceph_context(cct);
     if (r == -ENOENT) {
       auth_supported->remove_supported_auth(CEPH_AUTH_CEPHX);
@@ -547,7 +548,7 @@ void MonClient::handle_auth(MAuthReply *m)
     if (!auth || (int)m->protocol != auth->get_protocol()) {
       delete auth;
 
-      // rotating_secrets was initialized by Monitor::init
+      // rotating_secrets was initialized by MonClient::init
       auth = get_auth_client_handler(cct, m->protocol, rotating_secrets);
       if (!auth) {
 	ldout(cct, 10) << "no handler for protocol " << m->protocol << dendl;
@@ -579,6 +580,7 @@ void MonClient::handle_auth(MAuthReply *m)
 	want_keys &= ~CEPH_ENTITY_TYPE_MGR;
       }
 
+      // CephxClientHandler or AuthNoneClientHandler
       auth->set_want_keys(want_keys);
       auth->init(entity_name);
       auth->set_global_id(global_id);
@@ -595,6 +597,7 @@ void MonClient::handle_auth(MAuthReply *m)
 
   if (m->global_id && m->global_id != global_id) {
     global_id = m->global_id;
+
     auth->set_global_id(global_id);
 
     ldout(cct, 10) << "my global_id is " << m->global_id << dendl;

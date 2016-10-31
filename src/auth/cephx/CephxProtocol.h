@@ -322,16 +322,24 @@ struct CephXTicketManager {
   bool verify_service_ticket_reply(CryptoKey& principal_secret,
 				 bufferlist::iterator& indata);
 
+  // called by
+  // CephxClientHandler::handle_response
+  // CephxClientHandler::prepare_build_request
+  // CephXTicketManager::verify_service_ticket_reply
   CephXTicketHandler& get_handler(uint32_t type) {
     tickets_map_t::iterator i = tickets_map.find(type);
     if (i != tickets_map.end())
       return i->second;
+
     CephXTicketHandler newTicketHandler(cct, type);
     std::pair < tickets_map_t::iterator, bool > res =
 	tickets_map.insert(std::make_pair(type, newTicketHandler));
+
     assert(res.second);
+
     return res.first->second;
   }
+
   CephXAuthorizer *build_authorizer(uint32_t service_id) const;
   bool have_key(uint32_t service_id);
   bool need_key(uint32_t service_id) const;

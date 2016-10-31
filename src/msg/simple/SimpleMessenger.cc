@@ -408,12 +408,15 @@ Pipe *SimpleMessenger::connect_rank(const entity_addr_t& addr,
 
 
 
-
+// called by
+// Pipe::connect
 AuthAuthorizer *SimpleMessenger::get_authorizer(int peer_type, bool force_new)
 {
   return ms_deliver_get_authorizer(peer_type, force_new);
 }
 
+// called by
+// Pipe::accept
 bool SimpleMessenger::verify_authorizer(Connection *con, int peer_type,
 					int protocol, bufferlist& authorizer, bufferlist& authorizer_reply,
 					bool& isvalid,CryptoKey& session_key)

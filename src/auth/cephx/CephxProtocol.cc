@@ -58,17 +58,20 @@ bool cephx_build_service_ticket_blob(CephContext *cct, CephXSessionAuthInfo& inf
   ldout(cct, 10) << "build_service_ticket service " << ceph_entity_type_name(info.service_id)
 	   << " secret_id " << info.secret_id
 	   << " ticket_info.ticket.name=" << ticket_info.ticket.name.to_str() << dendl;
+
   blob.secret_id = info.secret_id;
   std::string error;
   if (!info.service_secret.get_secret().length())
     error = "invalid key";  // Bad key?
   else
     encode_encrypt_enc_bl(cct, ticket_info, info.service_secret, blob.blob, error);
+
   if (!error.empty()) {
     ldout(cct, -1) << "cephx_build_service_ticket_blob failed with error "
 	  << error << dendl;
     return false;
   }
+
   return true;
 }
 
@@ -213,6 +216,7 @@ bool CephXTicketManager::have_key(uint32_t service_id)
   map<uint32_t, CephXTicketHandler>::iterator iter = tickets_map.find(service_id);
   if (iter == tickets_map.end())
     return false;
+
   return iter->second.have_key();
 }
 
@@ -221,6 +225,7 @@ bool CephXTicketManager::need_key(uint32_t service_id) const
   map<uint32_t, CephXTicketHandler>::const_iterator iter = tickets_map.find(service_id);
   if (iter == tickets_map.end())
     return true;
+
   return iter->second.need_key();
 }
 
@@ -268,16 +273,20 @@ bool CephXTicketManager::verify_service_ticket_reply(CryptoKey& secret,
 
   uint32_t num;
   ::decode(num, indata);
+
   ldout(cct, 10) << "verify_service_ticket_reply got " << num << " keys" << dendl;
 
   for (int i=0; i<(int)num; i++) {
     uint32_t type;
     ::decode(type, indata);
+
     ldout(cct, 10) << "got key for service_id " << ceph_entity_type_name(type) << dendl;
+
     CephXTicketHandler& handler = get_handler(type);
     if (!handler.verify_service_ticket_reply(secret, indata)) {
       return false;
     }
+
     handler.service_id = type;
   }
 
@@ -299,6 +308,7 @@ bool CephXTicketManager::verify_service_ticket_reply(CryptoKey& secret,
 CephXAuthorizer *CephXTicketHandler::build_authorizer(uint64_t global_id) const
 {
   CephXAuthorizer *a = new CephXAuthorizer(cct);
+
   a->session_key = session_key;
   a->nonce = ((uint64_t)rand() << 32) + rand();
 
@@ -350,6 +360,7 @@ void CephXTicketManager::validate_tickets(uint32_t mask, uint32_t& have, uint32_
       set_have_need_key(i, have, need);
     }
   }
+
   ldout(cct, 10) << "validate_tickets want " << mask << " have " << have
 		 << " need " << need << dendl;
 }

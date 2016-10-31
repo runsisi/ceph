@@ -1260,6 +1260,7 @@ int Pipe::connect()
 
   while (1) {
     delete authorizer;
+    // if we are connecting to MON, then the returned authorizer should always be NULL
     authorizer = msgr->get_authorizer(peer_type, false);
 
     bufferlist authorizer_reply;

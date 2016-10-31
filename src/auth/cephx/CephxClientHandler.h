@@ -34,7 +34,7 @@ class CephxClientHandler : public AuthClientHandler {
   CephXTicketHandler* ticket_handler;
 
   RotatingKeyRing *rotating_secrets;
-  KeyRing *keyring;
+  KeyRing *keyring; // the configured keyring from keyring/key/keyfile
 
 public:
   CephxClientHandler(CephContext *cct_, RotatingKeyRing *rsecrets) 
@@ -54,6 +54,7 @@ public:
     starting = true;
     server_challenge = 0;
   }
+
   void prepare_build_request();
   int build_request(bufferlist& bl) const;
   int handle_response(int ret, bufferlist::iterator& iter);
@@ -67,6 +68,7 @@ public:
 
   void set_global_id(uint64_t id) {
     RWLock::WLocker l(lock);
+
     global_id = id;
     tickets.global_id = id;
   }

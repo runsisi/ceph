@@ -4554,9 +4554,12 @@ bool Objecter::ms_get_authorizer(int dest_type,
 {
   if (!initialized.read())
     return false;
+
   if (dest_type == CEPH_ENTITY_TYPE_MON)
     return true;
+
   *authorizer = monc->auth->build_authorizer(dest_type);
+
   return *authorizer != NULL;
 }
 
