@@ -297,6 +297,7 @@ void Mirror::print_status(Formatter *f, stringstream *ss)
 void Mirror::start()
 {
   dout(20) << "enter" << dendl;
+
   Mutex::Locker l(m_lock);
 
   if (m_stopping.read()) {
@@ -307,6 +308,7 @@ void Mirror::start()
 
   for (auto it = m_replayers.begin(); it != m_replayers.end(); it++) {
     auto &replayer = it->second;
+
     replayer->start();
   }
 }
@@ -314,6 +316,7 @@ void Mirror::start()
 void Mirror::stop()
 {
   dout(20) << "enter" << dendl;
+
   Mutex::Locker l(m_lock);
 
   if (m_stopping.read()) {
@@ -325,6 +328,7 @@ void Mirror::stop()
   // admin op, stop all replayers
   for (auto it = m_replayers.begin(); it != m_replayers.end(); it++) {
     auto &replayer = it->second;
+
     replayer->stop(true);
   }
 }
@@ -332,6 +336,7 @@ void Mirror::stop()
 void Mirror::restart()
 {
   dout(20) << "enter" << dendl;
+
   Mutex::Locker l(m_lock);
 
   if (m_stopping.read()) {

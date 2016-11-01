@@ -1229,6 +1229,8 @@ namespace librbd {
       return 0;
     }
 
+    // called by
+    // librbd::mirror_mode_set
     int mirror_uuid_set(librados::IoCtx *ioctx, const std::string &uuid) {
       bufferlist in_bl;
       ::encode(uuid, in_bl);

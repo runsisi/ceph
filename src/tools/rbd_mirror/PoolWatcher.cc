@@ -59,6 +59,8 @@ const PoolWatcher::ImageIds& PoolWatcher::get_images() const
   return m_images;
 }
 
+// called by
+// Replayer::init
 // reschedule default to true
 void PoolWatcher::refresh_images(bool reschedule)
 {
@@ -93,6 +95,8 @@ void PoolWatcher::refresh_images(bool reschedule)
   // about new/removed mirrored images
 }
 
+// called by
+// PoolWatcher::refresh_images
 int PoolWatcher::refresh(ImageIds *image_ids) {
   dout(20) << "enter" << dendl;
 

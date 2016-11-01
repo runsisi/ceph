@@ -265,6 +265,8 @@ bool Replayer::is_blacklisted() const {
   return m_blacklisted;
 }
 
+// called by
+// Mirror::update_replayers
 int Replayer::init()
 {
   dout(20) << "replaying for " << m_peer << dendl;
@@ -749,6 +751,7 @@ void Replayer::set_sources(const ImageIds &image_ids)
         m_threads, m_image_deleter, m_image_sync_throttler, m_local_rados,
         m_remote_rados, local_mirror_uuid, remote_mirror_uuid, m_local_pool_id,
         m_remote_pool_id, image_id.id, image_id.global_id));
+
       it = m_image_replayers.insert(
         std::make_pair(image_id.id, std::move(image_replayer))).first;
     }
