@@ -142,7 +142,11 @@ public:
   LogClient log_client;
   LogChannelRef clog;
   LogChannelRef audit_clog;
+
+  // loaded by Monitor::preinit
+  // used by Monitor::ms_get_authorizer, Monitor::ms_verify_authorizer
   KeyRing keyring;
+
   KeyServer key_server;
 
   AuthMethodList auth_cluster_required;

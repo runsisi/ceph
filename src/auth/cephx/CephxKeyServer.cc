@@ -21,6 +21,7 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "cephx keyserverdata: "
 
+// the secret_id is an [out] parameter
 bool KeyServerData::get_service_secret(CephContext *cct, uint32_t service_id,
 			    ExpiringCryptoKey& secret, uint64_t& secret_id) const
 {
@@ -36,19 +37,26 @@ bool KeyServerData::get_service_secret(CephContext *cct, uint32_t service_id,
   // second to oldest, unless it's expired
   map<uint64_t, ExpiringCryptoKey>::const_iterator riter = 
 	secrets.secrets.begin();
+
   if (secrets.secrets.size() > 1)
     ++riter;
 
   if (riter->second.expiration < ceph_clock_now(cct))
     ++riter;   // "current" key has expired, use "next" key instead
 
+  // secret_id is the version of the ExpiringCryptoKey, see RotatingSecrets::add which
+  // called by KeyServer::_rotate_secret
   secret_id = riter->first;
+
   secret = riter->second;
+
   ldout(cct, 30) << "get_service_secret service " << ceph_entity_type_name(service_id)
 	   << " id " << secret_id << " " << secret << dendl;
+
   return true;
 }
 
+// the secret_id is an [out] parameter
 bool KeyServerData::get_service_secret(CephContext *cct, uint32_t service_id,
 				CryptoKey& secret, uint64_t& secret_id) const
 {
@@ -58,9 +66,11 @@ bool KeyServerData::get_service_secret(CephContext *cct, uint32_t service_id,
     return false;
 
   secret = e.key;
+
   return true;
 }
 
+// the secret_id is an [in] parameter
 bool KeyServerData::get_service_secret(CephContext *cct, uint32_t service_id,
 				uint64_t secret_id, CryptoKey& secret) const
 {
@@ -70,6 +80,7 @@ bool KeyServerData::get_service_secret(CephContext *cct, uint32_t service_id,
     return false;
 
   const RotatingSecrets& secrets = iter->second;
+
   map<uint64_t, ExpiringCryptoKey>::const_iterator riter = 
       secrets.secrets.find(secret_id);
 
@@ -77,11 +88,13 @@ bool KeyServerData::get_service_secret(CephContext *cct, uint32_t service_id,
     ldout(cct, 10) << "get_service_secret service " << ceph_entity_type_name(service_id)
 	     << " secret " << secret_id << " not found" << dendl;
     ldout(cct, 30) << " I have:" << dendl;
+
     for (map<uint64_t, ExpiringCryptoKey>::const_iterator iter =
 	     secrets.secrets.begin();
         iter != secrets.secrets.end();
         ++iter)
       ldout(cct, 30) << " id " << iter->first << " " << iter->second << dendl;
+
     return false;
   }
 
@@ -138,20 +151,29 @@ KeyServer::KeyServer(CephContext *cct_, KeyRing *extra_secrets)
 {
 }
 
+// called by
+// AuthMonitor::on_active
 int KeyServer::start_server()
 {
   Mutex::Locker l(lock);
 
   _check_rotating_secrets();
+
   _dump_rotating_secrets();
+
   return 0;
 }
 
+// called by
+// KeyServer::start_server
+// KeyServer::updated_rotating
 bool KeyServer::_check_rotating_secrets()
 {
   ldout(cct, 10) << "_check_rotating_secrets" << dendl;
 
   int added = 0;
+
+  // CEPH_ENTITY_TYPE_CLIENT is not included here, becoz it's not the part of the cluster
   added += _rotate_secret(CEPH_ENTITY_TYPE_AUTH);
   added += _rotate_secret(CEPH_ENTITY_TYPE_MON);
   added += _rotate_secret(CEPH_ENTITY_TYPE_OSD);
@@ -160,12 +182,18 @@ bool KeyServer::_check_rotating_secrets()
 
   if (added) {
     ldout(cct, 10) << __func__ << " added " << added << dendl;
+
+    // will be checked by KeyServer::updated_rotating
     data.rotating_ver++;
+
     //data.next_rotating_time = ceph_clock_now(cct);
     //data.next_rotating_time += MIN(cct->_conf->auth_mon_ticket_ttl, cct->_conf->auth_service_ticket_ttl);
+
     _dump_rotating_secrets();
+
     return true;
   }
+
   return false;
 }
 
@@ -185,31 +213,49 @@ void KeyServer::_dump_rotating_secrets()
   }
 }
 
+// called by
+// KeyServer::_check_rotating_secrets
 int KeyServer::_rotate_secret(uint32_t service_id)
 {
   RotatingSecrets& r = data.rotating_secrets[service_id];
+
   int added = 0;
   utime_t now = ceph_clock_now(cct);
+
+  // auth_mon_ticket_ttl: default 60*60*12
+  // auth_service_ticket_ttl: default 60*60
   double ttl = service_id == CEPH_ENTITY_TYPE_AUTH ? cct->_conf->auth_mon_ticket_ttl : cct->_conf->auth_service_ticket_ttl;
 
+  // map<uint64_t, ExpiringCryptoKey>
   while (r.need_new_secrets(now)) {
+
+    // need 3 ExpiringCryptoKey, and these 3 keys must not be expired
+
     ExpiringCryptoKey ek;
+
     generate_secret(ek.key);
+
     if (r.empty()) {
       ek.expiration = now;
     } else {
       utime_t next_ttl = now;
+
       next_ttl += ttl;
       ek.expiration = MAX(next_ttl, r.next().expiration);
     }
+
     ek.expiration += ttl;
+
     uint64_t secret_id = r.add(ek);
+
     ldout(cct, 10) << "_rotate_secret adding " << ceph_entity_type_name(service_id) << dendl;
     ldout(cct, 30) << "_rotate_secret adding " << ceph_entity_type_name(service_id)
 	           << " id " << secret_id << " " << ek
 	           << dendl;
+
     added++;
   }
+
   return added;
 }
 
@@ -233,6 +279,7 @@ bool KeyServer::get_caps(const EntityName& name, const string& type,
   return data.get_caps(cct, name, type, caps_info);
 }
 
+// never been called
 bool KeyServer::get_service_secret(uint32_t service_id,
 	      ExpiringCryptoKey& secret, uint64_t& secret_id) const
 {
@@ -241,6 +288,9 @@ bool KeyServer::get_service_secret(uint32_t service_id,
   return data.get_service_secret(cct, service_id, secret, secret_id);
 }
 
+// called by
+// CephxServiceHandler::handle_request
+// KeyServer::build_session_auth_info
 bool KeyServer::get_service_secret(uint32_t service_id,
 		CryptoKey& secret, uint64_t& secret_id) const
 {
@@ -249,6 +299,9 @@ bool KeyServer::get_service_secret(uint32_t service_id,
   return data.get_service_secret(cct, service_id, secret, secret_id);
 }
 
+// called by
+// cephx_decode_ticket
+// cephx_verify_authorizer
 bool KeyServer::get_service_secret(uint32_t service_id,
 		uint64_t secret_id, CryptoKey& secret) const
 {
@@ -364,6 +417,8 @@ void KeyServer::encode_plaintext(bufferlist &bl)
   bl.append(os.str());
 }
 
+// called by
+// AuthMonitor::check_rotate
 bool KeyServer::updated_rotating(bufferlist& rotating_bl, version_t& rotating_ver)
 {
   Mutex::Locker l(lock);
@@ -371,8 +426,10 @@ bool KeyServer::updated_rotating(bufferlist& rotating_bl, version_t& rotating_ve
   _check_rotating_secrets(); 
 
   if (data.rotating_ver <= rotating_ver)
+    // no new rotating keys generated
     return false;
  
+  // KeyServerData
   data.encode_rotating(rotating_bl);
 
   rotating_ver = data.rotating_ver;
@@ -425,6 +482,7 @@ int KeyServer::_build_session_auth_info(uint32_t service_id, CephXServiceTicketI
 					CephXSessionAuthInfo& info)
 {
   info.service_id = service_id;
+
   info.ticket = auth_ticket_info.ticket;
   info.ticket.init_timestamps(ceph_clock_now(cct), cct->_conf->auth_service_ticket_ttl);
 
@@ -437,9 +495,12 @@ int KeyServer::_build_session_auth_info(uint32_t service_id, CephXServiceTicketI
       return -EINVAL;
     }
   }
+
   return 0;
 }
 
+// called by
+// CephxServiceHandler::handle_request
 int KeyServer::build_session_auth_info(uint32_t service_id, CephXServiceTicketInfo& auth_ticket_info,
 				       CephXSessionAuthInfo& info)
 {
@@ -452,6 +513,8 @@ int KeyServer::build_session_auth_info(uint32_t service_id, CephXServiceTicketIn
   return _build_session_auth_info(service_id, auth_ticket_info, info);
 }
 
+// called by
+// Monitor::ms_get_authorizer
 int KeyServer::build_session_auth_info(uint32_t service_id, CephXServiceTicketInfo& auth_ticket_info, CephXSessionAuthInfo& info,
                                         CryptoKey& service_secret, uint64_t secret_id)
 {
@@ -459,6 +522,7 @@ int KeyServer::build_session_auth_info(uint32_t service_id, CephXServiceTicketIn
   info.secret_id = secret_id;
 
   Mutex::Locker l(lock);
+
   return _build_session_auth_info(service_id, auth_ticket_info, info);
 }
 

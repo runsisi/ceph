@@ -151,7 +151,7 @@ Monitor::Monitor(CephContext* cct_, string nm, MonitorDBStore *s,
   logger(NULL), cluster_logger(NULL), cluster_logger_registered(false),
   monmap(map),
   log_client(cct_, messenger, monmap, LogClient::FLAG_MON),
-  key_server(cct, &keyring),
+  key_server(cct, &keyring), // keyring will be loaded by Monitor::preinit
   auth_cluster_required(cct,
 			cct->_conf->auth_supported.empty() ?
 			cct->_conf->auth_cluster_required : cct->_conf->auth_supported),
@@ -5380,6 +5380,7 @@ bool Monitor::ms_get_authorizer(int service_id, AuthAuthorizer **authorizer, boo
     dout(0) << "ms_get_authorizer failed to build service ticket use with mon" << dendl;
     return false;
   }
+
   bufferlist ticket_data;
   ::encode(blob, ticket_data);
 

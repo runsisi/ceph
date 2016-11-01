@@ -33,11 +33,13 @@ int CephxServiceHandler::start_session(EntityName& name, bufferlist::iterator& i
   get_random_bytes((char *)&server_challenge, sizeof(server_challenge));
   if (!server_challenge)
     server_challenge = 1;  // always non-zero.
+
   ldout(cct, 10) << "start_session server_challenge " << hex << server_challenge << dec << dendl;
 
   CephXServerChallenge ch;
   ch.server_challenge = server_challenge;
   ::encode(ch, result_bl);
+
   return CEPH_AUTH_CEPHX;
 }
 
@@ -171,7 +173,8 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
         if (ticket_req.keys & service_id) {
 	  ldout(cct, 10) << " adding key for service "
 			 << ceph_entity_type_name(service_id) << dendl;
-          CephXSessionAuthInfo info;
+
+	  CephXSessionAuthInfo info;
           int r = key_server->build_session_auth_info(service_id,
 						      auth_ticket_info, info);
 	  // tolerate missing MGR rotating key for the purposes of upgrades.
@@ -181,15 +184,18 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
 	    service_err = r;
 	    continue;
 	  }
+
           info.validity += cct->_conf->auth_service_ticket_ttl;
           info_vec.push_back(info);
 	  ++found_services;
         }
       }
+
       if (!found_services && service_err) {
 	ldout(cct, 10) << __func__ << " did not find any service keys" << dendl;
 	ret = service_err;
       }
+
       CryptoKey no_key;
       build_cephx_response_header(cephx_header.request_type, ret, result_bl);
       cephx_build_service_ticket_reply(cct, auth_ticket_info.session_key, info_vec, false, no_key, result_bl);

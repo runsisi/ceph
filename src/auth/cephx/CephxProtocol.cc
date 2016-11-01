@@ -43,6 +43,9 @@ void cephx_calc_client_server_challenge(CephContext *cct, CryptoKey& secret, uin
 }
 
 
+// called by
+// cephx_build_service_ticket_reply
+// Monitor::ms_get_authorizer
 /*
  * Authentication
  */
@@ -51,6 +54,7 @@ bool cephx_build_service_ticket_blob(CephContext *cct, CephXSessionAuthInfo& inf
 				     CephXTicketBlob& blob)
 {
   CephXServiceTicketInfo ticket_info;
+
   ticket_info.session_key = info.session_key;
   ticket_info.ticket = info.ticket;
   ticket_info.ticket.caps = info.ticket.caps;
@@ -60,7 +64,9 @@ bool cephx_build_service_ticket_blob(CephContext *cct, CephXSessionAuthInfo& inf
 	   << " ticket_info.ticket.name=" << ticket_info.ticket.name.to_str() << dendl;
 
   blob.secret_id = info.secret_id;
+
   std::string error;
+
   if (!info.service_secret.get_secret().length())
     error = "invalid key";  // Bad key?
   else
@@ -75,6 +81,8 @@ bool cephx_build_service_ticket_blob(CephContext *cct, CephXSessionAuthInfo& inf
   return true;
 }
 
+// called by
+// CephxServiceHandler::handle_request
 /*
  * AUTH SERVER: authenticate
  *
@@ -95,6 +103,7 @@ bool cephx_build_service_ticket_reply(CephContext *cct,
 
   uint32_t num = ticket_info_vec.size();
   ::encode(num, reply);
+
   ldout(cct, 10) << "build_service_ticket_reply encoding " << num
 	   << " tickets with secret " << principal_secret << dendl;
 

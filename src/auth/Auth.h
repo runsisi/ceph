@@ -187,10 +187,14 @@ struct RotatingSecrets {
     ::decode(max_ver, bl);
   }
   
+  // called by
+  // KeyServer::_rotate_secret
   uint64_t add(ExpiringCryptoKey& key) {
     secrets[++max_ver] = key;
+
     while (secrets.size() > KEY_ROTATE_NUM)
       secrets.erase(secrets.begin());
+
     return max_ver;
   }
   
@@ -205,19 +209,23 @@ struct RotatingSecrets {
   ExpiringCryptoKey& previous() {
     return secrets.begin()->second;
   }
+
   ExpiringCryptoKey& current() {
     map<uint64_t, ExpiringCryptoKey>::iterator p = secrets.begin();
     ++p;
     return p->second;
   }
+
   const ExpiringCryptoKey& current() const {
     map<uint64_t, ExpiringCryptoKey>::const_iterator p = secrets.begin();
     ++p;
     return p->second;
   }
+
   ExpiringCryptoKey& next() {
     return secrets.rbegin()->second;
   }
+
   bool empty() {
     return secrets.empty();
   }
