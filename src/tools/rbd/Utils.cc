@@ -530,6 +530,7 @@ int get_image_options(const boost::program_options::variables_map &vm,
 
   if (vm.count(at::IMAGE_ORDER)) {
     order = vm[at::IMAGE_ORDER].as<uint64_t>();
+
     std::cerr << "rbd: --order is deprecated, use --object-size"
 	      << std::endl;
   } else if (vm.count(at::IMAGE_OBJECT_SIZE)) {
@@ -572,6 +573,7 @@ int get_image_options(const boost::program_options::variables_map &vm,
   if (get_format) {
     uint64_t format = 0;
     bool format_specified = false;
+
     if (vm.count(at::IMAGE_NEW_FORMAT)) {
       format = 2;
       format_specified = true;
@@ -579,6 +581,7 @@ int get_image_options(const boost::program_options::variables_map &vm,
       format = vm[at::IMAGE_FORMAT].as<uint32_t>();
       format_specified = true;
     }
+
     if (format == 1) {
       std::cerr << "rbd: image format 1 is deprecated" << std::endl;
     }
@@ -620,6 +623,7 @@ int get_image_options(const boost::program_options::variables_map &vm,
     if (format_specified) {
       int r = g_conf->set_val("rbd_default_format", stringify(format));
       assert(r == 0);
+
       opts->set(RBD_IMAGE_OPTION_FORMAT, format);
     }
   }
