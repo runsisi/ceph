@@ -390,6 +390,13 @@ public:
     _send_mon_message(m, true);
   }
 
+  // called by
+  // Client::init
+  // librados::RadosClient::connect
+  // MDSDaemon::init
+  // MgrStandby::init
+  // OSD::init
+  // MDSUtility::init
   void set_want_keys(uint32_t want) {
     want_keys = want;
     if (auth)

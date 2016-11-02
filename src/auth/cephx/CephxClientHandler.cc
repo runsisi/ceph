@@ -26,7 +26,9 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "cephx client: "
 
-
+// called by
+// MonClient::handle_auth
+// MonClient::_check_auth_tickets
 int CephxClientHandler::build_request(bufferlist& bl) const
 {
   ldout(cct, 10) << "build_request" << dendl;
@@ -55,6 +57,9 @@ int CephxClientHandler::build_request(bufferlist& bl) const
     CephXAuthenticate req;
     get_random_bytes((char *)&req.client_challenge, sizeof(req.client_challenge));
     std::string error;
+
+    // server_challenge was got by CephxClientHandler::handle_response for the
+    // first response
     cephx_calc_client_server_challenge(cct, secret, server_challenge,
 				       req.client_challenge, &req.key, error);
     if (!error.empty()) {
@@ -115,6 +120,9 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
     return ret; // hrm!
 
   if (starting) {
+
+    // was set by CephxClientHandler::reset
+
     CephXServerChallenge ch;
     ::decode(ch, indata);
 
@@ -195,6 +203,7 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
 	    << error << dendl;
 	  return -EINVAL;
 	} else {
+	  // RotatingKeyRing *rotating_secrets was allocated by MonClient::init
 	  rotating_secrets->set_secrets(secrets);
 	}
       }
@@ -229,6 +238,9 @@ bool CephxClientHandler::build_rotating_request(bufferlist& bl) const
   return true;
 }
 
+// called by
+// MonClient::handle_auth
+// MonClient::_check_auth_tickets
 void CephxClientHandler::prepare_build_request()
 {
   RWLock::WLocker l(lock);
@@ -236,23 +248,35 @@ void CephxClientHandler::prepare_build_request()
   ldout(cct, 10) << "validate_tickets: want=" << want << " need=" << need
 		 << " have=" << have << dendl;
 
+  // to set AuthClientHandler::have, need
   validate_tickets();
 
   ldout(cct, 10) << "want=" << want << " need=" << need << " have=" << have
 		 << dendl;
 
+  // CephXTicketHandler
   ticket_handler = &(tickets.get_handler(CEPH_ENTITY_TYPE_AUTH));
 }
 
+// called by
+// CephxClientHandler::handle_response
+// CephxClientHandler::prepare_build_request
+// CephxClientHandler::need_tickets
+// AuthClientHandler::set_want_keys
 void CephxClientHandler::validate_tickets()
 {
+  // want is a mask initialized at the very beginning by MonClient::set_want_keys
   // lock should be held for write
   tickets.validate_tickets(want, have, need);
 }
 
+// called by
+// MonClient::_check_auth_tickets
 bool CephxClientHandler::need_tickets()
 {
   RWLock::WLocker l(lock);
+
+  // set AuthClientHandler::need, have
   validate_tickets();
 
   ldout(cct, 20) << "need_tickets: want=" << want
@@ -260,6 +284,7 @@ bool CephxClientHandler::need_tickets()
 		 << " need=" << need
 		 << dendl;
 
+  // AuthClientHandler::need != 0
   return _need_tickets();
 }
 

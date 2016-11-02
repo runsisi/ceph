@@ -327,6 +327,7 @@ struct CephXTicketManager {
   // CephxClientHandler::prepare_build_request
   // CephXTicketManager::verify_service_ticket_reply
   CephXTicketHandler& get_handler(uint32_t type) {
+    // map<uint32_t, CephXTicketHandler>
     tickets_map_t::iterator i = tickets_map.find(type);
     if (i != tickets_map.end())
       return i->second;
@@ -340,7 +341,10 @@ struct CephXTicketManager {
     return res.first->second;
   }
 
+  // called by
+  // CephxClientHandler::build_authorizer
   CephXAuthorizer *build_authorizer(uint32_t service_id) const;
+
   bool have_key(uint32_t service_id);
   bool need_key(uint32_t service_id) const;
   void set_have_need_key(uint32_t service_id, uint32_t& have, uint32_t& need);

@@ -149,6 +149,8 @@ bool cephx_build_service_ticket_reply(CephContext *cct,
   return true;
 }
 
+// called by
+// CephXTicketManager::verify_service_ticket_reply
 /*
  * PRINCIPAL: verify our attempt to authenticate succeeded.  fill out
  * this ServiceTicket with the result.
@@ -181,30 +183,38 @@ bool CephXTicketHandler::verify_service_ticket_reply(CryptoKey& secret,
   } else {
     ::decode(service_ticket_bl, indata);
   }
+
   bufferlist::iterator iter = service_ticket_bl.begin();
   ::decode(ticket, iter);
+
   ldout(cct, 10) << " ticket.secret_id=" <<  ticket.secret_id << dendl;
 
   ldout(cct, 10) << "verify_service_ticket_reply service " << ceph_entity_type_name(service_id)
 	   << " secret_id " << ticket.secret_id
 	   << " session_key " << msg_a.session_key
            << " validity=" << msg_a.validity << dendl;
+
   session_key = msg_a.session_key;
+
   if (!msg_a.validity.is_zero()) {
     expires = ceph_clock_now(cct);
     expires += msg_a.validity;
+
     renew_after = expires;
     renew_after -= ((double)msg_a.validity.sec() / 4);
+
     ldout(cct, 10) << "ticket expires=" << expires << " renew_after=" << renew_after << dendl;
   }
   
   have_key_flag = true;
+
   return true;
 }
 
 bool CephXTicketHandler::have_key()
 {
   if (have_key_flag) {
+    // was set by CephXTicketHandler::verify_service_ticket_reply
     have_key_flag = ceph_clock_now(cct) < expires;
   }
 
@@ -214,6 +224,7 @@ bool CephXTicketHandler::have_key()
 bool CephXTicketHandler::need_key() const
 {
   if (have_key_flag) {
+    // was set by CephXTicketHandler::verify_service_ticket_reply
     return (!expires.is_zero()) && (ceph_clock_now(cct) >= renew_after);
   }
 
@@ -240,6 +251,7 @@ bool CephXTicketManager::need_key(uint32_t service_id) const
 
 void CephXTicketManager::set_have_need_key(uint32_t service_id, uint32_t& have, uint32_t& need)
 {
+  // tickets_map was populated by CephXTicketManager::get_handler
   map<uint32_t, CephXTicketHandler>::iterator iter = tickets_map.find(service_id);
   if (iter == tickets_map.end()) {
     have &= ~service_id;
@@ -252,6 +264,7 @@ void CephXTicketManager::set_have_need_key(uint32_t service_id, uint32_t& have, 
   //ldout(cct, 10) << "set_have_need_key service " << ceph_entity_type_name(service_id)
   //<< " (" << service_id << ")"
   //<< " need=" << iter->second.need_key() << " have=" << iter->second.have_key() << dendl;
+
   if (iter->second.need_key())
     need |= service_id;
   else
@@ -267,9 +280,12 @@ void CephXTicketManager::invalidate_ticket(uint32_t service_id)
 {
   map<uint32_t, CephXTicketHandler>::iterator iter = tickets_map.find(service_id);
   if (iter != tickets_map.end())
+    // CephXTicketHandler::have_key_flag = 0
     iter->second.invalidate_ticket();
 }
 
+// called by
+// CephxClientHandler::handle_response
 /*
  * PRINCIPAL: verify our attempt to authenticate succeeded.  fill out
  * this ServiceTicket with the result.
@@ -341,6 +357,8 @@ CephXAuthorizer *CephXTicketHandler::build_authorizer(uint64_t global_id) const
   return a;
 }
 
+// called by
+// CephxClientHandler::build_authorizer
 /*
  * PRINCIPAL: build authorizer to access the service.
  *
@@ -360,12 +378,18 @@ CephXAuthorizer *CephXTicketManager::build_authorizer(uint32_t service_id) const
   return handler.build_authorizer(global_id);
 }
 
+// called by
+// CephxClientHandler::validate_tickets
 void CephXTicketManager::validate_tickets(uint32_t mask, uint32_t& have, uint32_t& need)
 {
   uint32_t i;
   need = 0;
+
+  // mask is AuthClientHandler::want, which is a mask initialized at the
+  // very beginning by MonClient::set_want_keys
   for (i = 1; i<=mask; i<<=1) {
     if (mask & i) {
+      // i is service id
       set_have_need_key(i, have, need);
     }
   }
@@ -374,6 +398,8 @@ void CephXTicketManager::validate_tickets(uint32_t mask, uint32_t& have, uint32_
 		 << " need " << need << dendl;
 }
 
+// called by
+// CephxServiceHandler::handle_request
 bool cephx_decode_ticket(CephContext *cct, KeyStore *keys, uint32_t service_id,
 	      CephXTicketBlob& ticket_blob, CephXServiceTicketInfo& ticket_info)
 {
@@ -511,6 +537,9 @@ bool cephx_verify_authorizer(CephContext *cct, KeyStore *keys,
   return true;
 }
 
+// called by
+// AsyncConnection::_process_connection
+// Pipe::connect
 bool CephXAuthorizer::verify_reply(bufferlist::iterator& indata)
 {
   CephXAuthorizeReply reply;

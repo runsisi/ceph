@@ -548,7 +548,8 @@ void MonClient::handle_auth(MAuthReply *m)
     if (!auth || (int)m->protocol != auth->get_protocol()) {
       delete auth;
 
-      // rotating_secrets was initialized by MonClient::init
+      // RotatingKeyRing *rotating_secrets was initialized by MonClient::init
+      // auth is an instance of CephxClientHandler
       auth = get_auth_client_handler(cct, m->protocol, rotating_secrets);
       if (!auth) {
 	ldout(cct, 10) << "no handler for protocol " << m->protocol << dendl;
@@ -582,9 +583,13 @@ void MonClient::handle_auth(MAuthReply *m)
 
       // CephxClientHandler or AuthNoneClientHandler
       auth->set_want_keys(want_keys);
+
+      // CephxClientHandler::name = entity_name
       auth->init(entity_name);
+
       auth->set_global_id(global_id);
     } else {
+      // CephxClientHandler::starting = true, CephxClientHandler::server_challenge = 0
       auth->reset();
     }
 
@@ -612,7 +617,9 @@ void MonClient::handle_auth(MAuthReply *m)
 
     ma->protocol = auth->get_protocol();
 
+    // CephxClientHandler::ticket_handler
     auth->prepare_build_request();
+
     ret = auth->build_request(ma->auth_payload);
 
     _send_mon_message(ma, true);
@@ -700,6 +707,7 @@ void MonClient::_send_mon_message(Message *m, bool force)
 
     cur_con->send_message(m);
   } else {
+    // will be handled by MonClient::handle_auth
     waiting_for_session.push_back(m);
   }
 }
@@ -992,18 +1000,27 @@ void MonClient::handle_subscribe_ack(MMonSubscribeAck *m)
   m->put();
 }
 
+// called by
+// MonClient::handle_auth
+// MonClient::tick
 int MonClient::_check_auth_tickets()
 {
   assert(monc_lock.is_locked());
 
   if (state == MC_STATE_HAVE_SESSION && auth) {
+
+    // auth was allocated by MonClient::handle_auth, it's an instance of
+    // CephxClientHandler
+
     if (auth->need_tickets()) {
       ldout(cct, 10) << "_check_auth_tickets getting new tickets!" << dendl;
 
       MAuth *m = new MAuth;
 
       m->protocol = auth->get_protocol();
+
       auth->prepare_build_request();
+
       auth->build_request(m->auth_payload);
 
       _send_mon_message(m);

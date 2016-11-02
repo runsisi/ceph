@@ -37,6 +37,8 @@ class CephxClientHandler : public AuthClientHandler {
   KeyRing *keyring; // the configured keyring from keyring/key/keyfile
 
 public:
+  // called by
+  // get_auth_client_handler
   CephxClientHandler(CephContext *cct_, RotatingKeyRing *rsecrets) 
     : AuthClientHandler(cct_),
       starting(false),
