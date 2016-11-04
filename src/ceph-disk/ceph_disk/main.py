@@ -3597,6 +3597,7 @@ def activate(
             keyring=keyring,
         )
         write_one_line(path, 'active', 'ok')
+
     LOG.debug('%s osd.%s data dir is ready at %s', cluster, osd_id, path)
     return (osd_id, cluster)
 

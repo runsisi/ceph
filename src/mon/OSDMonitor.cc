@@ -7037,6 +7037,9 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     // optional id provided?
     int64_t id = -1;
     if (cmd_getval(g_ceph_context, cmdmap, "id", id)) {
+
+      // user provided id
+
       if (id < 0) {
 	ss << "invalid osd id value '" << id << "'";
 	err = -EINVAL;
@@ -7050,6 +7053,9 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     uuid_d uuid;
     string uuidstr;
     if (cmd_getval(g_ceph_context, cmdmap, "uuid", uuidstr)) {
+
+      // user provided uuid
+
       if (!uuid.parse(uuidstr.c_str())) {
 	ss << "invalid uuid value '" << uuidstr << "'";
 	err = -EINVAL;
@@ -7059,13 +7065,19 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       dout(10) << " osd create got uuid " << uuid << dendl;
 
       i = osdmap.identify_osd(uuid);
+
       if (i >= 0) {
+
+        // the user provided uuid already has an id associated with it
+
 	// osd already exists
 	if (id >= 0 && i != id) {
 	  ss << "uuid " << uuidstr << " already in use for different id " << i;
 	  err = -EINVAL;
 	  goto reply;
 	}
+
+	// id < 0 || i == id, i.e., recreate an osd without or with correct osd id provided
 
 	err = 0;
 
@@ -7082,8 +7094,11 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	goto reply;
       }
 
-      // i < 0
+      // i < 0, i.e., user provided uuid has not been used
       if (id >= 0) {
+
+        // user provided id
+
 	if (osdmap.exists(id)) {
 	  ss << "id " << id << " already in use and does not match uuid "
 	     << uuid;
@@ -7097,6 +7112,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	  return true;
 	}
 
+	// use the user provide osd id
 	i = id;
       }
 
@@ -7107,13 +7123,16 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       }
 
       if (i >= 0) {
+
+        // use the user provided uuid and osd id
+
 	// raise max_osd
 	if (osdmap.get_max_osd() <= i && pending_inc.new_max_osd <= i)
 	  pending_inc.new_max_osd = i + 1;
 
 	goto done;
       }
-    }
+    } // user provided uuid
 
     // allocate a new id
     for (i=0; i < osdmap.get_max_osd(); i++) {
