@@ -222,6 +222,7 @@ void RebuildObjectMapRequest<I>::send_update_header() {
   }
 
   uint64_t flags = RBD_FLAG_OBJECT_MAP_INVALID | RBD_FLAG_FAST_DIFF_INVALID;
+
   cls_client::set_flags(&op, m_image_ctx.snap_id, 0, flags);
 
   librados::AioCompletion *comp = this->create_callback_completion();

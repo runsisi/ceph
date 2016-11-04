@@ -2296,6 +2296,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     // ensure previous writes are visible to listsnaps
     {
       RWLock::RLocker owner_locker(ictx->owner_lock);
+
       ictx->flush();
     }
 
@@ -2305,7 +2306,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     ictx->snap_lock.get_read();
+
     r = clip_io(ictx, off, &len);
+
     ictx->snap_lock.put_read();
     if (r < 0) {
       return r;
@@ -2313,7 +2316,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     DiffIterate command(*ictx, fromsnapname, off, len, include_parent,
                         whole_object, cb, arg);
+
     r = command.execute();
+
     return r;
   }
 

@@ -197,6 +197,7 @@ Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
 	*result = -EINVAL;
 	break;
       }
+
       m_enable_flags |= RBD_FLAG_OBJECT_MAP_INVALID;
       m_features_mask |= RBD_FEATURE_EXCLUSIVE_LOCK;
     }
@@ -207,6 +208,7 @@ Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
 	*result = -EINVAL;
 	break;
       }
+
       m_enable_flags |= RBD_FLAG_FAST_DIFF_INVALID;
       m_features_mask |= (RBD_FEATURE_OBJECT_MAP | RBD_FEATURE_EXCLUSIVE_LOCK);
     }

@@ -329,11 +329,14 @@ Context *RefreshRequest<I>::handle_v2_get_flags(int *result) {
     bufferlist::iterator it = m_out_bl.begin();
     cls_client::get_flags_finish(&it, &m_flags, m_snapc.snaps, &m_snap_flags);
   }
+
   if (*result == -EOPNOTSUPP) {
     // Older OSD doesn't support RBD flags, need to assume the worst
     *result = 0;
+
     ldout(cct, 10) << "OSD does not support RBD flags, disabling object map "
                    << "optimizations" << dendl;
+
     m_flags = RBD_FLAG_OBJECT_MAP_INVALID;
     if ((m_features & RBD_FEATURE_FAST_DIFF) != 0) {
       m_flags |= RBD_FLAG_FAST_DIFF_INVALID;

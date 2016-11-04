@@ -208,14 +208,18 @@ int DiffIterate::execute() {
   librados::snap_t end_snap_id;
   uint64_t from_size = 0;
   uint64_t end_size;
+
   {
     RWLock::RLocker md_locker(m_image_ctx.md_lock);
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     head_ctx.dup(m_image_ctx.data_ctx);
+
     if (m_from_snap_name) {
       from_snap_id = m_image_ctx.get_snap_id(m_from_snap_name);
       from_size = m_image_ctx.get_image_size(from_snap_id);
     }
+
     end_snap_id = m_image_ctx.snap_id;
     end_size = m_image_ctx.get_image_size(end_snap_id);
   }
@@ -223,10 +227,12 @@ int DiffIterate::execute() {
   if (from_snap_id == CEPH_NOSNAP) {
     return -ENOENT;
   }
+
   if (from_snap_id == end_snap_id) {
     // no diff.
     return 0;
   }
+
   if (from_snap_id >= end_snap_id) {
     return -EINVAL;
   }
@@ -234,14 +240,17 @@ int DiffIterate::execute() {
   int r;
   bool fast_diff_enabled = false;
   BitVector<2> object_diff_state;
+
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     if (m_whole_object && (m_image_ctx.features & RBD_FEATURE_FAST_DIFF) != 0) {
       r = diff_object_map(from_snap_id, end_snap_id, &object_diff_state);
       if (r < 0) {
         ldout(cct, 5) << "fast diff disabled" << dendl;
       } else {
         ldout(cct, 5) << "fast diff enabled" << dendl;
+
         fast_diff_enabled = true;
       }
     }
@@ -257,20 +266,27 @@ int DiffIterate::execute() {
   // check parent overlap only if we are comparing to the beginning of time
   DiffContext diff_context(m_image_ctx, m_callback, m_callback_arg,
                            m_whole_object, from_snap_id, end_snap_id);
+
   if (m_include_parent && from_snap_id == 0) {
     RWLock::RLocker l(m_image_ctx.snap_lock);
     RWLock::RLocker l2(m_image_ctx.parent_lock);
+
     uint64_t overlap = end_size;
     m_image_ctx.get_parent_overlap(from_snap_id, &overlap);
+
     r = 0;
+
     if (m_image_ctx.parent && overlap > 0) {
       ldout(cct, 10) << " first getting parent diff" << dendl;
+
       DiffIterate diff_parent(*m_image_ctx.parent, NULL, 0, overlap,
                               m_include_parent, m_whole_object,
                               &DiffIterate::simple_diff_cb,
                               &diff_context.parent_diff);
+
       r = diff_parent.execute();
     }
+
     if (r < 0) {
       return r;
     }
@@ -298,9 +314,11 @@ int DiffIterate::execute() {
 
       if (fast_diff_enabled) {
         const uint64_t object_no = p->second.front().objectno;
+
         if (object_diff_state[object_no] != OBJECT_DIFF_STATE_NONE) {
           bool updated = (object_diff_state[object_no] ==
                             OBJECT_DIFF_STATE_UPDATED);
+
           for (std::vector<ObjectExtent>::iterator q = p->second.begin();
                q != p->second.end(); ++q) {
             r = m_callback(off + q->offset, q->length, updated, m_callback_arg);
@@ -331,6 +349,7 @@ int DiffIterate::execute() {
   if (r < 0) {
     return r;
   }
+
   return 0;
 }
 
