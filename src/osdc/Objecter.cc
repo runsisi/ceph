@@ -3513,6 +3513,8 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
   }
 
   if (m->is_ondisk() || rc) {
+    // CEPH_OSD_FLAG_ONDISK
+
     if (op->oncommit) {
       ldout(cct, 15) << "handle_osd_op_reply safe" << dendl;
 
