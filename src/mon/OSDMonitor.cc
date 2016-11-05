@@ -6761,8 +6761,10 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 
     vector<string> idvec;
     cmd_getval(g_ceph_context, cmdmap, "ids", idvec);
+
     for (unsigned j = 0; j < idvec.size(); j++) {
       long osd = parse_osd_id(idvec[j].c_str(), &ss);
+
       if (osd < 0) {
 	ss << "invalid osd id" << osd;
 	err = -EINVAL;
@@ -6771,6 +6773,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	ss << "osd." << osd << " does not exist. ";
 	continue;
       }
+
       if (prefix == "osd down") {
 	if (osdmap.is_down(osd)) {
 	  ss << "osd." << osd << " is already down. ";
@@ -6828,6 +6831,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	}
       }
     }
+
     if (any) {
       getline(ss, rs);
       wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, err, rs,
@@ -6974,6 +6978,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       err = -EINVAL;
       goto reply;
     }
+
     double w;
     if (!cmd_getval(g_ceph_context, cmdmap, "weight", w)) {
       ss << "unable to parse weight value '"
@@ -6981,12 +6986,14 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       err = -EINVAL;
       goto reply;
     }
+
     long ww = (int)((double)CEPH_OSD_IN*w);
     if (ww < 0L) {
       ss << "weight must be >= 0";
       err = -EINVAL;
       goto reply;
     }
+
     if (osdmap.exists(id)) {
       pending_inc.new_weight[id] = ww;
       ss << "reweighted osd." << id << " to " << w << " (" << std::hex << ww << std::dec << ")";
@@ -7068,7 +7075,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 
       if (i >= 0) {
 
-        // the user provided uuid already has an id associated with it
+        // the user provided uuid already has an osd id associated with it
 
 	// osd already exists
 	if (id >= 0 && i != id) {
@@ -7095,6 +7102,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       }
 
       // i < 0, i.e., user provided uuid has not been used
+
       if (id >= 0) {
 
         // user provided id
@@ -7124,7 +7132,8 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 
       if (i >= 0) {
 
-        // use the user provided uuid and osd id
+        // user provide uuid and osd id both have not been used, so use
+        // the user provided uuid and osd id directly
 
 	// raise max_osd
 	if (osdmap.get_max_osd() <= i && pending_inc.new_max_osd <= i)
