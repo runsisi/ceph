@@ -608,18 +608,24 @@ void MonClient::handle_auth(MAuthReply *m)
     ldout(cct, 10) << "my global_id is " << m->global_id << dendl;
   }
 
+  // handle server challenge or
+  // CEPHX_GET_AUTH_SESSION_KEY/CEPHX_GET_PRINCIPAL_SESSION_KEY/CEPHX_GET_ROTATING_KEY
   int ret = auth->handle_response(m->result, p);
 
   m->put();
 
   if (ret == -EAGAIN) {
+
+    // handled server challenge or still has tickets to get
+
     MAuth *ma = new MAuth;
 
     ma->protocol = auth->get_protocol();
 
-    // CephxClientHandler::ticket_handler
+    // CephxClientHandler, to get CephXTicketHandler for CEPH_ENTITY_TYPE_AUTH
     auth->prepare_build_request();
 
+    // request CEPHX_GET_AUTH_SESSION_KEY/CEPHX_GET_PRINCIPAL_SESSION_KEY
     ret = auth->build_request(ma->auth_payload);
 
     _send_mon_message(ma, true);
@@ -1084,6 +1090,7 @@ int MonClient::_check_auth_rotating()
   MAuth *m = new MAuth;
 
   m->protocol = auth->get_protocol();
+
   if (auth->build_rotating_request(m->auth_payload)) {
     last_rotating_renew_sent = now;
 

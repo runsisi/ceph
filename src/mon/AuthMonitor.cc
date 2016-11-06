@@ -469,6 +469,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       goto reply;
     }
 
+    // this is a new session
     start = true;
   } else if (!s->auth_handler) {
       dout(10) << "protocol specified but no s->auth_handler" << dendl;
@@ -521,6 +522,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       if (m->monmap_epoch < mon->monmap->get_epoch())
 	mon->send_latest_monmap(m->get_connection().get());
 
+      // encode server challenge
       proto = s->auth_handler->start_session(entity_name, indata, response_bl, caps_info);
 
       ret = 0;

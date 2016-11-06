@@ -296,6 +296,7 @@ bool KeyServer::get_service_secret(uint32_t service_id,
 {
   Mutex::Locker l(lock);
 
+  // get a rotating key and its id
   return data.get_service_secret(cct, service_id, secret, secret_id);
 }
 
