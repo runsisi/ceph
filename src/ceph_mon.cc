@@ -135,9 +135,11 @@ int check_mon_data_empty()
     cerr << "opendir(" << mon_data << ") " << cpp_strerror(errno) << std::endl;
     return -errno;
   }
+
   int code = 0;
   struct dirent *de = nullptr;
   errno = 0;
+
   while ((de = ::readdir(dir))) {
     if (string(".") != de->d_name &&
 	string("..") != de->d_name &&
@@ -146,6 +148,7 @@ int check_mon_data_empty()
       break;
     }
   }
+
   if (!de && errno) {
     cerr << "readdir(" << mon_data << ") " << cpp_strerror(errno) << std::endl;
     code = -errno;
