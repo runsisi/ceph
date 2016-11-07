@@ -6180,6 +6180,8 @@ void OSD::ms_fast_preprocess(Message *m)
   }
 }
 
+// called by
+// Pipe::connect
 bool OSD::ms_get_authorizer(int dest_type, AuthAuthorizer **authorizer, bool force_new)
 {
   dout(10) << "OSD::ms_get_authorizer type=" << ceph_entity_type_name(dest_type) << dendl;
@@ -6201,7 +6203,8 @@ bool OSD::ms_get_authorizer(int dest_type, AuthAuthorizer **authorizer, bool for
   return *authorizer != NULL;
 }
 
-
+// called by
+// Pipe::accept
 bool OSD::ms_verify_authorizer(Connection *con, int peer_type,
 			       int protocol, bufferlist& authorizer_data, bufferlist& authorizer_reply,
 			       bool& isvalid, CryptoKey& session_key)
@@ -6267,6 +6270,7 @@ bool OSD::ms_verify_authorizer(Connection *con, int peer_type,
 
     s->put();
   }
+
   return true;
 }
 

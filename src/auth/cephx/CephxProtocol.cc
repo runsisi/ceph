@@ -391,6 +391,7 @@ CephXAuthorizer *CephXTicketManager::build_authorizer(uint32_t service_id) const
 
   const CephXTicketHandler& handler = iter->second;
 
+  // CephXAuthorizer = <session_key, nonce, bl>, bl = <global_id, service_id, ticket, encrypted msg>
   return handler.build_authorizer(global_id);
 }
 
