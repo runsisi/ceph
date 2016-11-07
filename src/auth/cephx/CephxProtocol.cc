@@ -130,7 +130,7 @@ bool cephx_build_service_ticket_reply(CephContext *cct,
 
     bufferlist service_ticket_bl;
     CephXTicketBlob blob;
-    // encrypt CephXServiceTicketInfo using rotating key
+    // encrypt CephXServiceTicketInfo, i.e., service ticket, using the service rotating key
     if (!cephx_build_service_ticket_blob(cct, info, blob)) {
       return false;
     }
@@ -143,6 +143,7 @@ bool cephx_build_service_ticket_reply(CephContext *cct,
     *_dout << dendl;
 
     ::encode((__u8)should_encrypt_ticket, reply);
+
     if (should_encrypt_ticket) {
       // encrypt using old ticket's session key
       if (encode_encrypt(cct, service_ticket_bl, ticket_enc_key, reply, error)) {
@@ -270,6 +271,7 @@ void CephXTicketManager::set_have_need_key(uint32_t service_id, uint32_t& have, 
   if (iter == tickets_map.end()) {
     have &= ~service_id;
     need |= service_id;
+
     ldout(cct, 10) << "set_have_need_key no handler for service "
 		   << ceph_entity_type_name(service_id) << dendl;
     return;
@@ -403,7 +405,7 @@ void CephXTicketManager::validate_tickets(uint32_t mask, uint32_t& have, uint32_
   need = 0;
 
   // mask is AuthClientHandler::want, which is a mask initialized at the
-  // very beginning by MonClient::set_want_keys
+  // very beginning by MonClient::set_want_keys, i.e., it's a set of services
   for (i = 1; i<=mask; i<<=1) {
     if (mask & i) {
       // i is service id
@@ -513,7 +515,7 @@ bool cephx_verify_authorizer(CephContext *cct, KeyStore *keys,
   if (!service_secret.get_secret().length())
     error = "invalid key";  // Bad key?
   else
-    // decrypt ticket using rotating key
+    // decrypt ticket info using rotating key
     decode_decrypt_enc_bl(cct, ticket_info, service_secret, ticket.blob, error);
 
   if (!error.empty()) {
@@ -546,6 +548,8 @@ bool cephx_verify_authorizer(CephContext *cct, KeyStore *keys,
   CephXAuthorizeReply reply;
   // reply.trans_id = auth_msg.trans_id;
   reply.nonce_plus_one = auth_msg.nonce + 1;
+
+  // encrypt using session key
   if (encode_encrypt(cct, reply, ticket_info.session_key, reply_bl, error)) {
     ldout(cct, 10) << "verify_authorizer: encode_encrypt error: " << error << dendl;
     return false;
@@ -565,6 +569,8 @@ bool CephXAuthorizer::verify_reply(bufferlist::iterator& indata)
   CephXAuthorizeReply reply;
 
   std::string error;
+
+  // session_key was assigned by CephXTicketHandler::build_authorizer
   if (decode_decrypt(cct, reply, session_key, indata, error)) {
       ldout(cct, 0) << "verify_reply couldn't decrypt with error: " << error << dendl;
       return false;
@@ -576,6 +582,7 @@ bool CephXAuthorizer::verify_reply(bufferlist::iterator& indata)
 	    << " sent " << nonce << dendl;
     return false;
   }
+
   return true;
 }
 

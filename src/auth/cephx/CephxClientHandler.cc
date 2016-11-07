@@ -137,6 +137,8 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
 
     tickets.invalidate_ticket(CEPH_ENTITY_TYPE_AUTH);
 
+    // will request CEPHX_GET_AUTH_SESSION_KEY immediately, see MonClient::handle_auth
+
     return -EAGAIN;
   }
 
@@ -167,6 +169,7 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
 
       // still need other tickets for other services
       if (_need_tickets())
+        // will request CEPHX_GET_PRINCIPAL_SESSION_KEY immediately, see MonClient::handle_auth
 	ret = -EAGAIN;
       else
 	ret = 0;
@@ -179,6 +182,9 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
 
       ldout(cct, 10) << " get_principal_session_key session_key " << ticket_handler.session_key << dendl;
   
+      // decrypt msg_a using client's key and decode/decrypt tickets using old session keys
+      // for all requested services except CEPH_ENTITY_TYPE_AUTH which has been got during
+      // handling CEPHX_GET_AUTH_SESSION_KEY
       if (!tickets.verify_service_ticket_reply(ticket_handler.session_key, indata)) {
         ldout(cct, 0) << "could not verify service_ticket reply" << dendl;
         return -EPERM;
@@ -193,10 +199,15 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
     break;
 
   case CEPHX_GET_ROTATING_KEY:
+    // the request was built by CephxClientHandler::build_rotating_request which
+    // was called by MonClient::_check_auth_rotating, only OSD/MDS/MGR needs this
     {
       ldout(cct, 10) << " get_rotating_key" << dendl;
 
       if (rotating_secrets) {
+
+        // was allocated by MonClient::init, should never be null
+
 	RotatingSecrets secrets;
 	CryptoKey secret_key;
 
@@ -207,6 +218,7 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
         }
 
         std::string error;
+        // decrypt rotating keys using client's key
 	if (decode_decrypt(cct, secrets, secret_key, indata, error)) {
 	  ldout(cct, 0) << "could not set rotating key: decode_decrypt failed. error:"
 	    << error << dendl;
@@ -228,13 +240,16 @@ int CephxClientHandler::handle_response(int ret, bufferlist::iterator& indata)
 }
 
 
-
+// called by
+// msgr->get_authorizer eventually, see Pipe::connect
 AuthAuthorizer *CephxClientHandler::build_authorizer(uint32_t service_id) const
 {
   RWLock::RLocker l(lock);
 
   ldout(cct, 10) << "build_authorizer for service " << ceph_entity_type_name(service_id) << dendl;
 
+  // build a CephXAuthorizer instance,
+  // CephXAuthorizer = <session_key, nonce, bl>, bl = <global_id, service_id, ticket, encrypted msg>
   return tickets.build_authorizer(service_id);
 }
 
@@ -279,7 +294,9 @@ void CephxClientHandler::prepare_build_request()
 // AuthClientHandler::set_want_keys
 void CephxClientHandler::validate_tickets()
 {
-  // want is a mask initialized at the very beginning by MonClient::set_want_keys
+  // want is a mask initialized at the very beginning by MonClient::set_want_keys,
+  // and should not be changed later, except for CEPH_ENTITY_TYPE_MGR which requires
+  // kraken features, see MonClient::handle_auth
   // lock should be held for write
   tickets.validate_tickets(want, have, need);
 }

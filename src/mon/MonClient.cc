@@ -548,7 +548,8 @@ void MonClient::handle_auth(MAuthReply *m)
     if (!auth || (int)m->protocol != auth->get_protocol()) {
       delete auth;
 
-      // RotatingKeyRing *rotating_secrets was initialized by MonClient::init
+      // RotatingKeyRing *rotating_secrets was initialized by MonClient::init, and
+      // will be populated by CephxClientHandler::handle_response for CEPHX_GET_ROTATING_KEY
       // auth is an instance of CephxClientHandler
       auth = get_auth_client_handler(cct, m->protocol, rotating_secrets);
       if (!auth) {
@@ -1044,6 +1045,9 @@ int MonClient::_check_auth_rotating()
 
   if (!rotating_secrets ||
       !auth_principal_needs_rotating_keys(entity_name)) {
+
+    // only OSD/MDS/MGR needs rotating keys
+
     ldout(cct, 20) << "_check_auth_rotating not needed by " << entity_name << dendl;
     return 0;
   }
@@ -1056,10 +1060,12 @@ int MonClient::_check_auth_rotating()
   utime_t now = ceph_clock_now(cct);
   utime_t cutoff = now;
 
+  // default 60*60
   cutoff -= MIN(30.0, cct->_conf->auth_service_ticket_ttl / 4.0);
 
   utime_t issued_at_lower_bound = now;
 
+  // default 60*60
   issued_at_lower_bound -= cct->_conf->auth_service_ticket_ttl;
 
   if (!rotating_secrets->need_new_secrets(cutoff)) {
@@ -1091,6 +1097,7 @@ int MonClient::_check_auth_rotating()
 
   m->protocol = auth->get_protocol();
 
+  // to build CEPHX_GET_ROTATING_KEY request header
   if (auth->build_rotating_request(m->auth_payload)) {
     last_rotating_renew_sent = now;
 

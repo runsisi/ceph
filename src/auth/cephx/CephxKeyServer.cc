@@ -443,6 +443,7 @@ bool KeyServer::get_rotating_encrypted(const EntityName& name,
 {
   Mutex::Locker l(lock);
 
+  // find from KeyServerData::secrets
   map<EntityName, EntityAuth>::const_iterator mapiter = data.find_name(name);
   if (mapiter == data.secrets_end())
     return false;
@@ -457,6 +458,7 @@ bool KeyServer::get_rotating_encrypted(const EntityName& name,
   RotatingSecrets secrets = rotate_iter->second;
 
   std::string error;
+  // encrypt rotating keys using service entity key
   if (encode_encrypt(cct, secrets, specific_key, enc_bl, error))
     return false;
 
@@ -505,12 +507,14 @@ int KeyServer::_build_session_auth_info(uint32_t service_id, CephXServiceTicketI
 int KeyServer::build_session_auth_info(uint32_t service_id, CephXServiceTicketInfo& auth_ticket_info,
 				       CephXSessionAuthInfo& info)
 {
+  // get a rotating key and its id for the specified service
   if (!get_service_secret(service_id, info.service_secret, info.secret_id)) {
     return -EPERM;
   }
 
   Mutex::Locker l(lock);
 
+  // auth_ticket_info is decrypted ticket for CEPH_ENTITY_TYPE_AUTH
   return _build_session_auth_info(service_id, auth_ticket_info, info);
 }
 

@@ -553,6 +553,8 @@ int Pipe::accept()
 
     pipe_lock.Unlock();
 
+    // will call authorize_handler->verify_authorizer which calls
+    // CephxAuthorizeHandler::verify_authorizer
     if (!msgr->verify_authorizer(connection_state.get(), peer_type, connect.authorizer_protocol, authorizer,
 				 authorizer_reply, authorizer_valid, session_key) ||
 	!authorizer_valid) {
@@ -1260,7 +1262,8 @@ int Pipe::connect()
 
   while (1) {
     delete authorizer;
-    // if we are connecting to MON, then the returned authorizer should always be NULL
+    // if we are connecting to MON, then the returned authorizer should always be NULL,
+    // otherwise, monc->auth->build_authorizer, i.e., CephxClientHandler::build_authorizer
     authorizer = msgr->get_authorizer(peer_type, false);
 
     bufferlist authorizer_reply;
@@ -1341,6 +1344,7 @@ int Pipe::connect()
 
     if (authorizer) {
       bufferlist::iterator iter = authorizer_reply.begin();
+
       if (!authorizer->verify_reply(iter)) {
         ldout(msgr->cct,0) << "failed verifying authorize reply" << dendl;
 	goto fail;

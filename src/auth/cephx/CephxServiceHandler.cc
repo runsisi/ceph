@@ -150,7 +150,7 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       build_cephx_response_header(cephx_header.request_type, 0, result_bl);
 
       // encrypt msg_a using client's key and encrypt CephXServiceTicketInfo, i.e.,
-      // ticket using rotating key
+      // ticket using rotating key of CEPH_ENTITY_TYPE_AUTH
       if (!cephx_build_service_ticket_reply(cct, eauth.key, info_vec, should_enc_ticket,
 					    old_ticket_info.session_key, result_bl)) {
 	ret = -EIO;
@@ -175,6 +175,8 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
 
       bufferlist tmp_bl;
       CephXServiceTicketInfo auth_ticket_info;
+      // get rotating key for CEPH_ENTITY_TYPE_AUTH to decrypt the ticket info for
+      // CEPH_ENTITY_TYPE_AUTH, during this process will verify if the ticket is valid
       if (!cephx_verify_authorizer(cct, key_server, indata, auth_ticket_info, tmp_bl)) {
         ret = -EPERM;
 	break;
@@ -198,6 +200,7 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
 			 << ceph_entity_type_name(service_id) << dendl;
 
 	  CephXSessionAuthInfo info;
+	  // build CephXSessionAuthInfo for later building tickets for services
           int r = key_server->build_session_auth_info(service_id,
 						      auth_ticket_info, info);
 	  // tolerate missing MGR rotating key for the purposes of upgrades.
@@ -208,6 +211,7 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
 	    continue;
 	  }
 
+          // default 60*60
           info.validity += cct->_conf->auth_service_ticket_ttl;
 
           info_vec.push_back(info);
@@ -224,6 +228,8 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       CryptoKey no_key;
       build_cephx_response_header(cephx_header.request_type, ret, result_bl);
 
+      // encrypt msg_a using client's key and encrypt CephXServiceTicketInfo, i.e.,
+      // ticket using rotating key of each service
       cephx_build_service_ticket_reply(cct, auth_ticket_info.session_key, info_vec, false, no_key, result_bl);
     }
     break;
@@ -233,6 +239,8 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
       ldout(cct, 10) << "handle_request getting rotating secret for " << entity_name << dendl;
 
       build_cephx_response_header(cephx_header.request_type, 0, result_bl);
+
+      // encrypt rotating keys using client's key
       if (!key_server->get_rotating_encrypted(entity_name, result_bl)) {
         ret = -EPERM;
         break;
@@ -244,6 +252,7 @@ int CephxServiceHandler::handle_request(bufferlist::iterator& indata, bufferlist
     ldout(cct, 10) << "handle_request unknown op " << cephx_header.request_type << dendl;
     return -EINVAL;
   }
+
   return ret;
 }
 
