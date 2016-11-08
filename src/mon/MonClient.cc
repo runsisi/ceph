@@ -1109,6 +1109,14 @@ int MonClient::_check_auth_rotating()
   return 0;
 }
 
+// called by
+// MDSDaemon::init
+// MDSDaemon::ms_get_authorizer
+// DaemonServer::ms_get_authorizer
+// MgrStandby::ms_get_authorizer
+// OSD::init
+// OSD::ms_get_authorizer
+// MDSUtility::ms_get_authorizer
 int MonClient::wait_auth_rotating(double timeout)
 {
   Mutex::Locker l(monc_lock);
@@ -1126,6 +1134,9 @@ int MonClient::wait_auth_rotating(double timeout)
 
   while (auth_principal_needs_rotating_keys(entity_name) &&
 	 rotating_secrets->need_new_secrets(now)) {
+
+    // the entity type is OSD/MDS/MGR
+
     if (now >= until) {
       ldout(cct, 0) << "wait_auth_rotating timed out after " << timeout << dendl;
 
@@ -1140,6 +1151,7 @@ int MonClient::wait_auth_rotating(double timeout)
   }
 
   ldout(cct, 10) << "wait_auth_rotating done" << dendl;
+
   return 0;
 }
 

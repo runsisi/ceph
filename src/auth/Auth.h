@@ -192,16 +192,22 @@ struct RotatingSecrets {
   uint64_t add(ExpiringCryptoKey& key) {
     secrets[++max_ver] = key;
 
+    // max 3 keys
     while (secrets.size() > KEY_ROTATE_NUM)
       secrets.erase(secrets.begin());
 
     return max_ver;
   }
   
+  // called by
+  // RotatingKeyRing::need_new_secrets()
   bool need_new_secrets() const {
     return secrets.size() < KEY_ROTATE_NUM;
   }
 
+  // called by
+  // KeyServer::_rotate_secret
+  // RotatingKeyRing::need_new_secrets(utime_t now)
   bool need_new_secrets(utime_t now) const {
     return secrets.size() < KEY_ROTATE_NUM || current().expiration <= now;
   }
@@ -250,6 +256,7 @@ public:
 static inline bool auth_principal_needs_rotating_keys(EntityName& name)
 {
   uint32_t ty(name.get_type());
+
   return ((ty == CEPH_ENTITY_TYPE_OSD)
       || (ty == CEPH_ENTITY_TYPE_MDS)
       || (ty == CEPH_ENTITY_TYPE_MGR));

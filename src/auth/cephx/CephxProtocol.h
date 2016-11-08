@@ -449,6 +449,7 @@ void decode_decrypt_enc_bl(CephContext *cct, T& t, CryptoKey key, bufferlist& bl
   __u8 struct_v;
   ::decode(struct_v, iter2);
   ::decode(magic, iter2);
+
   if (magic != AUTH_ENC_MAGIC) {
     ostringstream oss;
     oss << "bad magic in decode_decrypt, " << magic << " != " << AUTH_ENC_MAGIC;

@@ -8,13 +8,17 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "auth: "
 
-
+// called by
+// MonClient::_check_auth_rotating
 bool RotatingKeyRing::need_new_secrets() const
 {
   Mutex::Locker l(lock);
   return secrets.need_new_secrets();
 }
 
+// called by
+// MonClient::_check_auth_rotating
+// MonClient::wait_auth_rotating
 bool RotatingKeyRing::need_new_secrets(utime_t now) const
 {
   Mutex::Locker l(lock);

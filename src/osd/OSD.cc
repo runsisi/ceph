@@ -2277,12 +2277,17 @@ int OSD::init()
 
   while (monc->wait_auth_rotating(30.0) < 0) {
     derr << "unable to obtain rotating service keys; retrying" << dendl;
+
     ++rotating_auth_attempts;
+
+    // 10 attempts
     if (rotating_auth_attempts > max_rotating_auth_attempts) {
         osd_lock.Lock(); // make locker happy
+
         if (!is_stopping()) {
             r = - ETIMEDOUT;
         }
+
         goto monout;
     }
   }
@@ -6198,6 +6203,8 @@ bool OSD::ms_get_authorizer(int dest_type, AuthAuthorizer **authorizer, bool for
     }
   }
 
+  // build a CephXAuthorizer instance,
+  // CephXAuthorizer = <session_key, nonce, bl>, bl = <global_id, service_id, ticket, encrypted msg>
   *authorizer = monc->auth->build_authorizer(dest_type);
 
   return *authorizer != NULL;

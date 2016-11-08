@@ -542,6 +542,7 @@ void generic_server_usage()
   generic_usage(true);
   exit(1);
 }
+
 void generic_client_usage()
 {
   generic_usage(false);

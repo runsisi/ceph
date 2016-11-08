@@ -36,6 +36,8 @@ namespace mirror {
 
 namespace {
 
+// status, start, stop, restart, flush
+
 class ReplayerAdminSocketCommand {
 public:
   virtual ~ReplayerAdminSocketCommand() {}
@@ -157,6 +159,7 @@ public:
     for (Commands::const_iterator i = commands.begin(); i != commands.end();
 	 ++i) {
       (void)admin_socket->unregister_command(i->first);
+
       delete i->second;
     }
   }
@@ -165,11 +168,15 @@ public:
 	    bufferlist& out) {
     Commands::const_iterator i = commands.find(command);
     assert(i != commands.end());
+
     Formatter *f = Formatter::create(format);
     stringstream ss;
+
     bool r = i->second->call(f, &ss);
+
     delete f;
     out.append(ss);
+
     return r;
   }
 
@@ -180,6 +187,9 @@ private:
   Commands commands;
 };
 
+// member variable of Replayer, i.e.,
+// std::unique_ptr<MirrorStatusWatchCtx> Replayer::m_status_watcher, which
+// will be initialized by Replayer::mirror_image_status_init
 class MirrorStatusWatchCtx {
 public:
   MirrorStatusWatchCtx(librados::IoCtx &ioctx, ContextWQ *work_queue) {

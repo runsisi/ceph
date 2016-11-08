@@ -153,6 +153,8 @@ private:
   ImageReplayer<I> *replayer;
 };
 
+// will be registered by ImageReplayer<I>::ImageReplayer and registered
+// by ImageReplayer<I>::handle_bootstrap
 template <typename I>
 class ImageReplayerAdminSocketHook : public AdminSocketHook {
 public:
@@ -248,7 +250,7 @@ void ImageReplayer<I>::RemoteJournalerListener::handle_update(
   replayer->m_threads->work_queue->queue(ctx, 0);
 }
 
-// ImageReplayer instances are created by Replayer::set_sources
+// instances will be created by Replayer::set_sources
 template <typename I>
 ImageReplayer<I>::ImageReplayer(Threads *threads,
                              shared_ptr<ImageDeleter> image_deleter,

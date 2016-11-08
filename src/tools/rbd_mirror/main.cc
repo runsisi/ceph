@@ -20,6 +20,8 @@ void usage() {
   std::cout << "  --keyring=<path>          path to keyring for local cluster\n";
   std::cout << "  --log-file=<logfile>       file to log debug output\n";
   std::cout << "  --debug-rbd-mirror=<log-level>/<memory-level>  set rbd-mirror debug level\n";
+
+  // provided by ceph_argparse.cc
   generic_server_usage();
 }
 
@@ -49,6 +51,7 @@ int main(int argc, const char **argv)
   if (g_conf->daemonize) {
     global_init_daemonize(g_ceph_context);
   }
+
   g_ceph_context->enable_perf_counter();
 
   common_init_finish(g_ceph_context);
@@ -65,6 +68,7 @@ int main(int argc, const char **argv)
   g_ceph_context->_conf->set_val_or_die("rbd_cache", "false");
 
   mirror = new rbd::mirror::Mirror(g_ceph_context, cmd_args);
+
   int r = mirror->init();
   if (r < 0) {
     std::cerr << "failed to initialize: " << cpp_strerror(r) << std::endl;

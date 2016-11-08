@@ -456,7 +456,7 @@ bool cephx_decode_ticket(CephContext *cct, KeyStore *keys, uint32_t service_id,
 
 // called by
 // CephxAuthorizeHandler::verify_authorizer
-// CephxServiceHandler::handle_request
+// CephxServiceHandler::handle_request, for client requests CEPHX_GET_PRINCIPAL_SESSION_KEY
 // Monitor::ms_verify_authorizer
 /*
  * SERVICE: verify authorizer and generate reply authorizer

@@ -384,6 +384,7 @@ int global_init_prefork(CephContext *cct)
     return -1;
 
   const md_config_t *conf = cct->_conf;
+
   if (!conf->daemonize) {
 
     if (pidfile_write(conf) < 0)
@@ -399,15 +400,18 @@ int global_init_prefork(CephContext *cct)
   }
 
   cct->notify_pre_fork();
+
   // stop log thread
   cct->_log->flush();
   cct->_log->stop();
+
   return 0;
 }
 
 void global_init_daemonize(CephContext *cct)
 {
   if (global_init_prefork(cct) < 0)
+    // no need to daemonize
     return;
 
 #if !defined(_AIX)
@@ -430,6 +434,7 @@ void global_init_postfork_start(CephContext *cct)
 {
   // restart log thread
   cct->_log->start();
+
   cct->notify_post_fork();
 
   /* This is the old trick where we make file descriptors 0, 1, and possibly 2
@@ -447,6 +452,7 @@ void global_init_postfork_start(CephContext *cct)
 	 << err << dendl;
     exit(1);
   }
+
   VOID_TEMP_FAILURE_RETRY(close(STDOUT_FILENO));
   if (open("/dev/null", O_RDONLY) < 0) {
     int err = errno;
@@ -480,6 +486,7 @@ void global_init_postfork_finish(CephContext *cct)
       exit(1);
     }
   }
+
   ldout(cct, 1) << "finished global_init_daemonize" << dendl;
 }
 
