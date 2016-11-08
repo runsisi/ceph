@@ -101,6 +101,7 @@ private:
                                uint64_t handle,
                                uint64_t notifier_id,
                                bufferlist& bl) {
+      // pure virtual
       object_watcher->handle_notify(notify_id, handle, bl);
     }
 

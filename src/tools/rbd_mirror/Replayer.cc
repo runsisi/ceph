@@ -201,12 +201,16 @@ public:
     delete m_watcher;
   }
 
+  // called by
+  // Replayer::mirror_image_status_init
   int register_watch() {
     C_SaferCond cond;
     m_watcher->register_watch(&cond);
     return cond.wait();
   }
 
+  // called by
+  // Replayer::mirror_image_status_shut_down
   int unregister_watch() {
     C_SaferCond cond;
     m_watcher->unregister_watch(&cond);
@@ -224,6 +228,7 @@ private:
       ObjectWatcher<>(ioctx, work_queue) {
     }
 
+    // pure virtual
     virtual std::string get_oid() const {
       return RBD_MIRRORING;
     }
@@ -231,11 +236,14 @@ private:
     virtual void handle_notify(uint64_t notify_id, uint64_t handle,
 			       bufferlist &bl) {
       bufferlist out;
+
+      // ObjectWatcher<I>::acknowledge_notify, i.e., m_io_ctx.notify_ack, nothing special
       acknowledge_notify(notify_id, handle, out);
     }
   };
 
   librados::IoCtx m_ioctx;
+  // will be allocated by MirrorStatusWatchCtx::MirrorStatusWatchCtx
   Watcher *m_watcher;
 };
 
@@ -813,6 +821,8 @@ int Replayer::mirror_image_status_init() {
   return 0;
 }
 
+// called by
+// Replayer::set_sources
 void Replayer::mirror_image_status_shut_down() {
   assert(m_status_watcher);
 
@@ -822,9 +832,12 @@ void Replayer::mirror_image_status_shut_down() {
 	 << " object: " << cpp_strerror(r) << dendl;
   }
 
+  // std::unique_ptr<MirrorStatusWatchCtx>
   m_status_watcher.reset();
 }
 
+// called by
+// Replayer::set_sources
 void Replayer::start_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer,
                                     const std::string &image_id,
                                     const boost::optional<std::string>& image_name)
