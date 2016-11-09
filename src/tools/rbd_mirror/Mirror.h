@@ -47,6 +47,7 @@ public:
   void flush();
 
 private:
+  // std::map<int64_t, Peers>, i.e., std::map<int64_t, std::set<peer_t>>
   typedef ClusterWatcher::PoolPeers PoolPeers;
   typedef std::pair<int64_t, peer_t> PoolPeer;
 

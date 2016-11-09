@@ -96,6 +96,7 @@ void MirroringWatcher<I>::handle_notify(uint64_t notify_id, uint64_t handle,
                                                             handle);
 
   NotifyMessage notify_message;
+
   try {
     bufferlist::iterator iter = bl.begin();
     ::decode(notify_message, iter);

@@ -454,6 +454,8 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
     }
 
     int type;
+    // mon->auth_cluster_required and mon->auth_service_required were
+    // initialized by Monitor::Monitor
     if (entity_name.get_type() == CEPH_ENTITY_TYPE_MON ||
 	entity_name.get_type() == CEPH_ENTITY_TYPE_OSD ||
 	entity_name.get_type() == CEPH_ENTITY_TYPE_MDS ||

@@ -191,15 +191,22 @@ Mirror::~Mirror()
   delete m_asok_hook;
 }
 
+// called by
+// rbd_mirror/main.cc:handle_signal
 void Mirror::handle_signal(int signum)
 {
   m_stopping.set(1);
+
   {
     Mutex::Locker l(m_lock);
+
+    // Mirror::run is waiting for this to stop
     m_cond.Signal();
   }
 }
 
+// called by
+// rbd_mirror/main.cc:main
 int Mirror::init()
 {
   int r = m_local->init_with_context(m_cct);
@@ -208,6 +215,7 @@ int Mirror::init()
     return r;
   }
 
+  // connect to local cluster to get local <pool, peer> pairs
   r = m_local->connect();
   if (r < 0) {
     derr << "error connecting to local cluster" << dendl;
@@ -225,34 +233,50 @@ int Mirror::init()
   return r;
 }
 
+// called by
+// rbd_mirror/main.cc:main, this is running under the main thread of the rbd-mirror process
 void Mirror::run()
 {
   dout(20) << "enter" << dendl;
 
   while (!m_stopping.read()) {
 
-    // list pools and get their corresponding mirroring peers
+    // list local pools and get their corresponding mirroring peers
     m_local_cluster_watcher->refresh_pools();
 
     Mutex::Locker l(m_lock);
 
+    // m_manual_stop was/will be set by Mirror::stop, if we are told to stop
+    // manually, we will not stop the running thread, instead we skip
+    // to update, i.e., delete stale replayers and create replayers for newly
+    // added peers, replayers and let Mirror::stop to stop all replayers
     if (!m_manual_stop) {
-      // each pool can have a list of peers, i.e., map<int64_t, Peers>
+      // each pool can have a list of peers, i.e., std::map<int64_t, Peers>
+
+      // keep a Replayer instance running for each <pool, peer_t> pair, and
+      // delete the replayer if 1) peer is blacklisted, or 2) the local pool removed,
+      // or 3) no peers associated with the local pool, or 4) the peer has removed
+      // for the local pool
       update_replayers(m_local_cluster_watcher->get_pool_peers());
     }
     m_cond.WaitInterval(g_ceph_context, m_lock,
 	utime_t(m_cct->_conf->rbd_mirror_pool_replayers_refresh_interval, 0));
   }
 
-  // stop all replayers in parallel
+  // we are to stop, stop all replayers in parallel
   Mutex::Locker locker(m_lock);
+
   for (auto it = m_replayers.begin(); it != m_replayers.end(); it++) {
     auto &replayer = it->second;
+
     replayer->stop(false);
   }
+
   dout(20) << "return" << dendl;
 }
 
+// called by
+// StatusCommand::call
 void Mirror::print_status(Formatter *f, stringstream *ss)
 {
   dout(20) << "enter" << dendl;
@@ -270,6 +294,7 @@ void Mirror::print_status(Formatter *f, stringstream *ss)
 
   for (auto it = m_replayers.begin(); it != m_replayers.end(); it++) {
     auto &replayer = it->second;
+
     replayer->print_status(f, ss);
   }
 
@@ -294,6 +319,8 @@ void Mirror::print_status(Formatter *f, stringstream *ss)
   }
 }
 
+// called by
+// StartCommand::call
 void Mirror::start()
 {
   dout(20) << "enter" << dendl;
@@ -313,6 +340,8 @@ void Mirror::start()
   }
 }
 
+// called by
+// StopCommand::call
 void Mirror::stop()
 {
   dout(20) << "enter" << dendl;
@@ -333,6 +362,8 @@ void Mirror::stop()
   }
 }
 
+// called by
+// RestartCommand::call
 void Mirror::restart()
 {
   dout(20) << "enter" << dendl;
@@ -352,6 +383,8 @@ void Mirror::restart()
   }
 }
 
+// called by
+// FlushCommand::call
 void Mirror::flush()
 {
   dout(20) << "enter" << dendl;
@@ -363,12 +396,15 @@ void Mirror::flush()
 
   for (auto it = m_replayers.begin(); it != m_replayers.end(); it++) {
     auto &replayer = it->second;
+
     replayer->flush();
   }
 }
 
-// map<int64_t, Peers>, each pool can have a set of peers, each peer
-// is a tuple of <uuid, cluster name, client name>
+// called by
+// Mirror::run
+// std::map<int64_t, Peers>, i.e., std::map<int64_t, std::set<peer_t>>,
+// each pool can have a set of peers, and each peer is a tuple of <uuid, cluster name, client name>
 void Mirror::update_replayers(const PoolPeers &pool_peers)
 {
   dout(20) << "enter" << dendl;
@@ -378,37 +414,46 @@ void Mirror::update_replayers(const PoolPeers &pool_peers)
   // remove stale replayers before creating new replayers
   for (auto it = m_replayers.begin(); it != m_replayers.end();) {
 
-    // iterate map<PoolPeer, std::unique_ptr<Replayer> >, i.e., existing
-    // replayer for each pool
+    // iterate std::map<PoolPeer, std::unique_ptr<Replayer> >
 
+    // peer_t
     auto &peer = it->first.second;
 
-    // check if the local pool still exists
+    // check if the local pool still exists or no peers associated with it
     auto pool_peer_it = pool_peers.find(it->first.first);
 
+    // check if we need to stop this replayer or not, erase a Replayer
+    // from m_replayers will delete it, then Replayer::~Replayer will stop
+    // the replayer, i.e., set Replayer::m_stopping, and wait its thread to stop
     if (it->second->is_blacklisted()) {
 
       // PoolWatcher::refresh returned -EBLACKLISTED
 
       derr << "removing blacklisted replayer for " << peer << dendl;
+
       // TODO: make async
 
       it = m_replayers.erase(it);
     } else if (pool_peer_it == pool_peers.end() ||
                pool_peer_it->second.find(peer) == pool_peer_it->second.end()) {
 
-      // local pool has been removed or the mirroring peer of the local pool has been removed
+      // local pool has been removed or the peer of the local pool has been removed
 
       dout(20) << "removing replayer for " << peer << dendl;
+
       // TODO: make async
 
       it = m_replayers.erase(it);
     } else {
+
+      // this replayer can keep its way
+
       ++it;
     }
   }
 
-  // create new replayer instances for newly added peers
+  // we have deleted the stale replayers, now create the new replayer
+  // instances for newly added peers
 
   for (auto &kv : pool_peers) {
 
@@ -424,9 +469,12 @@ void Mirror::update_replayers(const PoolPeers &pool_peers)
 
       if (m_replayers.find(pool_peer) == m_replayers.end()) {
 
+        // if the replayer for the corresponding <pool, peer_t> does not
+        // exist, so create it
+
         dout(20) << "starting replayer for " << peer << dendl;
 
-        // <pool + peer> -> Replayer
+        // <pool, peer> -> Replayer
         unique_ptr<Replayer> replayer(new Replayer(m_threads, m_image_deleter,
                                                    m_image_sync_throttler,
                                                    kv.first, peer, m_args));

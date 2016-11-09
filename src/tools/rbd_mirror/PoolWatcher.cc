@@ -29,6 +29,7 @@ using librbd::cls_client::mirror_image_list;
 namespace rbd {
 namespace mirror {
 
+// will be created by Replayer::init
 PoolWatcher::PoolWatcher(librados::IoCtx &remote_io_ctx,
                          double interval_seconds,
 			 Mutex &lock, Cond &cond) :
@@ -44,29 +45,35 @@ PoolWatcher::PoolWatcher(librados::IoCtx &remote_io_ctx,
 PoolWatcher::~PoolWatcher()
 {
   Mutex::Locker l(m_lock);
+
   m_stopping = true;
   m_timer.shutdown();
 }
 
+// called by
+// Replayer::run
 bool PoolWatcher::is_blacklisted() const {
   assert(m_lock.is_locked());
+
+  // was set by PoolWatcher::refresh_images
   return m_blacklisted;
 }
 
 const PoolWatcher::ImageIds& PoolWatcher::get_images() const
 {
   assert(m_lock.is_locked());
+
   return m_images;
 }
 
 // called by
 // Replayer::init
-// reschedule default to true
+// reschedule default to true, and never be false except for test code
 void PoolWatcher::refresh_images(bool reschedule)
 {
   ImageIds image_ids;
 
-  // get all mirroring enabled images of this local pool
+  // to get mirroring enabled images from remote peer, i.e., pool at remote cluster
   int r = refresh(&image_ids);
 
   Mutex::Locker l(m_lock);
@@ -91,6 +98,7 @@ void PoolWatcher::refresh_images(bool reschedule)
 
   // signal replayer thread
   m_refresh_cond.Signal();
+
   // TODO: perhaps use a workqueue instead, once we get notifications
   // about new/removed mirrored images
 }
@@ -115,10 +123,10 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
     return 0;
   }
 
-  // the remote pool has mirror enabled, now we get all the mirror
-  // enabled images
+  // the remote pool has mirror enabled, either pool mode or image mode,
+  // now we are to get all the mirror enabled images
 
-  // get all images of the remote pool
+  // get all images of the remote pool from RBD_DIRECTORY
   // <image name, image id>
   std::map<std::string, std::string> images_map;
   r = librbd::list_images_v2(m_remote_io_ctx, images_map);
@@ -130,17 +138,20 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
 
   // <image id, image name>
   std::map<std::string, std::string> image_id_to_name;
+
   for (const auto& img_pair : images_map) {
     image_id_to_name.insert(std::make_pair(img_pair.second, img_pair.first));
   }
 
   std::string last_read = "";
   int max_read = 1024;
+
+  // to get all mirror registered images of the remote pool
   do {
-    // get all mirror enabled images of the remote pool
     // <image id, image global id>
     std::map<std::string, std::string> mirror_images;
 
+    // get from omap of RBD_MIRRORING
     r =  mirror_image_list(&m_remote_io_ctx, last_read, max_read,
                            &mirror_images);
     if (r < 0) {
@@ -154,6 +165,7 @@ int PoolWatcher::refresh(ImageIds *image_ids) {
       // mirror enabled images only has <image id, image global id> info,
       // we need to get the name of the mirror enabled image
 
+      // RBD_DIRECTORY may not agree with RBD_MIRRORING
       boost::optional<std::string> image_name(boost::none);
 
       auto it2 = image_id_to_name.find(it->first);

@@ -28,6 +28,7 @@ void usage() {
 static void handle_signal(int signum)
 {
   if (mirror)
+    // set Mirror::m_stopping and signal Mirror::run to stop
     mirror->handle_signal(signum);
 }
 
@@ -69,12 +70,18 @@ int main(int argc, const char **argv)
 
   mirror = new rbd::mirror::Mirror(g_ceph_context, cmd_args);
 
+  // connect to local cluster
+  // allocate ClusterWatcher, ImageDeleter, ImageSyncThrottler
   int r = mirror->init();
   if (r < 0) {
     std::cerr << "failed to initialize: " << cpp_strerror(r) << std::endl;
     goto cleanup;
   }
 
+  // keep a running Replayer instance for each <pool, peer> pair and delete
+  // the stale replayers, i.e., those replayers that 1) peer is blacklisted,
+  // or 2) the local pool removed, or 3) no peers associated with the
+  // local pool, or 4) the peer has removed for the local pool
   mirror->run();
 
  cleanup:

@@ -233,6 +233,7 @@ private:
       return RBD_MIRRORING;
     }
 
+    // pure virtual, so apparently we do nothing for this watch
     virtual void handle_notify(uint64_t notify_id, uint64_t handle,
 			       bufferlist &bl) {
       bufferlist out;
@@ -247,6 +248,7 @@ private:
   Watcher *m_watcher;
 };
 
+// will be created by Mirror::update_replayers for each <pool, peer> pair
 Replayer::Replayer(Threads *threads, std::shared_ptr<ImageDeleter> image_deleter,
                    ImageSyncThrottlerRef<> image_sync_throttler,
                    int64_t local_pool_id, const peer_t &peer,
@@ -263,23 +265,32 @@ Replayer::Replayer(Threads *threads, std::shared_ptr<ImageDeleter> image_deleter
 {
 }
 
+// replayer erased from Mirror::m_replayers will delete the Replayer
+// instance thus stop the thread, see Mirror::update_replayers
 Replayer::~Replayer()
 {
   delete m_asok_hook;
 
+  // will stop Replayer::run
   m_stopping.set(1);
 
   {
     Mutex::Locker l(m_lock);
+
     m_cond.Signal();
   }
+
   if (m_replayer_thread.is_started()) {
     m_replayer_thread.join();
   }
 }
 
+// called by
+// Mirror::update_replayers
 bool Replayer::is_blacklisted() const {
   Mutex::Locker locker(m_lock);
+
+  // was set by Replayer::run
   return m_blacklisted;
 }
 
@@ -325,10 +336,14 @@ int Replayer::init()
   // Bootstrap existing mirroring images
   init_local_mirroring_images();
 
+  // NOTE: the PoolWatcher for remote peer is driven by timer
+
   m_pool_watcher.reset(new PoolWatcher(m_remote_io_ctx,
 		       g_ceph_context->_conf->rbd_mirror_image_directory_refresh_interval,
 		       m_lock, m_cond));
-  // start periodic timer to get mirroring enabled images and signal the replayer thread
+
+  // start periodic timer to get mirroring enabled images from peer, i.e.,
+  // pool at remote cluster, and signal the replayer thread
   m_pool_watcher->refresh_images();
 
   // run Replayer::run
@@ -474,6 +489,8 @@ void Replayer::init_local_mirroring_images() {
   m_init_images = std::move(images);
 }
 
+// called by
+// Replayer::ReplayerThread::entry
 void Replayer::run()
 {
   dout(20) << "enter" << dendl;
@@ -500,23 +517,32 @@ void Replayer::run()
       // stop Replayer thread for this <pool, peer> pair
 
       m_blacklisted = true;
+
+      // stop the running thread, the Replayer instance will be deleted
+      // by Mirror::update_replayers when it finds the replayer was blacklisted
       m_stopping.set(1);
     } else if (!m_manual_stop) {
 
       // start ImageReplayer for those mirror enabled images of
-      // the remote pool, i.e., set<image id, image name, image global id>,
-      // the image name may be boost::none if the image name can not be
-      // get by image id, see PoolWatcher::refresh
+      // the remote pool
 
       set_sources(m_pool_watcher->get_images());
     }
 
+    // NOTE: manual stop, i.e., stop requested from admin socket, will not
+    // stop the running thread, it only stops the imageplayers
+
     if (m_blacklisted) {
       break;
     }
+
+    // will be signalled by Replayer::~Replayer, Replayer::stop and
+    // PoolWatcher::refresh_images
     m_cond.WaitInterval(g_ceph_context, m_lock,
 	utime_t(g_ceph_context->_conf->rbd_mirror_image_state_check_interval, 0));
-  }
+  } // keep running
+
+  // the Replayer is to stop, so stop all its ImageReplayer
 
   ImageIds empty_sources;
 
@@ -533,6 +559,8 @@ void Replayer::run()
   }
 }
 
+// called by
+// StatusCommand::call
 void Replayer::print_status(Formatter *f, stringstream *ss)
 {
   dout(20) << "enter" << dendl;
@@ -560,6 +588,9 @@ void Replayer::print_status(Formatter *f, stringstream *ss)
   }
 }
 
+// called by
+// StartCommand::call
+// Mirror::start
 void Replayer::start()
 {
   dout(20) << "enter" << dendl;
@@ -580,18 +611,32 @@ void Replayer::start()
   }
 }
 
+// called by
+// StopCommand::call, manual is true
+// Mirror::stop, manual is true
+// Mirror::run, manual is false, i.e., the process is to be stopped
 void Replayer::stop(bool manual)
 {
   dout(20) << "enter: manual=" << manual << dendl;
 
   Mutex::Locker l(m_lock);
+
   if (!manual) {
+
+    // process is to be stopped
+
     m_stopping.set(1);
     m_cond.Signal();
+
     return;
   } else if (m_stopping.read()) {
+
+    // already stopped or in progress of stop
+
     return;
   }
+
+  // admin socket requested stop, do not stop the running thread
 
   m_manual_stop = true;
 
@@ -623,6 +668,8 @@ void Replayer::restart()
   }
 }
 
+// called by
+// FlushCommand::call
 void Replayer::flush()
 {
   dout(20) << "enter" << dendl;
@@ -635,6 +682,7 @@ void Replayer::flush()
 
   for (auto &kv : m_image_replayers) {
     auto &image_replayer = kv.second;
+
     image_replayer->flush();
   }
 }
