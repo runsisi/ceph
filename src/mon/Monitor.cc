@@ -152,9 +152,11 @@ Monitor::Monitor(CephContext* cct_, string nm, MonitorDBStore *s,
   monmap(map),
   log_client(cct_, messenger, monmap, LogClient::FLAG_MON),
   key_server(cct, &keyring), // keyring will be loaded by Monitor::preinit
+  // default cephx
   auth_cluster_required(cct,
 			cct->_conf->auth_supported.empty() ?
 			cct->_conf->auth_cluster_required : cct->_conf->auth_supported),
+  // default cephx
   auth_service_required(cct,
 			cct->_conf->auth_supported.empty() ?
 			cct->_conf->auth_service_required : cct->_conf->auth_supported ),
@@ -5408,8 +5410,11 @@ bool Monitor::ms_verify_authorizer(Connection *con, int peer_type,
 
   if (peer_type == CEPH_ENTITY_TYPE_MON &&
       auth_cluster_required.is_supported_auth(CEPH_AUTH_CEPHX)) {
-    // monitor, and cephx is enabled
+
+    // the peer is a monitor, and cephx is supported
+
     isvalid = false;
+
     if (protocol == CEPH_AUTH_CEPHX) {
       bufferlist::iterator iter = authorizer_data.begin();
       CephXServiceTicketInfo auth_ticket_info;

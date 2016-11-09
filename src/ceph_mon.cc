@@ -665,6 +665,7 @@ int main(int argc, const char **argv)
     DEPRECATED_CEPH_FEATURE_MONCLOCKCHECK |
     CEPH_FEATURE_PGID64 |
     CEPH_FEATURE_MSG_AUTH;
+
   msgr->set_default_policy(Messenger::Policy::stateless_server(supported, 0));
   msgr->set_policy(entity_name_t::TYPE_MON,
                    Messenger::Policy::lossless_peer_reuse(
