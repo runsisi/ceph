@@ -714,7 +714,7 @@ void Replayer::set_sources(const ImageIds &image_ids)
 
     dout(20) << "scanning initial local image set" << dendl;
 
-    // <image id, image name, image global id>
+    // std::set<ImageId>, i.e., std::set< <id, name, global id> >
     for (auto &remote_image : image_ids) {
 
       // iterate remote mirroring enabled images
@@ -754,6 +754,7 @@ void Replayer::set_sources(const ImageIds &image_ids)
   for (auto image_it = m_image_replayers.begin();
        image_it != m_image_replayers.end();) {
 
+    // std::set<ImageId>, i.e., std::set< <id, name, global id> >
     if (image_ids.find(ImageId(image_it->first)) == image_ids.end()) {
 
       // the remote image has mirror disabled or deleted, so the image
@@ -839,6 +840,7 @@ void Replayer::set_sources(const ImageIds &image_ids)
         m_remote_rados, local_mirror_uuid, remote_mirror_uuid, m_local_pool_id,
         m_remote_pool_id, image_id.id, image_id.global_id));
 
+      // <remote image id, ImageReplayer>
       it = m_image_replayers.insert(
         std::make_pair(image_id.id, std::move(image_replayer))).first;
     }
