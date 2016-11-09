@@ -95,6 +95,8 @@ struct DeleteJournalPolicy : public librbd::journal::Policy {
 
 } // anonymous namespace
 
+// created by
+// ImageDeleter::ImageDeleter
 class ImageDeleterAdminSocketHook : public AdminSocketHook {
 public:
   ImageDeleterAdminSocketHook(CephContext *cct, ImageDeleter *image_del) :
@@ -138,6 +140,8 @@ private:
   Commands commands;
 };
 
+// created by
+// Mirror::init
 ImageDeleter::ImageDeleter(ContextWQ *work_queue, SafeTimer *timer,
                            Mutex *timer_lock)
   : m_running(1),
@@ -156,45 +160,65 @@ ImageDeleter::~ImageDeleter() {
   dout(20) << "enter" << dendl;
 
   m_running.set(0);
+
   {
     Mutex::Locker l (m_delete_lock);
+
     m_delete_queue_cond.Signal();
   }
+
   if (m_image_deleter_thread.is_started()) {
     m_image_deleter_thread.join();
   }
 
   delete m_asok_hook;
+
   dout(20) << "return" << dendl;
 }
 
+// called by
+// ImageDeleter::ImageDeleterThread::entry
 void ImageDeleter::run() {
   dout(20) << "enter" << dendl;
+
   while(m_running.read()) {
     m_delete_lock.Lock();
+
     while (m_delete_queue.empty()) {
       dout(20) << "waiting for delete requests" << dendl;
+
       m_delete_queue_cond.Wait(m_delete_lock);
 
       if (!m_running.read()) {
+
+        // to stop
+
         m_delete_lock.Unlock();
+
         dout(20) << "return" << dendl;
+
         return;
       }
     }
 
     m_active_delete = std::move(m_delete_queue.back());
     m_delete_queue.pop_back();
+
     m_delete_lock.Unlock();
 
+    // to delete image identified by m_active_delete
     bool move_to_next = process_image_delete();
     if (!move_to_next) {
       if (!m_running.read()) {
+
+        // to stop
+
        dout(20) << "return" << dendl;
        return;
       }
 
       Mutex::Locker l(m_delete_lock);
+
       if (m_delete_queue.size() == 1) {
         m_delete_queue_cond.Wait(m_delete_lock);
       }
@@ -202,6 +226,10 @@ void ImageDeleter::run() {
   }
 }
 
+// called by
+// ImageReplayer<I>::handle_shut_down
+// Replayer::set_sources
+// Replayer::stop_image_replayer
 void ImageDeleter::schedule_image_delete(RadosRef local_rados,
                                          int64_t local_pool_id,
                                          const std::string& local_image_id,
@@ -221,9 +249,12 @@ void ImageDeleter::schedule_image_delete(RadosRef local_rados,
   m_delete_queue.push_front(unique_ptr<DeleteInfo>(
         new DeleteInfo(local_rados, local_pool_id, local_image_id,
                        local_image_name, global_image_id)));
+
   m_delete_queue_cond.Signal();
 }
 
+// called by
+// Replayer::start_image_replayer
 void ImageDeleter::wait_for_scheduled_deletion(int64_t local_pool_id,
                                                const std::string &global_image_id,
                                                Context *ctx,
@@ -234,6 +265,7 @@ void ImageDeleter::wait_for_scheduled_deletion(int64_t local_pool_id,
     });
 
   Mutex::Locker locker(m_delete_lock);
+
   auto del_info = find_delete_info(local_pool_id, global_image_id);
   if (!del_info) {
     // image not scheduled for deletion
@@ -244,13 +276,17 @@ void ImageDeleter::wait_for_scheduled_deletion(int64_t local_pool_id,
   if ((*del_info)->on_delete != nullptr) {
     (*del_info)->on_delete->complete(-ESTALE);
   }
+
   (*del_info)->on_delete = ctx;
   (*del_info)->notify_on_failed_retry = notify_on_failed_retry;
 }
 
+// called by
+// Replayer::stop_image_replayer
 void ImageDeleter::cancel_waiter(int64_t local_pool_id,
                                  const std::string &global_image_id) {
   Mutex::Locker locker(m_delete_lock);
+
   auto del_info = find_delete_info(local_pool_id, global_image_id);
   if (!del_info) {
     return;
@@ -262,12 +298,18 @@ void ImageDeleter::cancel_waiter(int64_t local_pool_id,
   }
 }
 
+// called by
+// ImageDeleter::run
 bool ImageDeleter::process_image_delete() {
 
   stringstream ss;
+
   m_active_delete->to_string(ss);
+
   std::string del_info_str = ss.str();
+
   dout(10) << "start processing delete request: " << del_info_str << dendl;
+
   int r;
   cls::rbd::MirrorImage mirror_image;
 
@@ -277,6 +319,7 @@ bool ImageDeleter::process_image_delete() {
     m_active_delete->local_pool_id, ioctx);
   if (r < 0) {
     derr << "error accessing local pool: " << cpp_strerror(r) << dendl;
+
     enqueue_failed_delete(r);
     return true;
   }
@@ -289,6 +332,7 @@ bool ImageDeleter::process_image_delete() {
   if (r < 0 && r != -ENOENT) {
     derr << "error retrieving image primary info: " << cpp_strerror(r)
          << dendl;
+
     enqueue_failed_delete(r);
     return true;
   }
@@ -296,6 +340,7 @@ bool ImageDeleter::process_image_delete() {
   if (is_primary) {
     dout(10) << "local image is the primary image, aborting deletion..."
              << dendl;
+
     complete_active_delete(-EISPRM);
     return true;
   }
@@ -316,6 +361,7 @@ bool ImageDeleter::process_image_delete() {
                                    mirror_image);
   if (r == -ENOENT) {
     dout(10) << "local image is not mirrored, aborting deletion..." << dendl;
+
     complete_active_delete(r);
     return true;
   } else if (r == -EEXIST || r == -EINVAL) {
@@ -323,11 +369,13 @@ bool ImageDeleter::process_image_delete() {
          << m_active_delete->local_image_id
          << ": global_image_id has changed/reused, aborting deletion: "
          << cpp_strerror(r) << dendl;
+
     complete_active_delete(r);
     return true;
   } else if (r < 0) {
     derr << "cannot disable mirroring for image id "
          << m_active_delete->local_image_id << ": " << cpp_strerror(r) << dendl;
+
     enqueue_failed_delete(r);
     return true;
   }
@@ -343,6 +391,7 @@ bool ImageDeleter::process_image_delete() {
     if (r < 0) {
       derr << "error opening image id " << m_active_delete->local_image_id
            << ": " << cpp_strerror(r) << dendl;
+
       enqueue_failed_delete(r);
       delete imgctx;
       return true;
@@ -350,6 +399,7 @@ bool ImageDeleter::process_image_delete() {
 
     {
       RWLock::WLocker snap_locker(imgctx->snap_lock);
+
       imgctx->set_journal_policy(new DeleteJournalPolicy());
     }
 
@@ -358,6 +408,7 @@ bool ImageDeleter::process_image_delete() {
     if (r < 0) {
       derr << "error listing snapshot of image " << imgctx->name
            << cpp_strerror(r) << dendl;
+
       imgctx->state->close();
       enqueue_failed_delete(r);
       return true;
@@ -373,10 +424,12 @@ bool ImageDeleter::process_image_delete() {
         derr << "error checking snapshot protection of snapshot "
              << imgctx->name << "@" << snap.name << ": " << cpp_strerror(r)
              << dendl;
+
         imgctx->state->close();
         enqueue_failed_delete(r);
         return true;
       }
+
       if (is_protected) {
         dout(20) << "snapshot " << imgctx->name << "@" << snap.name
                  << " is protected, issuing unprotect command" << dendl;
@@ -388,14 +441,18 @@ bool ImageDeleter::process_image_delete() {
           dout(10) << "local image id " << m_active_delete->local_image_id << " has "
                    << "snapshots with cloned children, postponing deletion..."
                    << dendl;
+
           imgctx->state->close();
+
           Mutex::Locker l(m_delete_lock);
+
           m_active_delete->notify(r);
           m_delete_queue.push_front(std::move(m_active_delete));
           return false;
         } else if (r < 0) {
           derr << "error unprotecting snapshot " << imgctx->name << "@"
                << snap.name << ": " << cpp_strerror(r) << dendl;
+
           imgctx->state->close();
           enqueue_failed_delete(r);
           return true;
@@ -406,6 +463,7 @@ bool ImageDeleter::process_image_delete() {
       if (r < 0) {
         derr << "error removing snapshot " << imgctx->name << "@"
              << snap.name << ": " << cpp_strerror(r) << dendl;
+
         imgctx->state->close();
         enqueue_failed_delete(r);
         return true;
@@ -423,6 +481,7 @@ bool ImageDeleter::process_image_delete() {
   if (r < 0 && r != -ENOENT) {
     derr << "error removing image " << m_active_delete->local_image_name
          << " from local pool: " << cpp_strerror(r) << dendl;
+
     enqueue_failed_delete(r);
     return true;
   }
@@ -438,6 +497,7 @@ bool ImageDeleter::process_image_delete() {
   if (r < 0 && r != -ENOENT) {
     derr << "error removing image from mirroring directory: "
          << cpp_strerror(r) << dendl;
+
     enqueue_failed_delete(r);
     return true;
   }
@@ -449,6 +509,8 @@ bool ImageDeleter::process_image_delete() {
   return true;
 }
 
+// called by
+// ImageDeleter::process_image_delete
 int ImageDeleter::image_has_snapshots_and_children(IoCtx *ioctx,
                                                    string& image_id,
                                                    bool *has_snapshots) {
@@ -471,9 +533,13 @@ void ImageDeleter::complete_active_delete(int r) {
   dout(20) << dendl;
 
   m_delete_lock.Lock();
+
+  // unique_ptr<DeleteInfo>
   DeleteInfo *del_info = m_active_delete.release();
   assert(del_info != nullptr);
+
   m_delete_lock.Unlock();
+
   del_info->notify(r);
 }
 
@@ -482,22 +548,30 @@ void ImageDeleter::enqueue_failed_delete(int error_code) {
 
   if (error_code == -EBLACKLISTED) {
     derr << "blacklisted while deleting local image" << dendl;
+
     complete_active_delete(error_code);
     return;
   }
 
   m_delete_lock.Lock();
+
   if (m_active_delete->notify_on_failed_retry) {
     m_active_delete->notify(error_code);
   }
+
   m_active_delete->error_code = error_code;
+
   bool was_empty = m_failed_queue.empty();
   m_failed_queue.push_front(std::move(m_active_delete));
+
   m_delete_lock.Unlock();
+
   if (was_empty) {
     FunctionContext *ctx = new FunctionContext(
       boost::bind(&ImageDeleter::retry_failed_deletions, this));
+
     Mutex::Locker l(*m_failed_timer_lock);
+
     m_failed_timer->add_event_after(m_failed_interval, ctx);
   }
 }
@@ -511,28 +585,37 @@ void ImageDeleter::retry_failed_deletions() {
   while (!m_failed_queue.empty()) {
     m_delete_queue.push_back(std::move(m_failed_queue.back()));
     m_delete_queue.back()->retries++;
+
     m_failed_queue.pop_back();
   }
+
   if (!empty) {
     m_delete_queue_cond.Signal();
   }
 }
 
+// called by
+// ImageDeleter::schedule_image_delete
+// ImageDeleter::wait_for_scheduled_deletion
+// ImageDeleter::cancel_waiter
 unique_ptr<ImageDeleter::DeleteInfo> const* ImageDeleter::find_delete_info(
     int64_t local_pool_id, const std::string &global_image_id) {
   assert(m_delete_lock.is_locked());
 
+  // check currently active
   if (m_active_delete && m_active_delete->match(local_pool_id,
                                                 global_image_id)) {
     return &m_active_delete;
   }
 
+  // check currently on queue
   for (const auto& del_info : m_delete_queue) {
     if (del_info->match(local_pool_id, global_image_id)) {
       return &del_info;
     }
   }
 
+  // check currently has failed
   for (const auto& del_info : m_failed_queue) {
     if (del_info->match(local_pool_id, global_image_id)) {
       return &del_info;
@@ -551,6 +634,7 @@ void ImageDeleter::print_status(Formatter *f, stringstream *ss) {
   }
 
   Mutex::Locker l(m_delete_lock);
+
   for (const auto& image : m_delete_queue) {
     image->print_status(f, ss);
   }
@@ -587,6 +671,8 @@ void ImageDeleter::DeleteInfo::to_string(stringstream& ss) {
   ss << "global_image_id=" << global_image_id << "]";
 }
 
+// called by
+// StatusCommand::call
 void ImageDeleter::DeleteInfo::print_status(Formatter *f, stringstream *ss,
                                             bool print_failure_info) {
   if (f) {
@@ -609,6 +695,7 @@ vector<string> ImageDeleter::get_delete_queue_items() {
   vector<string> items;
 
   Mutex::Locker l(m_delete_lock);
+
   for (const auto& del_info : m_delete_queue) {
     items.push_back(del_info->local_image_name);
   }
@@ -620,6 +707,7 @@ vector<pair<string, int> > ImageDeleter::get_failed_queue_items() {
   vector<pair<string, int> > items;
 
   Mutex::Locker l(m_delete_lock);
+
   for (const auto& del_info : m_failed_queue) {
     items.push_back(make_pair(del_info->local_image_name,
                               del_info->error_code));
