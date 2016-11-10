@@ -29,6 +29,10 @@ void LockRequest<I>::send() {
   send_lock();
 }
 
+// called by
+// LockRequest<I>::send
+// LockRequest<I>::handle_get_lock_info
+// LockRequest<I>::handle_break_locks
 template <typename I>
 void LockRequest<I>::send_lock() {
   CephContext *cct = m_image_ctx.cct;
@@ -56,6 +60,10 @@ Context *LockRequest<I>::handle_lock(int *ret_val) {
   if (*ret_val == 0) {
     return m_on_finish;
   } else if (m_broke_lock || *ret_val != -EBUSY) {
+
+    // m_broke_lock was set by LockRequest<I>::handle_break_locks, which
+    // means the lock has been broken from the other owner
+
     lderr(cct) << "failed to lock object map: " << cpp_strerror(*ret_val)
                << dendl;
     *ret_val = 0;
@@ -143,6 +151,7 @@ Context *LockRequest<I>::handle_break_locks(int *ret_val) {
   ldout(cct, 10) << this << " " << __func__ << ": r=" << *ret_val << dendl;
 
   m_broke_lock = true;
+
   if (*ret_val == 0 || *ret_val == -ENOENT) {
     send_lock();
     return nullptr;
@@ -150,6 +159,7 @@ Context *LockRequest<I>::handle_break_locks(int *ret_val) {
 
   lderr(cct) << "failed to break object map lock: " << cpp_strerror(*ret_val)
              << dendl;
+
   *ret_val = 0;
   return m_on_finish;
 }

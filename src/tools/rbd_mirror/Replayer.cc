@@ -248,7 +248,8 @@ private:
   Watcher *m_watcher;
 };
 
-// will be created by Mirror::update_replayers for each <pool, peer> pair
+// created by
+// Mirror::update_replayers for each <pool, peer> pair
 Replayer::Replayer(Threads *threads, std::shared_ptr<ImageDeleter> image_deleter,
                    ImageSyncThrottlerRef<> image_sync_throttler,
                    int64_t local_pool_id, const peer_t &peer,
