@@ -47,11 +47,13 @@ bool SnapshotRollbackRequest::should_complete(int r) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": state=" << m_state << ", "
                 << "r=" << r << dendl;
+
   if (r < 0 && m_ret_val == 0) {
     m_ret_val = r;
   }
 
   bool finished = false;
+
   switch (m_state) {
   case STATE_READ_MAP:
     if (r < 0) {
@@ -72,6 +74,7 @@ bool SnapshotRollbackRequest::should_complete(int r) {
     assert(false);
     break;
   }
+
   return finished;
 }
 
@@ -81,11 +84,13 @@ void SnapshotRollbackRequest::send_read_map() {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": snap_oid=" << snap_oid
                 << dendl;
+
   m_state = STATE_READ_MAP;
 
   librados::ObjectReadOperation op;
   op.read(0, 0, NULL, NULL);
 
+  // create_callback_completion is protect method of AsyncRequest
   librados::AioCompletion *rados_completion = create_callback_completion();
   int r = m_image_ctx.md_ctx.aio_operate(snap_oid, rados_completion, &op,
                                          &m_read_bl);
@@ -98,8 +103,10 @@ void SnapshotRollbackRequest::send_write_map() {
 
   CephContext *cct = m_image_ctx.cct;
   std::string snap_oid(ObjectMap::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
+
   ldout(cct, 5) << this << " " << __func__ << ": snap_oid=" << snap_oid
                 << dendl;
+
   m_state = STATE_WRITE_MAP;
 
   librados::ObjectWriteOperation op;
@@ -118,11 +125,13 @@ void SnapshotRollbackRequest::send_invalidate_map() {
 
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
+
   m_state = STATE_INVALIDATE_MAP;
 
   InvalidateRequest<> *req = new InvalidateRequest<>(m_image_ctx, m_snap_id,
                                                      false,
                                                      create_callback_context());
+
   req->send();
 }
 

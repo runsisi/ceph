@@ -25,17 +25,20 @@ bool Request::should_complete(int r) {
     if (r < 0) {
       lderr(cct) << "failed to update object map: " << cpp_strerror(r)
 		 << dendl;
+
       return invalidate();
     }
 
     {
       RWLock::WLocker l2(m_image_ctx.object_map_lock);
+
       finish_request();
     }
     return true;
 
   case STATE_INVALIDATE:
     ldout(cct, 20) << "INVALIDATE" << dendl;
+
     if (r < 0) {
       lderr(cct) << "failed to invalidate object map: " << cpp_strerror(r)
 		 << dendl;
@@ -47,6 +50,7 @@ bool Request::should_complete(int r) {
     assert(false);
     break;
   }
+
   return false;
 }
 

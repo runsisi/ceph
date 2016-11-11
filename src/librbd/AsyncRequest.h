@@ -27,6 +27,8 @@ public:
     // pure virtual
     if (should_complete(r)) {
       r = filter_return_code(r);
+
+      // finish(r) then delete this
       finish_and_destroy(r);
     }
   }
@@ -46,7 +48,9 @@ protected:
   ImageCtxT &m_image_ctx;
 
   librados::AioCompletion *create_callback_completion();
+
   Context *create_callback_context();
+
   // called in TrimRequest<I>::send_clean_boundary
   Context *create_async_callback_context();
 
@@ -70,7 +74,8 @@ protected:
   }
 
   virtual void finish(int r) {
-    // remove from m_image_ctx.async_requests
+    // remove from m_image_ctx.async_requests, which was pushed back by
+    // start_request which was called by AsyncRequest::AsyncRequest
     finish_request();
 
     m_on_finish->complete(r);
