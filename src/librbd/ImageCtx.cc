@@ -665,7 +665,9 @@ struct C_InvalidateCache : public Context {
   int ImageCtx::update_flags(snap_t in_snap_id, uint64_t flag, bool enabled)
   {
     assert(snap_lock.is_wlocked());
+
     uint64_t *_flags;
+
     if (in_snap_id == CEPH_NOSNAP) {
       _flags = &flags;
     } else {
@@ -673,6 +675,7 @@ struct C_InvalidateCache : public Context {
       if (it == snap_info.end()) {
         return -ENOENT;
       }
+
       _flags = &it->second.flags;
     }
 
@@ -681,6 +684,7 @@ struct C_InvalidateCache : public Context {
     } else {
       (*_flags) &= ~flag;
     }
+
     return 0;
   }
 

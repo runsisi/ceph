@@ -53,11 +53,14 @@ void RefreshRequest<I>::send() {
 template <typename I>
 void RefreshRequest<I>::apply() {
   uint64_t num_objs;
+
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     num_objs = Striper::get_num_objects(
       m_image_ctx.layout, m_image_ctx.get_image_size(m_snap_id));
   }
+
   assert(m_on_disk_object_map.size() >= num_objs);
 
   *m_object_map = m_on_disk_object_map;
@@ -111,6 +114,7 @@ void RefreshRequest<I>::send_load() {
   ldout(cct, 10) << this << " " << __func__ << ": oid=" << oid << dendl;
 
   librados::ObjectReadOperation op;
+
   cls_client::object_map_load_start(&op);
 
   using klass = RefreshRequest<I>;
@@ -153,6 +157,7 @@ Context *RefreshRequest<I>::handle_load(int *ret_val) {
     lderr(cct) << "object map smaller than current object count: "
                << m_on_disk_object_map.size() << " != "
                << m_object_count << dendl;
+
     send_resize_invalidate();
     return nullptr;
   }
@@ -168,6 +173,7 @@ Context *RefreshRequest<I>::handle_load(int *ret_val) {
   }
 
   apply();
+
   return m_on_finish;
 }
 
@@ -201,6 +207,7 @@ Context *RefreshRequest<I>::handle_invalidate(int *ret_val) {
   assert(*ret_val == 0);
 
   apply();
+
   return m_on_finish;
 }
 
@@ -279,6 +286,7 @@ Context *RefreshRequest<I>::handle_resize(int *ret_val) {
   }
 
   apply();
+
   return m_on_finish;
 }
 

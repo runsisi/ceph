@@ -126,6 +126,8 @@ void ObjectMap::close(Context *on_finish) {
   req->send();
 }
 
+// called by
+// librbd::operation::SnapshotRollbackRequest<I>::send_rollback_object_map
 void ObjectMap::rollback(uint64_t snap_id, Context *on_finish) {
   assert(m_image_ctx.snap_lock.is_locked());
   assert(m_image_ctx.object_map_lock.is_wlocked());
@@ -138,6 +140,7 @@ void ObjectMap::rollback(uint64_t snap_id, Context *on_finish) {
 
 void ObjectMap::snapshot_add(uint64_t snap_id, Context *on_finish) {
   assert(m_image_ctx.snap_lock.is_locked());
+
   assert((m_image_ctx.features & RBD_FEATURE_OBJECT_MAP) != 0);
   assert(snap_id != CEPH_NOSNAP);
 

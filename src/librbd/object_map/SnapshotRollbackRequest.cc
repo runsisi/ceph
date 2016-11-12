@@ -102,6 +102,7 @@ void SnapshotRollbackRequest::send_write_map() {
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
 
   CephContext *cct = m_image_ctx.cct;
+
   std::string snap_oid(ObjectMap::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
 
   ldout(cct, 5) << this << " " << __func__ << ": snap_oid=" << snap_oid
