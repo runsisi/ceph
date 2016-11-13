@@ -322,6 +322,7 @@ Context *SnapshotRollbackRequest<I>::send_invalidate_cache() {
     SnapshotRollbackRequest<I>,
     &SnapshotRollbackRequest<I>::handle_invalidate_cache>(this);
 
+  // invalidate ImageCtx::object_cacher
   image_ctx.invalidate_cache(ctx);
 
   return nullptr;
@@ -338,9 +339,12 @@ Context *SnapshotRollbackRequest<I>::handle_invalidate_cache(int *result) {
     lderr(cct) << "failed to invalidate cache: " << cpp_strerror(*result)
                << dendl;
   }
+
   return this->create_context_finisher(*result);
 }
 
+// called by
+// SnapshotRollbackRequest<I>::send_invalidate_cache
 template <typename I>
 void SnapshotRollbackRequest<I>::apply() {
   I &image_ctx = this->m_image_ctx;

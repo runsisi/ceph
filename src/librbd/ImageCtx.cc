@@ -119,6 +119,7 @@ struct C_InvalidateCache : public Context {
   }
   virtual void finish(int r) {
     assert(image_ctx->cache_lock.is_locked());
+
     CephContext *cct = image_ctx->cct;
 
     if (r == -EBLACKLISTED) {
@@ -134,6 +135,7 @@ struct C_InvalidateCache : public Context {
 
     loff_t unclean = image_ctx->object_cacher->release_set(
       image_ctx->object_set);
+
     if (unclean == 0) {
       r = 0;
     } else {
