@@ -84,6 +84,7 @@ struct C_NotifyUpdate : public Context {
     }
 
     notified = true;
+
     image_ctx.notify_update(this);
   }
 
@@ -881,7 +882,9 @@ int Operations<I>::snap_rollback(const char *snap_name,
   }
 
   // other operations will use C_InvokeAsyncRequest or invoke_async_request,
-  // so no need to call this interface to acquire exclusive lock
+  // so no need to call this interface
+  // try to grab exclusive lock and wait synchronously, if the lock
+  // has been held by others, then we will fail
   r = prepare_image_update();
   if (r < 0) {
     return -EROFS;
@@ -900,6 +903,7 @@ int Operations<I>::snap_rollback(const char *snap_name,
   }
 
   m_image_ctx.perfcounter->inc(l_librbd_snap_rollback);
+
   return r;
 }
 
@@ -908,11 +912,13 @@ void Operations<I>::execute_snap_rollback(const std::string &snap_name,
                                           ProgressContext& prog_ctx,
                                           Context *on_finish) {
   assert(m_image_ctx.owner_lock.is_locked());
+
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": snap_name=" << snap_name
                 << dendl;
 
   m_image_ctx.snap_lock.get_read();
+
   uint64_t snap_id = m_image_ctx.get_snap_id(snap_name);
   if (snap_id == CEPH_NOSNAP) {
     lderr(cct) << "No such snapshot found." << dendl;
@@ -922,6 +928,7 @@ void Operations<I>::execute_snap_rollback(const std::string &snap_name,
   }
 
   uint64_t new_size = m_image_ctx.get_image_size(snap_id);
+
   m_image_ctx.snap_lock.put_read();
 
   // async mode used for journal replay

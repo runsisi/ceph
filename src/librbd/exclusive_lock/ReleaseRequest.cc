@@ -175,6 +175,7 @@ template <typename I>
 void ReleaseRequest<I>::send_close_journal() {
   {
     RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
+
     std::swap(m_journal, m_image_ctx.journal);
   }
 

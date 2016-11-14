@@ -280,6 +280,7 @@ Context *SnapshotRollbackRequest<I>::send_refresh_object_map() {
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
 
+  // allocate an librbd::ObjectMap instance
   m_object_map = image_ctx.create_object_map(CEPH_NOSNAP);
 
   Context *ctx = create_context_callback<

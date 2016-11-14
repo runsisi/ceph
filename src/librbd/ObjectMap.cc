@@ -46,12 +46,15 @@ std::string ObjectMap::object_map_name(const std::string &image_id,
   if (snap_id != CEPH_NOSNAP) {
     std::stringstream snap_suffix;
 
+    // e.g., rbd_object_map.2cf512ae8944a.0000000000000030
     snap_suffix << "." << std::setfill('0') << std::setw(16) << std::hex
 		<< snap_id;
 
     oid += snap_suffix.str();
   }
 
+  // object map for HEAD image, no snapid suffix, for e.g.,
+  // rbd_object_map.2cf512ae8944a
   return oid;
 }
 
@@ -107,6 +110,10 @@ bool ObjectMap::update_required(uint64_t object_no, uint8_t new_state) {
   return true;
 }
 
+// called by
+// librbd::SetSnapRequest<I>::send_open_object_map
+// librbd::exclusive_lock::AcquireRequest<I>::send_open_object_map
+// librbd::operation::SnapshotRollbackRequest<I>::send_refresh_object_map
 void ObjectMap::open(Context *on_finish) {
   object_map::RefreshRequest<> *req = new object_map::RefreshRequest<>(
     m_image_ctx, &m_object_map, m_snap_id, on_finish);
@@ -114,6 +121,8 @@ void ObjectMap::open(Context *on_finish) {
   req->send();
 }
 
+// called by
+// librbd::exclusive_lock::ReleaseRequest<I>::send_close_journal
 void ObjectMap::close(Context *on_finish) {
   if (m_snap_id != CEPH_NOSNAP) {
     m_image_ctx.op_work_queue->queue(on_finish, 0);

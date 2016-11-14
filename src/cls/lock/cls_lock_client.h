@@ -84,6 +84,10 @@ namespace rados {
 	void set_tag(const std::string& t) { tag = t; }
 	void set_description(const std::string& desc) { description = desc; }
 	void set_duration(const utime_t& e) { duration = e; }
+
+	// called by
+	// RGWAsyncLockSystemObj::_send_request
+	// RGWRados::lock_exclusive
 	void set_renew(bool renew) {
 	  if (renew) {
 	    flags |= LOCK_FLAG_RENEW;

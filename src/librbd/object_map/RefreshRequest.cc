@@ -70,13 +70,19 @@ template <typename I>
 void RefreshRequest<I>::send_lock() {
   CephContext *cct = m_image_ctx.cct;
 
+  // 256000000
   if (m_object_count > cls::rbd::MAX_OBJECT_MAP_OBJECT_COUNT) {
     send_invalidate_and_close();
     return;
   } else if (m_snap_id != CEPH_NOSNAP) {
+
+    // object map for snap is read only, so no need to lock, load it directly
+
     send_load();
     return;
   }
+
+  // m_snap_id == CEPH_NOSNAP, we have to lock the HEAD object_map first
 
   // "rbd_object_map." + image_id + "." + snapid
   std::string oid(ObjectMap::object_map_name(m_image_ctx.id, m_snap_id));
@@ -99,6 +105,7 @@ Context *RefreshRequest<I>::handle_lock(int *ret_val) {
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   assert(*ret_val == 0);
+
 
   send_load();
 

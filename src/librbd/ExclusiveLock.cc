@@ -749,11 +749,12 @@ void ExclusiveLock<I>::send_shutdown() {
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
 
   assert(m_state == STATE_LOCKED);
+
   m_state = STATE_PRE_SHUTTING_DOWN;
 
   m_lock.Unlock();
 
-  // call ExclusiveLock<I>::send_shutdown_release
+  // call ExclusiveLock<I>::send_shutdown_release to send ReleaseRequest
   m_image_ctx.op_work_queue->queue(new C_ShutDownRelease(this), 0);
 
   m_lock.Lock();

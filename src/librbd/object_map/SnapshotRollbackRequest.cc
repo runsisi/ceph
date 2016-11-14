@@ -64,6 +64,8 @@ bool SnapshotRollbackRequest::should_complete(int r) {
     }
     break;
   case STATE_INVALIDATE_MAP:
+    // m_ret_val should already been set to < 0, otherwise we never get
+    // here
     // invalidate the HEAD object map as well
     finished = Request::should_complete(m_ret_val);
     break;
@@ -79,6 +81,7 @@ bool SnapshotRollbackRequest::should_complete(int r) {
 }
 
 void SnapshotRollbackRequest::send_read_map() {
+  // e.g., rbd_object_map.2cf512ae8944a.0000000000000031
   std::string snap_oid(ObjectMap::object_map_name(m_image_ctx.id, m_snap_id));
 
   CephContext *cct = m_image_ctx.cct;

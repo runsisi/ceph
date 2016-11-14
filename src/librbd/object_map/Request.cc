@@ -37,6 +37,8 @@ bool Request::should_complete(int r) {
     return true;
 
   case STATE_INVALIDATE:
+    // this state was set by Request::invalidate
+
     ldout(cct, 20) << "INVALIDATE" << dendl;
 
     if (r < 0) {
