@@ -91,12 +91,15 @@ int do_rollback_snap(librbd::Image& image, const char *snapname,
                      bool no_progress)
 {
   utils::ProgressContext pc("Rolling back to snapshot", no_progress);
+
   int r = image.snap_rollback_with_progress(snapname, pc);
   if (r < 0) {
     pc.fail();
     return r;
   }
+
   pc.finish();
+
   return 0;
 }
 
@@ -339,6 +342,7 @@ int execute_rollback(const po::variables_map &vm) {
   std::string pool_name;
   std::string image_name;
   std::string snap_name;
+
   int r = utils::get_pool_image_snapshot_names(
     vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
     &snap_name, utils::SNAPSHOT_PRESENCE_REQUIRED, utils::SPEC_VALIDATION_NONE);
@@ -349,6 +353,7 @@ int execute_rollback(const po::variables_map &vm) {
   librados::Rados rados;
   librados::IoCtx io_ctx;
   librbd::Image image;
+
   r = utils::init_and_open_image(pool_name, image_name, "", false, &rados,
                                  &io_ctx, &image);
   if (r < 0) {
@@ -361,6 +366,7 @@ int execute_rollback(const po::variables_map &vm) {
     std::cerr << "rbd: rollback failed: " << cpp_strerror(r) << std::endl;
     return r;
   }
+
   return 0;
 }
 

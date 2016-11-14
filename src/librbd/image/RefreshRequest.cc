@@ -1149,6 +1149,8 @@ void RefreshRequest<I>::apply() {
         m_image_ctx.get_snap_id(m_image_ctx.snap_name) != m_image_ctx.snap_id) {
       lderr(cct) << "tried to read from a snapshot that no longer exists: "
                  << m_image_ctx.snap_name << dendl;
+
+      // the only place where the ImageCtx::snap_exists can be set to false
       m_image_ctx.snap_exists = false;
     }
 

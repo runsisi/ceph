@@ -2330,7 +2330,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     uint64_t image_size = ictx->get_image_size(ictx->snap_id);
 
     // ictx->snap_exists should always be true unless be set to false by
-    // RefreshRequest<I>::apply, which means we are reading from a non-exist snapshot
+    // RefreshRequest<I>::apply, which means we are reading from a non-exist snapshot,
+    // i.e., the snapshot has been removed when we are still being reading from it
     bool snap_exists = ictx->snap_exists;
 
     if (!snap_exists)

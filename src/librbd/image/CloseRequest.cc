@@ -242,6 +242,7 @@ template <typename I>
 void CloseRequest<I>::handle_flush_op_work_queue(int r) {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
+
   send_close_parent();
 }
 

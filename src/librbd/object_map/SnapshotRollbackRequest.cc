@@ -39,6 +39,8 @@ std::ostream& operator<<(std::ostream& os,
 
 } // anonymous namespace
 
+// called by
+// librbd::ObjectMap::rollback
 void SnapshotRollbackRequest::send() {
   send_read_map();
 }
@@ -90,6 +92,7 @@ void SnapshotRollbackRequest::send_read_map() {
 
   m_state = STATE_READ_MAP;
 
+  // read the object map of the snapshot
   librados::ObjectReadOperation op;
   op.read(0, 0, NULL, NULL);
 
@@ -113,6 +116,8 @@ void SnapshotRollbackRequest::send_write_map() {
 
   m_state = STATE_WRITE_MAP;
 
+  // because we are rolling back, so set the HEAD image's object map to the object
+  // map of the snapshot
   librados::ObjectWriteOperation op;
   rados::cls::lock::assert_locked(&op, RBD_LOCK_NAME, LOCK_EXCLUSIVE, "", "");
   op.write_full(m_read_bl);
@@ -123,6 +128,9 @@ void SnapshotRollbackRequest::send_write_map() {
   rados_completion->release();
 }
 
+// called by
+// SnapshotRollbackRequest::should_complete, which means we have failed the read object
+// map of the snapshot image
 void SnapshotRollbackRequest::send_invalidate_map() {
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
   RWLock::WLocker snap_locker(m_image_ctx.snap_lock);

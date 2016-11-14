@@ -863,10 +863,17 @@ int Operations<I>::snap_rollback(const char *snap_name,
     return r;
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   {
     // need to drop snap_lock before invalidating cache
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     if (!m_image_ctx.snap_exists) {
+
+      // ImageCtx::snap_exists was initialized to true by ImageCtx::ImageCtx, and can
+      // only be set to false by librbd::image::RefreshRequest<I>::apply, which means
+      // the snapshot has been removed when we are still using it
+
       return -ENOENT;
     }
 
@@ -896,7 +903,9 @@ int Operations<I>::snap_rollback(const char *snap_name,
   }
 
   C_SaferCond cond_ctx;
+
   execute_snap_rollback(snap_name, prog_ctx, &cond_ctx);
+
   r = cond_ctx.wait();
   if (r < 0) {
     return r;

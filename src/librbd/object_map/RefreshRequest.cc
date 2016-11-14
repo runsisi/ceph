@@ -151,12 +151,17 @@ Context *RefreshRequest<I>::handle_load(int *ret_val) {
      // object map is corrupt on-disk -- clear it and properly size it
      // so future IO can keep the object map in sync
     lderr(cct) << "object map corrupt on-disk: " << oid << dendl;
+
     m_truncate_on_disk_object_map = true;
+
     send_resize_invalidate();
+
     return nullptr;
   } else if (*ret_val < 0) {
     lderr(cct) << "failed to load object map: " << oid << dendl;
+
     send_invalidate();
+
     return nullptr;
   }
 

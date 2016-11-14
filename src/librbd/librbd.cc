@@ -653,15 +653,19 @@ namespace librbd {
   int Image::close()
   {
     int r = 0;
+
     if (ctx) {
       ImageCtx *ictx = (ImageCtx *)ctx;
+
       tracepoint(librbd, close_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str());
 
       r = ictx->state->close();
+
       ctx = NULL;
 
       tracepoint(librbd, close_image_exit, r);
     }
+
     return r;
   }
 

@@ -60,20 +60,25 @@ std::string ObjectMap::object_map_name(const std::string &image_id,
 
 bool ObjectMap::is_compatible(const file_layout_t& layout, uint64_t size) {
   uint64_t object_count = Striper::get_num_objects(layout, size);
+
   return (object_count <= cls::rbd::MAX_OBJECT_MAP_OBJECT_COUNT);
 }
 
 ceph::BitVector<2u>::Reference ObjectMap::operator[](uint64_t object_no)
 {
   assert(m_image_ctx.object_map_lock.is_wlocked());
+
   assert(object_no < m_object_map.size());
+
   return m_object_map[object_no];
 }
 
 uint8_t ObjectMap::operator[](uint64_t object_no) const
 {
   assert(m_image_ctx.object_map_lock.is_locked());
+
   assert(object_no < m_object_map.size());
+
   return m_object_map[object_no];
 }
 
@@ -90,8 +95,10 @@ bool ObjectMap::object_may_exist(uint64_t object_no) const
   }
 
   RWLock::RLocker l(m_image_ctx.object_map_lock);
+
   uint8_t state = (*this)[object_no];
   bool exists = (state != OBJECT_NONEXISTENT);
+
   ldout(m_image_ctx.cct, 20) << &m_image_ctx << " object_may_exist: "
 			     << "object_no=" << object_no << " r=" << exists
 			     << dendl;
@@ -100,6 +107,7 @@ bool ObjectMap::object_may_exist(uint64_t object_no) const
 
 bool ObjectMap::update_required(uint64_t object_no, uint8_t new_state) {
   assert(m_image_ctx.object_map_lock.is_wlocked());
+
   uint8_t state = (*this)[object_no];
 
   if ((state == new_state) ||
@@ -107,6 +115,7 @@ bool ObjectMap::update_required(uint64_t object_no, uint8_t new_state) {
       (new_state == OBJECT_NONEXISTENT && state != OBJECT_PENDING)) {
     return false;
   }
+
   return true;
 }
 
@@ -129,6 +138,7 @@ void ObjectMap::close(Context *on_finish) {
     return;
   }
 
+  // unlock rbd_object_map.2cf512ae8944a
   object_map::UnlockRequest<> *req = new object_map::UnlockRequest<>(
     m_image_ctx, on_finish);
 
@@ -156,28 +166,34 @@ void ObjectMap::snapshot_add(uint64_t snap_id, Context *on_finish) {
   object_map::SnapshotCreateRequest *req =
     new object_map::SnapshotCreateRequest(m_image_ctx, &m_object_map, snap_id,
                                           on_finish);
+
   req->send();
 }
 
 void ObjectMap::snapshot_remove(uint64_t snap_id, Context *on_finish) {
   assert(m_image_ctx.snap_lock.is_wlocked());
+
   assert((m_image_ctx.features & RBD_FEATURE_OBJECT_MAP) != 0);
   assert(snap_id != CEPH_NOSNAP);
 
   object_map::SnapshotRemoveRequest *req =
     new object_map::SnapshotRemoveRequest(m_image_ctx, &m_object_map, snap_id,
                                           on_finish);
+
   req->send();
 }
 
 void ObjectMap::aio_save(Context *on_finish) {
   assert(m_image_ctx.owner_lock.is_locked());
   assert(m_image_ctx.snap_lock.is_locked());
+
   assert(m_image_ctx.test_features(RBD_FEATURE_OBJECT_MAP,
                                    m_image_ctx.snap_lock));
+
   RWLock::RLocker object_map_locker(m_image_ctx.object_map_lock);
 
   librados::ObjectWriteOperation op;
+
   if (m_snap_id == CEPH_NOSNAP) {
     rados::cls::lock::assert_locked(&op, RBD_LOCK_NAME, LOCK_EXCLUSIVE, "", "");
   }
@@ -196,6 +212,7 @@ void ObjectMap::aio_resize(uint64_t new_size, uint8_t default_object_state,
 			   Context *on_finish) {
   assert(m_image_ctx.owner_lock.is_locked());
   assert(m_image_ctx.snap_lock.is_locked());
+
   assert(m_image_ctx.test_features(RBD_FEATURE_OBJECT_MAP,
                                    m_image_ctx.snap_lock));
   assert(m_image_ctx.image_watcher != NULL);
@@ -225,11 +242,14 @@ bool ObjectMap::aio_update(uint64_t start_object_no, uint64_t end_object_no,
                            Context *on_finish)
 {
   assert(m_image_ctx.snap_lock.is_locked());
+
   assert((m_image_ctx.features & RBD_FEATURE_OBJECT_MAP) != 0);
   assert(m_image_ctx.image_watcher != NULL);
   assert(m_image_ctx.exclusive_lock == nullptr ||
          m_image_ctx.exclusive_lock->is_lock_owner());
+
   assert(m_image_ctx.object_map_lock.is_wlocked());
+
   assert(start_object_no < end_object_no);
 
   CephContext *cct = m_image_ctx.cct;
@@ -266,6 +286,7 @@ void ObjectMap::aio_update(uint64_t snap_id, uint64_t start_object_no,
   object_map::UpdateRequest *req = new object_map::UpdateRequest(
     m_image_ctx, &m_object_map, snap_id, start_object_no, end_object_no,
     new_state, current_state, on_finish);
+
   req->send();
 }
 

@@ -273,6 +273,7 @@ void ImageState<I>::open(Context *on_finish) {
 template <typename I>
 int ImageState<I>::close() {
   C_SaferCond ctx;
+
   close(&ctx);
 
   int r = ctx.wait();
@@ -288,6 +289,7 @@ void ImageState<I>::close(Context *on_finish) {
   ldout(cct, 20) << __func__ << dendl;
 
   m_lock.Lock();
+
   assert(!is_closed());
 
   Action action(ACTION_TYPE_CLOSE);
@@ -627,6 +629,7 @@ void ImageState<I>::handle_open(int r) {
 template <typename I>
 void ImageState<I>::send_close_unlock() {
   assert(m_lock.is_locked());
+
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 

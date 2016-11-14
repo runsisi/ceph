@@ -385,6 +385,10 @@ namespace librbd {
       return get_flags_finish(&it, flags, snap_ids, snap_flags);
     }
 
+    // called by
+    // librbd::image::SetFlagsRequest<I>::send_set_flags
+    // librbd::object_map::InvalidateRequest<I>::send
+    // librbd::operation::RebuildObjectMapRequest<I>::send_update_header
     void set_flags(librados::ObjectWriteOperation *op, snapid_t snap_id,
                    uint64_t flags, uint64_t mask)
     {
