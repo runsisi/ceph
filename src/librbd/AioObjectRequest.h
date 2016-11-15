@@ -275,6 +275,7 @@ protected:
   virtual void pre_object_map_update(uint8_t *new_state) {
     *new_state = OBJECT_EXISTS;
   }
+
   virtual void send_write();
 
 private:
@@ -306,12 +307,14 @@ protected:
     }
     return "remove";
   }
+
   virtual void pre_object_map_update(uint8_t *new_state) {
     if (has_parent()) {
       m_object_state = OBJECT_EXISTS;
     } else {
       m_object_state = OBJECT_PENDING;
     }
+
     *new_state = m_object_state;
   }
 

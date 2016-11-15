@@ -875,12 +875,16 @@ namespace librbd {
     return r;
   }
 
+  // called by
+  // rbd::action::object_map::do_object_map_rebuild
   int Image::rebuild_object_map(ProgressContext &prog_ctx)
   {
     ImageCtx *ictx = reinterpret_cast<ImageCtx*>(ctx);
     return ictx->operations->rebuild_object_map(prog_ctx);
   }
 
+  // called by
+  // rbd::action::object_map::do_object_map_check
   int Image::check_object_map(ProgressContext &prog_ctx)
   {
     ImageCtx *ictx = reinterpret_cast<ImageCtx*>(ctx);

@@ -492,6 +492,9 @@ void Operations<I>::execute_flatten(ProgressContext &prog_ctx,
   req->send();
 }
 
+// called by
+// librbd::Image::rebuild_object_map
+// librbd::rbd_rebuild_object_map
 template <typename I>
 int Operations<I>::rebuild_object_map(ProgressContext &prog_ctx) {
   CephContext *cct = m_image_ctx.cct;
@@ -503,6 +506,7 @@ int Operations<I>::rebuild_object_map(ProgressContext &prog_ctx) {
   }
 
   uint64_t request_id = ++m_async_request_seq;
+
   r = invoke_async_request("rebuild object map", true,
                            boost::bind(&Operations<I>::execute_rebuild_object_map,
                                        this, boost::ref(prog_ctx), _1),
@@ -511,12 +515,17 @@ int Operations<I>::rebuild_object_map(ProgressContext &prog_ctx) {
                                        boost::ref(prog_ctx), _1));
 
   ldout(cct, 10) << "rebuild object map finished" << dendl;
+
   if (r < 0) {
     return r;
   }
+
   return 0;
 }
 
+// called by
+// librbd::Operations<I>::rebuild_object_map
+// ImageWatcher<I>::handle_payload(const RebuildObjectMapPayload)
 template <typename I>
 void Operations<I>::execute_rebuild_object_map(ProgressContext &prog_ctx,
                                                Context *on_finish) {
@@ -531,6 +540,7 @@ void Operations<I>::execute_rebuild_object_map(ProgressContext &prog_ctx,
     on_finish->complete(-EROFS);
     return;
   }
+
   if (!m_image_ctx.test_features(RBD_FEATURE_OBJECT_MAP)) {
     lderr(cct) << "image must support object-map feature" << dendl;
     on_finish->complete(-EINVAL);
@@ -540,13 +550,17 @@ void Operations<I>::execute_rebuild_object_map(ProgressContext &prog_ctx,
   operation::RebuildObjectMapRequest<I> *req =
     new operation::RebuildObjectMapRequest<I>(
       m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), prog_ctx);
+
   req->send();
 }
 
+// called by
+// librbd::Image::check_object_map
 template <typename I>
 int Operations<I>::check_object_map(ProgressContext &prog_ctx) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
+
   int r = m_image_ctx.state->refresh_if_required();
   if (r < 0) {
     return r;
@@ -579,6 +593,8 @@ void Operations<I>::object_map_iterate(ProgressContext &prog_ctx,
   req->send();
 }
 
+// called by
+// librbd::Operations<I>::check_object_map(ProgressContext &prog_ctx)
 template <typename I>
 void Operations<I>::check_object_map(ProgressContext &prog_ctx,
 				     Context *on_finish) {

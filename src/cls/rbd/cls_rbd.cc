@@ -2625,6 +2625,7 @@ int object_map_snap_add(cls_method_context_t hctx, bufferlist *in,
     ::encode(object_map, bl);
     r = cls_cxx_write_full(hctx, &bl);
   }
+
   return r;
 }
 

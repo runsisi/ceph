@@ -23,6 +23,8 @@
 namespace librbd {
 namespace operation {
 
+// called by
+// librbd::Operations<I>::execute_rebuild_object_map
 template <typename I>
 void RebuildObjectMapRequest<I>::send() {
   send_resize_object_map();
@@ -175,9 +177,11 @@ bool update_object_map(I& image_ctx, uint64_t object_no, uint8_t current_state,
 template <typename I>
 void RebuildObjectMapRequest<I>::send_verify_objects() {
   assert(m_image_ctx.owner_lock.is_locked());
+
   CephContext *cct = m_image_ctx.cct;
 
   m_state = STATE_VERIFY_OBJECTS;
+
   ldout(cct, 5) << this << " send_verify_objects" << dendl;
 
   ObjectMapIterateRequest<I> *req =
@@ -191,9 +195,11 @@ void RebuildObjectMapRequest<I>::send_verify_objects() {
 template <typename I>
 void RebuildObjectMapRequest<I>::send_save_object_map() {
   assert(m_image_ctx.owner_lock.is_locked());
+
   CephContext *cct = m_image_ctx.cct;
 
   ldout(cct, 5) << this << " send_save_object_map" << dendl;
+
   m_state = STATE_SAVE_OBJECT_MAP;
 
   // should have been canceled prior to releasing lock
@@ -201,7 +207,9 @@ void RebuildObjectMapRequest<I>::send_save_object_map() {
          m_image_ctx.exclusive_lock->is_lock_owner());
 
   RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
   assert(m_image_ctx.object_map != nullptr);
+
   m_image_ctx.object_map->aio_save(this->create_callback_context());
 }
 

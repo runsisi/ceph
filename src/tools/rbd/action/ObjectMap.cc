@@ -18,12 +18,15 @@ namespace po = boost::program_options;
 static int do_object_map_rebuild(librbd::Image &image, bool no_progress)
 {
   utils::ProgressContext pc("Object Map Rebuild", no_progress);
+
   int r = image.rebuild_object_map(pc);
   if (r < 0) {
     pc.fail();
     return r;
   }
+
   pc.finish();
+
   return 0;
 }
 
@@ -68,11 +71,13 @@ int execute_rebuild(const po::variables_map &vm) {
 static int do_object_map_check(librbd::Image &image, bool no_progress)
 {
   utils::ProgressContext pc("Object Map Check", no_progress);
+
   int r = image.check_object_map(pc);
   if (r < 0) {
     pc.fail();
     return r;
   }
+
   pc.finish();
   return 0;
 }

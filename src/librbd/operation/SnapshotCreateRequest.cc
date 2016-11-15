@@ -287,12 +287,14 @@ Context *SnapshotCreateRequest<I>::send_create_object_map() {
 template <typename I>
 Context *SnapshotCreateRequest<I>::handle_create_object_map(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": r=" << *result << dendl;
 
   assert(*result == 0);
 
   image_ctx.aio_work_queue->unblock_writes();
+
   return this->create_context_finisher(0);
 }
 

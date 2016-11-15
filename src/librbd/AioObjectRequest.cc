@@ -402,19 +402,23 @@ bool AbstractAioObjectWrite::should_complete(int r)
                          << " should_complete: r = " << r << dendl;
 
   bool finished = true;
+
   switch (m_state) {
   case LIBRBD_AIO_WRITE_PRE:
     ldout(m_ictx->cct, 20) << "WRITE_PRE" << dendl;
+
     if (r < 0) {
       return true;
     }
 
     send_write();
+
     finished = false;
     break;
 
   case LIBRBD_AIO_WRITE_POST:
     ldout(m_ictx->cct, 20) << "WRITE_POST" << dendl;
+
     finished = true;
     break;
 
@@ -448,6 +452,7 @@ bool AbstractAioObjectWrite::should_complete(int r)
 
   case LIBRBD_AIO_WRITE_COPYUP:
     ldout(m_ictx->cct, 20) << "WRITE_COPYUP" << dendl;
+
     if (r < 0) {
       m_state = LIBRBD_AIO_WRITE_ERROR;
       complete(r);
@@ -465,7 +470,9 @@ bool AbstractAioObjectWrite::should_complete(int r)
 
   case LIBRBD_AIO_WRITE_ERROR:
     assert(r < 0);
+
     lderr(m_ictx->cct) << "WRITE_ERROR: " << cpp_strerror(r) << dendl;
+
     break;
 
   default:
@@ -489,6 +496,7 @@ void AbstractAioObjectWrite::send_pre() {
 
   {
     RWLock::RLocker snap_lock(m_ictx->snap_lock);
+
     if (m_ictx->object_map == nullptr) {
       // assume the object exists, if we have a parent, we will add
       // an extra assert exists op, i.e., guard write, to test if the
@@ -505,6 +513,7 @@ void AbstractAioObjectWrite::send_pre() {
       pre_object_map_update(&new_state);
 
       RWLock::WLocker object_map_locker(m_ictx->object_map_lock);
+
       if (m_ictx->object_map->update_required(m_object_no, new_state)) {
         ldout(m_ictx->cct, 20) << "send_pre " << this << " " << m_oid << " "
                                << m_object_off << "~" << m_object_len

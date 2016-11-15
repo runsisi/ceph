@@ -105,6 +105,9 @@ bool ObjectMap::object_may_exist(uint64_t object_no) const
   return exists;
 }
 
+// called by
+// librbd::AbstractAioObjectWrite::send_pre
+// librbd::AbstractAioObjectWrite::send_post
 bool ObjectMap::update_required(uint64_t object_no, uint8_t new_state) {
   assert(m_image_ctx.object_map_lock.is_wlocked());
 
@@ -157,6 +160,8 @@ void ObjectMap::rollback(uint64_t snap_id, Context *on_finish) {
   req->send();
 }
 
+// called by
+// librbd::operation::SnapshotCreateRequest<I>::send_create_object_map
 void ObjectMap::snapshot_add(uint64_t snap_id, Context *on_finish) {
   assert(m_image_ctx.snap_lock.is_locked());
 
@@ -170,6 +175,8 @@ void ObjectMap::snapshot_add(uint64_t snap_id, Context *on_finish) {
   req->send();
 }
 
+// called by
+// librbd::operation::SnapshotRemoveRequest<I>::send_remove_object_map
 void ObjectMap::snapshot_remove(uint64_t snap_id, Context *on_finish) {
   assert(m_image_ctx.snap_lock.is_wlocked());
 
@@ -183,6 +190,8 @@ void ObjectMap::snapshot_remove(uint64_t snap_id, Context *on_finish) {
   req->send();
 }
 
+// called by
+// librbd::operation::RebuildObjectMapRequest<I>::send_save_object_map
 void ObjectMap::aio_save(Context *on_finish) {
   assert(m_image_ctx.owner_lock.is_locked());
   assert(m_image_ctx.snap_lock.is_locked());
@@ -208,6 +217,10 @@ void ObjectMap::aio_save(Context *on_finish) {
   comp->release();
 }
 
+// called by
+// librbd::operation::RebuildObjectMapRequest<I>::send_resize_object_map
+// librbd::operation::ResizeRequest<I>::send_grow_object_map
+// librbd::operation::ResizeRequest<I>::send_shrink_object_map
 void ObjectMap::aio_resize(uint64_t new_size, uint8_t default_object_state,
 			   Context *on_finish) {
   assert(m_image_ctx.owner_lock.is_locked());
@@ -226,8 +239,15 @@ void ObjectMap::aio_resize(uint64_t new_size, uint8_t default_object_state,
   req->send();
 }
 
-// called by AbstractAioObjectWrite::send_pre, AbstractAioObjectWrite::send_post
-// and UpdateObjectMap::send
+// called by
+// librbd::operation::TrimRequest<I>::send_pre_copyup
+// librbd::operation::TrimRequest<I>::send_pre_remove
+// librbd::operation::TrimRequest<I>::send_post_copyup
+// librbd::operation::TrimRequest<I>::send_post_remove
+// librbd::AbstractAioObjectWrite::send_pre
+// librbd::AbstractAioObjectWrite::send_post
+// CopyupRequest.cc:UpdateObjectMap::send
+// rbd::mirror::image_sync::ObjectCopyRequest<I>::send_update_object_map
 bool ObjectMap::aio_update(uint64_t object_no, uint8_t new_state,
 			   const boost::optional<uint8_t> &current_state,
 			   Context *on_finish)
@@ -276,6 +296,7 @@ bool ObjectMap::aio_update(uint64_t start_object_no, uint64_t end_object_no,
       return true;
     }
   }
+
   return false;
 }
 
