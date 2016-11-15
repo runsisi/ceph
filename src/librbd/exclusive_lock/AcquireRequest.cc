@@ -184,7 +184,9 @@ Context *AcquireRequest<I>::send_refresh() {
   // refresh
   image::RefreshRequest<I> *req = image::RefreshRequest<I>::create(
     m_image_ctx, true, ctx);
+
   req->send();
+
   return nullptr;
 }
 
@@ -194,8 +196,12 @@ Context *AcquireRequest<I>::handle_refresh(int *ret_val) {
   ldout(cct, 10) << __func__ << ": r=" << *ret_val << dendl;
 
   if (*ret_val == -ERESTART) {
+
+    // -ERESTART was set by RefreshRequest<I>::send_flush_aio
+
     // next issued IO or op will (re)-refresh the image and shut down lock
     ldout(cct, 5) << ": exclusive lock dynamically disabled" << dendl;
+
     *ret_val = 0;
   } else if (*ret_val < 0) {
     lderr(cct) << "failed to refresh image: " << cpp_strerror(*ret_val)

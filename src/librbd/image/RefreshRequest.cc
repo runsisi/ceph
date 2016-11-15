@@ -293,11 +293,12 @@ Context *RefreshRequest<I>::handle_v2_get_mutable_metadata(int *result) {
 
     m_features |= RBD_FEATURE_EXCLUSIVE_LOCK;
 
-    // used in RefreshRequest<I>::send_flush_aio
+    // used by RefreshRequest<I>::send_flush_aio to return -ERESTART
     m_incomplete_update = true;
   }
 
   send_v2_get_flags();
+
   return nullptr;
 }
 
@@ -327,6 +328,7 @@ Context *RefreshRequest<I>::handle_v2_get_flags(int *result) {
 
   if (*result == 0) {
     bufferlist::iterator it = m_out_bl.begin();
+
     cls_client::get_flags_finish(&it, &m_flags, m_snapc.snaps, &m_snap_flags);
   }
 
@@ -343,10 +345,13 @@ Context *RefreshRequest<I>::handle_v2_get_flags(int *result) {
     }
 
     std::vector<uint64_t> default_flags(m_snapc.snaps.size(), m_flags);
+
     m_snap_flags = std::move(default_flags);
   } else if (*result == -ENOENT) {
     ldout(cct, 10) << "out-of-sync snapshot state detected" << dendl;
+
     send_v2_get_mutable_metadata();
+
     return nullptr;
   } else if (*result < 0) {
     lderr(cct) << "failed to retrieve flags: " << cpp_strerror(*result)
@@ -355,6 +360,7 @@ Context *RefreshRequest<I>::handle_v2_get_flags(int *result) {
   }
 
   send_v2_get_group();
+
   return nullptr;
 }
 
@@ -443,6 +449,7 @@ Context *RefreshRequest<I>::handle_v2_get_snapshots(int *result) {
                                                &m_snap_parents,
                                                &m_snap_protection);
   }
+
   if (*result == -ENOENT) {
     ldout(cct, 10) << "out-of-sync snapshot state detected" << dendl;
 
@@ -459,6 +466,7 @@ Context *RefreshRequest<I>::handle_v2_get_snapshots(int *result) {
   }
 
   send_v2_get_snap_namespaces();
+
   return nullptr;
 }
 
@@ -468,6 +476,7 @@ void RefreshRequest<I>::send_v2_get_snap_namespaces() {
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   librados::ObjectReadOperation op;
+
   cls_client::snap_namespace_list_start(&op, m_snapc.snaps);
 
   using klass = RefreshRequest<I>;
@@ -491,8 +500,10 @@ Context *RefreshRequest<I>::handle_v2_get_snap_namespaces(int *result) {
     *result = cls_client::snap_namespace_list_finish(&it, m_snapc.snaps,
 						     &m_snap_namespaces);
   }
+
   if (*result == -ENOENT) {
     ldout(cct, 10) << "out-of-sync snapshot state detected" << dendl;
+
     send_v2_get_mutable_metadata();
     return nullptr;
   } else if (*result == -EOPNOTSUPP) {
@@ -575,6 +586,7 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
     // or 3) exclusive lock is not null
 
     send_v2_open_object_map();
+
     return;
   }
 
@@ -883,6 +895,12 @@ Context *RefreshRequest<I>::handle_v2_finalize_refresh_parent(int *result) {
 
 template <typename I>
 Context *RefreshRequest<I>::send_v2_shut_down_exclusive_lock() {
+
+  // NOTE: m_exclusive_lock, m_journal, m_object_map have been swapped by
+  // RefreshRequest<I>::apply before we get here, and the nullity of
+  // these member variables can be used to determine if the features have
+  // been disabled/enabled dynamically
+
   if (m_exclusive_lock == nullptr) {
 
     // exclusive lock did not disabled dynamically, no need to shutdown
@@ -921,6 +939,7 @@ Context *RefreshRequest<I>::handle_v2_shut_down_exclusive_lock(int *result) {
 
   {
     RWLock::WLocker owner_locker(m_image_ctx.owner_lock);
+
     assert(m_image_ctx.exclusive_lock == nullptr);
   }
 
