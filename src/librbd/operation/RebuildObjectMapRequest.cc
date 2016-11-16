@@ -39,6 +39,7 @@ bool RebuildObjectMapRequest<I>::should_complete(int r) {
   switch (m_state) {
   case STATE_RESIZE_OBJECT_MAP:
     ldout(cct, 5) << "RESIZE_OBJECT_MAP" << dendl;
+
     if (r == -ESTALE && !m_attempted_trim) {
       // objects are still flagged as in-use -- delete them
       m_attempted_trim = true;
@@ -51,6 +52,7 @@ bool RebuildObjectMapRequest<I>::should_complete(int r) {
 
   case STATE_TRIM_IMAGE:
     ldout(cct, 5) << "TRIM_IMAGE" << dendl;
+
     if (r == 0) {
       send_resize_object_map();
     }
@@ -58,6 +60,7 @@ bool RebuildObjectMapRequest<I>::should_complete(int r) {
 
   case STATE_VERIFY_OBJECTS:
     ldout(cct, 5) << "VERIFY_OBJECTS" << dendl;
+
     if (r == 0) {
       send_save_object_map();
     }
@@ -65,12 +68,14 @@ bool RebuildObjectMapRequest<I>::should_complete(int r) {
 
   case STATE_SAVE_OBJECT_MAP:
     ldout(cct, 5) << "SAVE_OBJECT_MAP" << dendl;
+
     if (r == 0) {
       send_update_header();
     }
     break;
   case STATE_UPDATE_HEADER:
     ldout(cct, 5) << "UPDATE_HEADER" << dendl;
+
     if (r == 0) {
       return true;
     }
@@ -99,6 +104,7 @@ void RebuildObjectMapRequest<I>::send_resize_object_map() {
   CephContext *cct = m_image_ctx.cct;
 
   m_image_ctx.snap_lock.get_read();
+
   assert(m_image_ctx.object_map != nullptr);
 
   uint64_t size = get_image_size();
@@ -106,6 +112,7 @@ void RebuildObjectMapRequest<I>::send_resize_object_map() {
 
   if (m_image_ctx.object_map->size() == num_objects) {
     m_image_ctx.snap_lock.put_read();
+
     send_verify_objects();
     return;
   }
@@ -155,9 +162,11 @@ template <typename I>
 bool update_object_map(I& image_ctx, uint64_t object_no, uint8_t current_state,
 		      uint8_t new_state) {
   CephContext *cct = image_ctx.cct;
+
   uint64_t snap_id = image_ctx.snap_id;
 
   uint8_t state = (*image_ctx.object_map)[object_no];
+
   if (state == OBJECT_EXISTS && new_state == OBJECT_NONEXISTENT &&
       snap_id == CEPH_NOSNAP) {
     // might be writing object to OSD concurrently
@@ -169,8 +178,10 @@ bool update_object_map(I& image_ctx, uint64_t object_no, uint8_t current_state,
       << " rebuild updating object map "
       << static_cast<uint32_t>(state) << "->"
       << static_cast<uint32_t>(new_state) << dendl;
+
     (*image_ctx.object_map)[object_no] = new_state;
   }
+
   return false;
 }
 
@@ -222,6 +233,7 @@ void RebuildObjectMapRequest<I>::send_update_header() {
          m_image_ctx.exclusive_lock->is_lock_owner());
 
   ldout(m_image_ctx.cct, 5) << this << " send_update_header" << dendl;
+
   m_state = STATE_UPDATE_HEADER;
 
   librados::ObjectWriteOperation op;
@@ -239,12 +251,14 @@ void RebuildObjectMapRequest<I>::send_update_header() {
   comp->release();
 
   RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
+
   m_image_ctx.update_flags(m_image_ctx.snap_id, flags, false);
 }
 
 template <typename I>
 uint64_t RebuildObjectMapRequest<I>::get_image_size() const {
   assert(m_image_ctx.snap_lock.is_locked());
+
   if (m_image_ctx.snap_id == CEPH_NOSNAP) {
     if (!m_image_ctx.resize_reqs.empty()) {
       return m_image_ctx.resize_reqs.front()->get_image_size();
@@ -252,6 +266,7 @@ uint64_t RebuildObjectMapRequest<I>::get_image_size() const {
       return m_image_ctx.size;
     }
   }
+
   return  m_image_ctx.get_image_size(m_image_ctx.snap_id);
 }
 

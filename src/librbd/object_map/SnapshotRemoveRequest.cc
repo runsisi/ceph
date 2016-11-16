@@ -86,6 +86,7 @@ bool SnapshotRemoveRequest::should_complete(int r) {
 
     if (r < 0) {
       RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
+
       send_invalidate_next_map();
     } else {
       send_remove_snapshot();
@@ -94,6 +95,7 @@ bool SnapshotRemoveRequest::should_complete(int r) {
   case STATE_REMOVE_SNAPSHOT:
     if (r < 0 && r != -ENOENT) {
       RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
+
       send_invalidate_next_map();
     } else {
       update_object_map();
@@ -110,14 +112,18 @@ bool SnapshotRemoveRequest::should_complete(int r) {
     assert(false);
     break;
   }
+
   return finished;
 }
 
 void SnapshotRemoveRequest::send_load_map() {
   CephContext *cct = m_image_ctx.cct;
+
   std::string snap_oid(ObjectMap::object_map_name(m_image_ctx.id, m_snap_id));
+
   ldout(cct, 5) << this << " " << __func__ << ": snap_oid=" << snap_oid
                 << dendl;
+
   m_state = STATE_LOAD_MAP;
 
   librados::ObjectReadOperation op;
@@ -141,6 +147,7 @@ void SnapshotRemoveRequest::send_remove_snapshot() {
   m_state = STATE_REMOVE_SNAPSHOT;
 
   librados::ObjectWriteOperation op;
+
   if (m_next_snap_id == CEPH_NOSNAP) {
     rados::cls::lock::assert_locked(&op, RBD_LOCK_NAME, LOCK_EXCLUSIVE, "", "");
   }
@@ -211,6 +218,7 @@ void SnapshotRemoveRequest::update_object_map() {
     CephContext *cct = m_image_ctx.cct;
     ldout(cct, 5) << this << " " << __func__ << dendl;
 
+    // update librbd::ObjectMap::m_object_map
     for (uint64_t i = 0; i < m_object_map.size(); ++i) {
       if (m_object_map[i] == OBJECT_EXISTS_CLEAN &&
           (i >= m_snap_object_map.size() ||

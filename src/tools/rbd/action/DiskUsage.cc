@@ -141,6 +141,7 @@ static int do_disk_usage(librbd::RBD &rbd, librados::IoCtx &io_ctx,
                 << std::endl;
       goto out;
     }
+
     if ((features & RBD_FEATURE_FAST_DIFF) == 0) {
       std::cerr << "warning: fast-diff map is not enabled for " << *name << ". "
                 << "operation may be slow." << std::endl;

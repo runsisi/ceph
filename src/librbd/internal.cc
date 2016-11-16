@@ -1808,6 +1808,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     if (r < 0) {
       return r;
     }
+
     if (boost::get<cls::rbd::UserSnapshotNamespace>(&snap_namespace) == nullptr) {
       return -EINVAL;
     }
@@ -1815,6 +1816,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     r = ictx->state->refresh_if_required();
     if (r < 0)
       return r;
+
+    // RBD_SNAP_REMOVE_FORCE = (RBD_SNAP_REMOVE_UNPROTECT | RBD_SNAP_REMOVE_FLATTEN), which
+    // was set by rbd::action::snap::do_remove_snap
 
     if (flags & RBD_SNAP_REMOVE_FLATTEN) {
 	r = flatten_children(ictx, snap_name, pctx);
@@ -1840,6 +1844,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       if (r < 0) {
 	return r;
       }
+
       if (is_protected) {
 	lderr(ictx->cct) << "snapshot is still protected after unprotection" << dendl;
 	assert(0);
@@ -1847,9 +1852,11 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     C_SaferCond ctx;
+
     ictx->operations->snap_remove(snap_name, &ctx);
 
     r = ctx.wait();
+
     return r;
   }
 

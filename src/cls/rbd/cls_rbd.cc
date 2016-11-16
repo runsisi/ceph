@@ -2431,6 +2431,8 @@ int object_map_resize(cls_method_context_t hctx, bufferlist *in, bufferlist *out
 
   size_t orig_object_map_size = object_map.size();
   if (object_count < orig_object_map_size) {
+    // shrink
+
     for (uint64_t i = object_count + 1; i < orig_object_map_size; ++i) {
       if (object_map[i] != default_state) {
 	CLS_ERR("object map indicates object still exists: %" PRIu64, i);
@@ -2440,6 +2442,8 @@ int object_map_resize(cls_method_context_t hctx, bufferlist *in, bufferlist *out
 
     object_map.resize(object_count);
   } else if (object_count > orig_object_map_size) {
+    // extend
+
     object_map.resize(object_count);
 
     for (uint64_t i = orig_object_map_size; i < object_count; ++i) {
@@ -2670,6 +2674,7 @@ int object_map_snap_remove(cls_method_context_t hctx, bufferlist *in,
     ::encode(dst_object_map, bl);
     r = cls_cxx_write_full(hctx, &bl);
   }
+
   return r;
 }
 

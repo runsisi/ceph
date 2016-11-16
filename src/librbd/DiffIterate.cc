@@ -356,6 +356,7 @@ int DiffIterate::execute() {
 int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
                                  BitVector<2>* object_diff_state) {
   assert(m_image_ctx.snap_lock.is_locked());
+
   CephContext* cct = m_image_ctx.cct;
 
   bool diff_from_start = (from_snap_id == 0);
@@ -372,8 +373,10 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
   uint64_t next_snap_id = to_snap_id;
   BitVector<2> prev_object_map;
   bool prev_object_map_valid = false;
+
   while (true) {
     uint64_t current_size = m_image_ctx.size;
+
     if (current_snap_id != CEPH_NOSNAP) {
       std::map<librados::snap_t, SnapInfo>::const_iterator snap_it =
         m_image_ctx.snap_info.find(current_snap_id);
@@ -394,6 +397,7 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
       lderr(cct) << "diff_object_map: failed to retrieve image flags" << dendl;
       return r;
     }
+
     if ((flags & RBD_FLAG_FAST_DIFF_INVALID) != 0) {
       ldout(cct, 1) << "diff_object_map: cannot perform fast diff on invalid "
                     << "object map" << dendl;
@@ -409,6 +413,7 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
                  << dendl;
       return r;
     }
+
     ldout(cct, 20) << "diff_object_map: loaded object map " << oid << dendl;
 
     uint64_t num_objs = Striper::get_num_objects(m_image_ctx.layout,
@@ -418,13 +423,16 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
                     << object_map.size() << " < " << num_objs << dendl;
       return -EINVAL;
     }
+
     object_map.resize(num_objs);
 
     uint64_t overlap = MIN(object_map.size(), prev_object_map.size());
+
     for (uint64_t i = 0; i < overlap; ++i) {
       ldout(cct, 20) << __func__ << ": object state: " << i << " "
                      << static_cast<uint32_t>(prev_object_map[i])
                      << "->" << static_cast<uint32_t>(object_map[i]) << dendl;
+
       if (object_map[i] == OBJECT_NONEXISTENT) {
         if (prev_object_map[i] != OBJECT_NONEXISTENT) {
           (*object_diff_state)[i] = OBJECT_DIFF_STATE_HOLE;
@@ -436,14 +444,17 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
         (*object_diff_state)[i] = OBJECT_DIFF_STATE_UPDATED;
       }
     }
+
     ldout(cct, 20) << "diff_object_map: computed overlap diffs" << dendl;
 
     object_diff_state->resize(object_map.size());
+
     if (object_map.size() > prev_object_map.size() &&
         (diff_from_start || prev_object_map_valid)) {
       for (uint64_t i = overlap; i < object_diff_state->size(); ++i) {
         ldout(cct, 20) << __func__ << ": object state: " << i << " "
                        << "->" << static_cast<uint32_t>(object_map[i]) << dendl;
+
         if (object_map[i] == OBJECT_NONEXISTENT) {
           (*object_diff_state)[i] = OBJECT_DIFF_STATE_NONE;
         } else {
@@ -451,15 +462,18 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
         }
       }
     }
+
     ldout(cct, 20) << "diff_object_map: computed resize diffs" << dendl;
 
     if (current_snap_id == next_snap_id || next_snap_id > to_snap_id) {
       break;
     }
+
     current_snap_id = next_snap_id;
     prev_object_map = object_map;
     prev_object_map_valid = true;
   }
+
   return 0;
 }
 

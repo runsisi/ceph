@@ -388,6 +388,7 @@ bool needs_invalidate(I& image_ctx, uint64_t object_no,
 	new_state == OBJECT_PENDING)) {
     return false;
   }
+
   return true;
 }
 
@@ -414,6 +415,7 @@ int Operations<I>::flatten(ProgressContext &prog_ctx) {
 
   {
     RWLock::RLocker parent_locker(m_image_ctx.parent_lock);
+
     if (m_image_ctx.parent_md.spec.pool_id == -1) {
       lderr(cct) << "image has no parent" << dendl;
       return -EINVAL;
@@ -431,7 +433,9 @@ int Operations<I>::flatten(ProgressContext &prog_ctx) {
   if (r < 0 && r != -EINVAL) {
     return r;
   }
+
   ldout(cct, 20) << "flatten finished" << dendl;
+
   return 0;
 }
 
@@ -476,6 +480,7 @@ void Operations<I>::execute_flatten(ProgressContext &prog_ctx,
   uint64_t overlap;
   int r = m_image_ctx.get_parent_overlap(CEPH_NOSNAP, &overlap);
   assert(r == 0);
+
   assert(overlap <= m_image_ctx.size);
 
   uint64_t object_size = m_image_ctx.get_object_size();
@@ -574,6 +579,8 @@ int Operations<I>::check_object_map(ProgressContext &prog_ctx) {
   return r;
 }
 
+// called by
+// librbd::Operations<I>::check_object_map(ProgressContext &prog_ctx, Context *on_finish)
 template <typename I>
 void Operations<I>::object_map_iterate(ProgressContext &prog_ctx,
 				       operation::ObjectIterateWork<I> handle_mismatch,
@@ -590,6 +597,7 @@ void Operations<I>::object_map_iterate(ProgressContext &prog_ctx,
   operation::ObjectMapIterateRequest<I> *req =
     new operation::ObjectMapIterateRequest<I>(m_image_ctx, on_finish,
 					      prog_ctx, handle_mismatch);
+
   req->send();
 }
 

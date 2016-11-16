@@ -538,11 +538,14 @@ Context *CreateRequest<I>::handle_object_map_resize(int *result) {
     lderr(m_cct) << "error creating initial object map: " << cpp_strerror(*result) << dendl;
 
     m_r_saved = *result;
+
     remove_header_object();
+
     return nullptr;
   }
 
   fetch_mirror_mode();
+
   return nullptr;
 }
 
