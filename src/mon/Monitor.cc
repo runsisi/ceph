@@ -2903,6 +2903,7 @@ void Monitor::handle_command(MonOpRequestRef op)
     dout(5) << __func__ << " dropping stray message " << *m << dendl;
     return;
   }
+
   BOOST_SCOPE_EXIT_ALL(=) {
     session->put();
   };
@@ -2961,6 +2962,7 @@ void Monitor::handle_command(MonOpRequestRef op)
 
   string format;
   cmd_getval(g_ceph_context, cmdmap, "format", format, string("plain"));
+
   boost::scoped_ptr<Formatter> f(Formatter::create(format));
 
   get_str_vec(prefix, fullcmd);
@@ -2986,6 +2988,7 @@ void Monitor::handle_command(MonOpRequestRef op)
     reply_command(op, -EINVAL, "command not known", 0);
     return;
   }
+
   // validate command is in our map & matches, or forward if it is allowed
   const MonCommand *mon_cmd = _get_moncommand(prefix, mon_commands,
                                               ARRAY_SIZE(mon_commands));
@@ -2997,9 +3000,12 @@ void Monitor::handle_command(MonOpRequestRef op)
 		      0);
 	return;
       }
+
       dout(10) << "Command not locally supported, forwarding request "
 	       << m << dendl;
+
       forward_request_leader(op);
+
       return;
     } else if (!mon_cmd->is_compat(leader_cmd)) {
       if (mon_cmd->is_noforward()) {
@@ -3008,9 +3014,12 @@ void Monitor::handle_command(MonOpRequestRef op)
 		      0);
 	return;
       }
+
       dout(10) << "Command not compatible with leader, forwarding request "
 	       << m << dendl;
+
       forward_request_leader(op);
+
       return;
     }
   }
@@ -3042,10 +3051,13 @@ void Monitor::handle_command(MonOpRequestRef op)
 
   // validate user's permissions for requested command
   map<string,string> param_str_map;
+
   _generate_command_map(cmdmap, param_str_map);
+
   if (!_allowed_command(session, service, prefix, cmdmap,
                         param_str_map, mon_cmd)) {
     dout(1) << __func__ << " access denied" << dendl;
+
     (cmd_is_rw ? audit_clog->info() : audit_clog->debug())
       << "from='" << session->inst << "' "
       << "entity='" << session->entity_name << "' "
@@ -3063,6 +3075,7 @@ void Monitor::handle_command(MonOpRequestRef op)
     mdsmon()->dispatch(op);
     return;
   }
+
   if (module == "osd") {
     osdmon()->dispatch(op);
     return;
@@ -3072,6 +3085,7 @@ void Monitor::handle_command(MonOpRequestRef op)
     pgmon()->dispatch(op);
     return;
   }
+
   if (module == "mon" &&
       /* Let the Monitor class handle the following commands:
        *  'mon compact'
@@ -3085,10 +3099,12 @@ void Monitor::handle_command(MonOpRequestRef op)
     monmon()->dispatch(op);
     return;
   }
+
   if (module == "auth") {
     authmon()->dispatch(op);
     return;
   }
+
   if (module == "log") {
     logmon()->dispatch(op);
     return;
@@ -3114,6 +3130,7 @@ void Monitor::handle_command(MonOpRequestRef op)
       ds << monmap->fsid;
       rdata.append(ds);
     }
+
     reply_command(op, 0, "", rdata, 0);
     return;
   }
@@ -3133,6 +3150,7 @@ void Monitor::handle_command(MonOpRequestRef op)
 
   if (prefix == "compact" || prefix == "mon compact") {
     dout(1) << "triggering manual compaction" << dendl;
+
     utime_t start = ceph_clock_now(g_ceph_context);
     store->compact();
     utime_t end = ceph_clock_now(g_ceph_context);
@@ -3348,8 +3366,11 @@ void Monitor::handle_command(MonOpRequestRef op)
 	   "--i-know-what-i-am-doing' if you really do.";
       goto out;
     }
+
     sync_force(f.get(), ds);
+
     rs = ds.str();
+
     r = 0;
   } else if (prefix == "heap") {
     if (!ceph_using_tcmalloc())
