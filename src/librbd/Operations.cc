@@ -379,6 +379,8 @@ struct C_InvokeAsyncRequest : public Context {
   }
 };
 
+// called by
+// librbd/operation/ObjectMapIterate.cc:object_map_action
 template <typename I>
 bool needs_invalidate(I& image_ctx, uint64_t object_no,
 		     uint8_t current_state, uint8_t new_state) {
@@ -386,6 +388,9 @@ bool needs_invalidate(I& image_ctx, uint64_t object_no,
 	current_state == OBJECT_EXISTS_CLEAN) &&
        (new_state == OBJECT_NONEXISTENT ||
 	new_state == OBJECT_PENDING)) {
+
+    // return false means no need to invalidate the object map
+
     return false;
   }
 

@@ -201,6 +201,7 @@ private:
 		   << image_ctx.get_object_name(m_object_no)
 		   << " marked as " << (int)state << ", but should be "
 		   << (int)new_state << dendl;
+
 	m_invalidate->test_and_set();
       } else {
 	ldout(cct, 1) << "object map inconsistent: object "

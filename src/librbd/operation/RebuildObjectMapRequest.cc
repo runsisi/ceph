@@ -158,6 +158,8 @@ void RebuildObjectMapRequest<I>::send_trim_image() {
   req->send();
 }
 
+// called by
+// librbd/operation/ObjectMapIterate.cc:object_map_action
 template <typename I>
 bool update_object_map(I& image_ctx, uint64_t object_no, uint8_t current_state,
 		      uint8_t new_state) {
@@ -182,6 +184,7 @@ bool update_object_map(I& image_ctx, uint64_t object_no, uint8_t current_state,
     (*image_ctx.object_map)[object_no] = new_state;
   }
 
+  // return false means no need to invalidate the object map
   return false;
 }
 
