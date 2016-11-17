@@ -34,10 +34,13 @@ ObjectMap::ObjectMap(ImageCtx &image_ctx, uint64_t snap_id)
 {
 }
 
+// librbd::remove
+// static
 int ObjectMap::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
   return io_ctx.remove(object_map_name(image_id, CEPH_NOSNAP));
 }
 
+// static
 std::string ObjectMap::object_map_name(const std::string &image_id,
 				       uint64_t snap_id) {
   // "rbd_object_map."
@@ -58,9 +61,16 @@ std::string ObjectMap::object_map_name(const std::string &image_id,
   return oid;
 }
 
+// called by
+// librbd/image/CreateRequest.cc:validate_layout
+// librbd::object_map::CreateRequest<I>::send
+// librbd::Operations<I>::resize
+// librbd::Operations<I>::execute_resize
+// static
 bool ObjectMap::is_compatible(const file_layout_t& layout, uint64_t size) {
   uint64_t object_count = Striper::get_num_objects(layout, size);
 
+  // 256000000
   return (object_count <= cls::rbd::MAX_OBJECT_MAP_OBJECT_COUNT);
 }
 
@@ -82,6 +92,10 @@ uint8_t ObjectMap::operator[](uint64_t object_no) const
   return m_object_map[object_no];
 }
 
+// called by
+// AioObjectRead<I>::send
+// AbstractAioObjectWrite::send_pre
+// LibrbdWriteback::read
 bool ObjectMap::object_may_exist(uint64_t object_no) const
 {
   assert(m_image_ctx.snap_lock.is_locked());
@@ -97,6 +111,8 @@ bool ObjectMap::object_may_exist(uint64_t object_no) const
   RWLock::RLocker l(m_image_ctx.object_map_lock);
 
   uint8_t state = (*this)[object_no];
+
+  // if state is OBJECT_NONEXISTENT, then it does not exist definitely
   bool exists = (state != OBJECT_NONEXISTENT);
 
   ldout(m_image_ctx.cct, 20) << &m_image_ctx << " object_may_exist: "

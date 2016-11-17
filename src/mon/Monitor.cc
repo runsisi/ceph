@@ -2814,6 +2814,8 @@ const MonCommand *Monitor::_get_moncommand(const string &cmd_prefix,
   return this_cmd;
 }
 
+// called by
+// Monitor::handle_command
 bool Monitor::_allowed_command(MonSession *s, string &module, string &prefix,
                                const map<string,cmd_vartype>& cmdmap,
                                const map<string,string>& param_str_map,
@@ -2828,6 +2830,7 @@ bool Monitor::_allowed_command(MonSession *s, string &module, string &prefix,
                                     cmd_r, cmd_w, cmd_x);
 
   dout(10) << __func__ << " " << (capable ? "" : "not ") << "capable" << dendl;
+
   return capable;
 }
 

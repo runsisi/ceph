@@ -455,6 +455,7 @@ int set_features(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   }
 
   features = (orig_features & ~mask) | (features & mask);
+
   CLS_LOG(10, "set_features features=%" PRIu64 " orig_features=%" PRIu64,
           features, orig_features);
 

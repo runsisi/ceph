@@ -9261,19 +9261,25 @@ void OSD::process_peering_events(
   bool need_up_thru = false;
   epoch_t same_interval_since = 0;
   OSDMapRef curmap = service.get_osdmap();
+
   PG::RecoveryCtx rctx = create_context();
   rctx.handle = &handle;
+
   for (list<PG*>::const_iterator i = pgs.begin();
        i != pgs.end();
        ++i) {
     set<boost::intrusive_ptr<PG> > split_pgs;
     PG *pg = *i;
+
     pg->lock_suspend_timeout(handle);
+
     curmap = service.get_osdmap();
+
     if (pg->deleting) {
       pg->unlock();
       continue;
     }
+
     if (!advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs)) {
       // we need to requeue the PG explicitly since we didn't actually
       // handle an event
@@ -9284,19 +9290,26 @@ void OSD::process_peering_events(
       pg->peering_queue.pop_front();
       pg->handle_peering_event(evt, &rctx);
     }
+
     need_up_thru = pg->need_up_thru || need_up_thru;
     same_interval_since = MAX(pg->info.history.same_interval_since,
 			      same_interval_since);
+
     pg->write_if_dirty(*rctx.transaction);
+
     if (!split_pgs.empty()) {
       rctx.on_applied->add(new C_CompleteSplits(this, split_pgs));
       split_pgs.clear();
     }
+
     dispatch_context_transaction(rctx, pg, &handle);
+
     pg->unlock();
   }
+
   if (need_up_thru)
     queue_want_up_thru(same_interval_since);
+
   dispatch_context(rctx, 0, curmap, &handle);
 
   service.send_pg_temp();

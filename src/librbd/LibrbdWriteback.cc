@@ -201,8 +201,12 @@ namespace librbd {
 
     {
       RWLock::RLocker snap_locker(m_ictx->snap_lock);
+
       if (m_ictx->object_map != nullptr &&
           !m_ictx->object_map->object_may_exist(object_no)) {
+
+        // definitely does not exist
+
         m_ictx->op_work_queue->queue(req, -ENOENT);
 	return;
       }

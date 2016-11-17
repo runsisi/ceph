@@ -89,9 +89,13 @@ int validate_data_pool(CephContext *cct, IoCtx &io_ctx, uint64_t features,
   return 0;
 }
 
-
+// called by
+// librbd::image::CreateRequest<I>::send
 bool validate_layout(CephContext *cct, uint64_t size, file_layout_t &layout) {
   if (!librbd::ObjectMap::is_compatible(layout, size)) {
+
+    // object count > 256000000
+
     lderr(cct) << "image size not compatible with object map" << dendl;
     return false;
   }
@@ -257,6 +261,7 @@ void CreateRequest<I>::send() {
     return;
   }
 
+  // object_map restricts the image size with object count <= 256000000
   if (!validate_layout(m_cct, m_size, m_layout)) {
     complete(-EINVAL);
     return;
@@ -506,6 +511,7 @@ Context *CreateRequest<I>::handle_set_stripe_unit_count(int *result) {
   }
 
   object_map_resize();
+
   return nullptr;
 }
 

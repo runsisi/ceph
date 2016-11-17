@@ -1522,12 +1522,13 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
   // rbd_remove_with_progress
   // RBD::remove
   // RBD::remove_with_progress
-  // librbd::clone when failed
+  // librbd::clone, when failed
   int remove(IoCtx& io_ctx, const std::string &image_name,
              const std::string &image_id, ProgressContext& prog_ctx,
              bool force)
   {
     CephContext *cct((CephContext *)io_ctx.cct());
+
     ldout(cct, 20) << "remove " << &io_ctx << " "
                    << (image_id.empty() ? image_name : image_id) << dendl;
 

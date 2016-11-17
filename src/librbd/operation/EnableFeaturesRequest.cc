@@ -384,6 +384,7 @@ Context *EnableFeaturesRequest<I>::handle_set_features(int *result) {
   }
 
   send_create_object_map();
+
   return nullptr;
 }
 
@@ -395,9 +396,14 @@ void EnableFeaturesRequest<I>::send_create_object_map() {
 
   if (((image_ctx.features & RBD_FEATURE_OBJECT_MAP) != 0) ||
       ((m_features & RBD_FEATURE_OBJECT_MAP) == 0)) {
+
+    // object_map already enabled or we are not to enable it this time
+
     send_enable_mirror_image();
     return;
   }
+
+  // enable object_map dynamically
 
   ldout(cct, 20) << this << " " << __func__ << dendl;
 
@@ -407,6 +413,7 @@ void EnableFeaturesRequest<I>::send_create_object_map() {
 
   object_map::CreateRequest<I> *req =
     object_map::CreateRequest<I>::create(&image_ctx, ctx);
+
   req->send();
 }
 

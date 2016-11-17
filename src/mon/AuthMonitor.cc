@@ -555,6 +555,7 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
       }
 
       s->caps.parse(str, NULL);
+
       s->auid = auid;
     }
   } catch (const buffer::error &err) {
