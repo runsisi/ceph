@@ -782,6 +782,7 @@ int open_image(librados::IoCtx &io_ctx, const std::string &image_name,
               << cpp_strerror(r) << std::endl;
     return r;
   }
+
   return 0;
 }
 
@@ -816,6 +817,7 @@ int snap_set(librbd::Image &image, const std::string &snap_name) {
               << std::endl;
     return r;
   }
+
   return 0;
 }
 

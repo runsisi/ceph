@@ -1186,6 +1186,9 @@ namespace librbd {
     return r;
   }
 
+  // called by
+  // rbd::action::snap::do_set_limit
+  // rbd::action::snap::do_clear_limit
   int Image::snap_set_limit(uint64_t limit)
   {
     ImageCtx *ictx = (ImageCtx *)ctx;

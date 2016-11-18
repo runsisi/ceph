@@ -20,9 +20,10 @@ namespace image {
 
 using util::create_context_callback;
 
-// used by 1) RefreshRequest, see OpenRequest<I>::send_set_snap
-// or 2) individual snap_set interface, see librbd::snap_set
-
+// created by
+// librbd::image::OpenRequest<I>::send_set_snap
+// librbd::image::RefreshParentRequest<I>::send_set_parent_snap
+// librbd::ImageState<I>::send_set_snap_unlock
 template <typename I>
 SetSnapRequest<I>::SetSnapRequest(I &image_ctx, const std::string &snap_name,
                                   Context *on_finish)
@@ -59,8 +60,10 @@ template <typename I>
 void SetSnapRequest<I>::send_init_exclusive_lock() {
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     if (m_image_ctx.exclusive_lock != nullptr) {
       assert(m_image_ctx.snap_id == CEPH_NOSNAP);
+
       send_complete();
       return;
     }
@@ -90,6 +93,7 @@ void SetSnapRequest<I>::send_init_exclusive_lock() {
     klass, &klass::handle_init_exclusive_lock>(this);
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   m_exclusive_lock->init(m_image_ctx.features, ctx);
 }
 

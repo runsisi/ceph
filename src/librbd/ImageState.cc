@@ -716,7 +716,9 @@ void ImageState<I>::send_set_snap_unlock() {
   m_state = STATE_SETTING_SNAP;
 
   assert(!m_actions_contexts.empty());
+
   ActionContexts &action_contexts(m_actions_contexts.front());
+
   assert(action_contexts.first.action_type == ACTION_TYPE_SET_SNAP);
 
   CephContext *cct = m_image_ctx->cct;
@@ -726,6 +728,9 @@ void ImageState<I>::send_set_snap_unlock() {
   Context *ctx = create_async_context_callback(
     *m_image_ctx, create_context_callback<
       ImageState<I>, &ImageState<I>::handle_set_snap>(this));
+  // those requests under librbd/image/ are different from those under
+  // librbd/operation/ and librbd/object_map/ which mostly are derived
+  // from librbd::AsyncRequest
   image::SetSnapRequest<I> *req = image::SetSnapRequest<I>::create(
     *m_image_ctx, action_contexts.first.snap_name, ctx);
 

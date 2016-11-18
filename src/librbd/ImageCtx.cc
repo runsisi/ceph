@@ -456,10 +456,12 @@ struct C_InvalidateCache : public Context {
   snap_t ImageCtx::get_snap_id(string in_snap_name) const
   {
     assert(snap_lock.is_locked());
+
     map<string, snap_t>::const_iterator it =
       snap_ids.find(in_snap_name);
     if (it != snap_ids.end())
       return it->second;
+
     return CEPH_NOSNAP;
   }
 

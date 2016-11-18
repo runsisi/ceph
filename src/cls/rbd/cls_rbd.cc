@@ -1593,6 +1593,7 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
       return r;
 
     total_read += vals.size();
+
     if (total_read >= snap_limit) {
       CLS_ERR("Attempt to create snapshot over limit of %lu", snap_limit);
       return -EDQUOT;
@@ -1611,6 +1612,7 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 	        (unsigned long long)snap_id.val);
 	return -EIO;
       }
+
       if ((snap_meta.name == old_meta.name &&
 	    snap_meta.snapshot_namespace == old_meta.snapshot_namespace) ||
 	  snap_meta.id == old_meta.id) {
@@ -1705,12 +1707,14 @@ int snapshot_rename(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 	        dst_snap_name.c_str());
 	return -EIO;
       }
+
       if (dst_snap_name == snap_meta.name) {
 	CLS_LOG(20, "snap_name %s  matches existing snap with snap id = %llu ",
 		dst_snap_name.c_str(), (unsigned long long)snap_meta.id.val);
         return -EEXIST;
       }
     }
+
     if (!vals.empty())
       last_read = vals.rbegin()->first;
   } while (r == RBD_MAX_KEYS_READ);
@@ -1721,6 +1725,7 @@ int snapshot_rename(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     CLS_LOG(20, "cannot find existing snap with snap id = %llu ", (unsigned long long)src_snap_id);
     return r;
   }
+
   snap_meta.name = dst_snap_name;
   bufferlist snap_metabl;
   ::encode(snap_meta, snap_metabl);

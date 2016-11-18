@@ -826,6 +826,7 @@ void Operations<I>::snap_create(const char *snap_name,
   }
 
   m_image_ctx.snap_lock.get_read();
+
   // iterate ImageCtx::snap_ids
   if (m_image_ctx.get_snap_id(snap_name) != CEPH_NOSNAP) {
     m_image_ctx.snap_lock.put_read();
@@ -833,6 +834,7 @@ void Operations<I>::snap_create(const char *snap_name,
     on_finish->complete(-EEXIST);
     return;
   }
+
   m_image_ctx.snap_lock.put_read();
 
   C_InvokeAsyncRequest<I> *req = new C_InvokeAsyncRequest<I>(
@@ -865,6 +867,7 @@ void Operations<I>::execute_snap_create(const std::string &snap_name,
 
   m_image_ctx.snap_lock.get_read();
 
+  // iterate ImageCtx::snap_ids to find the snap id
   if (m_image_ctx.get_snap_id(snap_name) != CEPH_NOSNAP) {
     m_image_ctx.snap_lock.put_read();
     on_finish->complete(-EEXIST);
@@ -877,6 +880,7 @@ void Operations<I>::execute_snap_create(const std::string &snap_name,
     new operation::SnapshotCreateRequest<I>(
       m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish), snap_name,
       snap_namespace, journal_op_tid, skip_object_map);
+
   req->send();
 }
 
@@ -1347,6 +1351,9 @@ void Operations<I>::execute_snap_unprotect(const std::string &snap_name,
   request->send();
 }
 
+// called by
+// librbd::snap_set_limit
+// librbd::Image::snap_set_limit
 template <typename I>
 int Operations<I>::snap_set_limit(uint64_t limit) {
   CephContext *cct = m_image_ctx.cct;
@@ -1363,6 +1370,7 @@ int Operations<I>::snap_set_limit(uint64_t limit) {
 
   {
     RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
+
     C_SaferCond limit_ctx;
 
     if (m_image_ctx.exclusive_lock != nullptr &&
@@ -1620,6 +1628,9 @@ void Operations<I>::execute_metadata_remove(const std::string &key,
   request->send();
 }
 
+// called by
+// librbd::remove
+// librbd::Operations<I>::snap_rollback
 template <typename I>
 int Operations<I>::prepare_image_update() {
   assert(m_image_ctx.owner_lock.is_locked() &&

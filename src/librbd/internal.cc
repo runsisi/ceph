@@ -2066,6 +2066,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     C_SaferCond ctx;
     std::string name(snap_name == nullptr ? "" : snap_name);
+
     ictx->state->snap_set(name, &ctx);
 
     int r = ctx.wait();

@@ -202,6 +202,7 @@ Context *SnapshotCreateRequest<I>::handle_allocate_snap_id(int *result) {
 template <typename I>
 void SnapshotCreateRequest<I>::send_create_snap() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
 
@@ -224,6 +225,7 @@ void SnapshotCreateRequest<I>::send_create_snap() {
     if (image_ctx.exclusive_lock != nullptr) {
       image_ctx.exclusive_lock->assert_header_locked(&op);
     }
+
     cls_client::snapshot_add(&op, m_snap_id, m_snap_name, m_snap_namespace);
   }
 
@@ -239,6 +241,7 @@ void SnapshotCreateRequest<I>::send_create_snap() {
 template <typename I>
 Context *SnapshotCreateRequest<I>::handle_create_snap(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": r=" << *result << dendl;
 
