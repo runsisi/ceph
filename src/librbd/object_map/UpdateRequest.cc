@@ -60,6 +60,10 @@ void UpdateRequest::send() {
   rados_completion->release();
 }
 
+// called by
+// Request::should_complete
+// only ResizeRequest and UpdateRequest override this method, and UpdateRequest only
+// print a debug message
 void UpdateRequest::finish_request() {
   ldout(m_image_ctx.cct, 20) << this << " on-disk object map updated"
                              << dendl;

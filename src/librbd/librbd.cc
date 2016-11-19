@@ -1270,6 +1270,10 @@ namespace librbd {
     return r;
   }
 
+  // called by
+  // rbd::action::diff::do_diff
+  // rbd::action::disk_usage::compute_image_disk_usage
+  // rbd::action::export_diff::do_export_diff
   int Image::diff_iterate2(const char *fromsnapname, uint64_t ofs, uint64_t len,
                            bool include_parent, bool whole_object,
                            int (*cb)(uint64_t, size_t, int, void *), void *arg)

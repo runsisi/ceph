@@ -49,11 +49,16 @@ void ResizeRequest::send() {
   rados_completion->release();
 }
 
+// called by
+// Request::should_complete
+// only ResizeRequest and UpdateRequest override this method, and UpdateRequest only
+// print a debug message
 void ResizeRequest::finish_request() {
   CephContext *cct = m_image_ctx.cct;
 
   ldout(cct, 5) << this << " resizing in-memory object map: "
 		<< m_num_objs << dendl;
+
   resize(m_object_map, m_num_objs, m_default_object_state);
 }
 

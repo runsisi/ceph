@@ -42,7 +42,11 @@ protected:
   // call finish() to remove ourself from m_image_ctx.async_requests and
   // complete the m_on_finish
 
-  // TODO: it can not override AsyncRequest::finish_request ???
+  // NOTE: AsyncRequest::finish_request is not a virtual method, so Request::finish_request is
+  // not an override of AsyncRequest::finish_request
+
+  // only ResizeRequest and UpdateRequest override this method, and UpdateRequest only
+  // print a debug message
   virtual void finish_request() {
   }
 
