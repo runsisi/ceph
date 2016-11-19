@@ -99,6 +99,7 @@ bool SnapshotRemoveRequest::should_complete(int r) {
       send_invalidate_next_map();
     } else {
       update_object_map();
+
       send_remove_map();
     }
     break;

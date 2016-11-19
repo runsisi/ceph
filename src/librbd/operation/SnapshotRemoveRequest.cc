@@ -100,12 +100,15 @@ bool SnapshotRemoveRequest<I>::should_complete(int r) {
 template <typename I>
 void SnapshotRemoveRequest<I>::send_remove_object_map() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
 
   {
     CephContext *cct = image_ctx.cct;
+
     RWLock::WLocker snap_locker(image_ctx.snap_lock);
     RWLock::RLocker object_map_locker(image_ctx.object_map_lock);
+
     if (image_ctx.snap_info.find(m_snap_id) == image_ctx.snap_info.end()) {
       lderr(cct) << this << " " << __func__ << ": snapshot doesn't exist"
                  << dendl;
@@ -115,6 +118,7 @@ void SnapshotRemoveRequest<I>::send_remove_object_map() {
 
     if (image_ctx.object_map != nullptr) {
       ldout(cct, 5) << this << " " << __func__ << dendl;
+
       m_state = STATE_REMOVE_OBJECT_MAP;
 
       image_ctx.object_map->snapshot_remove(
@@ -122,15 +126,18 @@ void SnapshotRemoveRequest<I>::send_remove_object_map() {
       return;
     }
   }
+
   send_remove_child();
 }
 
 template <typename I>
 void SnapshotRemoveRequest<I>::send_remove_child() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
 
   CephContext *cct = image_ctx.cct;
+
   {
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
     RWLock::RLocker parent_locker(image_ctx.parent_lock);
@@ -143,6 +150,7 @@ void SnapshotRemoveRequest<I>::send_remove_child() {
       } else {
         lderr(cct) << "failed to retrieve parent spec" << dendl;
       }
+
       m_state = STATE_ERROR;
 
       this->async_complete(r);
@@ -153,6 +161,7 @@ void SnapshotRemoveRequest<I>::send_remove_child() {
         (scan_for_parents(our_pspec) == -ENOENT)) {
       // no other references to the parent image
       ldout(cct, 5) << this << " " << __func__ << dendl;
+
       m_state = STATE_REMOVE_CHILD;
 
       librados::ObjectWriteOperation op;
@@ -173,10 +182,12 @@ void SnapshotRemoveRequest<I>::send_remove_child() {
 template <typename I>
 void SnapshotRemoveRequest<I>::send_remove_snap() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
 
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
+
   m_state = STATE_REMOVE_SNAP;
 
   librados::ObjectWriteOperation op;
@@ -200,32 +211,38 @@ void SnapshotRemoveRequest<I>::send_remove_snap() {
 template <typename I>
 void SnapshotRemoveRequest<I>::send_release_snap_id() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
 
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << ": "
                 << "snap_name=" << m_snap_name << ", "
                 << "snap_id=" << m_snap_id << dendl;
+
   m_state = STATE_RELEASE_SNAP_ID;
 
   // TODO add async version of selfmanaged_snap_remove
   int r = image_ctx.md_ctx.selfmanaged_snap_remove(m_snap_id);
+
   this->async_complete(r);
 }
 
 template <typename I>
 void SnapshotRemoveRequest<I>::remove_snap_context() {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
 
   RWLock::WLocker snap_locker(image_ctx.snap_lock);
+
   image_ctx.rm_snap(m_snap_name, m_snap_id);
 }
 
 template <typename I>
 int SnapshotRemoveRequest<I>::scan_for_parents(parent_spec &pspec) {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.snap_lock.is_locked());
   assert(image_ctx.parent_lock.is_locked());
 
@@ -245,6 +262,7 @@ int SnapshotRemoveRequest<I>::scan_for_parents(parent_spec &pspec) {
       return -ENOENT;
     }
   }
+
   return 0;
 }
 
