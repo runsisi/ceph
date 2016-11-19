@@ -129,8 +129,10 @@ struct rbd_bencher {
   {
     {
       Mutex::Locker l(lock);
+
       if (in_flight >= max)
         return false;
+
       in_flight++;
     }
 
@@ -147,12 +149,14 @@ struct rbd_bencher {
     } else {
       assert(0 == "Invalid io_type");
     }
+
     //cout << "start " << c << " at " << off << "~" << len << std::endl;
     return true;
   }
 
   void wait_for(int max) {
     Mutex::Locker l(lock);
+
     while (in_flight > max) {
       utime_t dur;
       dur.set_from_double(.2);
@@ -166,8 +170,11 @@ void rbd_bencher_completion(void *vc, void *pc)
 {
   librbd::RBD::AioCompletion *c = (librbd::RBD::AioCompletion *)vc;
   bencher_completer *bc = static_cast<bencher_completer *>(pc);
+
   rbd_bencher *b = bc->bencher;
+
   //cout << "complete " << c << std::endl;
+
   int ret = c->get_return_value();
   if (b->io_type == IO_TYPE_WRITE && ret != 0) {
     cout << "write error: " << cpp_strerror(ret) << std::endl;
@@ -176,10 +183,14 @@ void rbd_bencher_completion(void *vc, void *pc)
     cout << "read error: " << cpp_strerror(ret) << std::endl;
     exit(ret < 0 ? -ret : ret);
   }
+
   b->lock.Lock();
+
   b->in_flight--;
   b->cond.Signal();
+
   b->lock.Unlock();
+
   c->release();
   delete bc;
 }
@@ -189,7 +200,9 @@ int do_bench(librbd::Image& image, io_type_t io_type,
 		   uint64_t io_bytes, bool random)
 {
   uint64_t size = 0;
+
   image.size(&size);
+
   if (io_size > size) {
     std::cerr << "rbd: io-size " << prettybyte_t(io_size) << " "
               << "larger than image size " << prettybyte_t(size) << std::endl;
@@ -219,6 +232,7 @@ int do_bench(librbd::Image& image, io_type_t io_type,
   // disturb all thread's offset, used by seq IO
   for (i = 0; i < io_threads; i++) {
     start_pos = (rand() % (size / io_size)) * io_size;
+
     thread_offset.push_back(start_pos);
   }
 
@@ -237,6 +251,7 @@ int do_bench(librbd::Image& image, io_type_t io_type,
   uint64_t cur_off = 0;
 
   int op_flags;
+
   if  (random) {
     op_flags = LIBRADOS_OP_FLAG_FADVISE_RANDOM;
   } else {
@@ -244,20 +259,26 @@ int do_bench(librbd::Image& image, io_type_t io_type,
   }
 
   printf("  SEC       OPS   OPS/SEC   BYTES/SEC\n");
+
   uint64_t off;
   for (off = 0; off < io_bytes; ) {
+    // wait until in_flight io <= (io_threads - 1)
     b.wait_for(io_threads - 1);
+
     i = 0;
+
     while (i < io_threads && off < io_bytes) {
       if (random) {
         thread_offset[i] = (rand() % (size / io_size)) * io_size;
       } else {
         thread_offset[i] += io_size;
+
         if (thread_offset[i] + io_size > size)
           thread_offset[i] = 0;
       }
 
       if (!b.start_io(io_threads, thread_offset[i], io_size, op_flags))
+        // in_flight io already >= io_threads
         break;
 
       ++i;
@@ -270,24 +291,29 @@ int do_bench(librbd::Image& image, io_type_t io_type,
 
     utime_t now = ceph_clock_now(NULL);
     utime_t elapsed = now - start;
+
     if (last.is_zero()) {
       last = elapsed;
     } else if (elapsed.sec() != last.sec()) {
       time_acc(elapsed - last);
       ios_acc(static_cast<double>(cur_ios));
       off_acc(static_cast<double>(cur_off));
+
       cur_ios = 0;
       cur_off = 0;
 
       double time_sum = boost::accumulators::rolling_sum(time_acc);
+
       printf("%5d  %8d  %8.2lf  %8.2lf\n",
              (int)elapsed,
              (int)(ios - io_threads),
              boost::accumulators::rolling_sum(ios_acc) / time_sum,
              boost::accumulators::rolling_sum(off_acc) / time_sum);
+
       last = elapsed;
     }
   }
+
   b.wait_for(0);
   int r = image.flush();
   if (r < 0) {
@@ -375,6 +401,7 @@ int bench_execute(const po::variables_map &vm, io_type_t bench_io_type) {
   librados::Rados rados;
   librados::IoCtx io_ctx;
   librbd::Image image;
+
   r = utils::init_and_open_image(pool_name, image_name, "", false, &rados,
                                  &io_ctx, &image);
   if (r < 0) {
@@ -387,6 +414,7 @@ int bench_execute(const po::variables_map &vm, io_type_t bench_io_type) {
     std::cerr << "bench failed: " << cpp_strerror(r) << std::endl;
     return r;
   }
+
   return 0;
 }
 

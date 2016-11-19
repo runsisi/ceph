@@ -1104,6 +1104,8 @@ namespace librbd {
       rados_op->exec("rbd", "object_map_update", in);
     }
 
+    // called by
+    // librbd::object_map::SnapshotCreateRequest::send_add_snapshot
     void object_map_snap_add(librados::ObjectWriteOperation *rados_op)
     {
       bufferlist in;

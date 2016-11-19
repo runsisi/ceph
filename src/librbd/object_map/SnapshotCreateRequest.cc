@@ -87,6 +87,7 @@ void SnapshotCreateRequest::send_read_map() {
 
   CephContext *cct = m_image_ctx.cct;
 
+  // read the object map of the HEAD from the disk
   std::string oid(ObjectMap::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
 
   ldout(cct, 5) << this << " " << __func__ << ": oid=" << oid << dendl;
@@ -107,6 +108,7 @@ void SnapshotCreateRequest::send_read_map() {
 void SnapshotCreateRequest::send_write_map() {
   CephContext *cct = m_image_ctx.cct;
 
+  // write the object map of the HEAD as the snap's object map
   std::string snap_oid(ObjectMap::object_map_name(m_image_ctx.id, m_snap_id));
 
   ldout(cct, 5) << this << " " << __func__ << ": snap_oid=" << snap_oid
@@ -132,6 +134,7 @@ bool SnapshotCreateRequest::send_add_snapshot() {
 
   CephContext *cct = m_image_ctx.cct;
 
+  // add a new object_map for HEAD
   std::string oid(ObjectMap::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
 
   ldout(cct, 5) << this << " " << __func__ << ": oid=" << oid << dendl;

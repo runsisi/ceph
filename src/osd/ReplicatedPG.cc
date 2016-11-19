@@ -5350,11 +5350,13 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
         if (!ssc) {
 	  ssc = ctx->obc->ssc = get_snapset_context(soid, false);
         }
+
         assert(ssc);
 
         int clonecount = ssc->snapset.clones.size();
         if (ssc->snapset.head_exists)
           clonecount++;
+
         // clone objects + maybe HEAD
         resp.clones.reserve(clonecount);
 
@@ -5365,6 +5367,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
           // iterate each clone object to get the clone info
 
           clone_info ci;
+
           ci.cloneid = *clone_iter;
 
 	  hobject_t clone_oid = soid;
@@ -5389,6 +5392,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
           map<snapid_t, interval_set<uint64_t> >::const_iterator coi;
 
           // every clone object has an overlap, see ReplicatedPG::make_writeable
+          // map<snapid_t, interval_set<uint64_t> >
           coi = ssc->snapset.clone_overlap.find(ci.cloneid);
           if (coi == ssc->snapset.clone_overlap.end()) {
             osd->clog->error() << "osd." << osd->whoami << ": inconsistent clone_overlap found for oid "
@@ -5410,6 +5414,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 
           map<snapid_t, uint64_t>::const_iterator si;
 
+          // map<snapid_t, uint64_t>
           si = ssc->snapset.clone_size.find(ci.cloneid);
           if (si == ssc->snapset.clone_size.end()) {
             osd->clog->error() << "osd." << osd->whoami << ": inconsistent clone_size found for oid "
@@ -5421,7 +5426,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
           ci.size = si->second;
 
           resp.clones.push_back(ci);
-        }
+        } // for-each ssc->snapset.clones
 
 	if (result < 0) {
 	  break;

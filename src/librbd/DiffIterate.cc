@@ -388,6 +388,7 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
   CephContext* cct = m_image_ctx.cct;
 
   bool diff_from_start = (from_snap_id == 0);
+
   if (from_snap_id == 0) {
     if (!m_image_ctx.snaps.empty()) {
       from_snap_id = m_image_ctx.snaps.back();
@@ -409,6 +410,7 @@ int DiffIterate::diff_object_map(uint64_t from_snap_id, uint64_t to_snap_id,
       std::map<librados::snap_t, SnapInfo>::const_iterator snap_it =
         m_image_ctx.snap_info.find(current_snap_id);
       assert(snap_it != m_image_ctx.snap_info.end());
+
       current_size = snap_it->second.size;
 
       ++snap_it;
