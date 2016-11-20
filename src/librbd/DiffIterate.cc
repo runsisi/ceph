@@ -59,7 +59,9 @@ public:
   }
 
   void send() {
+    // if under throttle then return immediately, else wait for throttle
     C_OrderedThrottle *ctx = m_diff_context.throttle.start_op(this);
+
     librados::AioCompletion *rados_completion =
       util::create_rados_safe_callback(ctx);
 
@@ -77,6 +79,7 @@ protected:
 
   virtual void finish(int r) {
     CephContext *cct = m_image_ctx.cct;
+
     if (r == 0 && m_snap_ret < 0) {
       r = m_snap_ret;
     }
@@ -84,11 +87,14 @@ protected:
     Diffs diffs;
     if (r == 0) {
       ldout(cct, 20) << "object " << m_oid << ": list_snaps complete" << dendl;
+
       compute_diffs(&diffs);
     } else if (r == -ENOENT) {
       ldout(cct, 20) << "object " << m_oid << ": list_snaps (not found)"
                      << dendl;
+
       r = 0;
+
       compute_parent_overlap(&diffs);
     } else {
       ldout(cct, 20) << "object " << m_oid << ": list_snaps failed: "
@@ -104,6 +110,7 @@ protected:
         }
       }
     }
+
     m_diff_context.throttle.end_op(r);
   }
 
@@ -125,11 +132,14 @@ private:
     interval_set<uint64_t> diff;
     uint64_t end_size;
     bool end_exists;
+
     calc_snap_set_diff(cct, m_snap_set, m_diff_context.from_snap_id,
                        m_diff_context.end_snap_id, &diff, &end_size,
                        &end_exists);
+
     ldout(cct, 20) << "  diff " << diff << " end_exists=" << end_exists
                    << dendl;
+
     if (diff.empty()) {
       if (m_diff_context.from_snap_id == 0 && !end_exists) {
         compute_parent_overlap(diffs);
@@ -142,6 +152,7 @@ private:
         diffs->push_back(boost::make_tuple(m_offset + q->offset, q->length,
                                            end_exists));
       }
+
       return;
     }
 
@@ -150,28 +161,37 @@ private:
       ldout(cct, 20) << "diff_iterate object " << m_oid << " extent "
                      << q->offset << "~" << q->length << " from "
                      << q->buffer_extents << dendl;
+
       uint64_t opos = q->offset;
+
       for (vector<pair<uint64_t,uint64_t> >::iterator r =
              q->buffer_extents.begin();
            r != q->buffer_extents.end(); ++r) {
         interval_set<uint64_t> overlap;  // object extents
+
         overlap.insert(opos, r->second);
         overlap.intersection_of(diff);
+
         ldout(m_image_ctx.cct, 20) << " opos " << opos
     			             << " buf " << r->first << "~" << r->second
     			             << " overlap " << overlap << dendl;
+
         for (interval_set<uint64_t>::iterator s = overlap.begin();
     	       s != overlap.end(); ++s) {
           uint64_t su_off = s.get_start() - opos;
           uint64_t logical_off = m_offset + r->first + su_off;
+
           ldout(cct, 20) << "   overlap extent " << s.get_start() << "~"
                          << s.get_len() << " logical " << logical_off << "~"
                          << s.get_len() << dendl;
+
           diffs->push_back(boost::make_tuple(logical_off, s.get_len(),
                            end_exists));
         }
+
         opos += r->second;
       }
+
       assert(opos == q->offset + q->length);
     }
   }
@@ -186,10 +206,13 @@ private:
                q->buffer_extents.begin();
              r != q->buffer_extents.end(); ++r) {
           interval_set<uint64_t> o;
+
           o.insert(m_offset + r->first, r->second);
           o.intersection_of(m_diff_context.parent_diff);
+
           ldout(m_image_ctx.cct, 20) << " reporting parent overlap " << o
                                      << dendl;
+
           for (interval_set<uint64_t>::iterator s = o.begin(); s != o.end();
                ++s) {
             diffs->push_back(boost::make_tuple(s.get_start(), s.get_len(),
@@ -324,6 +347,7 @@ int DiffIterate::execute() {
 
           for (std::vector<ObjectExtent>::iterator q = p->second.begin();
                q != p->second.end(); ++q) {
+            // e.g., disk_usage_callback(uint64_t offset, size_t len, int exists, void *arg)
             r = m_callback(off + q->offset, q->length, updated, m_callback_arg);
             if (r < 0) {
               return r;
@@ -335,6 +359,7 @@ int DiffIterate::execute() {
                                                      diff_context,
                                                      p->first.name, off,
                                                      p->second);
+        // for each oid to list_snaps
         diff_object->send();
 
         if (diff_context.throttle.pending_error()) {

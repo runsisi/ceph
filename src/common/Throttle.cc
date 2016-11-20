@@ -520,8 +520,10 @@ C_OrderedThrottle *OrderedThrottle::start_op(Context *on_finish) {
   assert(on_finish != NULL);
 
   Mutex::Locker locker(m_lock);
+
   uint64_t tid = m_next_tid++;
   m_tid_result[tid] = Result(on_finish);
+
   C_OrderedThrottle *ctx = new C_OrderedThrottle(this, tid);
 
   complete_pending_ops();
@@ -529,6 +531,7 @@ C_OrderedThrottle *OrderedThrottle::start_op(Context *on_finish) {
     m_cond.Wait(m_lock);
     complete_pending_ops();
   }
+
   ++m_current;
 
   return ctx;
