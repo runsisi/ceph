@@ -59,6 +59,7 @@ bool ExclusiveLock<I>::is_lock_owner() const {
   Mutex::Locker locker(m_lock);
 
   bool lock_owner;
+
   switch (m_state) {
   case STATE_LOCKED:
   case STATE_POST_ACQUIRING:
@@ -74,6 +75,7 @@ bool ExclusiveLock<I>::is_lock_owner() const {
 
   ldout(m_image_ctx.cct, 20) << this << " " << __func__ << "=" << lock_owner
                              << dendl;
+
   return lock_owner;
 }
 
@@ -102,7 +104,9 @@ bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
 template <typename I>
 void ExclusiveLock<I>::block_requests(int r) {
   Mutex::Locker locker(m_lock);
+
   m_request_blocked_count++;
+
   if (m_request_blocked_ret_val == 0) {
     m_request_blocked_ret_val = r;
   }
@@ -118,7 +122,9 @@ void ExclusiveLock<I>::unblock_requests() {
   Mutex::Locker locker(m_lock);
 
   assert(m_request_blocked_count > 0);
+
   m_request_blocked_count--;
+
   if (m_request_blocked_count == 0) {
     m_request_blocked_ret_val = 0;
   }
@@ -134,6 +140,7 @@ void ExclusiveLock<I>::init(uint64_t features, Context *on_init) {
 
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_state == STATE_UNINITIALIZED);
     m_state = STATE_INITIALIZING;
   }
@@ -245,15 +252,19 @@ template <typename I>
 void ExclusiveLock<I>::reacquire_lock(Context *on_reacquired) {
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_image_ctx.owner_lock.is_locked());
 
     if (m_state == STATE_WAITING_FOR_REGISTER) {
       // restart the acquire lock process now that watch is valid
       ldout(m_image_ctx.cct, 10) << this << " " << __func__ << ": "
                                  << "woke up waiting acquire" << dendl;
+
       Action active_action = get_active_action();
+
       assert(active_action == ACTION_TRY_LOCK ||
              active_action == ACTION_REQUEST_LOCK);
+
       execute_next_action();
     } else if (!is_shutdown() &&
                (m_state == STATE_LOCKED ||
@@ -264,6 +275,7 @@ void ExclusiveLock<I>::reacquire_lock(Context *on_reacquired) {
       ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
 
       execute_action(ACTION_REACQUIRE_LOCK, on_reacquired);
+
       return;
     }
   }
@@ -274,15 +286,23 @@ void ExclusiveLock<I>::reacquire_lock(Context *on_reacquired) {
   }
 }
 
+// called by
+// ExclusiveLock<I>::shut_down
+// ImageWatcher<I>::handle_request_lock
+// ImageWatcher<I>::handle_payload(const AcquiredLockPayload)
+// ImageWatcher<I>::handle_payload(const ReleasedLockPayload)
 template <typename I>
 void ExclusiveLock<I>::handle_peer_notification() {
   Mutex::Locker locker(m_lock);
+
   if (m_state != STATE_WAITING_FOR_PEER) {
     return;
   }
 
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
+
   assert(get_active_action() == ACTION_REQUEST_LOCK);
+
   execute_next_action();
 }
 

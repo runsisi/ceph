@@ -1400,6 +1400,8 @@ int Pipe::connect()
       pipe_lock.Unlock();
 
       delete authorizer;
+      // only OSD::ms_get_authorizer will respect the force_new semantic,
+      // it will wait for 10 seconds
       authorizer = msgr->get_authorizer(peer_type, true);  // try harder
 
       continue;

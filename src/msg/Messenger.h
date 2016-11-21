@@ -741,6 +741,8 @@ public:
     for (list<Dispatcher*>::iterator p = dispatchers.begin();
 	 p != dispatchers.end();
 	 ++p) {
+      // only OSD::ms_get_authorizer obeys the force_new semantic, it will
+      // wait for 10 seconds
       if ((*p)->ms_get_authorizer(peer_type, &a, force_new))
 	return a;
     }

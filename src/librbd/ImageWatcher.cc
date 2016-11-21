@@ -1119,7 +1119,8 @@ void ImageWatcher<I>::process_payload(uint64_t notify_id, uint64_t handle,
   }
 }
 
-// called by ImageWatcher::WatchCtx::handle_notify
+// called by
+// ImageWatcher::WatchCtx::handle_notify
 template <typename I>
 void ImageWatcher<I>::handle_notify(uint64_t notify_id, uint64_t handle,
 			            bufferlist &bl) {
@@ -1166,6 +1167,8 @@ void ImageWatcher<I>::handle_notify(uint64_t notify_id, uint64_t handle,
   }
 }
 
+// called by
+// ImageWatcher<I>::WatchCtx::handle_error
 template <typename I>
 void ImageWatcher<I>::handle_error(uint64_t handle, int err) {
   lderr(m_image_ctx.cct) << this << " image watch failed: " << handle << ", "
@@ -1173,15 +1176,18 @@ void ImageWatcher<I>::handle_error(uint64_t handle, int err) {
 
   {
     Mutex::Locker l(m_owner_client_id_lock);
+
     set_owner_client_id(ClientId());
   }
 
   RWLock::WLocker l(m_watch_lock);
+
   if (m_watch_state == WATCH_STATE_REGISTERED) {
     m_watch_state = WATCH_STATE_ERROR;
 
     FunctionContext *ctx = new FunctionContext(
       boost::bind(&ImageWatcher<I>::rewatch, this));
+
     m_task_finisher->queue(TASK_CODE_REREGISTER_WATCH, ctx);
   }
 }
@@ -1209,6 +1215,7 @@ void ImageWatcher<I>::rewatch() {
   RewatchRequest<I> *req = RewatchRequest<I>::create(m_image_ctx, m_watch_lock,
                                                      &m_watch_ctx,
                                                      &m_watch_handle, ctx);
+
   req->send();
 }
 
