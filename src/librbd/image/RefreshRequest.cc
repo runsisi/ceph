@@ -552,6 +552,9 @@ void RefreshRequest<I>::send_v2_refresh_parent() {
   }
 
   if (m_refresh_parent != nullptr) {
+
+    // need to refresh the parent image first
+
     m_refresh_parent->send();
   } else {
     send_v2_init_exclusive_lock();
@@ -566,8 +569,13 @@ Context *RefreshRequest<I>::handle_v2_refresh_parent(int *result) {
   if (*result < 0) {
     lderr(cct) << "failed to refresh parent image: " << cpp_strerror(*result)
                << dendl;
+
+    // save error code to RefreshRequest<I>::m_error_result
     save_result(result);
+
+    // call RefreshRequest<I>::apply asynchronously
     send_v2_apply();
+
     return nullptr;
   }
 
@@ -590,9 +598,11 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
     return;
   }
 
-  // exclusive lock enabled and is null(dynamically enabled or we are
-  // on OpenRequest), so init it, the journal and object_map will be
-  // created and opened on AcquireRequest, see AcquireRequest<I>::apply
+  // need to create the exclusive_lock instance
+
+  // create exclusive_lock and block io, the journal and object_map will be
+  // created and opened by librbd::exclusive_lock::AcquireRequest,
+  // see librbd::exclusive_lock::AcquireRequest<I>::apply
 
   // implies exclusive lock dynamically enabled or image open in-progress
 
@@ -608,7 +618,8 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
 
-  // block r/w, will unblock until the exclusive lock acquired, see ExclusiveLock<I>::handle_acquire_lock
+  // block io, will unblock until the exclusive lock acquired, see
+  // ExclusiveLock<I>::handle_acquire_lock
   m_exclusive_lock->init(m_features, ctx);
 }
 
@@ -623,9 +634,12 @@ Context *RefreshRequest<I>::handle_v2_init_exclusive_lock(int *result) {
     save_result(result);
   }
 
-  // object map and journal will be opened when exclusive lock is
-  // acquired (if features are enabled), do not try to create and open
-  // them here, see AcquireRequest<I>::apply
+  // if the exclusive_lock is dynamically enabled or the first time we
+  // open the image, then we only have to create the exclusive_lock instance
+  // here, and the object_map and journal instances will be created and
+  // opened until exclusive_lock is acquired
+
+  // call RefreshRequest<I>::apply asynchronously
   send_v2_apply();
 
   return nullptr;
@@ -647,12 +661,14 @@ void RefreshRequest<I>::send_v2_open_journal() {
 
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     journal_disabled_by_policy = (
       !journal_disabled &&
       m_image_ctx.get_journal_policy()->journal_disabled());
   }
 
   if (journal_disabled || journal_disabled_by_policy) {
+
     // journal dynamically enabled -- doesn't own exclusive lock
     if ((m_features & RBD_FEATURE_JOURNALING) != 0 &&
         !journal_disabled_by_policy &&
@@ -672,6 +688,8 @@ void RefreshRequest<I>::send_v2_open_journal() {
 
     return;
   }
+
+  // need to create the journal instance
 
   // journal dynamically enabled, and we are the exclusive lock owner
 
@@ -724,6 +742,7 @@ void RefreshRequest<I>::send_v2_block_writes() {
 
     // non-dynamically disabled journal, no need to block writes
 
+    // call RefreshRequest<I>::apply asynchronously
     send_v2_apply();
     return;
   }
@@ -760,13 +779,15 @@ Context *RefreshRequest<I>::handle_v2_block_writes(int *result) {
     save_result(result);
   }
 
+  // call RefreshRequest<I>::apply asynchronously
   send_v2_apply();
 
   return nullptr;
 }
 
-// exclusive lock does not needed(disabled or image is read-only/snap),
-// or is not null
+// called by
+// RefreshRequest<I>::send_v2_init_exclusive_lock, with no need to create
+// (and init) the exclusive_lock instance
 template <typename I>
 void RefreshRequest<I>::send_v2_open_object_map() {
   if ((m_features & RBD_FEATURE_OBJECT_MAP) == 0 ||
@@ -782,7 +803,7 @@ void RefreshRequest<I>::send_v2_open_object_map() {
     return;
   }
 
-  // object map enabled and is null, and we own the exclusive lock
+  // need to create the object_map instance
 
   // implies object map dynamically enabled or image open in-progress
   // since SetSnapRequest loads the object map for a snapshot and
@@ -804,6 +825,7 @@ void RefreshRequest<I>::send_v2_open_object_map() {
     if (m_object_map == nullptr) {
       lderr(cct) << "failed to locate snapshot: " << m_image_ctx.snap_name
                  << dendl;
+
       send_v2_open_journal();
       return;
     }
@@ -1048,6 +1070,7 @@ Context *RefreshRequest<I>::send_flush_aio() {
     ldout(cct, 10) << this << " " << __func__ << dendl;
 
     RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
+
     using klass = RefreshRequest<I>;
     Context *ctx = create_context_callback<
       klass, &klass::handle_flush_aio>(this);
@@ -1093,6 +1116,8 @@ Context *RefreshRequest<I>::handle_error(int *result) {
   return m_on_finish;
 }
 
+// called by
+// RefreshRequest<I>::handle_v2_apply
 template <typename I>
 void RefreshRequest<I>::apply() {
   CephContext *cct = m_image_ctx.cct;
@@ -1105,6 +1130,10 @@ void RefreshRequest<I>::apply() {
     Mutex::Locker cache_locker(m_image_ctx.cache_lock);
     RWLock::WLocker snap_locker(m_image_ctx.snap_lock);
     RWLock::WLocker parent_locker(m_image_ctx.parent_lock);
+
+    // --------------------------------------------------------
+    // to update mutable metadata
+    // --------------------------------------------------------
 
     m_image_ctx.size = m_size;
     m_image_ctx.lockers = m_lockers;
@@ -1124,6 +1153,10 @@ void RefreshRequest<I>::apply() {
       m_image_ctx.parent_md = m_parent_md;
     }
 
+    // --------------------------------------------------------
+    // to update snapshot related fields
+    // --------------------------------------------------------
+
     for (size_t i = 0; i < m_snapc.snaps.size(); ++i) {
 
       // check if new snapshot added
@@ -1133,6 +1166,10 @@ void RefreshRequest<I>::apply() {
         m_snapc.snaps[i].val);
 
       if (it == m_image_ctx.snaps.end()) {
+
+        // new snapshot added, it does not exist in previous refresh
+
+        // will be tested by RefreshRequest<I>::send_flush_aio
         m_flush_aio = true;
 
         ldout(cct, 20) << "new snapshot id=" << m_snapc.snaps[i].val
@@ -1173,12 +1210,22 @@ void RefreshRequest<I>::apply() {
       m_image_ctx.snap_exists = false;
     }
 
+    // --------------------------------------------------------
+    // to update m_image_ctx.parent
+    // --------------------------------------------------------
     if (m_refresh_parent != nullptr) {
       m_refresh_parent->apply();
     }
 
+    // --------------------------------------------------------
+    // to update m_image_ctx.snapc
+    // --------------------------------------------------------
     m_image_ctx.data_ctx.selfmanaged_snap_set_write_ctx(m_image_ctx.snapc.seq,
                                                         m_image_ctx.snaps);
+
+    // --------------------------------------------------------
+    // to update the exclusive_lock, object_map, journal instances
+    // --------------------------------------------------------
 
     // handle dynamically enabled / disabled features
     if (m_image_ctx.exclusive_lock != nullptr &&

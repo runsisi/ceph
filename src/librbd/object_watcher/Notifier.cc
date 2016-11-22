@@ -28,8 +28,11 @@ Notifier::~Notifier() {
   assert(m_pending_aio_notifies == 0);
 }
 
+// called by
+// ImageWatcher<I>::flush
 void Notifier::flush(Context *on_finish) {
   Mutex::Locker aio_notify_locker(m_aio_notify_lock);
+
   if (m_pending_aio_notifies == 0) {
     m_work_queue->queue(on_finish, 0);
     return;
@@ -58,17 +61,21 @@ void Notifier::notify(bufferlist &bl, bufferlist *out_bl, Context *on_finish) {
   comp->release();
 }
 
+// called by
+// Notifier::C_AioNotify::finish
 void Notifier::handle_notify(int r, Context *on_finish) {
   if (on_finish != nullptr) {
     m_work_queue->queue(on_finish, r);
   }
 
   Mutex::Locker aio_notify_locker(m_aio_notify_lock);
+
   assert(m_pending_aio_notifies > 0);
   --m_pending_aio_notifies;
 
   ldout(m_cct, 20) << __func__ << ": pending=" << m_pending_aio_notifies
                    << dendl;
+
   if (m_pending_aio_notifies == 0) {
     for (auto ctx : m_aio_notify_flush_ctxs) {
       m_work_queue->queue(ctx, 0);

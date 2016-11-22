@@ -78,6 +78,7 @@ AioObjectRequest<I>::AioObjectRequest(ImageCtx *ictx, const std::string &oid,
     m_object_len(len), m_snap_id(snap_id), m_completion(completion),
     m_hide_enoent(hide_enoent) {
 
+  // m_parent_extents is [out] parameter
   Striper::extent_to_file(m_ictx->cct, &m_ictx->layout, m_object_no,
                           0, m_ictx->layout.object_size, m_parent_extents);
 
@@ -105,6 +106,10 @@ void AioObjectRequest<I>::complete(int r)
   }
 }
 
+// called by
+// AioObjectRequest<I>::AioObjectRequest
+// AioObjectRead<I>::send_copyup
+// AbstractAioObjectWrite::handle_write_guard
 template <typename I>
 bool AioObjectRequest<I>::compute_parent_extents() {
   assert(m_ictx->snap_lock.is_locked());
@@ -118,6 +123,7 @@ bool AioObjectRequest<I>::compute_parent_extents() {
     lderr(m_ictx->cct) << this << " compute_parent_extents: failed to "
                        << "retrieve parent overlap: " << cpp_strerror(r)
                        << dendl;
+
     m_parent_extents.clear();
     return false;
   }
@@ -128,8 +134,11 @@ bool AioObjectRequest<I>::compute_parent_extents() {
     ldout(m_ictx->cct, 20) << this << " compute_parent_extents: "
                            << "overlap " << parent_overlap << " "
                            << "extents " << m_parent_extents << dendl;
+
+    // has parent
     return true;
   }
+
   return false;
 }
 
@@ -321,9 +330,11 @@ template <typename I>
 void AioObjectRead<I>::send_copyup()
 {
   ImageCtx *image_ctx = this->m_ictx;
+
   {
     RWLock::RLocker snap_locker(image_ctx->snap_lock);
     RWLock::RLocker parent_locker(image_ctx->parent_lock);
+
     if (!this->compute_parent_extents() ||
         (image_ctx->exclusive_lock != nullptr &&
          !image_ctx->exclusive_lock->is_lock_owner())) {
@@ -652,9 +663,11 @@ void AbstractAioObjectWrite::send_write_op(bool write_guard)
 void AbstractAioObjectWrite::handle_write_guard()
 {
   bool has_parent;
+
   {
     RWLock::RLocker snap_locker(m_ictx->snap_lock);
     RWLock::RLocker parent_locker(m_ictx->parent_lock);
+
     has_parent = compute_parent_extents();
   }
 

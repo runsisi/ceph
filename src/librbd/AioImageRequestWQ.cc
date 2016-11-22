@@ -323,13 +323,16 @@ void AioImageRequestWQ::unblock_writes() {
   CephContext *cct = m_image_ctx.cct;
 
   bool wake_up = false;
+
   {
     RWLock::WLocker locker(m_lock);
+
     assert(m_write_blockers > 0);
     --m_write_blockers;
 
     ldout(cct, 5) << __func__ << ": " << &m_image_ctx << ", "
                   << "num=" << m_write_blockers << dendl;
+
     if (m_write_blockers == 0) {
       wake_up = true;
     }
@@ -341,14 +344,15 @@ void AioImageRequestWQ::unblock_writes() {
 }
 
 // called by:
-// ReleaseRequest<I>::send_block_writes
-// RefreshRequest<I>::send_v2_open_journal
-// ExclusiveLock<I>::init
+// librbd::ExclusiveLock<I>::init
+// librbd::exclusive_lock::ReleaseRequest<I>::send_block_writes
+// librbd::image::RefreshRequest<I>::send_v2_block_writes
 void AioImageRequestWQ::set_require_lock_on_read() {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << __func__ << dendl;
 
   RWLock::WLocker locker(m_lock);
+
   m_require_lock_on_read = true;
 }
 

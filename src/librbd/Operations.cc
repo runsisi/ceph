@@ -480,6 +480,7 @@ void Operations<I>::execute_flatten(ProgressContext &prog_ctx,
   }
 
   ::SnapContext snapc = m_image_ctx.snapc;
+
   assert(m_image_ctx.parent != NULL);
 
   uint64_t overlap;

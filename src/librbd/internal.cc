@@ -647,12 +647,15 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     return 0;
   }
 
+  // called by
+  // librbd::snap_remove
   int flatten_children(ImageCtx *ictx, const char* snap_name, ProgressContext& pctx)
   {
     CephContext *cct = ictx->cct;
     ldout(cct, 20) << "children flatten " << ictx->name << dendl;
 
     RWLock::RLocker l(ictx->snap_lock);
+
     snap_t snap_id = ictx->get_snap_id(snap_name);
     parent_spec parent_spec(ictx->md_ctx.get_id(), ictx->id, snap_id);
     map< pair<int64_t, string>, set<string> > image_info;
@@ -668,7 +671,11 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
     size_t i = 0;
     Rados rados(ictx->md_ctx);
+
     for ( auto &info : image_info){
+
+      // iterate all children images
+
       string pool = info.first.second;
       IoCtx ioctx;
       r = rados.ioctx_create2(info.first.first, ioctx);
@@ -687,6 +694,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
           delete imctx;
 	  return r;
 	}
+
 	librbd::NoOpProgressContext prog_ctx;
 	r = imctx->operations->flatten(prog_ctx);
 	if (r < 0) {
@@ -699,7 +707,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 	if ((imctx->features & RBD_FEATURE_DEEP_FLATTEN) == 0 &&
 	    !imctx->snaps.empty()) {
 	  imctx->parent_lock.get_read();
+
 	  parent_info parent_info = imctx->parent_md;
+
 	  imctx->parent_lock.put_read();
 
 	  r = cls_client::remove_child(&imctx->md_ctx, RBD_CHILDREN,
@@ -710,9 +720,12 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 	    return r;
 	  }
 	}
+
 	imctx->state->close();
       }
+
       pctx.update_progress(++i, size);
+
       assert(i <= size);
     }
 

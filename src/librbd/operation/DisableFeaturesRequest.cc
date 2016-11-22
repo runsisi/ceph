@@ -99,6 +99,7 @@ void DisableFeaturesRequest<I>::send_block_writes() {
   ldout(cct, 20) << this << " " << __func__ << dendl;
 
   RWLock::WLocker locker(image_ctx.owner_lock);
+
   image_ctx.aio_work_queue->block_writes(create_context_callback<
     DisableFeaturesRequest<I>,
     &DisableFeaturesRequest<I>::handle_block_writes>(this));

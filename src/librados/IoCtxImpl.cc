@@ -222,13 +222,17 @@ void librados::IoCtxImpl::set_snap_read(snapid_t s)
 int librados::IoCtxImpl::set_snap_write_context(snapid_t seq, vector<snapid_t>& snaps)
 {
   ::SnapContext n;
+
   ldout(client->cct, 10) << "set snap write context: seq = " << seq
 			 << " and snaps = " << snaps << dendl;
   n.seq = seq;
   n.snaps = snaps;
+
   if (!n.is_valid())
     return -EINVAL;
+
   snapc = n;
+
   return 0;
 }
 

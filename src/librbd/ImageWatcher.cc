@@ -185,6 +185,7 @@ void ImageWatcher<I>::unregister_watch(Context *on_finish) {
 
 template <typename I>
 void ImageWatcher<I>::flush(Context *on_finish) {
+  // wait all in-flight notification to finish
   m_notifier.flush(on_finish);
 }
 
@@ -272,6 +273,7 @@ void ImageWatcher<I>::notify_flatten(uint64_t request_id,
 
   bufferlist bl;
   ::encode(NotifyMessage(FlattenPayload(async_request_id)), bl);
+
   notify_async_request(async_request_id, std::move(bl), prog_ctx, on_finish);
 }
 
@@ -577,6 +579,16 @@ void ImageWatcher<I>::handle_request_lock(int r) {
   }
 }
 
+// called by
+// ImageWatcher<I>::notify_snap_create
+// ImageWatcher<I>::notify_snap_rename
+// ImageWatcher<I>::notify_snap_remove
+// ImageWatcher<I>::notify_snap_protect
+// ImageWatcher<I>::notify_snap_unprotect
+// ImageWatcher<I>::notify_rename
+// ImageWatcher<I>::notify_update_features
+// ImageWatcher<I>::notify_request_lock
+// ImageWatcher<I>::notify_async_request
 template <typename I>
 void ImageWatcher<I>::notify_lock_owner(bufferlist &&bl, Context *on_finish) {
   assert(on_finish != nullptr);
@@ -592,12 +604,16 @@ void ImageWatcher<I>::notify_lock_owner(bufferlist &&bl, Context *on_finish) {
 template <typename I>
 Context *ImageWatcher<I>::remove_async_request(const AsyncRequestId &id) {
   RWLock::WLocker async_request_locker(m_async_request_lock);
+
   auto it = m_async_requests.find(id);
   if (it != m_async_requests.end()) {
     Context *on_complete = it->second.first;
+
     m_async_requests.erase(it);
+
     return on_complete;
   }
+
   return nullptr;
 }
 
@@ -618,18 +634,25 @@ void ImageWatcher<I>::schedule_async_request_timed_out(const AsyncRequestId &id)
 template <typename I>
 void ImageWatcher<I>::async_request_timed_out(const AsyncRequestId &id) {
   Context *on_complete = remove_async_request(id);
+
   if (on_complete != nullptr) {
     ldout(m_image_ctx.cct, 5) << "async request timed out: " << id << dendl;
+
     m_image_ctx.op_work_queue->queue(on_complete, -ETIMEDOUT);
   }
 }
 
+// called by
+// ImageWatcher<I>::notify_flatten
+// ImageWatcher<I>::notify_resize
+// ImageWatcher<I>::notify_rebuild_object_map
 template <typename I>
 void ImageWatcher<I>::notify_async_request(const AsyncRequestId &async_request_id,
 				           bufferlist &&in,
 				        ProgressContext& prog_ctx,
                                         Context *on_finish) {
   assert(on_finish != nullptr);
+
   assert(m_image_ctx.owner_lock.is_locked());
 
   ldout(m_image_ctx.cct, 10) << this << " async request: " << async_request_id
@@ -644,6 +667,7 @@ void ImageWatcher<I>::notify_async_request(const AsyncRequestId &async_request_i
       }
     }
   });
+
   Context *on_complete = new FunctionContext(
     [this, async_request_id, on_finish](int r) {
       m_task_finisher->cancel(Task(TASK_CODE_ASYNC_REQUEST, async_request_id));
@@ -652,10 +676,12 @@ void ImageWatcher<I>::notify_async_request(const AsyncRequestId &async_request_i
 
   {
     RWLock::WLocker async_request_locker(m_async_request_lock);
+
     m_async_requests[async_request_id] = AsyncRequest(on_complete, &prog_ctx);
   }
 
   schedule_async_request_timed_out(async_request_id);
+
   notify_lock_owner(std::move(in), on_notify);
 }
 
@@ -830,6 +856,7 @@ template <typename I>
 bool ImageWatcher<I>::handle_payload(const AsyncProgressPayload &payload,
                                      C_NotifyAck *ack_ctx) {
   RWLock::RLocker l(m_async_request_lock);
+
   std::map<AsyncRequestId, AsyncRequest>::iterator req_it =
     m_async_requests.find(payload.async_request_id);
   if (req_it != m_async_requests.end()) {
@@ -837,9 +864,12 @@ bool ImageWatcher<I>::handle_payload(const AsyncProgressPayload &payload,
 			       << payload.async_request_id << " @ "
 			       << payload.offset << "/" << payload.total
 			       << dendl;
+
     schedule_async_request_timed_out(payload.async_request_id);
+
     req_it->second.second->update_progress(payload.offset, payload.total);
   }
+
   return true;
 }
 
@@ -851,8 +881,10 @@ bool ImageWatcher<I>::handle_payload(const AsyncCompletePayload &payload,
     ldout(m_image_ctx.cct, 10) << this << " request finished: "
                                << payload.async_request_id << "="
 			       << payload.result << dendl;
+
     on_complete->complete(payload.result);
   }
+
   return true;
 }
 

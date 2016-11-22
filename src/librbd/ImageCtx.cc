@@ -468,10 +468,12 @@ struct C_InvalidateCache : public Context {
   const SnapInfo* ImageCtx::get_snap_info(snap_t in_snap_id) const
   {
     assert(snap_lock.is_locked());
+
     map<snap_t, SnapInfo>::const_iterator it =
       snap_info.find(in_snap_id);
     if (it != snap_info.end())
       return &it->second;
+
     return NULL;
   }
 
@@ -634,6 +636,7 @@ struct C_InvalidateCache : public Context {
                                const RWLock &in_snap_lock) const
   {
     assert(snap_lock.is_locked());
+
     return ((features & in_features) == in_features);
   }
 
@@ -696,11 +699,16 @@ struct C_InvalidateCache : public Context {
   {
     assert(snap_lock.is_locked());
     assert(parent_lock.is_locked());
+
     if (in_snap_id == CEPH_NOSNAP)
       return &parent_md;
+
+    // find SnapInfo from ImageCtx::snap_info, see
+    // librbd::image::RefreshRequest<I>::apply
     const SnapInfo *info = get_snap_info(in_snap_id);
     if (info)
       return &info->parent;
+
     return NULL;
   }
 
@@ -731,11 +739,13 @@ struct C_InvalidateCache : public Context {
   int ImageCtx::get_parent_overlap(snap_t in_snap_id, uint64_t *overlap) const
   {
     assert(snap_lock.is_locked());
+
     const parent_info *info = get_parent_info(in_snap_id);
     if (info) {
       *overlap = info->overlap;
       return 0;
     }
+
     return -ENOENT;
   }
 
