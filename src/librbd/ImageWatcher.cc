@@ -92,6 +92,7 @@ template <typename I>
 ImageWatcher<I>::~ImageWatcher()
 {
   delete m_task_finisher;
+
   {
     RWLock::RLocker l(m_watch_lock);
     assert(m_watch_state != WATCH_STATE_REGISTERED);
@@ -423,21 +424,30 @@ void ImageWatcher<I>::notify_header_update(librados::IoCtx &io_ctx,
   io_ctx.notify2(oid, bl, object_watcher::Notifier::NOTIFY_TIMEOUT, nullptr);
 }
 
+// called by
+// ImageWatcher<I>::handle_payload(const AcquiredLockPayload)
+// ImageWatcher<I>::handle_payload(const ReleasedLockPayload)
 template <typename I>
 void ImageWatcher<I>::schedule_cancel_async_requests() {
   FunctionContext *ctx = new FunctionContext(
     boost::bind(&ImageWatcher<I>::cancel_async_requests, this));
+
   m_task_finisher->queue(TASK_CODE_CANCEL_ASYNC_REQUESTS, ctx);
 }
 
+// called by
+// ImageWatcher<I>::unregister_watch
+// ImageWatcher<I>::schedule_cancel_async_requests
 template <typename I>
 void ImageWatcher<I>::cancel_async_requests() {
   RWLock::WLocker l(m_async_request_lock);
+
   for (std::map<AsyncRequestId, AsyncRequest>::iterator iter =
 	 m_async_requests.begin();
        iter != m_async_requests.end(); ++iter) {
     iter->second.first->complete(-ERESTART);
   }
+
   m_async_requests.clear();
 }
 
@@ -718,14 +728,14 @@ bool ImageWatcher<I>::handle_payload(const HeaderUpdatePayload &payload,
 			             C_NotifyAck *ack_ctx) {
   ldout(m_image_ctx.cct, 10) << this << " image header updated" << dendl;
 
-  // ++m_refresh_seq
+  // ++m_refresh_seq and notify the registered user callbacks
   m_image_ctx.state->handle_update_notification();
 
   m_image_ctx.perfcounter->inc(l_librbd_notify);
 
   if (ack_ctx != nullptr) {
     // m_update_watchers->flush, these watchers are not for rbd internal usage,
-    // only rbd-nbd.cc:do_map registered a watcher
+    // only rbd-nbd.cc:do_map registered a watcher,,i.e., user callback
     m_image_ctx.state->flush_update_watchers(new C_ResponseMessage(ack_ctx));
 
     return false;
@@ -748,7 +758,11 @@ bool ImageWatcher<I>::handle_payload(const AcquiredLockPayload &payload,
   if (payload.client_id.is_valid()) {
     Mutex::Locker owner_client_id_locker(m_owner_client_id_lock);
 
+    // m_owner_client_id was set by ImageWatcher<I>::set_owner_client_id
     if (payload.client_id == m_owner_client_id) {
+
+      // the current exclusive_lock owner was the previously recorded
+
       cancel_async_requests = false;
     }
 
@@ -784,6 +798,7 @@ bool ImageWatcher<I>::handle_payload(const ReleasedLockPayload &payload,
   if (payload.client_id.is_valid()) {
     Mutex::Locker l(m_owner_client_id_lock);
 
+    // m_owner_client_id was set by ImageWatcher<I>::set_owner_client_id
     if (payload.client_id != m_owner_client_id) {
 
       // we previously recorded exclusive lock owner does not match
@@ -795,6 +810,8 @@ bool ImageWatcher<I>::handle_payload(const ReleasedLockPayload &payload,
 
       cancel_async_requests = false;
     } else {
+      // the previous owner has released the exclusive_lock, so we do not know
+      // currently who has owned it
       set_owner_client_id(ClientId());
     }
   }

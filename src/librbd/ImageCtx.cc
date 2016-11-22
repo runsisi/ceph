@@ -1171,7 +1171,7 @@ struct C_InvalidateCache : public Context {
   // EnableFeaturesRequest<I>::send_notify_update
   // librbd::C_NotifyUpdate::complete
   void ImageCtx::notify_update(Context *on_finish) {
-    // ++m_refresh_seq
+    // ++m_refresh_seq and notify the user registered callbacks
     state->handle_update_notification();
 
     image_watcher->notify_header_update(on_finish);

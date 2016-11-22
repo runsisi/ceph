@@ -59,6 +59,9 @@ struct C_NotifyUpdate : public Context {
     CephContext *cct = image_ctx.cct;
 
     if (notified) {
+
+      // has notified the header update
+
       if (r == -ETIMEDOUT) {
         // don't fail the op if a peer fails to get the update notification
         lderr(cct) << "update notification timed-out" << dendl;

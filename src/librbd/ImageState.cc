@@ -65,6 +65,8 @@ public:
     on_finish->complete(0);
   }
 
+  // called by
+  // ImageState<I>::shut_down_update_watchers
   void shut_down(Context *on_finish) {
     ldout(m_cct, 20) << "ImageUpdateWatchers::" << __func__ << dendl;
     {
@@ -81,33 +83,45 @@ public:
     on_finish->complete(0);
   }
 
+  // called by
+  // ImageState<I>::register_update_watcher
   void register_watcher(UpdateWatchCtx *watcher, uint64_t *handle) {
     ldout(m_cct, 20) << __func__ << ": watcher=" << watcher << dendl;
 
     Mutex::Locker locker(m_lock);
+
     assert(m_on_shut_down_finish == nullptr);
 
     create_work_queue();
 
     *handle = m_next_handle++;
+
     m_watchers.insert(std::make_pair(*handle, watcher));
   }
 
+  // called by
+  // ImageState<I>::unregister_update_watcher
   void unregister_watcher(uint64_t handle, Context *on_finish) {
     ldout(m_cct, 20) << "ImageUpdateWatchers::" << __func__ << ": handle="
 		     << handle << dendl;
+
     int r = 0;
+
     {
       Mutex::Locker locker(m_lock);
+
       auto it = m_watchers.find(handle);
       if (it == m_watchers.end()) {
 	r = -ENOENT;
       } else {
 	if (m_in_flight.find(handle) != m_in_flight.end()) {
 	  assert(m_pending_unregister.find(handle) == m_pending_unregister.end());
+
 	  m_pending_unregister[handle] = on_finish;
+
 	  on_finish = nullptr;
 	}
+
 	m_watchers.erase(it);
       }
     }
@@ -115,14 +129,18 @@ public:
     if (on_finish) {
       ldout(m_cct, 20) << "ImageUpdateWatchers::" << __func__
 		       << ": completing unregister" << dendl;
+
       on_finish->complete(r);
     }
   }
 
+  // called by
+  // ImageState<I>::handle_update_notification
   void notify() {
     ldout(m_cct, 20) << "ImageUpdateWatchers::" << __func__ << dendl;
 
     Mutex::Locker locker(m_lock);
+
     for (auto it : m_watchers) {
       send_notify(it.first, it.second);
     }
@@ -218,9 +236,11 @@ private:
     if (m_work_queue != nullptr) {
       return;
     }
+
     ThreadPoolSingleton *thread_pool_singleton;
     m_cct->lookup_or_create_singleton_object<ThreadPoolSingleton>(
       thread_pool_singleton, "librbd::ImageUpdateWatchers::thread_pool");
+
     m_work_queue = new ContextWQ("librbd::ImageUpdateWatchers::op_work_queue",
 				 m_cct->_conf->rbd_op_thread_timeout,
 				 thread_pool_singleton);
@@ -230,7 +250,9 @@ private:
     if (m_work_queue == nullptr) {
       return;
     }
+
     m_work_queue->drain();
+
     delete m_work_queue;
   }
 };
@@ -311,6 +333,10 @@ void ImageState<I>::handle_update_notification() {
 		 << "last_refresh = " << m_last_refresh << dendl;
 
   if (m_state == STATE_OPEN) {
+
+    // to notify the user registered callback, see rbd-nbd.cc:do_map, and
+    // ImageState<I>::register_update_watcher
+
     m_update_watchers->notify();
   }
 }
@@ -456,6 +482,8 @@ void ImageState<I>::flush_update_watchers(Context *on_finish) {
   m_update_watchers->flush(on_finish);
 }
 
+// called by
+// librbd::image::CloseRequest<I>::send_shut_down_update_watchers
 template <typename I>
 void ImageState<I>::shut_down_update_watchers(Context *on_finish) {
   CephContext *cct = m_image_ctx->cct;
