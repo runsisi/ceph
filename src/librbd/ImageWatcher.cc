@@ -214,7 +214,7 @@ int ImageWatcher<I>::notify_async_progress(const AsyncRequestId &request,
 
 // called by
 // ImageWatcher<I>::RemoteContext::finish
-// ImageWatcher<I>::handle_async_complete
+// ImageWatcher<I>::handle_async_complete, i.e., timeout, reschedule
 template <typename I>
 void ImageWatcher<I>::schedule_async_complete(const AsyncRequestId &request,
                                               int r) {
@@ -262,6 +262,8 @@ void ImageWatcher<I>::handle_async_complete(const AsyncRequestId &request,
   }
 }
 
+// called by
+// librbd::Operations<I>::flatten
 template <typename I>
 void ImageWatcher<I>::notify_flatten(uint64_t request_id,
                                      ProgressContext &prog_ctx,
@@ -611,6 +613,10 @@ void ImageWatcher<I>::notify_lock_owner(bufferlist &&bl, Context *on_finish) {
   notify_lock_owner->send();
 }
 
+// called by
+// ImageWatcher<I>::async_request_timed_out
+// ImageWatcher<I>::notify_async_request, when failed
+// ImageWatcher<I>::handle_payload(const AsyncCompletePayload)
 template <typename I>
 Context *ImageWatcher<I>::remove_async_request(const AsyncRequestId &id) {
   RWLock::WLocker async_request_locker(m_async_request_lock);
@@ -910,8 +916,10 @@ bool ImageWatcher<I>::handle_payload(const FlattenPayload &payload,
 				     C_NotifyAck *ack_ctx) {
 
   RWLock::RLocker l(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
+
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
       bool new_request;
       Context *ctx;
@@ -919,8 +927,12 @@ bool ImageWatcher<I>::handle_payload(const FlattenPayload &payload,
       r = prepare_async_request(payload.async_request_id, &new_request,
                                 &ctx, &prog_ctx);
       if (new_request) {
+
+        // this is a new request
+
         ldout(m_image_ctx.cct, 10) << this << " remote flatten request: "
 				   << payload.async_request_id << dendl;
+
         m_image_ctx.operations->execute_flatten(*prog_ctx, ctx);
       }
 
@@ -929,6 +941,7 @@ bool ImageWatcher<I>::handle_payload(const FlattenPayload &payload,
       ::encode(ResponseMessage(r), ack_ctx->out);
     }
   }
+
   return true;
 }
 
@@ -939,6 +952,7 @@ bool ImageWatcher<I>::handle_payload(const ResizePayload &payload,
 
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
+
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
       bool new_request;
       Context *ctx;
@@ -946,10 +960,14 @@ bool ImageWatcher<I>::handle_payload(const ResizePayload &payload,
       r = prepare_async_request(payload.async_request_id, &new_request,
                                 &ctx, &prog_ctx);
       if (new_request) {
+
+        // this is a new request
+
         ldout(m_image_ctx.cct, 10) << this << " remote resize request: "
 				   << payload.async_request_id << " "
 				   << payload.size << " "
 				   << payload.allow_shrink << dendl;
+
         m_image_ctx.operations->execute_resize(payload.size, payload.allow_shrink, *prog_ctx, ctx, 0);
       }
 
@@ -958,6 +976,7 @@ bool ImageWatcher<I>::handle_payload(const ResizePayload &payload,
       ::encode(ResponseMessage(r), ack_ctx->out);
     }
   }
+
   return true;
 }
 
@@ -969,6 +988,7 @@ bool ImageWatcher<I>::handle_payload(const SnapCreatePayload &payload,
 
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
+
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
       ldout(m_image_ctx.cct, 10) << this << " remote snap_create request: "
 			         << payload.snap_name << dendl;
@@ -983,6 +1003,7 @@ bool ImageWatcher<I>::handle_payload(const SnapCreatePayload &payload,
       ::encode(ResponseMessage(r), ack_ctx->out);
     }
   }
+
   return true;
 }
 
@@ -990,8 +1011,10 @@ template <typename I>
 bool ImageWatcher<I>::handle_payload(const SnapRenamePayload &payload,
 			             C_NotifyAck *ack_ctx) {
   RWLock::RLocker l(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
+
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
       ldout(m_image_ctx.cct, 10) << this << " remote snap_rename request: "
 			         << payload.snap_id << " to "
@@ -1005,6 +1028,7 @@ bool ImageWatcher<I>::handle_payload(const SnapRenamePayload &payload,
       ::encode(ResponseMessage(r), ack_ctx->out);
     }
   }
+
   return true;
 }
 
@@ -1012,8 +1036,10 @@ template <typename I>
 bool ImageWatcher<I>::handle_payload(const SnapRemovePayload &payload,
 			             C_NotifyAck *ack_ctx) {
   RWLock::RLocker l(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
+
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
       ldout(m_image_ctx.cct, 10) << this << " remote snap_remove request: "
 			         << payload.snap_name << dendl;
@@ -1025,6 +1051,7 @@ bool ImageWatcher<I>::handle_payload(const SnapRemovePayload &payload,
       ::encode(ResponseMessage(r), ack_ctx->out);
     }
   }
+
   return true;
 }
 
@@ -1032,8 +1059,10 @@ template <typename I>
 bool ImageWatcher<I>::handle_payload(const SnapProtectPayload& payload,
                                      C_NotifyAck *ack_ctx) {
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
+
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
       ldout(m_image_ctx.cct, 10) << this << " remote snap_protect request: "
                                  << payload.snap_name << dendl;
@@ -1045,6 +1074,7 @@ bool ImageWatcher<I>::handle_payload(const SnapProtectPayload& payload,
       ::encode(ResponseMessage(r), ack_ctx->out);
     }
   }
+
   return true;
 }
 
@@ -1052,8 +1082,10 @@ template <typename I>
 bool ImageWatcher<I>::handle_payload(const SnapUnprotectPayload& payload,
                                      C_NotifyAck *ack_ctx) {
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
+
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
       ldout(m_image_ctx.cct, 10) << this << " remote snap_unprotect request: "
                                  << payload.snap_name << dendl;
@@ -1065,6 +1097,7 @@ bool ImageWatcher<I>::handle_payload(const SnapUnprotectPayload& payload,
       ::encode(ResponseMessage(r), ack_ctx->out);
     }
   }
+
   return true;
 }
 
@@ -1072,8 +1105,10 @@ template <typename I>
 bool ImageWatcher<I>::handle_payload(const RebuildObjectMapPayload& payload,
                                      C_NotifyAck *ack_ctx) {
   RWLock::RLocker l(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
+
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
       bool new_request;
       Context *ctx;
@@ -1084,6 +1119,7 @@ bool ImageWatcher<I>::handle_payload(const RebuildObjectMapPayload& payload,
         ldout(m_image_ctx.cct, 10) << this
                                    << " remote rebuild object map request: "
                                    << payload.async_request_id << dendl;
+
         m_image_ctx.operations->execute_rebuild_object_map(*prog_ctx, ctx);
       }
 
@@ -1092,6 +1128,7 @@ bool ImageWatcher<I>::handle_payload(const RebuildObjectMapPayload& payload,
       ::encode(ResponseMessage(r), ack_ctx->out);
     }
   }
+
   return true;
 }
 
@@ -1099,8 +1136,10 @@ template <typename I>
 bool ImageWatcher<I>::handle_payload(const RenamePayload& payload,
                                      C_NotifyAck *ack_ctx) {
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
+
     if (m_image_ctx.exclusive_lock->accept_requests(&r)) {
       ldout(m_image_ctx.cct, 10) << this << " remote rename request: "
                                  << payload.image_name << dendl;
@@ -1112,6 +1151,7 @@ bool ImageWatcher<I>::handle_payload(const RenamePayload& payload,
       ::encode(ResponseMessage(r), ack_ctx->out);
     }
   }
+
   return true;
 }
 
@@ -1143,12 +1183,14 @@ template <typename I>
 bool ImageWatcher<I>::handle_payload(const UnknownPayload &payload,
 			             C_NotifyAck *ack_ctx) {
   RWLock::RLocker l(m_image_ctx.owner_lock);
+
   if (m_image_ctx.exclusive_lock != nullptr) {
     int r;
     if (m_image_ctx.exclusive_lock->accept_requests(&r) || r < 0) {
       ::encode(ResponseMessage(-EOPNOTSUPP), ack_ctx->out);
     }
   }
+
   return true;
 }
 
@@ -1314,6 +1356,8 @@ void ImageWatcher<I>::WatchCtx::handle_error(uint64_t handle, int err) {
   image_watcher.handle_error(handle, err);
 }
 
+// called by
+// librbd.cc:Operations.cc:C_NotifyUpdate::finish
 template <typename I>
 void ImageWatcher<I>::RemoteContext::finish(int r) {
   m_image_watcher.schedule_async_complete(m_async_request_id, r);

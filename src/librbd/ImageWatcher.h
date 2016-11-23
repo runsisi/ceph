@@ -138,7 +138,7 @@ private:
     watch_notify::AsyncRequestId m_async_request_id;
   };
 
-  // used by
+  // created by
   // ImageWatcher<I>::prepare_async_request
   class RemoteContext : public Context {
   public:

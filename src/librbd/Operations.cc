@@ -86,6 +86,8 @@ struct C_NotifyUpdate : public Context {
       return;
     }
 
+    // notify first, then to complete the ctx
+
     notified = true;
 
     image_ctx.notify_update(this);
@@ -431,6 +433,7 @@ int Operations<I>::flatten(ProgressContext &prog_ctx) {
   }
 
   uint64_t request_id = ++m_async_request_seq;
+
   r = invoke_async_request("flatten", false,
                            boost::bind(&Operations<I>::execute_flatten, this,
                                        boost::ref(prog_ctx), _1),
@@ -447,6 +450,10 @@ int Operations<I>::flatten(ProgressContext &prog_ctx) {
   return 0;
 }
 
+// called by
+// librbd::Operations<I>::flatten
+// ImageWatcher<I>::handle_payload(const FlattenPayload)
+// librbd/journal/Replay.cc:ExecuteOp::execute(const journal::FlattenEvent)
 template <typename I>
 void Operations<I>::execute_flatten(ProgressContext &prog_ctx,
                                     Context *on_finish) {
@@ -777,6 +784,7 @@ void Operations<I>::execute_resize(uint64_t size, bool allow_shrink, ProgressCon
   } else if (m_image_ctx.test_features(RBD_FEATURE_OBJECT_MAP,
                                        m_image_ctx.snap_lock) &&
              !ObjectMap::is_compatible(m_image_ctx.layout, size)) {
+    // image size too big
     m_image_ctx.snap_lock.put_read();
     on_finish->complete(-EINVAL);
     return;
