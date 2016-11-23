@@ -40,6 +40,8 @@ struct C_CreateSnapId: public Context {
   }
 };
 
+// created by
+// SnapshotCreateRequest<I>::send_release_snap_id
 template <typename ImageCtxT>
 struct C_RemoveSnapId: public Context {
   ImageCtxT &image_ctx;
@@ -58,6 +60,8 @@ struct C_RemoveSnapId: public Context {
 
 } // anonymous namespace
 
+// created by
+// librbd::Operations<I>::execute_snap_create
 template <typename I>
 SnapshotCreateRequest<I>::SnapshotCreateRequest(I &image_ctx,
                                                 Context *on_finish,
@@ -253,6 +257,7 @@ Context *SnapshotCreateRequest<I>::handle_create_snap(int *result) {
   ldout(cct, 5) << this << " " << __func__ << ": r=" << *result << dendl;
 
   if (*result == -ESTALE) {
+    // reallocate a new snap id and continue
     send_allocate_snap_id();
     return nullptr;
   } else if (*result < 0) {
@@ -268,17 +273,25 @@ template <typename I>
 Context *SnapshotCreateRequest<I>::send_create_object_map() {
   I &image_ctx = this->m_image_ctx;
 
+  // update ImageCtx::snaps, ImageCtx::snap_info, ImageCtx::snap_ids,
+  // ImageCtx::snapc and ImageCtx::data_ctx.snapc
   update_snap_context();
 
   image_ctx.snap_lock.get_read();
 
   if (image_ctx.object_map == nullptr || m_skip_object_map) {
+
+    // only rbd::mirror::image_sync::SnapshotCreateRequest<I>::send_snap_create
+    // sets m_skip_object_map to true
+
     image_ctx.snap_lock.put_read();
 
     image_ctx.aio_work_queue->unblock_writes();
 
     return this->create_context_finisher(0);
   }
+
+  // object_map != nullptr && !m_skip_object_map
 
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
@@ -335,12 +348,17 @@ Context *SnapshotCreateRequest<I>::handle_release_snap_id(int *result) {
   ldout(cct, 5) << this << " " << __func__ << ": r=" << *result << dendl;
 
   assert(m_ret_val < 0);
+
   *result = m_ret_val;
 
+  // the io was blocked by SnapshotCreateRequest<I>::send_suspend_aio
   image_ctx.aio_work_queue->unblock_writes();
+
   return this->create_context_finisher(m_ret_val);
 }
 
+// called by
+// SnapshotCreateRequest<I>::send_create_object_map
 template <typename I>
 void SnapshotCreateRequest<I>::update_snap_context() {
   I &image_ctx = this->m_image_ctx;
@@ -363,6 +381,10 @@ void SnapshotCreateRequest<I>::update_snap_context() {
   assert(image_ctx.exclusive_lock == nullptr ||
          image_ctx.exclusive_lock->is_lock_owner());
 
+  // --------------------------------------------------------
+  // to update snapshot related fields, this mimics librbd::image::RefreshRequest<I>::apply
+  // --------------------------------------------------------
+
   // immediately add a reference to the new snapshot
   image_ctx.add_snap(m_snap_name, m_snap_namespace, m_snap_id, m_size, m_parent_info,
                      RBD_PROTECTION_STATUS_UNPROTECTED, 0);
@@ -377,7 +399,7 @@ void SnapshotCreateRequest<I>::update_snap_context() {
   image_ctx.snapc.seq = m_snap_id;
   image_ctx.snapc.snaps.swap(snaps);
 
-  // set IoCtxImpl::snapc
+  // set update librados::IoCtxImpl::snapc
   image_ctx.data_ctx.selfmanaged_snap_set_write_ctx(
     image_ctx.snapc.seq, image_ctx.snaps);
 }

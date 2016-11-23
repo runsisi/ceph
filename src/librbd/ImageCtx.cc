@@ -465,6 +465,17 @@ struct C_InvalidateCache : public Context {
     return CEPH_NOSNAP;
   }
 
+  // called by
+  // librbd::operation::SnapshotCreateRequest::send_read_map
+  // librbd::operation::SnapshotCreateRequest<I>::update_snap_context
+  // ImageCtx::get_snap_name
+  // ImageCtx::get_snap_namespace
+  // ImageCtx::get_parent_spec
+  // ImageCtx::is_snap_protected
+  // ImageCtx::is_snap_unprotected
+  // ImageCtx::get_image_size
+  // ImageCtx::get_flags
+  // ImageCtx::get_parent_info
   const SnapInfo* ImageCtx::get_snap_info(snap_t in_snap_id) const
   {
     assert(snap_lock.is_locked());
@@ -481,11 +492,13 @@ struct C_InvalidateCache : public Context {
 			      string *out_snap_name) const
   {
     assert(snap_lock.is_locked());
+
     const SnapInfo *info = get_snap_info(in_snap_id);
     if (info) {
       *out_snap_name = info->name;
       return 0;
     }
+
     return -ENOENT;
   }
 
@@ -493,11 +506,13 @@ struct C_InvalidateCache : public Context {
 				   cls::rbd::SnapshotNamespace *out_snap_namespace) const
   {
     assert(snap_lock.is_locked());
+
     const SnapInfo *info = get_snap_info(in_snap_id);
     if (info) {
       *out_snap_namespace = info->snap_namespace;
       return 0;
     }
+
     return -ENOENT;
   }
 
@@ -509,6 +524,7 @@ struct C_InvalidateCache : public Context {
       *out_pspec = info->parent.spec;
       return 0;
     }
+
     return -ENOENT;
   }
 
@@ -548,12 +564,14 @@ struct C_InvalidateCache : public Context {
 				  bool *is_protected) const
   {
     assert(snap_lock.is_locked());
+
     const SnapInfo *info = get_snap_info(in_snap_id);
     if (info) {
       *is_protected =
 	(info->protection_status == RBD_PROTECTION_STATUS_PROTECTED);
       return 0;
     }
+
     return -ENOENT;
   }
 
@@ -580,9 +598,12 @@ struct C_InvalidateCache : public Context {
                           uint64_t flags)
   {
     assert(snap_lock.is_wlocked());
+
     snaps.push_back(id);
+
     SnapInfo info(in_snap_name, in_snap_namespace,
 		  in_size, parent, protection_status, flags);
+
     snap_info.insert(pair<snap_t, SnapInfo>(id, info));
     snap_ids.insert(pair<string, snap_t>(in_snap_name, id));
   }
@@ -590,6 +611,7 @@ struct C_InvalidateCache : public Context {
   void ImageCtx::rm_snap(string in_snap_name, snap_t id)
   {
     assert(snap_lock.is_wlocked());
+
     snaps.erase(std::remove(snaps.begin(), snaps.end(), id), snaps.end());
     snap_info.erase(id);
     snap_ids.erase(in_snap_name);
@@ -615,6 +637,7 @@ struct C_InvalidateCache : public Context {
     if (info) {
       return info->size;
     }
+
     return 0;
   }
 
@@ -629,6 +652,7 @@ struct C_InvalidateCache : public Context {
   bool ImageCtx::test_features(uint64_t features) const
   {
     RWLock::RLocker l(snap_lock);
+
     return test_features(features, snap_lock);
   }
 
@@ -643,27 +667,32 @@ struct C_InvalidateCache : public Context {
   int ImageCtx::get_flags(librados::snap_t _snap_id, uint64_t *_flags) const
   {
     assert(snap_lock.is_locked());
+
     if (_snap_id == CEPH_NOSNAP) {
       *_flags = flags;
       return 0;
     }
+
     const SnapInfo *info = get_snap_info(_snap_id);
     if (info) {
       *_flags = info->flags;
       return 0;
     }
+
     return -ENOENT;
   }
 
   bool ImageCtx::test_flags(uint64_t flags) const
   {
     RWLock::RLocker l(snap_lock);
+
     return test_flags(flags, snap_lock);
   }
 
   bool ImageCtx::test_flags(uint64_t flags, const RWLock &in_snap_lock) const
   {
     assert(snap_lock.is_locked());
+
     uint64_t snap_flags;
     get_flags(snap_id, &snap_flags);
     return ((snap_flags & flags) == flags);
@@ -695,6 +724,12 @@ struct C_InvalidateCache : public Context {
     return 0;
   }
 
+  // called by
+  // librbd::image::SetSnapRequest<I>::send_refresh_parent
+  // ImageCtx::get_parent_pool_id
+  // ImageCtx::get_parent_image_id
+  // ImageCtx::get_parent_snap_id
+  // ImageCtx::get_parent_overlap
   const parent_info* ImageCtx::get_parent_info(snap_t in_snap_id) const
   {
     assert(snap_lock.is_locked());
@@ -703,7 +738,7 @@ struct C_InvalidateCache : public Context {
     if (in_snap_id == CEPH_NOSNAP)
       return &parent_md;
 
-    // find SnapInfo from ImageCtx::snap_info, see
+    // find the specfied SnapInfo from ImageCtx::snap_info, see
     // librbd::image::RefreshRequest<I>::apply
     const SnapInfo *info = get_snap_info(in_snap_id);
     if (info)
@@ -717,6 +752,7 @@ struct C_InvalidateCache : public Context {
     const parent_info *info = get_parent_info(in_snap_id);
     if (info)
       return info->spec.pool_id;
+
     return -1;
   }
 
@@ -725,6 +761,7 @@ struct C_InvalidateCache : public Context {
     const parent_info *info = get_parent_info(in_snap_id);
     if (info)
       return info->spec.image_id;
+
     return "";
   }
 
@@ -733,9 +770,18 @@ struct C_InvalidateCache : public Context {
     const parent_info *info = get_parent_info(in_snap_id);
     if (info)
       return info->spec.snap_id;
+
     return CEPH_NOSNAP;
   }
 
+  // called by
+  // librbd::operation::TrimRequest<I>::send_pre_copyup
+  // AioObjectRequest<I>::compute_parent_extents
+  // AioObjectRead<I>::should_complete
+  // DiffIterate::execute
+  // librbd::get_overlap
+  // LibrbdWriteback::may_copy_on_write
+  // librbd::Operations<I>::execute_flatten
   int ImageCtx::get_parent_overlap(snap_t in_snap_id, uint64_t *overlap) const
   {
     assert(snap_lock.is_locked());
@@ -890,6 +936,10 @@ struct C_InvalidateCache : public Context {
     image_watcher->register_watch(on_finish);
   }
 
+  // called by
+  // AioObjectRequest<I>::compute_parent_extents
+  // AioObjectRead<I>::should_complete
+  // LibrbdWriteback::may_copy_on_write
   uint64_t ImageCtx::prune_parent_extents(vector<pair<uint64_t,uint64_t> >& objectx,
 					  uint64_t overlap)
   {
@@ -906,6 +956,7 @@ struct C_InvalidateCache : public Context {
 	 p != objectx.end();
 	 ++p)
       len += p->second;
+
     ldout(cct, 10) << "prune_parent_extents image overlap " << overlap
 		   << ", object overlap " << len
 		   << " from image extents " << objectx << dendl;

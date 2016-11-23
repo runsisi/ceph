@@ -118,6 +118,9 @@ bool AioObjectRequest<I>::compute_parent_extents() {
   uint64_t parent_overlap;
   int r = m_ictx->get_parent_overlap(m_snap_id, &parent_overlap);
   if (r < 0) {
+
+    // r == -ENOENT, no parent found
+
     // NOTE: it's possible for a snapshot to be deleted while we are
     // still reading from it
     lderr(m_ictx->cct) << this << " compute_parent_extents: failed to "
@@ -369,6 +372,7 @@ template <typename I>
 void AioObjectRead<I>::read_from_parent(Extents&& parent_extents)
 {
   ImageCtx *image_ctx = this->m_ictx;
+
   AioCompletion *parent_completion = AioCompletion::create_and_start<
     AioObjectRequest<I> >(this, image_ctx, AIO_TYPE_READ);
 
@@ -376,6 +380,7 @@ void AioObjectRead<I>::read_from_parent(Extents&& parent_extents)
                             << " parent completion " << parent_completion
                             << " extents " << parent_extents
                             << dendl;
+
   AioImageRequest<>::aio_read(image_ctx->parent, parent_completion,
                               std::move(parent_extents), nullptr, &m_read_data,
                               0);

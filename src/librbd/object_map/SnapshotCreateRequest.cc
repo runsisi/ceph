@@ -38,7 +38,7 @@ std::ostream& operator<<(std::ostream& os,
 
 } // anonymous namespace
 
-// created by
+// called by
 // librbd::ObjectMap::snapshot_add
 void SnapshotCreateRequest::send() {
   send_read_map();

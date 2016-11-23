@@ -852,8 +852,10 @@ void Operations<I>::snap_create(const char *snap_name,
 }
 
 // called by
-// librbd::Operations<I>::snap_create, always has journal_op_tid set to zero
-// librbd::ExecuteOp::execute(journal::SnapCreateEvent), which has journal_op_tid set to non-zero
+// librbd/journal/Replay.cc:ExecuteOp::execute(const journal::SnapCreateEvent), with journal_op_tid set to non-zero
+// ImageWatcher<I>::handle_payload(const SnapCreatePayload)
+// librbd::Operations<I>::snap_create
+// rbd::mirror::image_sync::SnapshotCreateRequest<I>::send_snap_create, with skip_object_map set to true
 template <typename I>
 void Operations<I>::execute_snap_create(const std::string &snap_name,
 					const cls::rbd::SnapshotNamespace &snap_namespace,

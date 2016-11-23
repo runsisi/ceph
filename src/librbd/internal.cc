@@ -1356,6 +1356,9 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     return ictx->get_parent_overlap(ictx->snap_id, overlap);
   }
 
+  // called by
+  // librbd::Image::parent_info
+  // rbd_get_parent_info
   int get_parent_info(ImageCtx *ictx, string *parent_pool_name,
 		      string *parent_name, string *parent_snap_name)
   {

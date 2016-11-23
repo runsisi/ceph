@@ -450,10 +450,11 @@ void SnapshotCopyRequest<I>::send_snap_create() {
     SnapshotCopyRequest<I>, &SnapshotCopyRequest<I>::handle_snap_create>(
       this);
 
-  // use the SnapshotCreateRequest under rbd_mirror/image_sync/, craete
+  // use the SnapshotCreateRequest under rbd_mirror/image_sync/, create
   // a local snapshot which has the same name as the remote peer
   SnapshotCreateRequest<I> *req = SnapshotCreateRequest<I>::create(
     m_local_image_ctx, m_snap_name, m_snap_namespace, size, parent_spec, parent_overlap, ctx);
+
   req->send();
 }
 

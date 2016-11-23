@@ -202,6 +202,10 @@ void SnapshotCreateRequest<I>::send_snap_create() {
       this);
 
   RWLock::RLocker owner_locker(m_local_image_ctx->owner_lock);
+
+  // the last parameter skip_object_map is true, so
+  // librbd::operation::SnapshotCreateRequest<I>::send_create_object_map will
+  // not to add a snapshot for the object_map
   m_local_image_ctx->operations->execute_snap_create(m_snap_name.c_str(),
 						     m_snap_namespace,
 						     ctx,
@@ -246,6 +250,7 @@ void SnapshotCreateRequest<I>::send_create_object_map() {
 
   std::string object_map_oid(librbd::ObjectMap::object_map_name(
     m_local_image_ctx->id, local_snap_id));
+
   uint64_t object_count = Striper::get_num_objects(m_local_image_ctx->layout,
                                                    m_size);
   dout(20) << ": "

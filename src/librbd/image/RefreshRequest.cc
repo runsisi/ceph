@@ -531,7 +531,9 @@ void RefreshRequest<I>::send_v2_refresh_parent() {
 
     // <parent_spec, overlap>
     parent_info parent_md;
-    // get parent info of this image(maybe snapshot of the image)
+    // get parent info of this image(maybe snapshot of the image), the
+    // m_snap_parents were just got by RefreshRequest<I>::handle_v2_get_snapshots,
+    // so we can not use ImageCtx::get_parent_info instead
     int r = get_parent_info(m_image_ctx.snap_id, &parent_md);
     if (r < 0 ||
         RefreshParentRequest<I>::is_refresh_required(m_image_ctx, parent_md)) {
@@ -1159,7 +1161,7 @@ void RefreshRequest<I>::apply() {
 
     for (size_t i = 0; i < m_snapc.snaps.size(); ++i) {
 
-      // check if new snapshot added
+      // check if there is new snapshot added
 
       std::vector<librados::snap_t>::const_iterator it = std::find(
         m_image_ctx.snaps.begin(), m_image_ctx.snaps.end(),
@@ -1190,6 +1192,7 @@ void RefreshRequest<I>::apply() {
         m_snap_protection[i];
 
       parent_info parent;
+
       if (!m_image_ctx.old_format) {
         parent = m_snap_parents[i];
       }
@@ -1213,13 +1216,15 @@ void RefreshRequest<I>::apply() {
     // --------------------------------------------------------
     // to update m_image_ctx.parent
     // --------------------------------------------------------
+
     if (m_refresh_parent != nullptr) {
       m_refresh_parent->apply();
     }
 
     // --------------------------------------------------------
-    // to update m_image_ctx.snapc
+    // to update librados::IoCtxImpl::snapc
     // --------------------------------------------------------
+
     m_image_ctx.data_ctx.selfmanaged_snap_set_write_ctx(m_image_ctx.snapc.seq,
                                                         m_image_ctx.snaps);
 
@@ -1290,6 +1295,8 @@ int RefreshRequest<I>::get_parent_info(uint64_t snap_id,
   } else {
     for (size_t i = 0; i < m_snapc.snaps.size(); ++i) {
       if (m_snapc.snaps[i].val == snap_id) {
+        // the m_snap_parents were just got by RefreshRequest<I>::handle_v2_get_snapshots,
+        // so we can not use ImageCtx::get_parent_info instead
         *parent_md = m_snap_parents[i];
         return 0;
       }
