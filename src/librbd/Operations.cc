@@ -995,6 +995,9 @@ void Operations<I>::execute_snap_rollback(const std::string &snap_name,
   request->send();
 }
 
+// called by
+// librbd::snap_remove
+// rbd::mirror::ImageDeleter::process_image_delete
 template <typename I>
 int Operations<I>::snap_remove(const char *snap_name) {
   if (m_image_ctx.read_only) {
@@ -1018,6 +1021,10 @@ int Operations<I>::snap_remove(const char *snap_name) {
   return 0;
 }
 
+// called by
+// librbd::snap_remove
+// librbd::Operations<I>::snap_remove(const char *snap_name)
+// rbd::mirror::mirror_sync::SyncPointPruneRequest<I>::send_remove_snap
 template <typename I>
 void Operations<I>::snap_remove(const char *snap_name, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;

@@ -336,13 +336,16 @@ bool CopyupRequest::send_object_map() {
     m_state = STATE_OBJECT_MAP;
 
     RWLock::RLocker owner_locker(m_ictx->owner_lock);
+
     AsyncObjectThrottle<>::ContextFactory context_factory(
       boost::lambda::bind(boost::lambda::new_ptr<UpdateObjectMap>(),
       boost::lambda::_1, m_ictx, m_object_no, &m_snap_ids,
       boost::lambda::_2));
+
     AsyncObjectThrottle<> *throttle = new AsyncObjectThrottle<>(
       NULL, *m_ictx, context_factory, util::create_context_callback(this),
       NULL, 0, m_snap_ids.size());
+
     throttle->start_ops(m_ictx->concurrent_management_ops);
   }
   return false;

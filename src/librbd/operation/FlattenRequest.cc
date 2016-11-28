@@ -117,6 +117,7 @@ void FlattenRequest<I>::send_op() {
     boost::lambda::bind(boost::lambda::new_ptr<C_FlattenObject<I> >(),
       boost::lambda::_1, &image_ctx, m_object_size, m_snapc,
       boost::lambda::_2));
+
   AsyncObjectThrottle<I> *throttle = new AsyncObjectThrottle<I>(
     this, image_ctx, context_factory, this->create_callback_context(), &m_prog_ctx,
     0, m_overlap_objects);

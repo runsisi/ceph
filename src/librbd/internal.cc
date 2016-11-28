@@ -267,10 +267,15 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 	   ictx->exclusive_lock->is_lock_owner());
 
     C_SaferCond ctx;
+
+    // ImageCtx::size is protected by ImageCtx::snap_lock, see ImageCtx::get_current_size
     ictx->snap_lock.get_read();
+
     operation::TrimRequest<> *req = operation::TrimRequest<>::create(
       *ictx, &ctx, ictx->size, newsize, prog_ctx);
+
     ictx->snap_lock.put_read();
+
     req->send();
 
     int r = ctx.wait();
@@ -1567,6 +1572,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       name = ictx->name;
       id = ictx->id;
 
+      // check exclusive_lock
+
       ictx->owner_lock.get_read();
 
       if (ictx->exclusive_lock != nullptr) {
@@ -1605,6 +1612,10 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
         }
       }
 
+      // check snapshots
+      // check watchers
+      // check consistency group
+
       if (ictx->snaps.size()) {
 	lderr(cct) << "image has snapshots - not removing" << dendl;
 	ictx->owner_lock.put_read();
@@ -1642,6 +1653,11 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 	return -EMLINK;
       }
 
+      // trim image
+      // remove from RBD_CHILDREN
+      // disable mirroring
+      // close image
+
       trim_image(ictx, 0, prog_ctx);
 
       ictx->parent_lock.get_read();
@@ -1675,6 +1691,8 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
       ictx->state->close();
 
+      // remove "rbd_header.xxx" object
+
       ldout(cct, 2) << "removing header..." << dendl;
 
       r = io_ctx.remove(header_oid);
@@ -1689,11 +1707,16 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
       r = tmap_rm(io_ctx, name);
 
+      // if removing from v1 directory succeeded, then the image is
+      // old format, so even if our opening image failed, we can still
+      // determine the image format by this operation
       old_format = (r == 0);
 
       if (r < 0 && !unknown_format) {
 
-        // open ImageCtx succeeded, it is old format, and we remove it failed
+        // !unknown_format, so our opening ImageCtx succeeded
+        // we are here, so the image is old format
+        // but our removing from v1 directory failed
 
         if (r != -ENOENT) {
           lderr(cct) << "error removing image from v1 directory: "
@@ -1705,6 +1728,13 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     }
 
     if (!old_format) {
+
+      // remove journaling objects
+      // remove object_map objects
+      // remove from RBD_MIRRORING
+      // remove "rbd_id.xxx" object
+      // remove from RBD_DIRECTORY
+
       if (id.empty()) {
         ldout(cct, 5) << "attempting to determine image id" << dendl;
 
@@ -1756,6 +1786,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 
       ldout(cct, 2) << "removing id object..." << dendl;
 
+      // "rbd_id." + name
       r = io_ctx.remove(util::id_obj_name(name));
       if (r < 0 && r != -ENOENT) {
 	lderr(cct) << "error removing id object: " << cpp_strerror(r)
@@ -1814,6 +1845,11 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
     return 0;
   }
 
+  // called by
+  // Image::snap_remove
+  // Image::snap_remove2
+  // rbd_snap_remove
+  // rbd_snap_remove2
   int snap_remove(ImageCtx *ictx, const char *snap_name, uint32_t flags, ProgressContext& pctx)
   {
     ldout(ictx->cct, 20) << "snap_remove " << ictx << " " << snap_name << " flags: " << flags << dendl;

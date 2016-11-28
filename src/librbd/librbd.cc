@@ -394,6 +394,8 @@ namespace librbd {
     return r;
   }
 
+  // called by
+  // rbd::action::remove::do_delete
   int RBD::remove_with_progress(IoCtx& io_ctx, const char *name,
 				ProgressContext& pctx)
   {
@@ -1056,6 +1058,8 @@ namespace librbd {
     return r;
   }
 
+  // called by
+  // rbd::action::snap::do_purge_snaps
   int Image::snap_remove(const char *snap_name)
   {
     ImageCtx *ictx = (ImageCtx *)ctx;
@@ -1066,6 +1070,8 @@ namespace librbd {
     return r;
   }
 
+  // called by
+  // rbd::action::snap::do_remove_snap
   int Image::snap_remove2(const char *snap_name, uint32_t flags, ProgressContext& pctx)
   {
     ImageCtx *ictx = (ImageCtx *)ctx;

@@ -266,7 +266,8 @@ void Journaler::create(uint8_t order, uint8_t splay_width,
   comp->release();
 }
 
-// called by journal::RemoveRequest<I>::remove_journal
+// called by
+// journal::RemoveRequest<I>::remove_journal
 void Journaler::remove(bool force, Context *on_finish) {
   // chain journal removal (reverse order)
   on_finish = new FunctionContext([this, on_finish](int r) {

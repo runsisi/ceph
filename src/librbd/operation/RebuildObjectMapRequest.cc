@@ -139,7 +139,9 @@ void RebuildObjectMapRequest<I>::send_trim_image() {
   // should have been canceled prior to releasing lock
   assert(m_image_ctx.exclusive_lock == nullptr ||
          m_image_ctx.exclusive_lock->is_lock_owner());
+
   ldout(cct, 5) << this << " send_trim_image" << dendl;
+
   m_state = STATE_TRIM_IMAGE;
 
   uint64_t new_size;

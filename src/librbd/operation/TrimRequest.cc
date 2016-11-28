@@ -38,16 +38,20 @@ public:
 
   virtual int send() {
     I &image_ctx = this->m_image_ctx;
+
     assert(image_ctx.owner_lock.is_locked());
     assert(image_ctx.exclusive_lock == nullptr ||
            image_ctx.exclusive_lock->is_lock_owner());
 
     string oid = image_ctx.get_object_name(m_object_no);
+
     ldout(image_ctx.cct, 10) << "removing (with copyup) " << oid << dendl;
 
     AioObjectRequest<> *req = new AioObjectTrim(&image_ctx, oid, m_object_no,
                                                 m_snapc, this, false);
+
     req->send();
+
     return 0;
   }
 private:
@@ -105,6 +109,7 @@ TrimRequest<I>::TrimRequest(I &image_ctx, Context *on_finish,
 {
   uint64_t period = image_ctx.get_stripe_period();
   uint64_t new_num_periods = ((m_new_size + period - 1) / period);
+
   m_delete_off = MIN(new_num_periods * period, original_size);
   // first object we can delete free and clear
   m_delete_start = new_num_periods * image_ctx.get_stripe_count();
@@ -211,12 +216,15 @@ void TrimRequest<I>::send_copyup_objects() {
   }
 
   Context *ctx = this->create_callback_context();
+
   typename AsyncObjectThrottle<I>::ContextFactory context_factory(
     boost::lambda::bind(boost::lambda::new_ptr<C_CopyupObject<I> >(),
       boost::lambda::_1, &image_ctx, snapc, boost::lambda::_2));
+
   AsyncObjectThrottle<I> *throttle = new AsyncObjectThrottle<I>(
     this, image_ctx, context_factory, ctx, &m_prog_ctx, m_copyup_start,
     m_copyup_end);
+
   throttle->start_ops(image_ctx.concurrent_management_ops);
 }
 
@@ -233,9 +241,11 @@ void TrimRequest<I>::send_remove_objects() {
   m_state = STATE_REMOVE_OBJECTS;
 
   Context *ctx = this->create_callback_context();
+
   typename AsyncObjectThrottle<I>::ContextFactory context_factory(
     boost::lambda::bind(boost::lambda::new_ptr<C_RemoveObject<I> >(),
       boost::lambda::_1, &image_ctx, boost::lambda::_2));
+
   AsyncObjectThrottle<I> *throttle = new AsyncObjectThrottle<I>(
     this, image_ctx, context_factory, ctx, &m_prog_ctx, m_delete_start,
     m_num_objects);
@@ -316,6 +326,7 @@ void TrimRequest<I>::send_pre_copyup() {
 template <typename I>
 void TrimRequest<I>::send_pre_remove() {
   I &image_ctx = this->m_image_ctx;
+
   assert(image_ctx.owner_lock.is_locked());
   if (m_delete_start >= m_num_objects) {
     send_clean_boundary();
@@ -323,8 +334,10 @@ void TrimRequest<I>::send_pre_remove() {
   }
 
   bool remove_objects = false;
+
   {
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
+
     if (image_ctx.object_map == nullptr) {
       remove_objects = true;
     } else {

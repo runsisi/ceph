@@ -23,6 +23,14 @@ AsyncObjectThrottle<T>::AsyncObjectThrottle(
 {
 }
 
+// called by
+// librbd::operation::FlattenRequest<I>::send_op
+// librbd::operation::ObjectMapIterateRequest<I>::send_verify_objects
+// librbd::operation::SnapshotRollbackRequest<I>::send_rollback_objects
+// librbd::operation::SnapshotUnprotectRequest<I>::send_scan_pool_children
+// librbd::operation::TrimRequest<I>::send_copyup_objects
+// librbd::operation::TrimRequest<I>::send_remove_objects
+// librbd::CopyupRequest::send_object_map
 template <typename T>
 void AsyncObjectThrottle<T>::start_ops(uint64_t max_concurrent) {
   assert(m_image_ctx.owner_lock.is_locked());
@@ -34,6 +42,7 @@ void AsyncObjectThrottle<T>::start_ops(uint64_t max_concurrent) {
 
     for (uint64_t i = 0; i < max_concurrent; ++i) {
       start_next_op();
+
       if (m_ret < 0 && m_current_ops == 0) {
 	break;
       }
@@ -45,6 +54,7 @@ void AsyncObjectThrottle<T>::start_ops(uint64_t max_concurrent) {
   if (complete) {
     // avoid re-entrant callback
     m_image_ctx.op_work_queue->queue(m_ctx, m_ret);
+
     delete this;
   }
 }
@@ -52,17 +62,22 @@ void AsyncObjectThrottle<T>::start_ops(uint64_t max_concurrent) {
 template <typename T>
 void AsyncObjectThrottle<T>::finish_op(int r) {
   bool complete;
+
   {
     RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
     Mutex::Locker locker(m_lock);
+
     --m_current_ops;
+
     if (r < 0 && r != -ENOENT && m_ret == 0) {
       m_ret = r;
     }
 
     start_next_op();
+
     complete = (m_current_ops == 0);
   }
+
   if (complete) {
     m_ctx->complete(m_ret);
     delete this;
@@ -96,7 +111,11 @@ void AsyncObjectThrottle<T>::start_next_op() {
       // op completed immediately
       delete ctx;
     } else {
+
+      // r == 0, the op is in-flight
+
       ++m_current_ops;
+
       done = true;
     }
 

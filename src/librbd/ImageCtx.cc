@@ -531,6 +531,7 @@ struct C_InvalidateCache : public Context {
   uint64_t ImageCtx::get_current_size() const
   {
     assert(snap_lock.is_locked());
+
     return size;
   }
 
