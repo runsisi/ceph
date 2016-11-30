@@ -2987,6 +2987,7 @@ void OSDMonitor::tick()
 	  dout(10) << "tick marking osd." << o << " OUT after " << down
 		   << " sec (target " << grace << " = " << orig_grace << " + " << my_grace << ")" << dendl;
 
+	  // set the new weight to 0
 	  pending_inc.new_weight[o] = CEPH_OSD_OUT;
 
 	  // set the AUTOOUT bit.

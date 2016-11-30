@@ -145,8 +145,12 @@ bool AioObjectRequest<I>::compute_parent_extents() {
   return false;
 }
 
+// called by
+// AioObjectRead<I>::should_complete
 static inline bool is_copy_on_read(ImageCtx *ictx, librados::snap_t snap_id) {
   assert(ictx->snap_lock.is_locked());
+
+  // rbd_clone_copy_on_read default false
   return (ictx->clone_copy_on_read &&
           !ictx->read_only && snap_id == CEPH_NOSNAP &&
           (ictx->exclusive_lock == nullptr ||

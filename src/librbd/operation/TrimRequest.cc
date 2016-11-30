@@ -198,6 +198,9 @@ void TrimRequest<I>::send() {
   send_pre_copyup();
 }
 
+// called by
+// TrimRequest<I>::should_complete
+// TrimRequest<I>::send_pre_copyup
 template<typename I>
 void TrimRequest<I>::send_copyup_objects() {
   I &image_ctx = this->m_image_ctx;
@@ -257,6 +260,8 @@ void TrimRequest<I>::send_remove_objects() {
   throttle->start_ops(image_ctx.concurrent_management_ops);
 }
 
+// called by
+// TrimRequest<I>::send
 template<typename I>
 void TrimRequest<I>::send_pre_copyup() {
   I &image_ctx = this->m_image_ctx;
@@ -332,6 +337,7 @@ void TrimRequest<I>::send_pre_remove() {
   I &image_ctx = this->m_image_ctx;
 
   assert(image_ctx.owner_lock.is_locked());
+
   if (m_delete_start >= m_num_objects) {
     send_clean_boundary();
     return;
@@ -354,7 +360,9 @@ void TrimRequest<I>::send_pre_remove() {
 
       // flag the objects as pending deletion
       Context *ctx = this->create_callback_context();
+
       RWLock::WLocker object_map_locker(image_ctx.object_map_lock);
+
       if (!image_ctx.object_map->aio_update(m_delete_start, m_num_objects,
 					    OBJECT_PENDING, OBJECT_EXISTS,
                                             ctx)) {
