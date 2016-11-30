@@ -26,6 +26,8 @@
 namespace librbd {
 namespace operation {
 
+// created by
+// TrimRequest<I>::send_copyup_objects
 template <typename I>
 class C_CopyupObject : public C_AsyncObjectThrottle<I> {
 public:
@@ -59,6 +61,8 @@ private:
   uint64_t m_object_no;
 };
 
+// created by
+// TrimRequest<I>::send_remove_objects
 template <typename I>
 class C_RemoveObject : public C_AsyncObjectThrottle<I> {
 public:

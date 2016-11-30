@@ -80,6 +80,7 @@ public:
   virtual void send() = 0;
 
   bool has_parent() const {
+    // was computed by AioObjectRequest<I>::compute_parent_extents
     return !m_parent_extents.empty();
   }
 
@@ -172,6 +173,12 @@ private:
   void read_from_parent(Extents&& image_extents);
 };
 
+// derived by
+// AioObjectWrite
+// AioObjectRemove
+// AioObjectTrim
+// AioObjectTruncate
+// AioObjectZero
 class AbstractAioObjectWrite : public AioObjectRequest<> {
 public:
   AbstractAioObjectWrite(ImageCtx *ictx, const std::string &oid,
