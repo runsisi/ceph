@@ -256,13 +256,10 @@ void ObjectMap::aio_resize(uint64_t new_size, uint8_t default_object_state,
 }
 
 // called by
-// librbd::operation::TrimRequest<I>::send_pre_copyup
-// librbd::operation::TrimRequest<I>::send_pre_remove
-// librbd::operation::TrimRequest<I>::send_post_copyup
-// librbd::operation::TrimRequest<I>::send_post_remove
+
 // librbd::AbstractAioObjectWrite::send_pre
 // librbd::AbstractAioObjectWrite::send_post
-// CopyupRequest.cc:UpdateObjectMap::send
+// librbd/CopyupRequest.cc:UpdateObjectMap::send
 // rbd::mirror::image_sync::ObjectCopyRequest<I>::send_update_object_map
 bool ObjectMap::aio_update(uint64_t object_no, uint8_t new_state,
 			   const boost::optional<uint8_t> &current_state,
@@ -272,6 +269,12 @@ bool ObjectMap::aio_update(uint64_t object_no, uint8_t new_state,
 		    on_finish);
 }
 
+// called by
+// ObjectMap::aio_update
+// librbd::operation::TrimRequest<I>::send_pre_copyup
+// librbd::operation::TrimRequest<I>::send_post_copyup
+// librbd::operation::TrimRequest<I>::send_pre_remove
+// librbd::operation::TrimRequest<I>::send_post_remove
 bool ObjectMap::aio_update(uint64_t start_object_no, uint64_t end_object_no,
 			   uint8_t new_state,
                            const boost::optional<uint8_t> &current_state,

@@ -1358,6 +1358,7 @@ int get_snapcontext(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   int r;
   int max_read = RBD_MAX_KEYS_READ;
   vector<snapid_t> snap_ids;
+  // "snapshot_"
   string last_read = RBD_SNAP_KEY_PREFIX;
 
   do {
@@ -1370,9 +1371,12 @@ int get_snapcontext(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 	 it != keys.end(); ++it) {
       if ((*it).find(RBD_SNAP_KEY_PREFIX) != 0)
 	break;
+
       snapid_t snap_id = snap_id_from_key(*it);
+
       snap_ids.push_back(snap_id);
     }
+
     if (!keys.empty())
       last_read = *(keys.rbegin());
   } while (r == max_read);
@@ -1608,6 +1612,7 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 	::decode(old_meta, iter);
       } catch (const buffer::error &err) {
 	snapid_t snap_id = snap_id_from_key(it->first);
+
 	CLS_ERR("error decoding snapshot metadata for snap_id: %llu",
 	        (unsigned long long)snap_id.val);
 	return -EIO;
@@ -1619,6 +1624,7 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 	CLS_LOG(20, "snap_name %s or snap_id %llu matches existing snap %s %llu",
 		snap_meta.name.c_str(), (unsigned long long)snap_meta.id.val,
 		old_meta.name.c_str(), (unsigned long long)old_meta.id.val);
+
 	return -EEXIST;
       }
     }

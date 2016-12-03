@@ -36,6 +36,7 @@ bool RefreshParentRequest<I>::is_refresh_required(I &child_image_ctx,
                                                   const parent_info &parent_md) {
   assert(child_image_ctx.snap_lock.is_locked());
   assert(child_image_ctx.parent_lock.is_locked());
+
   return (is_open_required(child_image_ctx, parent_md) ||
           is_close_required(child_image_ctx, parent_md));
 }

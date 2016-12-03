@@ -354,6 +354,7 @@ void TrimRequest<I>::send_pre_remove() {
       ldout(image_ctx.cct, 5) << this << " send_pre_remove: "
 				<< " delete_start=" << m_delete_start
 				<< " num_objects=" << m_num_objects << dendl;
+
       m_state = STATE_PRE_REMOVE;
 
       assert(image_ctx.exclusive_lock->is_lock_owner());
@@ -425,6 +426,7 @@ void TrimRequest<I>::send_post_remove() {
   assert(image_ctx.owner_lock.is_locked());
 
   bool clean_boundary = false;
+
   {
     RWLock::RLocker snap_locker(image_ctx.snap_lock);
 

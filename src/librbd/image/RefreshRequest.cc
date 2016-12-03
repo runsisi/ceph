@@ -443,6 +443,7 @@ Context *RefreshRequest<I>::handle_v2_get_snapshots(int *result) {
 
   if (*result == 0) {
     bufferlist::iterator it = m_out_bl.begin();
+
     *result = cls_client::snapshot_list_finish(&it, m_snapc.snaps,
                                                &m_snap_names,
 					       &m_snap_sizes,

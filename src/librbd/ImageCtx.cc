@@ -592,6 +592,9 @@ struct C_InvalidateCache : public Context {
     return -ENOENT;
   }
 
+  // called by
+  // librbd::image::RefreshRequest<I>::apply
+  // librbd::operation::SnapshotCreateRequest<I>::update_snap_context
   void ImageCtx::add_snap(string in_snap_name,
 			  cls::rbd::SnapshotNamespace in_snap_namespace,
 			  snap_t id, uint64_t in_size,
