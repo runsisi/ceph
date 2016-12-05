@@ -634,7 +634,9 @@ void OSDService::promote_throttle_recalibrate()
   unsigned min_prob = 1;
 
   uint64_t attempts, obj, bytes;
+
   promote_counter.sample_and_attenuate(&attempts, &obj, &bytes);
+
   dout(10) << __func__ << " " << attempts << " attempts, promoted "
 	   << obj << " objects and " << pretty_si_t(bytes) << " bytes; target "
 	   << target_obj_sec << " obj/sec or "
@@ -643,15 +645,20 @@ void OSDService::promote_throttle_recalibrate()
 
   // calculate what the probability *should* be, given the targets
   unsigned new_prob;
+
   if (attempts && dur > 0) {
     uint64_t avg_size = 1;
+
     if (obj)
       avg_size = MAX(bytes / obj, 1);
+
     unsigned po = (double)target_obj_sec * dur * 1000.0 / (double)attempts;
     unsigned pb = (double)target_bytes_sec / (double)avg_size * dur * 1000.0
       / (double)attempts;
+
     dout(20) << __func__ << "  po " << po << " pb " << pb << " avg_size "
 	     << avg_size << dendl;
+
     if (target_obj_sec && target_bytes_sec)
       new_prob = MIN(po, pb);
     else if (target_obj_sec)
@@ -663,6 +670,7 @@ void OSDService::promote_throttle_recalibrate()
   } else {
     new_prob = 1000;
   }
+
   dout(20) << __func__ << "  new_prob " << new_prob << dendl;
 
   // correct for persistent skew between target rate and actual rate, adjust
@@ -680,11 +688,13 @@ void OSDService::promote_throttle_recalibrate()
   prob = (prob + new_prob) / 2;
   prob = MAX(prob, min_prob);
   prob = MIN(prob, 1000);
+
   dout(10) << __func__ << "  actual " << actual
 	   << ", actual/prob ratio " << ratio
 	   << ", adjusted new_prob " << new_prob
 	   << ", prob " << promote_probability_millis << " -> " << prob
 	   << dendl;
+
   promote_probability_millis = prob;
 
   // set hard limits for this interval to mitigate stampedes
@@ -4558,6 +4568,7 @@ void OSD::tick_without_osd_lock()
     if (!scrub_random_backoff()) {
       sched_scrub();
     }
+
     service.promote_throttle_recalibrate();
   }
 
@@ -4933,13 +4944,17 @@ void OSD::ms_handle_fast_accept(Connection *con)
 bool OSD::ms_handle_reset(Connection *con)
 {
   OSD::Session *session = (OSD::Session *)con->get_priv();
+
   dout(1) << "ms_handle_reset con " << con << " session " << session << dendl;
+
   if (!session)
     return false;
+
   session->wstate.reset(con);
   session->con.reset(NULL);  // break con <-> session ref cycle
   session_handle_reset(session);
   session->put();
+
   return true;
 }
 
@@ -6052,10 +6067,16 @@ bool OSD::ms_dispatch(Message *m)
   return true;
 }
 
+// called by
+// OSD::ms_fast_dispatch
+// OSD::dispatch_sessions_waiting_on_map
+// OSD::wake_pg_waiters
 void OSD::dispatch_session_waiting(Session *session, OSDMapRef osdmap)
 {
   assert(session->session_dispatch_lock.is_locked());
+
   assert(session->osdmap == osdmap);
+
   for (list<OpRequestRef>::iterator i = session->waiting_on_map.begin();
        i != session->waiting_on_map.end() && dispatch_op_fast(*i, osdmap);
        session->waiting_on_map.erase(i++));
@@ -6065,6 +6086,7 @@ void OSD::dispatch_session_waiting(Session *session, OSDMapRef osdmap)
   } else {
     register_session_waiting_on_map(session);
   }
+
   session->maybe_reset_osdmap();
 }
 
@@ -6148,6 +6170,8 @@ void OSD::session_notify_pg_cleared(
   clear_session_waiting_on_pg(session, pgid);
 }
 
+// called by
+// Messenger::ms_fast_dispatch
 void OSD::ms_fast_dispatch(Message *m)
 {
   if (service.is_stopping()) {
@@ -6168,6 +6192,7 @@ void OSD::ms_fast_dispatch(Message *m)
   OSDMapRef nextmap = service.get_nextmap_reserved();
 
   Session *session = static_cast<Session*>(m->get_connection()->get_priv());
+
   if (session) {
     {
       Mutex::Locker l(session->session_dispatch_lock);
@@ -6175,6 +6200,7 @@ void OSD::ms_fast_dispatch(Message *m)
       update_waiting_for_pg(session, nextmap);
 
       session->waiting_on_map.push_back(op);
+
       dispatch_session_waiting(session, nextmap);
     }
 
@@ -6425,13 +6451,18 @@ bool OSD::dispatch_op_fast(OpRequestRef& op, OSDMapRef& osdmap)
 				       get_connection()->get_priv());
     if (s) {
       s->received_map_lock.lock();
+
       epoch_t received_epoch = s->received_map_epoch;
+
       s->received_map_lock.unlock();
+
       if (received_epoch < msg_epoch) {
 	osdmap_subscribe(msg_epoch, false);
       }
+
       s->put();
     }
+
     return false;
   }
 
@@ -6495,6 +6526,7 @@ bool OSD::dispatch_op_fast(OpRequestRef& op, OSDMapRef& osdmap)
   default:
     ceph_abort();
   }
+
   return true;
 }
 
@@ -7488,6 +7520,7 @@ bool OSD::advance_pg(
 void OSD::consume_map()
 {
   assert(osd_lock.is_locked());
+
   dout(7) << "consume_map version " << osdmap->get_epoch() << dendl;
 
   int num_pg_primary = 0, num_pg_replica = 0, num_pg_stray = 0;

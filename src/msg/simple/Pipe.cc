@@ -1915,7 +1915,8 @@ void Pipe::stop_and_wait()
 /* read msgs from socket.
  * also, server.
  */
-// called by Pipe::Reader::entry
+// called by
+// Pipe::Reader::entry
 void Pipe::reader()
 {
   pipe_lock.Lock();

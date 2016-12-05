@@ -2035,6 +2035,9 @@ private:
       return false;
     }
   }
+
+  // called by
+  // Messenger::ms_fast_dispatch
   void ms_fast_dispatch(Message *m) {
     ms_dispatch(m);
   }

@@ -65,10 +65,19 @@ bool DispatchQueue::can_fast_dispatch(Message *m) const
   return msgr->ms_can_fast_dispatch(m);
 }
 
+// called by
+// AsyncConnection::process
+// AsyncConnection::DelayedDelivery::do_request
+// AsyncConnection::DelayedDelivery::flush
+// Pipe::DelayedDelivery::entry
+// Pipe::reader
+// DispatchQueue::run_local_delivery
 void DispatchQueue::fast_dispatch(Message *m)
 {
   uint64_t msize = pre_dispatch(m);
+
   msgr->ms_fast_dispatch(m);
+
   post_dispatch(m, msize);
 }
 

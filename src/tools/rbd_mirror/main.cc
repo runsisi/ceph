@@ -53,11 +53,14 @@ int main(int argc, const char **argv)
     global_init_daemonize(g_ceph_context);
   }
 
+  // setup perf counter of CephContext
   g_ceph_context->enable_perf_counter();
 
   common_init_finish(g_ceph_context);
 
   init_async_signal_handler();
+
+  // g_ceph_context->reopen_logs
   register_async_signal_handler(SIGHUP, sighup_handler);
   register_async_signal_handler_oneshot(SIGINT, handle_signal);
   register_async_signal_handler_oneshot(SIGTERM, handle_signal);

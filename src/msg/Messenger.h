@@ -585,8 +585,11 @@ public:
    * @param m The Message we are fast dispatching. We take ownership
    * of one reference to it.
    */
+  // called by
+  // DispatchQueue::fast_dispatch
   void ms_fast_dispatch(Message *m) {
     m->set_dispatch_stamp(ceph_clock_now(cct));
+
     for (list<Dispatcher*>::iterator p = fast_dispatchers.begin();
 	 p != fast_dispatchers.end();
 	 ++p) {
@@ -595,6 +598,7 @@ public:
 	return;
       }
     }
+
     ceph_abort();
   }
   /**

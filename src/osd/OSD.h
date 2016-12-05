@@ -1481,34 +1481,54 @@ private:
     Mutex::Locker l(session_waiting_lock);
     out->swap(session_waiting_for_map);
   }
+
+  // called by
+  // OSD::dispatch_session_waiting
   void register_session_waiting_on_map(Session *session) {
     Mutex::Locker l(session_waiting_lock);
+
     if (session_waiting_for_map.count(session) == 0) {
       session->get();
       session_waiting_for_map.insert(session);
     }
   }
+
+  // called by
+  // OSD::dispatch_session_waiting
+  // OSD::require_same_peer_instance
+  // OSD::session_handle_reset
   void clear_session_waiting_on_map(Session *session) {
     Mutex::Locker l(session_waiting_lock);
+
     set<Session*>::iterator i = session_waiting_for_map.find(session);
     if (i != session_waiting_for_map.end()) {
       (*i)->put();
       session_waiting_for_map.erase(i);
     }
   }
+
+  // called by
+  // OSD::consume_map
   void dispatch_sessions_waiting_on_map() {
     set<Session*> sessions_to_check;
+
     get_sessions_waiting_for_map(&sessions_to_check);
+
     for (set<Session*>::iterator i = sessions_to_check.begin();
 	 i != sessions_to_check.end();
 	 sessions_to_check.erase(i++)) {
       (*i)->session_dispatch_lock.Lock();
+
       update_waiting_for_pg(*i, osdmap);
+
       dispatch_session_waiting(*i, osdmap);
+
       (*i)->session_dispatch_lock.Unlock();
+
       (*i)->put();
     }
   }
+
   void clear_session_waiting_on_pg(Session *session, const spg_t &pgid) {
     Mutex::Locker l(session_waiting_lock);
     map<spg_t, set<Session*> >::iterator i = session_waiting_for_pg.find(pgid);
@@ -1524,8 +1544,12 @@ private:
       session_waiting_for_pg.erase(i);
     }
   }
+
+  // called by
+  // OSD::ms_handle_reset
   void session_handle_reset(Session *session) {
     Mutex::Locker l(session->session_dispatch_lock);
+
     clear_session_waiting_on_map(session);
 
     for (map<spg_t, list<OpRequestRef> >::const_iterator i =
@@ -1544,6 +1568,7 @@ private:
     session->waiting_for_pg.clear();
     session->osdmap.reset();
   }
+
   void register_session_waiting_on_pg(Session *session, spg_t pgid) {
     Mutex::Locker l(session_waiting_lock);
     set<Session*> &s = session_waiting_for_pg[pgid];
@@ -1553,6 +1578,7 @@ private:
       s.insert(session);
     }
   }
+
   void get_sessions_possibly_interested_in_pg(
     spg_t pgid, set<Session*> *sessions) {
     Mutex::Locker l(session_waiting_lock);
@@ -1573,6 +1599,7 @@ private:
       (*i)->get();
     }
   }
+
   void get_pgs_with_waiting_sessions(set<spg_t> *pgs) {
     Mutex::Locker l(session_waiting_lock);
     for (map<spg_t, set<Session*> >::iterator i =
@@ -1699,6 +1726,9 @@ public:
           return false;
 	}
     }
+
+    // called by
+    // Messenger::ms_fast_dispatch
     void ms_fast_dispatch(Message *m) {
       osd->heartbeat_dispatch(m);
     }

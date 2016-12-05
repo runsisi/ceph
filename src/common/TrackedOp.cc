@@ -130,51 +130,72 @@ bool OpTracker::dump_historic_ops(Formatter *f)
 bool OpTracker::dump_ops_in_flight(Formatter *f, bool print_only_blocked)
 {
   RWLock::RLocker l(lock);
+
   if (!tracking_enabled)
     return false;
 
   f->open_object_section("ops_in_flight"); // overall dump
+
   uint64_t total_ops_in_flight = 0;
+
   f->open_array_section("ops"); // list of TrackedOps
+
   utime_t now = ceph_clock_now(cct);
+
   for (uint32_t i = 0; i < num_optracker_shards; i++) {
     ShardedTrackingData* sdata = sharded_in_flight_list[i];
     assert(NULL != sdata); 
+
     Mutex::Locker locker(sdata->ops_in_flight_lock_sharded);
+
     for (xlist<TrackedOp*>::iterator p = sdata->ops_in_flight_sharded.begin(); !p.end(); ++p) {
       if (print_only_blocked && (now - (*p)->get_initiated() <= complaint_time))
 	break;
+
       f->open_object_section("op");
+
       (*p)->dump(now, f);
+
       f->close_section(); // this TrackedOp
+
       total_ops_in_flight++;
     }
   }
+
   f->close_section(); // list of TrackedOps
+
   if (print_only_blocked) {
     f->dump_float("complaint_time", complaint_time);
     f->dump_int("num_blocked_ops", total_ops_in_flight);
   } else
     f->dump_int("num_ops", total_ops_in_flight);
+
   f->close_section(); // overall dump
+
   return true;
 }
 
 bool OpTracker::register_inflight_op(xlist<TrackedOp*>::item *i)
 {
   RWLock::RLocker l(lock);
+
   if (!tracking_enabled)
     return false;
 
   uint64_t current_seq = seq.inc();
   uint32_t shard_index = current_seq % num_optracker_shards;
+
   ShardedTrackingData* sdata = sharded_in_flight_list[shard_index];
+
   assert(NULL != sdata);
+
   {
     Mutex::Locker locker(sdata->ops_in_flight_lock_sharded);
+
     sdata->ops_in_flight_sharded.push_back(i);
     sdata->ops_in_flight_sharded.back()->seq = current_seq;
   }
+
   return true;
 }
 
@@ -205,6 +226,7 @@ void OpTracker::unregister_inflight_op(TrackedOp *i)
 bool OpTracker::check_ops_in_flight(std::vector<string> &warning_vector, int *slow)
 {
   RWLock::RLocker l(lock);
+
   if (!tracking_enabled)
     return false;
 
@@ -217,13 +239,16 @@ bool OpTracker::check_ops_in_flight(std::vector<string> &warning_vector, int *sl
   for (uint32_t i = 0; i < num_optracker_shards; i++) {
     ShardedTrackingData* sdata = sharded_in_flight_list[i];
     assert(NULL != sdata);
+
     Mutex::Locker locker(sdata->ops_in_flight_lock_sharded);
+
     if (!sdata->ops_in_flight_sharded.empty()) {
       utime_t oldest_op_tmp = sdata->ops_in_flight_sharded.front()->get_initiated();
       if (oldest_op_tmp < oldest_op) {
         oldest_op = oldest_op_tmp;
       }
     } 
+
     total_ops_in_flight += sdata->ops_in_flight_sharded.size();
   }
       
@@ -248,13 +273,17 @@ bool OpTracker::check_ops_in_flight(std::vector<string> &warning_vector, int *sl
     slow = &_slow; 
   else
     *slow = _slow;  // start from 0 anyway
+
   int warned = 0;   // total logged
   for (uint32_t iter = 0; iter < num_optracker_shards; iter++) {
     ShardedTrackingData* sdata = sharded_in_flight_list[iter];
     assert(NULL != sdata);
+
     Mutex::Locker locker(sdata->ops_in_flight_lock_sharded);
+
     if (sdata->ops_in_flight_sharded.empty())
       continue;
+
     xlist<TrackedOp*>::iterator i = sdata->ops_in_flight_sharded.begin();    
     while (!i.end() && (*i)->get_initiated() < too_old) {
       (*slow)++;
@@ -269,9 +298,12 @@ bool OpTracker::check_ops_in_flight(std::vector<string> &warning_vector, int *sl
         stringstream ss;
         ss << "slow request " << age << " seconds old, received at "
            << (*i)->get_initiated() << ": ";
+
         (*i)->_dump_op_descriptor_unlocked(ss);
+
         ss << " currently "
 	   << ((*i)->current.size() ? (*i)->current : (*i)->state_string());
+
         warning_vector.push_back(ss.str());
 
         // only those that have been shown will backoff
@@ -312,10 +344,16 @@ void OpTracker::get_age_ms_histogram(pow2_hist_t *h)
   }
 }
 
+// called by
+// TrackedOp::mark_event
+// MDRequestImpl::MDRequestImpl
+// MonOpRequest::MonOpRequest
+// OpRequest::OpRequest
 void OpTracker::mark_event(TrackedOp *op, const string &dest, utime_t time)
 {
   if (!op->is_tracked)
     return;
+
   return _mark_event(op, dest, time);
 }
 
@@ -323,10 +361,13 @@ void OpTracker::_mark_event(TrackedOp *op, const string &evt,
 			    utime_t time)
 {
   dout(5);
+
   *_dout  <<  "seq: " << op->seq
 	  << ", time: " << time << ", event: " << evt
 	  << ", op: ";
+
   op->_dump_op_descriptor_unlocked(*_dout);
+
   *_dout << dendl;
      
 }
@@ -337,22 +378,79 @@ void OpTracker::RemoveOnDelete::operator()(TrackedOp *op) {
     delete op;
     return;
   }
+
   op->mark_event("done");
+
   tracker->unregister_inflight_op(op);
   // Do not delete op, unregister_inflight_op took control
 }
 
+// called by
+// OpTracker::RemoveOnDelete::operator()
+// MDCache::request_finish
+// MDCache::request_forward
+// MDCache::request_cleanup
+// MDCache::request_kill
+// ServerLogContext::pre_finish
+// Server::submit_mdlog_entry
+// Server::early_reply
+// Server::reply_client_request
+// DataHealthService::handle_tell
+// DataHealthService::service_dispatch_op
+// Elector::handle_propose
+// Elector::handle_ack
+// Elector::handle_victory
+// Elector::nak_old_peer
+// Elector::handle_nak
+// Elector::dispatch
+// C_MonOp::finish
+// C_MonOp::mark_op_event
+// Monitor::forward_request_leader
+// Monitor::send_reply
+// Monitor::no_reply
+// Monitor::resend_routed_requests
+// Monitor::_ms_dispatch
+// Monitor::dispatch_op
+// MonOpRequest::mark_dispatch
+// MonOpRequest::mark_wait_for_quorum
+// MonOpRequest::mark_zap
+// MonOpRequest::mark_forwarded
+// MonOpRequest::mark_svc_event
+// OSDMonitor::process_failures
+// OSDMonitor::send_incremental
+// Paxos::wait_for_active
+// Paxos::wait_for_readable
+// Paxos::wait_for_writeable
+// PaxosService::dispatch
+// PaxosService::wait_for_finished_proposal
+// PaxosService::wait_for_active
+// PaxosService::wait_for_readable
+// PaxosService::wait_for_writeable
+// FileJournal::queue_completions_thru
+// FileJournal::prepare_single_write
+// FileJournal::submit_entry
+// SubWriteCommitted::finish
+// SubWriteApplied::finish
+// OpRequest::mark_flag_point
+// ReplicatedBackend::op_applied
+// ReplicatedBackend::op_commit
+// ReplicatedBackend::sub_op_modify_reply
+// ReplicatedBackend::sub_op_modify_applied
 void TrackedOp::mark_event(const string &event)
 {
   if (!is_tracked)
     return;
 
   utime_t now = ceph_clock_now(g_ceph_context);
+
   {
     Mutex::Locker l(lock);
+
     events.push_back(make_pair(now, event));
   }
+
   tracker->mark_event(this, event);
+
   _event_marked();
 }
 
@@ -361,12 +459,15 @@ void TrackedOp::dump(utime_t now, Formatter *f) const
   // Ignore if still in the constructor
   if (!is_tracked)
     return;
+
   stringstream name;
   _dump_op_descriptor_unlocked(name);
+
   f->dump_string("description", name.str().c_str()); // this TrackedOp
   f->dump_stream("initiated_at") << get_initiated();
   f->dump_float("age", now - get_initiated());
   f->dump_float("duration", get_duration());
+
   {
     f->open_array_section("type_data");
     _dump(f);
