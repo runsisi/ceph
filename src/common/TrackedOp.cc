@@ -369,7 +369,6 @@ void OpTracker::_mark_event(TrackedOp *op, const string &evt,
   op->_dump_op_descriptor_unlocked(*_dout);
 
   *_dout << dendl;
-     
 }
 
 void OpTracker::RemoveOnDelete::operator()(TrackedOp *op) {

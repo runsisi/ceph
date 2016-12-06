@@ -166,10 +166,13 @@ ostream& operator<<(ostream& out, const entity_addr_t &addr)
   if (addr.type == entity_addr_t::TYPE_NONE) {
     return out << "-";
   }
+
   if (addr.type != entity_addr_t::TYPE_DEFAULT) {
     out << entity_addr_t::get_type_name(addr.type) << ":";
   }
+
   out << addr.get_sockaddr() << '/' << addr.nonce;
+
   return out;
 }
 

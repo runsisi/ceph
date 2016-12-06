@@ -6437,6 +6437,8 @@ void OSD::dispatch_op(OpRequestRef op)
   }
 }
 
+// called by
+// OSD::dispatch_session_waiting
 bool OSD::dispatch_op_fast(OpRequestRef& op, OSDMapRef& osdmap)
 {
   if (is_stopping()) {
