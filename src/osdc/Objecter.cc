@@ -2386,16 +2386,20 @@ void Objecter::_op_submit(Op *op, shunique_lock& sul, ceph_tid_t *ptid)
       (check_for_latest_map && sul.owns_lock_shared())) {
     epoch_t orig_epoch = osdmap->get_epoch();
     sul.unlock();
+
     if (cct->_conf->objecter_debug_inject_relock_delay) {
       sleep(1);
     }
+
     sul.lock();
     if (orig_epoch != osdmap->get_epoch()) {
       // map changed; recalculate mapping
       ldout(cct, 10) << __func__ << " relock raced with osdmap, recalc target"
 		     << dendl;
+
       check_for_latest_map = _calc_target(&op->target, &op->last_force_resend)
 	== RECALC_OP_TARGET_POOL_DNE;
+
       if (s) {
 	put_session(s);
 	s = NULL;
@@ -2403,6 +2407,7 @@ void Objecter::_op_submit(Op *op, shunique_lock& sul, ceph_tid_t *ptid)
       }
     }
   }
+
   if (r == -EAGAIN) {
     assert(s == NULL);
     r = _get_session(op->target.osd, &s, sul);
@@ -3194,6 +3199,7 @@ void Objecter::_send_op(Op *op, MOSDOp *m)
 
   if (!m) {
     assert(op->tid > 0);
+
     m = _prepare_osd_op(op);
   }
 
@@ -3207,13 +3213,16 @@ void Objecter::_send_op(Op *op, MOSDOp *m)
   if (op->con) {
     ldout(cct, 20) << " revoking rx buffer for " << op->tid << " on "
 		   << op->con << dendl;
+
     op->con->revoke_rx_buffer(op->tid);
   }
+
   if (op->outbl &&
       op->ontimeout == 0 &&  // only post rx_buffer if no timeout; see #9582
       op->outbl->length()) {
     ldout(cct, 20) << " posting rx buffer for " << op->tid << " on " << con
 		   << dendl;
+
     op->con = con;
     op->con->post_rx_buffer(op->tid, *op->outbl);
   }

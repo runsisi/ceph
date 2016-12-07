@@ -223,8 +223,10 @@ static const int SM_IOV_MAX = (IOV_MAX >= 1024 ? IOV_MAX / 4 : IOV_MAX);
     void set_peer_addr(const entity_addr_t& a) {
       if (&peer_addr != &a)  // shut up valgrind
         peer_addr = a;
+
       connection_state->set_peer_addr(a);
     }
+
     void set_peer_type(int t) {
       peer_type = t;
       connection_state->set_peer_type(t);

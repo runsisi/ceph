@@ -433,6 +433,7 @@ int Pipe::accept()
     ldout(msgr->cct,10) << "accept couldn't read peer_addr" << dendl;
     goto fail_unlocked;
   }
+
   {
     bufferlist::iterator ti = addrbl.begin();
     ::decode(peer_addr, ti);
@@ -2888,6 +2889,7 @@ int Pipe::write_message(const ceph_msg_header& header, const ceph_msg_footer& fo
 
   // send envelope
   ceph_msg_header_old oldheader;
+
   if (connection_state->has_feature(CEPH_FEATURE_NOSRCADDR)) {
     msgvec[msg.msg_iovlen].iov_base = (char*)&header;
     msgvec[msg.msg_iovlen].iov_len = sizeof(header);
