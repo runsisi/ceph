@@ -1480,7 +1480,9 @@ bool OSDMonitor::preprocess_query(MonOpRequestRef op)
 bool OSDMonitor::prepare_update(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
+
   Message *m = op->get_req();
+
   dout(7) << "prepare_update " << *m << " from " << m->get_orig_source_inst() << dendl;
 
   switch (m->get_type()) {
@@ -1650,6 +1652,9 @@ bool OSDMonitor::preprocess_failure(MonOpRequestRef op)
   return true;
 }
 
+// called by
+// OSDMonitor::preprocess_mark_me_down
+// OSDMonitor::prepare_mark_me_down
 class C_AckMarkedDown : public C_MonOp {
   OSDMonitor *osdmon;
 public:
@@ -1660,6 +1665,7 @@ public:
 
   void _finish(int) {
     MOSDMarkMeDown *m = static_cast<MOSDMarkMeDown*>(op->get_req());
+
     osdmon->mon->send_reply(
       op,
       new MOSDMarkMeDown(
@@ -1668,14 +1674,19 @@ public:
 	m->get_epoch(),
 	false));   // ACK itself does not request an ack
   }
+
   ~C_AckMarkedDown() {
   }
 };
 
+// called by
+// OSDMonitor::preprocess_query
 bool OSDMonitor::preprocess_mark_me_down(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
+
   MOSDMarkMeDown *m = static_cast<MOSDMarkMeDown*>(op->get_req());
+
   int requesting_down = m->get_target().name.num();
   int from = m->get_orig_source().num();
 
@@ -1692,7 +1703,9 @@ bool OSDMonitor::preprocess_mark_me_down(MonOpRequestRef op)
       osdmap.get_addr(from) != m->get_target().addr) {
     dout(5) << "preprocess_mark_me_down from dead osd."
 	    << from << ", ignoring" << dendl;
+
     send_incremental(op, m->get_epoch()+1);
+
     goto reply;
   }
 
@@ -1701,6 +1714,7 @@ bool OSDMonitor::preprocess_mark_me_down(MonOpRequestRef op)
     goto reply;
 
   dout(10) << "MOSDMarkMeDown for: " << m->get_target() << dendl;
+
   return false;
 
  reply:
@@ -1708,22 +1722,30 @@ bool OSDMonitor::preprocess_mark_me_down(MonOpRequestRef op)
     Context *c(new C_AckMarkedDown(this, op));
     c->complete(0);
   }
+
   return true;
 }
 
+// called by
+// OSDMonitor::prepare_update
 bool OSDMonitor::prepare_mark_me_down(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
+
   MOSDMarkMeDown *m = static_cast<MOSDMarkMeDown*>(op->get_req());
+
   int target_osd = m->get_target().name.num();
 
   assert(osdmap.is_up(target_osd));
   assert(osdmap.get_addr(target_osd) == m->get_target().addr);
 
   mon->clog->info() << "osd." << target_osd << " marked itself down\n";
+
   pending_inc.new_state[target_osd] = CEPH_OSD_UP;
+
   if (m->request_ack)
     wait_for_finished_proposal(op, new C_AckMarkedDown(this, op));
+
   return true;
 }
 
@@ -2584,21 +2606,28 @@ void OSDMonitor::update_up_thru(int from, epoch_t up_thru)
 bool OSDMonitor::prepare_pgtemp(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
+
   MOSDPGTemp *m = static_cast<MOSDPGTemp*>(op->get_req());
+
   int from = m->get_orig_source().num();
+
   dout(7) << "prepare_pgtemp e" << m->map_epoch << " from " << m->get_orig_source_inst() << dendl;
+
   for (map<pg_t,vector<int32_t> >::iterator p = m->pg_temp.begin(); p != m->pg_temp.end(); ++p) {
     uint64_t pool = p->first.pool();
+
     if (pending_inc.old_pools.count(pool)) {
       dout(10) << __func__ << " ignore " << p->first << " -> " << p->second
                << ": pool pending removal" << dendl;
       continue;
     }
+
     if (!osdmap.have_pg_pool(pool)) {
       dout(10) << __func__ << " ignore " << p->first << " -> " << p->second
                << ": pool has been removed" << dendl;
       continue;
     }
+
     pending_inc.new_pg_temp[p->first] = p->second;
 
     // unconditionally clear pg_primary (until this message can encode
@@ -2613,22 +2642,29 @@ bool OSDMonitor::prepare_pgtemp(MonOpRequestRef op)
   update_up_thru(from, m->map_epoch);
 
   wait_for_finished_proposal(op, new C_ReplyMap(this, op, m->map_epoch));
+
   return true;
 }
 
 
 // ---
 
+// called by
+// OSDMonitor::preprocess_query
 bool OSDMonitor::preprocess_remove_snaps(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
+
+  // the MRemoveSnaps was sent from mds/SnapServer.cc/SnapServer::check_osd_map
   MRemoveSnaps *m = static_cast<MRemoveSnaps*>(op->get_req());
+
   dout(7) << "preprocess_remove_snaps " << *m << dendl;
 
   // check privilege, ignore if failed
   MonSession *session = m->get_session();
   if (!session)
     goto ignore;
+
   if (!session->caps.is_capable(g_ceph_context, session->entity_name,
         "osd", "osd pool rmsnap", {}, true, true, false)) {
     dout(0) << "got preprocess_remove_snaps from entity with insufficient caps "
@@ -2643,7 +2679,9 @@ bool OSDMonitor::preprocess_remove_snaps(MonOpRequestRef op)
       dout(10) << " ignoring removed_snaps " << q->second << " on non-existent pool " << q->first << dendl;
       continue;
     }
+
     const pg_pool_t *pi = osdmap.get_pg_pool(q->first);
+
     for (vector<snapid_t>::iterator p = q->second.begin();
 	 p != q->second.end();
 	 ++p) {
@@ -2657,10 +2695,15 @@ bool OSDMonitor::preprocess_remove_snaps(MonOpRequestRef op)
   return true;
 }
 
+// called by
+// OSDMonitor::prepare_update
 bool OSDMonitor::prepare_remove_snaps(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
+
+  // the MRemoveSnaps was sent from mds/SnapServer.cc/SnapServer::check_osd_map
   MRemoveSnaps *m = static_cast<MRemoveSnaps*>(op->get_req());
+
   dout(7) << "prepare_remove_snaps " << *m << dendl;
 
   for (map<int, vector<snapid_t> >::iterator p = m->snaps.begin();
@@ -2673,24 +2716,32 @@ bool OSDMonitor::prepare_remove_snaps(MonOpRequestRef op)
     }
 
     pg_pool_t& pi = osdmap.pools[p->first];
+
     for (vector<snapid_t>::iterator q = p->second.begin();
 	 q != p->second.end();
 	 ++q) {
+      // pg_pool_t::removed_snaps is also used by rbd, see pg_pool_t::remove_unmanaged_snap
       if (!pi.removed_snaps.contains(*q) &&
 	  (!pending_inc.new_pools.count(p->first) ||
 	   !pending_inc.new_pools[p->first].removed_snaps.contains(*q))) {
 	pg_pool_t *newpi = pending_inc.get_new_pool(p->first, &pi);
+
 	newpi->removed_snaps.insert(*q);
+
 	dout(10) << " pool " << p->first << " removed_snaps added " << *q
 		 << " (now " << newpi->removed_snaps << ")" << dendl;
+
 	if (*q > newpi->get_snap_seq()) {
 	  dout(10) << " pool " << p->first << " snap_seq " << newpi->get_snap_seq() << " -> " << *q << dendl;
+
 	  newpi->set_snap_seq(*q);
 	}
+
 	newpi->set_snap_epoch(pending_inc.epoch);
       }
     }
   }
+
   return true;
 }
 
@@ -8154,7 +8205,9 @@ done:
 bool OSDMonitor::preprocess_pool_op(MonOpRequestRef op) 
 {
   op->mark_osdmon_event(__func__);
+
   MPoolOp *m = static_cast<MPoolOp*>(op->get_req());
+
   if (m->op == POOL_OP_CREATE)
     return preprocess_pool_op_create(op);
 
@@ -8186,6 +8239,7 @@ bool OSDMonitor::preprocess_pool_op(MonOpRequestRef op)
       _pool_op_reply(op, -EINVAL, osdmap.get_epoch());
       return true;
     }
+
     return false;
   case POOL_OP_DELETE_SNAP:
     if (p->is_unmanaged_snaps_mode()) {
@@ -8202,10 +8256,12 @@ bool OSDMonitor::preprocess_pool_op(MonOpRequestRef op)
       _pool_op_reply(op, -EINVAL, osdmap.get_epoch());
       return true;
     }
+
     if (p->is_removed_snap(m->snapid)) {
       _pool_op_reply(op, 0, osdmap.get_epoch());
       return true;
     }
+
     return false;
   case POOL_OP_DELETE:
     if (osdmap.lookup_pg_pool_name(m->name.c_str()) >= 0) {
@@ -8249,11 +8305,16 @@ bool OSDMonitor::preprocess_pool_op_create(MonOpRequestRef op)
   return false;
 }
 
+// called by
+// OSDMonitor::prepare_update
 bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
+
   MPoolOp *m = static_cast<MPoolOp*>(op->get_req());
+
   dout(10) << "prepare_pool_op " << *m << dendl;
+
   if (m->op == POOL_OP_CREATE) {
     return prepare_pool_op_create(op);
   } else if (m->op == POOL_OP_DELETE) {
@@ -8306,6 +8367,7 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
 
   // projected pool info
   pg_pool_t pp;
+
   if (pending_inc.new_pools.count(m->pool))
     pp = pending_inc.new_pools[m->pool];
   else
@@ -8353,8 +8415,10 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
   case POOL_OP_CREATE_UNMANAGED_SNAP:
     {
       uint64_t snapid;
+
       pp.add_unmanaged_snap(snapid);
       ::encode(snapid, reply_data);
+
       changed = true;
     }
     break;
@@ -8362,8 +8426,10 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
   case POOL_OP_DELETE_UNMANAGED_SNAP:
     if (!pp.is_removed_snap(m->snapid)) {
       pp.remove_unmanaged_snap(m->snapid);
+
       changed = true;
     }
+
     break;
 
   case POOL_OP_AUID_CHANGE:

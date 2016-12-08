@@ -252,6 +252,7 @@ void SnapServer::check_osd_map(bool force)
     dout(10) << "check_osd_map - version unchanged" << dendl;
     return;
   }
+
   dout(10) << "check_osd_map need_to_purge=" << need_to_purge << dendl;
 
   map<int, vector<snapid_t> > all_purge;
@@ -289,7 +290,9 @@ void SnapServer::check_osd_map(bool force)
 
   if (!all_purge.empty()) {
     dout(10) << "requesting removal of " << all_purge << dendl;
+
     MRemoveSnaps *m = new MRemoveSnaps(all_purge);
+
     mon_client->send_mon_message(m);
   }
 

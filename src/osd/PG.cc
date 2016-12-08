@@ -156,23 +156,31 @@ void PG::dump_live_ids()
 }
 #endif
 
-// called by PG::handle_advance_map
+// called by
+// PG::handle_advance_map
 void PGPool::update(OSDMapRef map)
 {
   const pg_pool_t *pi = map->get_pg_pool(id);
+
   assert(pi);
+
   info = *pi;
   auid = pi->auid;
   name = map->get_pool_name(id);
+
   bool updated = false;
 
   if ((map->get_epoch() == cached_epoch + 1) &&
       (pi->get_snap_epoch() == map->get_epoch())) {
     updated = true;
 
+    // for pool mode excludes those pg_pool_t::snaps, for rbd/mds snap return
+    // pg_pool_t::removed_snaps
     pi->build_removed_snaps(newly_removed_snaps);
 
     interval_set<snapid_t> intersection;
+
+    // get the intersection of all removed snaps and last cached removed snaps
     intersection.intersection_of(newly_removed_snaps, cached_removed_snaps);
 
     if (intersection == cached_removed_snaps) {
@@ -186,6 +194,7 @@ void PGPool::update(OSDMapRef map)
           << " to " << newly_removed_snaps << dendl;
 
         cached_removed_snaps = newly_removed_snaps;
+
         newly_removed_snaps.clear();
     }
 
@@ -1591,8 +1600,10 @@ void PG::activate(ObjectStore::Transaction& t,
 
     // TODOSAM: osd->osd-> is no good
     osd->osd->replay_queue_lock.Lock();
+
     osd->osd->replay_queue.push_back(pair<spg_t,utime_t>(
 	info.pgid, replay_until));
+
     osd->osd->replay_queue_lock.Unlock();
   }
 
@@ -1645,7 +1656,9 @@ void PG::activate(ObjectStore::Transaction& t,
     dout(20) << "activate - purged_snaps " << info.purged_snaps
 	     << " cached_removed_snaps " << pool.cached_removed_snaps << dendl;
 
+    // see PGPool::update which called by PG::handle_advance_map
     snap_trimq = pool.cached_removed_snaps;
+
     interval_set<snapid_t> intersection;
     intersection.intersection_of(snap_trimq, info.purged_snaps);
 
@@ -1655,6 +1668,7 @@ void PG::activate(ObjectStore::Transaction& t,
         dout(0) << "warning: info.purged_snaps (" << info.purged_snaps
                 << ") is not a subset of pool.cached_removed_snaps ("
                 << pool.cached_removed_snaps << ")" << dendl;
+
         snap_trimq.subtract(intersection);
     }
   }
@@ -1663,10 +1677,13 @@ void PG::activate(ObjectStore::Transaction& t,
   if (missing.num_missing() == 0) {
     dout(10) << "activate - no missing, moving last_complete " << info.last_complete 
 	     << " -> " << info.last_update << dendl;
+
     info.last_complete = info.last_update;
+
     pg_log.reset_recovery_pointers();
   } else {
     dout(10) << "activate - not complete, " << missing << dendl;
+
     pg_log.activate_not_complete(info);
   }
     
@@ -1683,13 +1700,16 @@ void PG::activate(ObjectStore::Transaction& t,
 	 i != actingbackfill.end();
 	 ++i) {
       if (*i == pg_whoami) continue;
+
       pg_shard_t peer = *i;
       assert(peer_info.count(peer));
+
       pg_info_t& pi = peer_info[peer];
 
       dout(10) << "activate peer osd." << peer << " " << pi << dendl;
 
       MOSDPGLog *m = 0;
+
       pg_missing_t& pm = peer_missing[peer];
 
       bool needs_past_intervals = pi.dne();
@@ -1710,8 +1730,10 @@ void PG::activate(ObjectStore::Transaction& t,
 			    << " from (" << pi.log_tail << "," << pi.last_update
 			    << "] " << pi.last_backfill
 			    << " to " << info.last_update;
+
 	if (!pi.is_empty() && activator_map) {
 	  dout(10) << "activate peer osd." << peer << " is up to date, queueing in pending_activators" << dendl;
+
 	  (*activator_map)[peer.osd].push_back(
 	    make_pair(
 	      pg_notify_t(
@@ -1722,6 +1744,7 @@ void PG::activate(ObjectStore::Transaction& t,
 	      past_intervals));
 	} else {
 	  dout(10) << "activate peer osd." << peer << " is up to date, but sending pg_log anyway" << dendl;
+
 	  m = new MOSDPGLog(
 	    i->shard, pg_whoami.shard,
 	    get_osdmap()->get_epoch(), info);
@@ -1805,7 +1828,8 @@ void PG::activate(ObjectStore::Transaction& t,
       // update our missing
       if (pm.num_missing() == 0) {
 	pi.last_complete = pi.last_update;
-        dout(10) << "activate peer osd." << peer << " " << pi << " uptodate" << dendl;
+
+	dout(10) << "activate peer osd." << peer << " " << pi << " uptodate" << dendl;
       } else {
         dout(10) << "activate peer osd." << peer << " " << pi << " missing " << pm << dendl;
       }
@@ -1824,7 +1848,9 @@ void PG::activate(ObjectStore::Transaction& t,
       } else {
 	auto peer_missing_entry = peer_missing.find(*i);
 	assert(peer_missing_entry != peer_missing.end());
+
 	missing_loc.add_active_missing(peer_missing_entry->second);
+
         if (!peer_missing_entry->second.have_missing() &&
 	    peer_info[*i].last_backfill.is_max())
 	  complete_shards.insert(*i);
@@ -1897,11 +1923,14 @@ void PG::activate(ObjectStore::Transaction& t,
 
     state_set(PG_STATE_ACTIVATING);
   }
+
   if (is_primary()) {
     projected_last_update = info.last_update;
   }
+
   if (acting.size() >= pool.info.min_size) {
     PGLogEntryHandler handler{this, &t};
+
     pg_log.roll_forward(&handler);
   }
 }
@@ -6984,23 +7013,30 @@ PG::RecoveryState::Active::Active(my_context ctx)
 boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   dout(10) << "Active advmap" << dendl;
+
   if (!pg->pool.newly_removed_snaps.empty()) {
     pg->snap_trimq.union_of(pg->pool.newly_removed_snaps);
+
     dout(10) << *pg << " snap_trimq now " << pg->snap_trimq << dendl;
+
     pg->dirty_info = true;
     pg->dirty_big_info = true;
   }
 
   for (size_t i = 0; i < pg->want_acting.size(); i++) {
     int osd = pg->want_acting[i];
+
     if (!advmap.osdmap->is_up(osd)) {
       pg_shard_t osd_with_shard(osd, shard_id_t(i));
+
       assert(pg->is_acting(osd_with_shard) || pg->is_up(osd_with_shard));
     }
   }
 
   bool need_publish = false;
+
   /* Check for changes in pool size (if the acting set changed as a result,
    * this does not matter) */
   if (advmap.lastmap->get_pg_size(pg->info.pgid.pgid) !=
@@ -7016,6 +7052,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
       pg->state_set(PG_STATE_UNDERSIZED);
       pg->state_set(PG_STATE_DEGRADED);
     }
+
     need_publish = true; // degraded may have changed
   }
 
@@ -7023,6 +7060,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
   if (pg->info.stats.reported_epoch + pg->cct->_conf->osd_pg_stat_report_interval_max < advmap.osdmap->get_epoch()) {
     dout(20) << "reporting stats to osd after " << (advmap.osdmap->get_epoch() - pg->info.stats.reported_epoch)
 	     << " epochs" << dendl;
+
     need_publish = true;
   }
 

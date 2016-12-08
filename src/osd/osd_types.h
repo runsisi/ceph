@@ -1233,12 +1233,14 @@ public:
    * context.
    */
   map<snapid_t, pool_snap_info_t> snaps;
+
   /*
    * Alternatively, if we are defining non-pool snaps (e.g. via the
    * Ceph MDS), we must track @removed_snaps (since @snaps is not
    * used).  Snaps and removed_snaps are to be used exclusive of each
    * other!
    */
+  // used both for mds and rbd
   interval_set<snapid_t> removed_snaps;
 
   unsigned pg_num_mask, pgp_num_mask;

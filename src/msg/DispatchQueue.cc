@@ -36,6 +36,9 @@ double DispatchQueue::get_max_age(utime_t now) const {
     return (now - marrival.begin()->first);
 }
 
+// called by
+// DispatchQueue::fast_dispatch
+// DispatchQueue::entry
 uint64_t DispatchQueue::pre_dispatch(Message *m)
 {
   ldout(cct,1) << "<== " << m->get_source_inst()
@@ -57,6 +60,9 @@ uint64_t DispatchQueue::pre_dispatch(Message *m)
   return msize;
 }
 
+// called by
+// DispatchQueue::fast_dispatch
+// DispatchQueue::entry
 void DispatchQueue::post_dispatch(Message *m, uint64_t msize)
 {
   dispatch_throttle_release(msize);
@@ -93,8 +99,11 @@ void DispatchQueue::enqueue(Message *m, int priority, uint64_t id)
 {
 
   Mutex::Locker l(lock);
+
   ldout(cct,20) << "queue " << m << " prio " << priority << dendl;
+
   add_arrival(m);
+
   if (priority >= CEPH_MSG_PRIO_LOW) {
     mqueue.enqueue_strict(
         id, priority, QueueItem(m));
@@ -102,42 +111,57 @@ void DispatchQueue::enqueue(Message *m, int priority, uint64_t id)
     mqueue.enqueue(
         id, priority, m->get_cost(), QueueItem(m));
   }
+
   cond.Signal();
 }
 
 void DispatchQueue::local_delivery(Message *m, int priority)
 {
   m->set_recv_stamp(ceph_clock_now(msgr->cct));
+
   Mutex::Locker l(local_delivery_lock);
+
   if (local_messages.empty())
     local_delivery_cond.Signal();
+
   local_messages.push_back(make_pair(m, priority));
+
   return;
 }
 
 void DispatchQueue::run_local_delivery()
 {
   local_delivery_lock.Lock();
+
   while (true) {
     if (stop_local_delivery)
       break;
+
     if (local_messages.empty()) {
       local_delivery_cond.Wait(local_delivery_lock);
       continue;
     }
+
     pair<Message *, int> mp = local_messages.front();
+
     local_messages.pop_front();
+
     local_delivery_lock.Unlock();
+
     Message *m = mp.first;
     int priority = mp.second;
+
     fast_preprocess(m);
+
     if (can_fast_dispatch(m)) {
       fast_dispatch(m);
     } else {
       enqueue(m, priority, 0);
     }
+
     local_delivery_lock.Lock();
   }
+
   local_delivery_lock.Unlock();
 }
 
@@ -147,6 +171,7 @@ void DispatchQueue::dispatch_throttle_release(uint64_t msize)
     ldout(cct,10) << __func__ << " " << msize << " to dispatch throttler "
 	    << dispatch_throttler.get_current() << "/"
 	    << dispatch_throttler.get_max() << dendl;
+
     dispatch_throttler.put(msize);
   }
 }

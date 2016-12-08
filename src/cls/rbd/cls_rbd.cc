@@ -506,8 +506,10 @@ int set_size(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     r = read_key(hctx, "parent", &parent);
     if (r == -ENOENT)
       r = 0;
+
     if (r < 0)
       return r;
+
     if (parent.exists() && parent.overlap > size) {
       bufferlist parentbl;
       parent.overlap = size;
@@ -1648,7 +1650,7 @@ int snapshot_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   ::encode(snap_meta.id, snap_seqbl);
 
   string snapshot_key;
-  // "snapshot_" + snap_id
+  // "snapshot_" + snap_seq
   key_from_snap_id(snap_meta.id, &snapshot_key);
 
   map<string, bufferlist> vals;

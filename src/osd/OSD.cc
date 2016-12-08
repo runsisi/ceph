@@ -1170,16 +1170,22 @@ void OSDService::set_epochs(const epoch_t *_boot_epoch, const epoch_t *_up_epoch
   }
 }
 
+// called by
+// OSD::shutdown
 bool OSDService::prepare_to_stop()
 {
   Mutex::Locker l(is_stopping_lock);
+
   if (get_state() != NOT_STOPPING)
     return false;
 
   OSDMapRef osdmap = get_osdmap();
+
   if (osdmap && osdmap->is_up(whoami)) {
     dout(0) << __func__ << " telling mon we are shutting down" << dendl;
+
     set_state(PREPARING_TO_STOP);
+
     monc->send_mon_message(new MOSDMarkMeDown(monc->get_fsid(),
 					      osdmap->get_inst(whoami),
 					      osdmap->get_epoch(),
@@ -1188,13 +1194,17 @@ bool OSDService::prepare_to_stop()
     utime_t now = ceph_clock_now(cct);
     utime_t timeout;
     timeout.set_from_double(now + cct->_conf->osd_mon_shutdown_timeout);
+
     while ((ceph_clock_now(cct) < timeout) &&
        (get_state() != STOPPING)) {
       is_stopping_cond.WaitUntil(is_stopping_lock, timeout);
     }
   }
+
   dout(0) << __func__ << " starting shutdown" << dendl;
+
   set_state(STOPPING);
+
   return true;
 }
 

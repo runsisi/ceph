@@ -1061,6 +1061,7 @@ void Operations<I>::snap_remove(const char *snap_name, Context *on_finish) {
     req->send();
   } else {
     RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
+
     execute_snap_remove(snap_name, on_finish);
   }
 }
@@ -1069,6 +1070,7 @@ template <typename I>
 void Operations<I>::execute_snap_remove(const std::string &snap_name,
                                         Context *on_finish) {
   assert(m_image_ctx.owner_lock.is_locked());
+
   {
     if ((m_image_ctx.features & RBD_FEATURE_FAST_DIFF) != 0) {
       assert(m_image_ctx.exclusive_lock == nullptr ||

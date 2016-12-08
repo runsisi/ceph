@@ -83,7 +83,9 @@ bool SnapshotRemoveRequest<I>::should_complete(int r) {
     send_remove_snap();
     break;
   case STATE_REMOVE_SNAP:
+    // remove in memory snap related info from ImageCtx
     remove_snap_context();
+
     send_release_snap_id();
     break;
   case STATE_RELEASE_SNAP_ID:
@@ -224,6 +226,7 @@ void SnapshotRemoveRequest<I>::send_release_snap_id() {
   // TODO add async version of selfmanaged_snap_remove
   int r = image_ctx.md_ctx.selfmanaged_snap_remove(m_snap_id);
 
+  // i.e., m_image_ctx.op_work_queue->queue(create_callback_context(), r);
   this->async_complete(r);
 }
 
@@ -236,9 +239,12 @@ void SnapshotRemoveRequest<I>::remove_snap_context() {
 
   RWLock::WLocker snap_locker(image_ctx.snap_lock);
 
+  // erase snap related info from ImageCtx::snaps, ImageCtx::snap_info and ImageCtx::snap_ids
   image_ctx.rm_snap(m_snap_name, m_snap_id);
 }
 
+// called by
+// SnapshotRemoveRequest<I>::send_remove_child
 template <typename I>
 int SnapshotRemoveRequest<I>::scan_for_parents(parent_spec &pspec) {
   I &image_ctx = this->m_image_ctx;
@@ -248,16 +254,19 @@ int SnapshotRemoveRequest<I>::scan_for_parents(parent_spec &pspec) {
 
   if (pspec.pool_id != -1) {
     map<uint64_t, SnapInfo>::iterator it;
+
     for (it = image_ctx.snap_info.begin();
          it != image_ctx.snap_info.end(); ++it) {
       // skip our snap id (if checking base image, CEPH_NOSNAP won't match)
       if (it->first == m_snap_id) {
         continue;
       }
+
       if (it->second.parent.spec == pspec) {
         break;
       }
     }
+
     if (it == image_ctx.snap_info.end()) {
       return -ENOENT;
     }

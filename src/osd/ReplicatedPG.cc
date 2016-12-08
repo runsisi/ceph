@@ -3893,17 +3893,20 @@ ReplicatedPG::OpContextUPtr ReplicatedPG::trim_object(bool first, const hobject_
 {
   // load clone info
   bufferlist bl;
+
   ObjectContextRef obc = get_object_context(coid, false, NULL);
   if (!obc) {
     derr << __func__ << " could not find coid " << coid << dendl;
     ceph_abort();
   }
+
   assert(obc->ssc);
 
   hobject_t snapoid(
     coid.oid, coid.get_key(),
     obc->ssc->snapset.head_exists ? CEPH_NOSNAP:CEPH_SNAPDIR, coid.get_hash(),
     info.pgid.pool(), coid.get_namespace());
+
   ObjectContextRef snapset_obc = get_object_context(snapoid, false);
   assert(snapset_obc);
 
@@ -3918,6 +3921,7 @@ ReplicatedPG::OpContextUPtr ReplicatedPG::trim_object(bool first, const hobject_
 
   dout(10) << coid << " old_snaps " << old_snaps
 	   << " old snapset " << snapset << dendl;
+
   if (snapset.seq == 0) {
     osd->clog->error() << __func__ << " No snapset.seq for " << coid << "\n";
     return NULL;
@@ -3949,7 +3953,9 @@ ReplicatedPG::OpContextUPtr ReplicatedPG::trim_object(bool first, const hobject_
 	obc,
 	first)) {
     close_op_ctx(ctx.release());
+
     dout(10) << __func__ << ": Unable to get a wlock on " << coid << dendl;
+
     return NULL;
   }
 
@@ -3958,7 +3964,9 @@ ReplicatedPG::OpContextUPtr ReplicatedPG::trim_object(bool first, const hobject_
 	snapset_obc,
 	first)) {
     close_op_ctx(ctx.release());
+
     dout(10) << __func__ << ": Unable to get a wlock on " << snapoid << dendl;
+
     return NULL;
   }
 
@@ -3975,6 +3983,7 @@ ReplicatedPG::OpContextUPtr ReplicatedPG::trim_object(bool first, const hobject_
     assert(p != snapset.clones.end());
   
     snapid_t last = coid.snap;
+
     ctx->delta_stats.num_bytes -= snapset.get_clone_bytes(last);
 
     if (p != snapset.clones.begin()) {
@@ -3993,6 +4002,7 @@ ReplicatedPG::OpContextUPtr ReplicatedPG::trim_object(bool first, const hobject_
       if (adjust_prev_bytes)
 	ctx->delta_stats.num_bytes += snapset.get_clone_bytes(*n);
     }
+
     ctx->delta_stats.num_objects--;
     if (coi.is_dirty())
       ctx->delta_stats.num_objects_dirty--;
@@ -4002,7 +4012,9 @@ ReplicatedPG::OpContextUPtr ReplicatedPG::trim_object(bool first, const hobject_
       dout(20) << __func__ << " trimming whiteout on " << coid << dendl;
       ctx->delta_stats.num_whiteouts--;
     }
+
     ctx->delta_stats.num_object_clones--;
+
     if (coi.is_cache_pinned())
       ctx->delta_stats.num_objects_pinned--;
     obc->obs.exists = false;
@@ -4022,16 +4034,19 @@ ReplicatedPG::OpContextUPtr ReplicatedPG::trim_object(bool first, const hobject_
 	ctx->mtime,
 	0)
       );
+
     t->remove(coid);
     t->update_snaps(
       coid,
       old_snaps,
       new_snaps);
+
     ctx->at_version.version++;
   } else {
     // save adjusted snaps for this object
     dout(10) << coid << " snaps " << old_snaps
 	     << " -> " << new_snaps << dendl;
+
     coi.snaps = vector<snapid_t>(new_snaps.rbegin(), new_snaps.rend());
 
     coi.prior_version = coi.version;
@@ -4056,6 +4071,7 @@ ReplicatedPG::OpContextUPtr ReplicatedPG::trim_object(bool first, const hobject_
       coid,
       old_snaps,
       new_snaps);
+
     ctx->at_version.version++;
   }
 
@@ -4064,6 +4080,7 @@ ReplicatedPG::OpContextUPtr ReplicatedPG::trim_object(bool first, const hobject_
 
   if (snapset.clones.empty() && !snapset.head_exists) {
     dout(10) << coid << " removing " << snapoid << dendl;
+
     ctx->log.push_back(
       pg_log_entry_t(
 	pg_log_entry_t::DELETE,
@@ -4081,9 +4098,12 @@ ReplicatedPG::OpContextUPtr ReplicatedPG::trim_object(bool first, const hobject_
     t->remove(snapoid);
   } else {
     dout(10) << coid << " filtering snapset on " << snapoid << dendl;
+
     snapset.filter(pool.info);
+
     dout(10) << coid << " writing updated snapset on " << snapoid
 	     << ", snapset is " << snapset << dendl;
+
     ctx->log.push_back(
       pg_log_entry_t(
 	pg_log_entry_t::MODIFY,
@@ -4118,8 +4138,10 @@ void ReplicatedPG::kick_snap_trim()
 {
   assert(is_active());
   assert(is_primary());
+
   if (is_clean() && !snap_trimq.empty()) {
     dout(10) << __func__ << ": clean and snaps to trim, kicking" << dendl;
+
     snap_trimmer_machine.process_event(KickTrim());
   }
 }
@@ -4128,6 +4150,7 @@ void ReplicatedPG::snap_trimmer_scrub_complete()
 {
   if (is_primary() && is_active() && is_clean()) {
     assert(!snap_trimq.empty());
+
     snap_trimmer_machine.process_event(ScrubComplete());
   }
 }
@@ -4137,20 +4160,27 @@ void ReplicatedPG::snap_trimmer(epoch_t queued)
   if (deleting || pg_has_reset_since(queued)) {
     return;
   }
+
   if (g_conf->osd_snap_trim_sleep > 0) {
     unlock();
+
     utime_t t;
     t.set_from_double(g_conf->osd_snap_trim_sleep);
     t.sleep();
+
     lock();
+
     dout(20) << __func__ << " slept for " << t << dendl;
   }
 
   assert(is_primary());
 
   dout(10) << "snap_trimmer posting" << dendl;
+
   snap_trimmer_machine.process_event(DoSnapWork());
+
   dout(10) << "snap_trimmer complete" << dendl;
+
   return;
 }
 

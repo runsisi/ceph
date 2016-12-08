@@ -612,6 +612,8 @@ struct C_InvalidateCache : public Context {
     snap_ids.insert(pair<string, snap_t>(in_snap_name, id));
   }
 
+  // called by
+  // librbd::operation::SnapshotRemoveRequest<I>::remove_snap_context
   void ImageCtx::rm_snap(string in_snap_name, snap_t id)
   {
     assert(snap_lock.is_wlocked());

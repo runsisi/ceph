@@ -1249,11 +1249,13 @@ bool pg_pool_t::is_removed_snap(snapid_t s) const
  * build set of known-removed sets from either pool snaps or
  * explicit removed_snaps set.
  */
-// called by PGPool::update
+// called by
+// PGPool::update, which called by PG::handle_advance_map
 void pg_pool_t::build_removed_snaps(interval_set<snapid_t>& rs) const
 {
   if (is_pool_snaps_mode()) {
     rs.clear();
+
     for (snapid_t s = 1; s <= get_snap_seq(); s = s + 1)
       if (snaps.count(s) == 0)
 	rs.insert(s);
@@ -1283,6 +1285,8 @@ void pg_pool_t::add_snap(const char *n, utime_t stamp)
   snaps[s].stamp = stamp;
 }
 
+// called by
+// OSDMonitor::prepare_pool_op
 void pg_pool_t::add_unmanaged_snap(uint64_t& snapid)
 {
   if (removed_snaps.empty()) {
@@ -1293,6 +1297,7 @@ void pg_pool_t::add_unmanaged_snap(uint64_t& snapid)
     assert(!is_pool_snaps_mode());
 
     removed_snaps.insert(snapid_t(1));
+
     snap_seq = 1;
   }
 
@@ -1306,25 +1311,33 @@ void pg_pool_t::remove_snap(snapid_t s)
   snap_seq = snap_seq + 1;
 }
 
+// called by
+// OSDMonitor::prepare_pool_op
 void pg_pool_t::remove_unmanaged_snap(snapid_t s)
 {
   assert(is_unmanaged_snaps_mode());
 
+  // pg_pool_t::removed_snaps is also used by mds, see OSDMonitor::prepare_remove_snaps
   removed_snaps.insert(s);
+
+  // remove a snap will also increase the snap_seq by 1
   snap_seq = snap_seq + 1;
 
-  // TODO: why insert this　???
   removed_snaps.insert(get_snap_seq());
 }
 
+// called by
+// PGPool::update
 SnapContext pg_pool_t::get_snap_context() const
 {
   vector<snapid_t> s(snaps.size());
   unsigned i = 0;
+
   for (map<snapid_t, pool_snap_info_t>::const_reverse_iterator p = snaps.rbegin();
        p != snaps.rend();
        ++p)
     s[i++] = p->first;
+
   return SnapContext(get_snap_seq(), s);
 }
 

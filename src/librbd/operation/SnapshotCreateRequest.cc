@@ -200,13 +200,17 @@ Context *SnapshotCreateRequest<I>::handle_allocate_snap_id(int *result) {
 
   if (*result < 0) {
     save_result(result);
+
     image_ctx.aio_work_queue->unblock_writes();
+
     lderr(cct) << "failed to allocate snapshot id: " << cpp_strerror(*result)
                << dendl;
+
     return this->create_context_finisher(*result);
   }
 
   send_create_snap();
+
   return nullptr;
 }
 
@@ -237,6 +241,7 @@ void SnapshotCreateRequest<I>::send_create_snap() {
       image_ctx.exclusive_lock->assert_header_locked(&op);
     }
 
+    // add omap entries "snap_seq" and "snapshot_" + snap_seq
     cls_client::snapshot_add(&op, m_snap_id, m_snap_name, m_snap_namespace);
   }
 
@@ -262,6 +267,7 @@ Context *SnapshotCreateRequest<I>::handle_create_snap(int *result) {
     return nullptr;
   } else if (*result < 0) {
     save_result(result);
+
     send_release_snap_id();
     return nullptr;
   }
@@ -324,6 +330,8 @@ Context *SnapshotCreateRequest<I>::handle_create_object_map(int *result) {
   return this->create_context_finisher(0);
 }
 
+// called by
+// SnapshotCreateRequest<I>::handle_create_snap, which means create snap failed
 template <typename I>
 void SnapshotCreateRequest<I>::send_release_snap_id() {
   I &image_ctx = this->m_image_ctx;

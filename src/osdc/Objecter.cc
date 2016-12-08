@@ -3962,18 +3962,25 @@ int Objecter::allocate_selfmanaged_snap(int64_t pool, snapid_t *psnapid,
 					Context *onfinish)
 {
   unique_lock wl(rwlock);
+
   ldout(cct, 10) << "allocate_selfmanaged_snap; pool: " << pool << dendl;
+
   PoolOp *op = new PoolOp;
   if (!op) return -ENOMEM;
+
   op->tid = last_tid.inc();
   op->pool = pool;
+  // decode allocatd id then call onfinish
   C_SelfmanagedSnap *fin = new C_SelfmanagedSnap(psnapid, onfinish);
   op->onfinish = fin;
   op->blp = &fin->bl;
   op->pool_op = POOL_OP_CREATE_UNMANAGED_SNAP;
+
+  // used for Objecter::shutdown, Objecter::resend_mon_ops, Objecter::handle_pool_op_reply
   pool_ops[op->tid] = op;
 
   pool_op_submit(op);
+
   return 0;
 }
 
@@ -3981,6 +3988,7 @@ int Objecter::delete_pool_snap(int64_t pool, string& snap_name,
 			       Context *onfinish)
 {
   unique_lock wl(rwlock);
+
   ldout(cct, 10) << "delete_pool_snap; pool: " << pool << "; snap: "
 		 << snap_name << dendl;
 
@@ -3993,11 +4001,13 @@ int Objecter::delete_pool_snap(int64_t pool, string& snap_name,
   PoolOp *op = new PoolOp;
   if (!op)
     return -ENOMEM;
+
   op->tid = last_tid.inc();
   op->pool = pool;
   op->name = snap_name;
   op->onfinish = onfinish;
   op->pool_op = POOL_OP_DELETE_SNAP;
+
   pool_ops[op->tid] = op;
 
   pool_op_submit(op);
@@ -4019,8 +4029,11 @@ int Objecter::delete_selfmanaged_snap(int64_t pool, snapid_t snap,
   op->tid = last_tid.inc();
   op->pool = pool;
   op->onfinish = onfinish;
+  // will be checked by OSDMonitor::preprocess_pool_op and
+  // handled by OSDMonitor::prepare_pool_op
   op->pool_op = POOL_OP_DELETE_UNMANAGED_SNAP;
   op->snapid = snap;
+
   pool_ops[op->tid] = op;
 
   pool_op_submit(op);
@@ -4117,6 +4130,14 @@ int Objecter::change_pool_auid(int64_t pool, Context *onfinish, uint64_t auid)
   return 0;
 }
 
+// called by
+// Objecter::create_pool_snap
+// Objecter::delete_pool_snap
+// Objecter::allocate_selfmanaged_snap
+// Objecter::delete_selfmanaged_snap
+// Objecter::create_pool
+// Objecter::_do_delete_pool
+// Objecter::change_pool_auid
 void Objecter::pool_op_submit(PoolOp *op)
 {
   // rwlock is locked
@@ -4140,6 +4161,7 @@ void Objecter::_pool_op_submit(PoolOp *op)
 			   op->auid, last_seen_osdmap_version);
 
   if (op->snapid) m->snapid = op->snapid;
+
   if (op->crush_rule) m->crush_rule = op->crush_rule;
 
   monc->send_mon_message(m);
