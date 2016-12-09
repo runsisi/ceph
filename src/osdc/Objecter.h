@@ -1941,7 +1941,9 @@ private:
     logger(NULL), tick_event(0), m_request_state_hook(NULL),
     num_homeless_ops(0),
     homeless_session(new OSDSession(cct, -1)),
+    // for pool stats and pool op
     mon_timeout(ceph::make_timespan(mon_timeout)),
+    // for Objecter::_op_submit_with_budget and Objecter::submit_command
     osd_timeout(ceph::make_timespan(osd_timeout)),
     op_throttle_bytes(cct, "objecter_bytes",
 		      cct->_conf->objecter_inflight_op_bytes),

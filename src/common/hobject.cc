@@ -175,6 +175,7 @@ void hobject_t::decode(json_spirit::Value& v)
     else if (p.name_ == "namespace")
       nspace = p.value_.get_str();
   }
+
   build_hash_cache();
 }
 
@@ -241,6 +242,7 @@ ostream& operator<<(ostream& out, const hobject_t& o)
 
   if (o == hobject_t())
     return out << "MIN";
+
   if (o.is_max())
     return out << "MAX";
 
@@ -269,6 +271,7 @@ bool hobject_t::parse(const string &s)
     *this = hobject_t();
     return true;
   }
+
   if (s == "MAX") {
     *this = hobject_t::get_max();
     return true;
@@ -277,11 +280,15 @@ bool hobject_t::parse(const string &s)
   const char *start = s.c_str();
   long long po;
   unsigned h;
+
   int r = sscanf(start, "%lld:%x:", &po, &h);
   if (r != 2)
     return false;
+
   for (; *start && *start != ':'; ++start) ;
+
   for (++start; *start && isxdigit(*start); ++start) ;
+
   if (*start != ':')
     return false;
 
@@ -289,25 +296,32 @@ bool hobject_t::parse(const string &s)
   const char *p = decode_out_escaped(start + 1, &ns);
   if (*p != ':')
     return false;
+
   p = decode_out_escaped(p + 1, &k);
+
   if (*p != ':')
     return false;
+
   p = decode_out_escaped(p + 1, &name);
   if (*p != ':')
     return false;
+
   start = p + 1;
 
   unsigned long long sn;
   if (strncmp(start, "head", 4) == 0) {
     sn = CEPH_NOSNAP;
     start += 4;
+
     if (*start != 0)
       return false;
   } else {
     r = sscanf(start, "%llx", &sn);
     if (r != 1)
       return false;
+
     for (++start; *start && isxdigit(*start); ++start) ;
+
     if (*start)
       return false;
   }

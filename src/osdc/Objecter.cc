@@ -2267,6 +2267,7 @@ void Objecter::_op_submit_with_budget(Op *op, shunique_lock& sul,
   // _take_op_budget() may drop our lock while it blocks.
   if (!op->ctx_budgeted || (ctx_budget && (*ctx_budget == -1))) {
     int op_budget = _take_op_budget(op, sul);
+
     // take and pass out the budget for the first OP
     // in the context session
     if (ctx_budget && (*ctx_budget == -1)) {
@@ -2274,10 +2275,14 @@ void Objecter::_op_submit_with_budget(Op *op, shunique_lock& sul,
     }
   }
 
+  // the Objecter::mon_timeout, Objecter::osd_timeout were set by
+  // Objecter::Objecter
   if (osd_timeout > timespan(0)) {
     if (op->tid == 0)
       op->tid = last_tid.inc();
+
     auto tid = op->tid;
+
     op->ontimeout = timer.add_event(osd_timeout,
 				    [this, tid]() {
 				      op_cancel(tid, -ETIMEDOUT); });
@@ -2501,6 +2506,9 @@ void Objecter::_op_submit(Op *op, shunique_lock& sul, ceph_tid_t *ptid)
 		<< " uncommitted" << dendl;
 }
 
+// called by
+// Objecter::_op_cancel(ceph_tid_t tid, int r)
+// Objecter::op_cancel_writes
 int Objecter::op_cancel(OSDSession *s, ceph_tid_t tid, int r)
 {
   assert(initialized.read());
@@ -2522,6 +2530,7 @@ int Objecter::op_cancel(OSDSession *s, ceph_tid_t tid, int r)
 
   ldout(cct, 10) << __func__ << " tid " << tid << " in session " << s->osd
 		 << dendl;
+
   Op *op = p->second;
   if (op->onack) {
     op->onack->complete(r);
@@ -2545,16 +2554,23 @@ int Objecter::op_cancel(OSDSession *s, ceph_tid_t tid, int r)
   return 0;
 }
 
+// called by
+// Objecter::_op_submit_with_budget, for timeout callback
+// librados::IoCtxImpl::aio_cancel
+// MDBalancer::localize_balancer
 int Objecter::op_cancel(ceph_tid_t tid, int r)
 {
   int ret = 0;
 
   unique_lock wl(rwlock);
+
   ret = _op_cancel(tid, r);
 
   return ret;
 }
 
+// called by
+// Objecter::op_cancel(ceph_tid_t tid, int r)
 int Objecter::_op_cancel(ceph_tid_t tid, int r)
 {
   int ret = 0;
@@ -2567,14 +2583,18 @@ start:
   for (map<int, OSDSession *>::iterator siter = osd_sessions.begin();
        siter != osd_sessions.end(); ++siter) {
     OSDSession *s = siter->second;
+
     OSDSession::shared_lock sl(s->lock);
+
     if (s->ops.find(tid) != s->ops.end()) {
       sl.unlock();
+
       ret = op_cancel(s, tid, r);
       if (ret == -ENOENT) {
 	/* oh no! raced, maybe tid moved to another session, restarting */
 	goto start;
       }
+
       return ret;
     }
   }
@@ -2586,6 +2606,7 @@ start:
   OSDSession::shared_lock sl(homeless_session->lock);
   if (homeless_session->ops.find(tid) != homeless_session->ops.end()) {
     sl.unlock();
+
     ret = op_cancel(homeless_session, tid, r);
     if (ret == -ENOENT) {
       /* oh no! raced, maybe tid moved to another session, restarting */
@@ -4286,10 +4307,12 @@ void Objecter::get_pool_stats(list<string>& pools,
   ldout(cct, 10) << "get_pool_stats " << pools << dendl;
 
   PoolStatOp *op = new PoolStatOp;
+
   op->tid = last_tid.inc();
   op->pools = pools;
   op->pool_stats = result;
   op->onfinish = onfinish;
+
   if (mon_timeout > timespan(0)) {
     op->ontimeout = timer.add_event(mon_timeout,
 				    [this, op]() {
@@ -4937,6 +4960,7 @@ int Objecter::submit_command(CommandOp *c, ceph_tid_t *ptid)
 
   _calc_command_target(c, sul);
   _assign_command_session(c, sul);
+
   if (osd_timeout > timespan(0)) {
     c->ontimeout = timer.add_event(osd_timeout,
 				   [this, c, tid]() {
@@ -5421,6 +5445,7 @@ void ::ObjectOperation::scrub_ls(const librados::object_id_t& start_after,
 				 int *rval)
 {
   scrub_ls_arg_t arg = {*interval, 0, start_after, max_to_get};
+
   do_scrub_ls(this, arg, objects, interval, rval);
 }
 

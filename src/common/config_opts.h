@@ -400,6 +400,7 @@ OPTION(mon_pool_quota_crit_threshold, OPT_INT, 0) // percent of quota at which t
 OPTION(client_cache_size, OPT_INT, 16384)
 OPTION(client_cache_mid, OPT_FLOAT, .75)
 OPTION(client_use_random_mds, OPT_BOOL, false)
+// used by MonClient::authenticate
 OPTION(client_mount_timeout, OPT_DOUBLE, 300.0)
 OPTION(client_tick_interval, OPT_DOUBLE, 1.0)
 OPTION(client_trace, OPT_STR, "")
@@ -1243,6 +1244,10 @@ OPTION(journal_discard, OPT_BOOL, false) //using ssd disk as journal, whether su
 
 OPTION(fio_dir, OPT_STR, "/tmp/fio") // fio data directory for fio-objectstore
 
+// used by
+// MonClient::start_mon_command
+// librados::RadosClient::connect, to set Objecter::mon_timeout, Objecter::osd_timeout
+// librados::RadosClient::wait_for_osdmap
 OPTION(rados_mon_op_timeout, OPT_DOUBLE, 0) // how many seconds to wait for a response from the monitor before returning an error from a rados operation. 0 means on limit.
 OPTION(rados_osd_op_timeout, OPT_DOUBLE, 0) // how many seconds to wait for a response from osds before returning an error from a rados operation. 0 means no limit.
 OPTION(rados_tracing, OPT_BOOL, false) // true if LTTng-UST tracepoints should be enabled

@@ -3520,6 +3520,7 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
   } else if (prefix == "osd df") {
     string method;
     cmd_getval(g_ceph_context, cmdmap, "output_method", method);
+
     print_utilization(ds, f ? f.get() : NULL, method == "tree");
     rdata.append(ds);
   } else if (prefix == "osd getmaxosd") {
@@ -3678,19 +3679,24 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 
     if (whostr == "*") {
       ss << "osds ";
+
       int c = 0;
       for (int i = 0; i < osdmap.get_max_osd(); i++)
 	if (osdmap.is_up(i)) {
 	  ss << (c++ ? "," : "") << i;
+
 	  mon->try_send_message(new MOSDScrub(osdmap.get_fsid(),
 					      pvec.back() == "repair",
 					      pvec.back() == "deep-scrub"),
 				osdmap.get_inst(i));
 	}
+
       r = 0;
+
       ss << " instructed to " << pvec.back();
     } else {
       long osd = parse_osd_id(whostr.c_str(), &ss);
+
       if (osd < 0) {
 	r = -EINVAL;
       } else if (osdmap.is_up(osd)) {
@@ -3698,9 +3704,11 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 					    pvec.back() == "repair",
 					    pvec.back() == "deep-scrub"),
 			      osdmap.get_inst(osd));
+
 	ss << "osd." << osd << " instructed to " << pvec.back();
       } else {
 	ss << "osd." << osd << " is not up";
+
 	r = -EAGAIN;
       }
     }

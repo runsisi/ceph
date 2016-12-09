@@ -22,6 +22,9 @@
  * instruct an OSD to scrub some or all pg(s)
  */
 
+// created by
+// OSDMonitor::preprocess_command, for "osd scrub", "osd deep-scrub", "osd repair"
+// PGMonitor::preprocess_command, for "pg scrub", "pg repair", "pg deep-scrub"
 struct MOSDScrub : public Message {
 
   static const int HEAD_VERSION = 2;
@@ -33,9 +36,11 @@ struct MOSDScrub : public Message {
   bool deep;
 
   MOSDScrub() : Message(MSG_OSD_SCRUB, HEAD_VERSION, COMPAT_VERSION) {}
+  // for OSDMonitor::preprocess_command
   MOSDScrub(const uuid_d& f, bool r, bool d) :
     Message(MSG_OSD_SCRUB, HEAD_VERSION, COMPAT_VERSION),
     fsid(f), repair(r), deep(d) {}
+  // for PGMonitor::preprocess_command
   MOSDScrub(const uuid_d& f, vector<pg_t>& pgs, bool r, bool d) :
     Message(MSG_OSD_SCRUB, HEAD_VERSION, COMPAT_VERSION),
     fsid(f), scrub_pgs(pgs), repair(r), deep(d) {}

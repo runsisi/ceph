@@ -864,6 +864,8 @@ int ReplicatedPG::get_pgls_filter(bufferlist::iterator& iter, PGLSFilter **pfilt
 
 // ==========================================================
 
+// called by
+// OSD::do_command, which called by OSD::CommandWQ::_process
 int ReplicatedPG::do_command(
   cmdmap_t cmdmap,
   ostream& ss,
@@ -881,6 +883,7 @@ int ReplicatedPG::do_command(
 
   string command;
   cmd_getval(cct, cmdmap, "cmd", command);
+
   if (command == "query") {
     f->open_object_section("pg");
     f->dump_string("state", pg_state_string(get_state()));
@@ -13663,6 +13666,8 @@ unsigned ReplicatedPG::process_clones_to(const boost::optional<hobject_t> &head,
  *              [Snapset clones 4]
  * EOL                  obj4 snap 4, (expected)
  */
+// called by
+// PG::scrub_compare_maps
 void ReplicatedPG::scrub_snapshot_metadata(
   ScrubMap &scrubmap,
   const map<hobject_t, pair<uint32_t, uint32_t>, hobject_t::BitwiseComparator> &missing_digest)
@@ -13670,9 +13675,12 @@ void ReplicatedPG::scrub_snapshot_metadata(
   dout(10) << __func__ << dendl;
 
   coll_t c(info.pgid);
+
   bool repair = state_test(PG_STATE_REPAIR);
   bool deep_scrub = state_test(PG_STATE_DEEP_SCRUB);
+
   const char *mode = (repair ? "repair": (deep_scrub ? "deep-scrub" : "scrub"));
+
   boost::optional<snapid_t> all_clones;   // Unspecified snapid_t or boost::none
 
   // traverse in reverse order.
@@ -13998,6 +14006,7 @@ void ReplicatedPG::_scrub_finish()
 {
   bool repair = state_test(PG_STATE_REPAIR);
   bool deep_scrub = state_test(PG_STATE_DEEP_SCRUB);
+
   const char *mode = (repair ? "repair": (deep_scrub ? "deep-scrub" : "scrub"));
 
   if (info.stats.stats_invalid) {
@@ -14044,16 +14053,20 @@ void ReplicatedPG::_scrub_finish()
 		      << scrub_cstat.sum.num_whiteouts << "/" << info.stats.stats.sum.num_whiteouts << " whiteouts, "
 		      << scrub_cstat.sum.num_bytes << "/" << info.stats.stats.sum.num_bytes << " bytes, "
 		      << scrub_cstat.sum.num_bytes_hit_set_archive << "/" << info.stats.stats.sum.num_bytes_hit_set_archive << " hit_set_archive bytes.\n";
+
     ++scrubber.shallow_errors;
 
     if (repair) {
       ++scrubber.fixed;
+
       info.stats.stats = scrub_cstat;
       info.stats.dirty_stats_invalid = false;
       info.stats.omap_stats_invalid = false;
       info.stats.hitset_stats_invalid = false;
       info.stats.hitset_bytes_stats_invalid = false;
+
       publish_stats_to_osd();
+
       share_pg_info();
     }
   }

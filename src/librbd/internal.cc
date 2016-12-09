@@ -1074,6 +1074,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
 	    IoCtx& c_ioctx, const char *c_name, ImageOptions& c_opts)
   {
     CephContext *cct = (CephContext *)p_ioctx.cct();
+
     if (p_snap_name == NULL) {
       lderr(cct) << "image to be cloned must be a snapshot" << dendl;
       return -EINVAL;

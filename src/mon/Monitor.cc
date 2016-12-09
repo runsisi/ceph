@@ -2894,6 +2894,7 @@ void Monitor::handle_command(MonOpRequestRef op)
   assert(op->is_type_command());
 
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
+
   if (m->fsid != monmap->fsid) {
     dout(0) << "handle_command on fsid " << m->fsid << " != " << monmap->fsid << dendl;
     reply_command(op, -EPERM, "wrong fsid", 0);
@@ -3216,12 +3217,15 @@ void Monitor::handle_command(MonOpRequestRef op)
       r = 0;
     } else if (prefix == "df") {
       bool verbose = (detail == "detail");
+
       if (f)
         f->open_object_section("stats");
 
       pgmon()->pg_map.dump_fs_stats(&ds, f.get(), verbose);
+
       if (!f)
         ds << '\n';
+
       pgmon()->pg_map.dump_pool_stats(osdmon()->osdmap, &ds, f.get(), verbose);
 
       if (f) {
@@ -5048,10 +5052,14 @@ int Monitor::scrub()
   return 0;
 }
 
+// called by
+// Monitor::dispatch_op
 void Monitor::handle_scrub(MonOpRequestRef op)
 {
   MMonScrub *m = static_cast<MMonScrub*>(op->get_req());
+
   dout(10) << __func__ << " " << *m << dendl;
+
   switch (m->op) {
   case MMonScrub::OP_SCRUB:
     {

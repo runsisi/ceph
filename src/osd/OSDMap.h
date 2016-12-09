@@ -752,6 +752,7 @@ public:
   pg_t raw_pg_to_pg(pg_t pg) const {
     map<int64_t,pg_pool_t>::const_iterator p = pools.find(pg.pool());
     assert(p != pools.end());
+
     return p->second.raw_pg_to_pg(pg);
   }
 

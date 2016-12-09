@@ -286,6 +286,7 @@ void PGMonitor::upgrade_format()
 void PGMonitor::post_paxos_update()
 {
   dout(10) << __func__ << dendl;
+
   if (mon->osdmon()->osdmap.get_epoch()) {
     send_pg_creates();
   }
@@ -928,6 +929,8 @@ void PGMonitor::check_osd_map(epoch_t epoch)
   propose_pending();
 }
 
+// called by
+// PGMonitor::post_paxos_update
 void PGMonitor::send_pg_creates()
 {
   // We only need to do this old, spammy way of broadcasting create messages
@@ -963,11 +966,16 @@ void PGMonitor::send_pg_creates()
   }
 }
 
+// called by
+// PGMonitor::send_pg_creates()
+// PGMonitor::check_sub
 epoch_t PGMonitor::send_pg_creates(int osd, Connection *con, epoch_t next)
 {
   dout(30) << __func__ << " " << pg_map.creating_pgs_by_osd_epoch << dendl;
+
   map<int, map<epoch_t, set<pg_t> > >::iterator p =
     pg_map.creating_pgs_by_osd_epoch.find(osd);
+
   if (p == pg_map.creating_pgs_by_osd_epoch.end())
     return next;
 
@@ -975,28 +983,36 @@ epoch_t PGMonitor::send_pg_creates(int osd, Connection *con, epoch_t next)
 
   MOSDPGCreate *m = NULL;
   epoch_t last = 0;
+
   for (map<epoch_t, set<pg_t> >::iterator q = p->second.lower_bound(next);
        q != p->second.end();
        ++q) {
     dout(20) << __func__ << " osd." << osd << " from " << next
              << " : epoch " << q->first << " " << q->second.size() << " pgs"
              << dendl;
+
     last = q->first;
+
     for (set<pg_t>::iterator r = q->second.begin(); r != q->second.end(); ++r) {
       pg_stat_t &st = pg_map.pg_stat[*r];
+
       if (!m)
 	m = new MOSDPGCreate(pg_map.last_osdmap_epoch);
+
       m->mkpg[*r] = pg_create_t(st.created,
                                 st.parent,
                                 st.parent_split_bits);
+
       // Need the create time from the monitor using its clock to set
       // last_scrub_stamp upon pg creation.
       m->ctimes[*r] = pg_map.pg_stat[*r].last_scrub_stamp;
     }
   }
+
   if (!m) {
     dout(20) << "send_pg_creates osd." << osd << " from " << next
              << " has nothing to send" << dendl;
+
     return next;
   }
 
@@ -1004,8 +1020,10 @@ epoch_t PGMonitor::send_pg_creates(int osd, Connection *con, epoch_t next)
     con->send_message(m);
   } else {
     assert(mon->osdmon()->osdmap.is_up(osd));
+
     mon->messenger->send_message(m, mon->osdmon()->osdmap.get_inst(osd));
   }
+
   last_sent_pg_create[osd] = ceph_clock_now(g_ceph_context);
 
   // sub is current through last + 1
@@ -1019,19 +1037,22 @@ void PGMonitor::_try_mark_pg_stale(
 {
   map<pg_t,pg_stat_t>::iterator q = pending_inc.pg_stat_updates.find(pgid);
   pg_stat_t *stat;
+
   if (q == pending_inc.pg_stat_updates.end()) {
     stat = &pending_inc.pg_stat_updates[pgid];
     *stat = cur_stat;
   } else {
     stat = &q->second;
   }
+
   if ((stat->acting_primary == cur_stat.acting_primary) ||
       ((stat->state & PG_STATE_STALE) == 0 &&
        stat->acting_primary != -1 &&
        osdmap->is_down(stat->acting_primary))) {
     dout(10) << " marking pg " << pgid << " stale (acting_primary "
 	     << stat->acting_primary << ")" << dendl;
-    stat->state |= PG_STATE_STALE;  
+
+    stat->state |= PG_STATE_STALE;
     stat->last_unstale = ceph_clock_now(g_ceph_context);
   }
 }
@@ -1095,6 +1116,7 @@ void PGMonitor::dump_info(Formatter *f) const
 bool PGMonitor::preprocess_command(MonOpRequestRef op)
 {
   op->mark_pgmon_event(__func__);
+
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
   int r = -1;
   bufferlist rdata;
@@ -1344,34 +1366,43 @@ bool PGMonitor::preprocess_command(MonOpRequestRef op)
     pg_t pgid;
     string pgidstr;
     cmd_getval(g_ceph_context, cmdmap, "pgid", pgidstr);
+
     if (!pgid.parse(pgidstr.c_str())) {
       ss << "invalid pgid '" << pgidstr << "'";
       r = -EINVAL;
       goto reply;
     }
+
     if (!pg_map.pg_stat.count(pgid)) {
       ss << "pg " << pgid << " dne";
       r = -ENOENT;
       goto reply;
     }
+
     if (pg_map.pg_stat[pgid].acting_primary == -1) {
       ss << "pg " << pgid << " has no primary osd";
       r = -EAGAIN;
       goto reply;
     }
+
     int osd = pg_map.pg_stat[pgid].acting_primary;
+
     if (!mon->osdmon()->osdmap.is_up(osd)) {
       ss << "pg " << pgid << " primary osd." << osd << " not up";
       r = -EAGAIN;
       goto reply;
     }
+
     vector<pg_t> pgs(1);
     pgs[0] = pgid;
+
     mon->try_send_message(new MOSDScrub(mon->monmap->fsid, pgs,
                                         scrubop == "repair",
                                         scrubop == "deep-scrub"),
                           mon->osdmon()->osdmap.get_inst(osd));
+
     ss << "instructing pg " << pgid << " on osd." << osd << " to " << scrubop;
+
     r = 0;
   } else if (prefix == "pg debug") {
     string debugop;

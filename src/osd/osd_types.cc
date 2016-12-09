@@ -1345,12 +1345,15 @@ uint32_t pg_pool_t::hash_key(const string& key, const string& ns) const
 {
  if (ns.empty()) 
     return ceph_str_hash(object_hash, key.data(), key.length());
+
   int nsl = ns.length();
   int len = key.length() + nsl + 1;
   char buf[len];
   memcpy(&buf[0], ns.data(), nsl);
+  // unit separator
   buf[nsl] = '\037';
   memcpy(&buf[nsl+1], key.data(), key.length());
+
   return ceph_str_hash(object_hash, &buf[0], len);
 }
 
@@ -1365,6 +1368,7 @@ uint32_t pg_pool_t::raw_hash_to_pg(uint32_t v) const
 pg_t pg_pool_t::raw_pg_to_pg(pg_t pg) const
 {
   pg.set_ps(ceph_stable_mod(pg.ps(), pg_num, pg_num_mask));
+
   return pg;
 }
   

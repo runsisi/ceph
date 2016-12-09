@@ -4502,6 +4502,7 @@ void OSD::tick()
 void OSD::tick_without_osd_lock()
 {
   assert(tick_timer_lock.is_locked());
+
   dout(10) << "tick_without_osd_lock" << dendl;
 
   logger->set(l_osd_buf, buffer::get_total_alloc());
@@ -4518,13 +4519,16 @@ void OSD::tick_without_osd_lock()
     heartbeat_lock.Unlock();
 
     map_lock.get_read();
+
     Mutex::Locker l(mon_report_lock);
 
     // mon report?
     bool reset = false;
     bool report = false;
     utime_t now = ceph_clock_now(cct);
+
     pg_stat_queue_lock.Lock();
+
     double backoff = stats_ack_timeout / g_conf->osd_mon_ack_timeout;
     double adjusted_min = cct->_conf->osd_mon_report_interval_min * backoff;
     // note: we shouldn't adjust max because it must remain < the
@@ -4536,6 +4540,7 @@ void OSD::tick_without_osd_lock()
       dout(1) << __func__ << " mon hasn't acked PGStats in "
 	      << now - last_pg_stats_ack
 	      << " seconds, reconnecting elsewhere" << dendl;
+
       reset = true;
       last_pg_stats_ack = now;  // reset clock
       last_pg_stats_sent = utime_t();
@@ -4544,6 +4549,7 @@ void OSD::tick_without_osd_lock()
 	    stats_ack_timeout * g_conf->osd_stats_ack_timeout_factor);
       outstanding_pg_stats.clear();
     }
+
     if (now - last_pg_stats_sent > max) {
       osd_stat_updated = true;
       report = true;
@@ -4556,10 +4562,12 @@ void OSD::tick_without_osd_lock()
 	dout(20) << __func__ << " stats backoff " << backoff
 		 << " adjusted_min " << adjusted_min << " - sending report"
 		 << dendl;
+
         osd_stat_updated = true;
 	report = true;
       }
     }
+
     pg_stat_queue_lock.Unlock();
 
     if (reset) {
@@ -4571,6 +4579,7 @@ void OSD::tick_without_osd_lock()
       send_failures();
       send_pg_stats(now);
     }
+
     map_lock.put_read();
   }
 
@@ -4583,7 +4592,9 @@ void OSD::tick_without_osd_lock()
   }
 
   check_ops_in_flight();
+
   service.kick_recovery_queue();
+
   tick_timer_without_osd_lock.add_event_after(OSD_TICK_INTERVAL, new C_Tick_WithoutOSDLock(this));
 }
 
@@ -5597,6 +5608,8 @@ COMMAND("reset_pg_recovery_stats", "reset pg recovery statistics",
 	"osd", "rw", "cli,rest")
 };
 
+// called by
+// OSD::CommandWQ::_process
 void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, bufferlist& data)
 {
   int r = 0;
@@ -5715,12 +5728,14 @@ void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, buffe
     } else {
       spg_t pcand;
       PG *pg = nullptr;
+
       if (osdmap->get_primary_shard(pgid, &pcand) &&
 	  (pg = _lookup_lock_pg(pcand))) {
 	if (pg->is_primary()) {
 	  // simulate pg <pgid> cmd= for pg->do-command
 	  if (prefix != "pg")
 	    cmd_putval(cct, cmdmap, "cmd", prefix);
+
 	  r = pg->do_command(cmdmap, ss, data, odata, con, tid);
 	  if (r == -EAGAIN) {
 	    pg->unlock();
@@ -5737,8 +5752,10 @@ void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, buffe
 	  // do not reply; they will get newer maps and realize they
 	  // need to resend.
 	  pg->unlock();
+
 	  return;
 	}
+
 	pg->unlock();
       } else {
 	ss << "i don't have pgid " << pgid;
@@ -6070,6 +6087,7 @@ bool OSD::ms_dispatch(Message *m)
   }
 
   do_waiters();
+
   _dispatch(m);
 
   osd_lock.Unlock();
@@ -6598,44 +6616,67 @@ void OSD::_dispatch(Message *m)
   }
 }
 
+// called by
+// OSD::handle_scrub, which called by OSD::_dispatch(Message *m)
 void OSD::handle_pg_scrub(MOSDScrub *m, PG *pg)
 {
   pg->lock();
+
   if (pg->is_primary()) {
     pg->unreg_next_scrub();
+
     pg->scrubber.must_scrub = true;
     pg->scrubber.must_deep_scrub = m->deep || m->repair;
     pg->scrubber.must_repair = m->repair;
+
     pg->reg_next_scrub();
+
     dout(10) << "marking " << *pg << " for scrub" << dendl;
   }
+
   pg->unlock();
 }
 
+// called by
+// OSD::_dispatch(Message *m)
 void OSD::handle_scrub(MOSDScrub *m)
 {
   dout(10) << "handle_scrub " << *m << dendl;
+
   if (!require_mon_peer(m))
     return;
+
   if (m->fsid != monc->get_fsid()) {
     dout(0) << "handle_scrub fsid " << m->fsid << " != " << monc->get_fsid() << dendl;
+
     m->put();
     return;
   }
 
   RWLock::RLocker l(pg_map_lock);
+
   if (m->scrub_pgs.empty()) {
+
+    // MOSDScrub was sent from OSDMonitor::preprocess_command
+    // scrub all pg on this osd
+
     for (ceph::unordered_map<spg_t, PG*>::iterator p = pg_map.begin();
 	 p != pg_map.end();
 	 ++p)
       handle_pg_scrub(m, p->second);
   } else {
+
+    // MOSDScrub was sent from PGMonitor::preprocess_command
+    // only scrub the specified pg
+
     for (vector<pg_t>::iterator p = m->scrub_pgs.begin();
 	 p != m->scrub_pgs.end();
 	 ++p) {
       spg_t pcand;
+
       if (osdmap->get_primary_shard(*p, &pcand)) {
 	auto pg_map_entry = pg_map.find(pcand);
+
 	if (pg_map_entry != pg_map.end()) {
 	  handle_pg_scrub(m, pg_map_entry->second);
 	}
@@ -6649,10 +6690,13 @@ void OSD::handle_scrub(MOSDScrub *m)
 bool OSD::scrub_random_backoff()
 {
   bool coin_flip = (rand() % 3) == whoami % 3;
+
   if (!coin_flip) {
     dout(20) << "scrub_random_backoff lost coin flip, randomly backing off" << dendl;
+
     return true;
   }
+
   return false;
 }
 
@@ -6746,6 +6790,8 @@ bool OSD::scrub_load_below_threshold()
   return false;
 }
 
+// called by
+// OSD::tick_without_osd_lock
 void OSD::sched_scrub()
 {
   // if not permitted, fail fast
@@ -6756,9 +6802,11 @@ void OSD::sched_scrub()
   utime_t now = ceph_clock_now(cct);
   bool time_permit = scrub_time_permit(now);
   bool load_is_low = scrub_load_below_threshold();
+
   dout(20) << "sched_scrub load_is_low=" << (int)load_is_low << dendl;
 
   OSDService::ScrubJob scrub;
+
   if (service.first_scrub_stamp(&scrub)) {
     do {
       dout(30) << "sched_scrub examine " << scrub.pgid << " at " << scrub.sched_time << dendl;
@@ -9018,6 +9066,7 @@ void OSD::handle_replica_op(OpRequestRef& op, OSDMapRef& osdmap)
     // OSD::dequeue_op will check this and share map if needed
     op->send_map_update = should_share_map;
     op->sent_epoch = m->map_epoch;
+
     enqueue_op(pg, op);
   } else if (should_share_map && m->get_connection()->is_connected()) {
     C_SendMap *send_map = new C_SendMap(this, m->get_source(),

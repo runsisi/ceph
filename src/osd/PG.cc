@@ -3517,26 +3517,35 @@ void PG::requeue_ops(list<OpRequestRef> &ls)
  *     osd->scrubber.active++
  */
 
+// called by
+// PG::sub_op_scrub_reserve_reply
+// OSD::sched_scrub
+
 // returns true if a scrub has been newly kicked off
 bool PG::sched_scrub()
 {
   assert(_lock.is_locked());
+
   if (!(is_primary() && is_active() && is_clean() && !is_scrubbing())) {
     return false;
   }
 
   double deep_scrub_interval = 0;
   pool.info.opts.get(pool_opts_t::DEEP_SCRUB_INTERVAL, &deep_scrub_interval);
+
   if (deep_scrub_interval <= 0) {
     deep_scrub_interval = cct->_conf->osd_deep_scrub_interval;
   }
+
   bool time_for_deep = ceph_clock_now(cct) >=
     info.history.last_deep_scrub_stamp + deep_scrub_interval;
 
   bool deep_coin_flip = false;
+
   // Only add random deep scrubs when NOT user initiated scrub
   if (!scrubber.must_scrub)
       deep_coin_flip = (rand() % 100) < cct->_conf->osd_deep_scrub_randomize_ratio * 100;
+
   dout(20) << __func__ << ": time_for_deep=" << time_for_deep << " deep_coin_flip=" << deep_coin_flip << dendl;
 
   time_for_deep = (time_for_deep || deep_coin_flip);
@@ -3559,10 +3568,12 @@ bool PG::sched_scrub()
         clear_scrub_reserved();
         scrub_unreserve_replicas();
       }
+
       return false;
     }
   }
 
+  // default false
   if (cct->_conf->osd_scrub_auto_repair
       && get_pgbackend()->auto_repair_supported()
       && time_for_deep
@@ -3571,6 +3582,7 @@ bool PG::sched_scrub()
       && !scrubber.must_scrub
       && !scrubber.must_deep_scrub) {
     dout(20) << __func__ << ": auto repair with deep scrubbing" << dendl;
+
     scrubber.auto_repair = true;
   } else {
     // this happens when user issue the scrub/repair command during
@@ -3579,30 +3591,41 @@ bool PG::sched_scrub()
   }
 
   bool ret = true;
+
   if (!scrubber.reserved) {
     assert(scrubber.reserved_peers.empty());
+
     if (osd->inc_scrubs_pending()) {
       dout(20) << "sched_scrub: reserved locally, reserving replicas" << dendl;
+
       scrubber.reserved = true;
       scrubber.reserved_peers.insert(pg_whoami);
+
       scrub_reserve_replicas();
     } else {
       dout(20) << "sched_scrub: failed to reserve locally" << dendl;
+
       ret = false;
     }
   }
+
   if (scrubber.reserved) {
     if (scrubber.reserve_failed) {
       dout(20) << "sched_scrub: failed, a peer declined" << dendl;
+
       clear_scrub_reserved();
       scrub_unreserve_replicas();
+
       ret = false;
     } else if (scrubber.reserved_peers.size() == acting.size()) {
       dout(20) << "sched_scrub: success, reserved self and replicas" << dendl;
+
       if (time_for_deep) {
 	dout(10) << "sched_scrub: scrub will be deep" << dendl;
+
 	state_set(PG_STATE_DEEP_SCRUB);
       }
+
       queue_scrub();
     } else {
       // none declined, since scrubber.reserved is set
@@ -3628,9 +3651,12 @@ void PG::reg_next_scrub()
   // note down the sched_time, so we can locate this scrub, and remove it
   // later on.
   double scrub_min_interval = 0, scrub_max_interval = 0;
+
   pool.info.opts.get(pool_opts_t::SCRUB_MIN_INTERVAL, &scrub_min_interval);
   pool.info.opts.get(pool_opts_t::SCRUB_MAX_INTERVAL, &scrub_max_interval);
+
   assert(scrubber.scrub_reg_stamp == utime_t());
+
   scrubber.scrub_reg_stamp = osd->reg_pg_scrub(info.pgid,
 					       reg_stamp,
 					       scrub_min_interval,
@@ -3649,7 +3675,9 @@ void PG::unreg_next_scrub()
 void PG::sub_op_scrub_map(OpRequestRef op)
 {
   MOSDSubOp *m = static_cast<MOSDSubOp *>(op->get_req());
+
   assert(m->get_type() == MSG_OSD_SUBOP);
+
   dout(7) << "sub_op_scrub_map" << dendl;
 
   if (m->map_epoch < info.history.same_interval_since) {
@@ -3666,14 +3694,17 @@ void PG::sub_op_scrub_map(OpRequestRef op)
   op->mark_started();
 
   dout(10) << " got " << m->from << " scrub map" << dendl;
+
   bufferlist::iterator p = m->get_data().begin();
 
   scrubber.received_maps[m->from].decode(p, info.pgid.pool());
+
   dout(10) << "map version is "
 	     << scrubber.received_maps[m->from].valid_through
 	     << dendl;
 
   --scrubber.waiting_on;
+
   scrubber.waiting_on_whom.erase(m->from);
 
   if (scrubber.waiting_on == 0) {
@@ -3688,12 +3719,15 @@ void PG::_request_scrub_map(
   bool deep, uint32_t seed)
 {
   assert(replica != pg_whoami);
+
   dout(10) << "scrub  requesting scrubmap from osd." << replica
 	   << " deep " << (int)deep << " seed " << seed << dendl;
+
   MOSDRepScrub *repscrubop = new MOSDRepScrub(
     spg_t(info.pgid.pgid, replica.shard), version,
     get_osdmap()->get_epoch(),
     start, end, deep, seed);
+
   // default priority, we want the rep scrub processed prior to any recovery
   // or client io messages (we are holding a lock!)
   osd->send_message_osd_cluster(
@@ -3724,7 +3758,9 @@ void PG::sub_op_scrub_reserve(OpRequestRef op)
 void PG::sub_op_scrub_reserve_reply(OpRequestRef op)
 {
   MOSDSubOpReply *reply = static_cast<MOSDSubOpReply*>(op->get_req());
+
   assert(reply->get_type() == MSG_OSD_SUBOPREPLY);
+
   dout(7) << "sub_op_scrub_reserve_reply" << dendl;
 
   if (!scrubber.reserved) {
@@ -3735,6 +3771,7 @@ void PG::sub_op_scrub_reserve_reply(OpRequestRef op)
   op->mark_started();
 
   pg_shard_t from = reply->from;
+
   bufferlist::iterator p = reply->get_data().begin();
   bool reserved;
   ::decode(reserved, p);
@@ -3744,12 +3781,15 @@ void PG::sub_op_scrub_reserve_reply(OpRequestRef op)
   } else {
     if (reserved) {
       dout(10) << " osd." << from << " scrub reserve = success" << dendl;
+
       scrubber.reserved_peers.insert(from);
     } else {
       /* One decline stops this pg from being scheduled for scrubbing. */
       dout(10) << " osd." << from << " scrub reserve = fail" << dendl;
+
       scrubber.reserve_failed = true;
     }
+
     sched_scrub();
   }
 }
@@ -3799,20 +3839,26 @@ void PG::clear_scrub_reserved()
 void PG::scrub_reserve_replicas()
 {
   assert(backfill_targets.empty());
+
   for (set<pg_shard_t>::iterator i = actingbackfill.begin();
        i != actingbackfill.end();
        ++i) {
     if (*i == pg_whoami) continue;
+
     dout(10) << "scrub requesting reserve from osd." << *i << dendl;
+
     vector<OSDOp> scrub(1);
     scrub[0].op.op = CEPH_OSD_OP_SCRUB_RESERVE;
     hobject_t poid;
     eversion_t v;
     osd_reqid_t reqid;
+
     MOSDSubOp *subop = new MOSDSubOp(
       reqid, pg_whoami, spg_t(info.pgid.pgid, i->shard), poid, 0,
       get_osdmap()->get_epoch(), osd->get_tid(), v);
+
     subop->ops = scrub;
+
     osd->send_message_osd_cluster(
       i->osd, subop, get_osdmap()->get_epoch());
   }
@@ -3821,20 +3867,26 @@ void PG::scrub_reserve_replicas()
 void PG::scrub_unreserve_replicas()
 {
   assert(backfill_targets.empty());
+
   for (set<pg_shard_t>::iterator i = actingbackfill.begin();
        i != actingbackfill.end();
        ++i) {
     if (*i == pg_whoami) continue;
+
     dout(10) << "scrub requesting unreserve from osd." << *i << dendl;
+
     vector<OSDOp> scrub(1);
     scrub[0].op.op = CEPH_OSD_OP_SCRUB_UNRESERVE;
     hobject_t poid;
     eversion_t v;
     osd_reqid_t reqid;
+
     MOSDSubOp *subop = new MOSDSubOp(
       reqid, pg_whoami, spg_t(info.pgid.pgid, i->shard), poid, 0,
       get_osdmap()->get_epoch(), osd->get_tid(), v);
+
     subop->ops = scrub;
+
     osd->send_message_osd_cluster(i->osd, subop, get_osdmap()->get_epoch());
   }
 }
@@ -3855,12 +3907,15 @@ void PG::_scan_rollback_obs(
 			<< *i << " generation < trimmed_to "
 			<< trimmed_to
 			<< "...repaired";
+
       t.remove(coll, *i);
     }
   }
+
   if (!t.empty()) {
     derr << __func__ << ": queueing trans to clean up obsolete rollback objs"
 	 << dendl;
+
     osd->store->queue_transaction(osr.get(), std::move(t), NULL);
   }
 }
@@ -3902,11 +3957,13 @@ void PG::_scan_snaps(ScrubMap &smap)
       // check and if necessary fix snap_mapper
       set<snapid_t> oi_snaps(oi.snaps.begin(), oi.snaps.end());
       set<snapid_t> cur_snaps;
+
       int r = snap_mapper.get_snaps(hoid, &cur_snaps);
       if (r != 0 && r != -ENOENT) {
 	derr << __func__ << ": get_snaps returned " << cpp_strerror(r) << dendl;
 	ceph_abort();
       }
+
       if (r == -ENOENT || cur_snaps != oi_snaps) {
 	ObjectStore::Transaction t;
 	OSDriver::OSTransaction _t(osdriver.get_transaction(&t));
@@ -3933,7 +3990,9 @@ void PG::_scan_snaps(ScrubMap &smap)
 			    << oi_snaps
 			    << "...repaired";
 	}
+
 	snap_mapper.add_oid(hoid, oi_snaps, &_t);
+
 	r = osd->store->apply_transaction(osr.get(), std::move(t));
 	if (r != 0) {
 	  derr << __func__ << ": apply_transaction got " << cpp_strerror(r)
@@ -3998,6 +4057,8 @@ void PG::Scrubber::cleanup_store(ObjectStore::Transaction *t) {
   assert(!store);
 }
 
+// called by
+// PG::scrub_process_inconsistent
 void PG::repair_object(
   const hobject_t& soid, list<pair<ScrubMap::object, pg_shard_t> > *ok_peers,
   pg_shard_t bad_peer)
@@ -4006,13 +4067,16 @@ void PG::repair_object(
   for (auto i : *ok_peers) {
     op_shards.push_back(i.second);
   }
+
   dout(10) << "repair_object " << soid << " bad_peer osd."
 	   << bad_peer << " ok_peers osd.{" << op_shards << "}" << dendl;
+
   ScrubMap::object &po = ok_peers->back().first;
   eversion_t v;
   bufferlist bv;
   bv.push_back(po.attrs[OI_ATTR]);
   object_info_t oi(bv);
+
   if (bad_peer != primary) {
     peer_missing[bad_peer].add(soid, oi.version, eversion_t());
   } else {
@@ -4022,6 +4086,7 @@ void PG::repair_object(
     pg_log.missing_add(soid, oi.version, eversion_t());
 
     pg_log.set_last_requested(0);
+
     dout(10) << __func__ << ": primary = " << primary << dendl;
   }
 
@@ -4029,6 +4094,7 @@ void PG::repair_object(
     // we'd better collect all shard for EC pg, and prepare good peers as the
     // source of pull in the case of replicated pg.
     missing_loc.add_missing(soid, oi.version, eversion_t());
+
     list<pair<ScrubMap::object, pg_shard_t> >::iterator i;
     for (i = ok_peers->begin();
 	i != ok_peers->end();
@@ -4048,7 +4114,9 @@ void PG::replica_scrub(
   ThreadPool::TPHandle &handle)
 {
   MOSDRepScrub *msg = static_cast<MOSDRepScrub *>(op->get_req());
+
   assert(!scrubber.active_rep_scrub);
+
   dout(7) << "replica_scrub" << dendl;
 
   if (msg->map_epoch < info.history.same_interval_since) {
@@ -4061,6 +4129,7 @@ void PG::replica_scrub(
   ScrubMap map;
 
   assert(msg->chunky);
+
   if (last_update_applied < msg->scrub_to) {
     dout(10) << "waiting for last_update_applied to catch up" << dendl;
     scrubber.active_rep_scrub = op;
@@ -4078,6 +4147,7 @@ void PG::replica_scrub(
   hobject_t end = msg->end;
   if (!start.is_max())
     start.pool = info.pgid.pool();
+
   if (!end.is_max())
     end.pool = info.pgid.pool();
 
@@ -4090,6 +4160,7 @@ void PG::replica_scrub(
   hobject_t poid;
   eversion_t v;
   osd_reqid_t reqid;
+
   MOSDSubOp *subop = new MOSDSubOp(
     reqid,
     pg_whoami,
@@ -4099,7 +4170,9 @@ void PG::replica_scrub(
     msg->map_epoch,
     osd->get_tid(),
     v);
+
   ::encode(map, subop->get_data());
+
   subop->ops = scrub;
 
   osd->send_message_osd_cluster(subop, msg->get_connection());
@@ -4111,32 +4184,44 @@ void PG::replica_scrub(
  * scrub will be chunky if all OSDs in PG support chunky scrub
  * scrub will fail if OSDs are too old.
  */
+// called by
+// PGQueueable::RunVis::operator()(const PGScrub &op)
 void PG::scrub(epoch_t queued, ThreadPool::TPHandle &handle)
 {
+  // default 0
   if (g_conf->osd_scrub_sleep > 0 &&
       (scrubber.state == PG::Scrubber::NEW_CHUNK ||
        scrubber.state == PG::Scrubber::INACTIVE)) {
     dout(20) << __func__ << " state is INACTIVE|NEW_CHUNK, sleeping" << dendl;
+
     unlock();
+
     utime_t t;
     t.set_from_double(g_conf->osd_scrub_sleep);
+
     handle.suspend_tp_timeout();
     t.sleep();
     handle.reset_tp_timeout();
+
     lock();
+
     dout(20) << __func__ << " slept for " << t << dendl;
   }
+
   if (pg_has_reset_since(queued)) {
     return;
   }
+
   assert(scrub_queued);
   scrub_queued = false;
 
   if (!is_primary() || !is_active() || !is_clean() || !is_scrubbing()) {
     dout(10) << "scrub -- not primary or active or not clean" << dendl;
+
     state_clear(PG_STATE_SCRUBBING);
     state_clear(PG_STATE_REPAIR);
     state_clear(PG_STATE_DEEP_SCRUB);
+
     publish_stats_to_osd();
     return;
   }
@@ -4230,6 +4315,8 @@ void PG::scrub(epoch_t queued, ThreadPool::TPHandle &handle)
  * scrubber.state encodes the current state of the scrub (refer to state diagram
  * for details).
  */
+// called by
+// PG::scrub, which called by PGQueueable::RunVis::operator()(const PGScrub &op)
 void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 {
   // check for map changes
@@ -4255,10 +4342,12 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 	scrubber.cleaned_meta_map.reset_bitwise(get_sort_bitwise());
 
         publish_stats_to_osd();
+
         scrubber.epoch_start = info.history.same_interval_since;
         scrubber.active = true;
 
 	osd->inc_scrubs_active(scrubber.reserved);
+
 	if (scrubber.reserved) {
 	  scrubber.reserved = false;
 	  scrubber.reserved_peers.clear();
@@ -4266,6 +4355,7 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 
 	{
 	  ObjectStore::Transaction t;
+
 	  scrubber.cleanup_store(&t);
 	  scrubber.store.reset(Scrub::Store::create(osd->store, &t,
 						    info.pgid, coll));
@@ -4521,12 +4611,15 @@ void PG::scrub_clear_state()
   _scrub_clear_state();
 }
 
+// called by
+// PG::chunky_scrub
 void PG::scrub_compare_maps() 
 {
   dout(10) << __func__ << " has maps, analyzing" << dendl;
 
   // construct authoritative scrub map for type specific scrubbing
   scrubber.cleaned_meta_map.insert(scrubber.primary_scrubmap);
+
   map<hobject_t, pair<uint32_t, uint32_t>, hobject_t::BitwiseComparator> missing_digest;
 
   if (acting.size() > 1) {
@@ -4540,15 +4633,18 @@ void PG::scrub_compare_maps()
 
     dout(2) << __func__ << "   osd." << acting[0] << " has "
 	    << scrubber.primary_scrubmap.objects.size() << " items" << dendl;
+
     maps[pg_whoami] = &scrubber.primary_scrubmap;
 
     for (set<pg_shard_t>::iterator i = actingbackfill.begin();
 	 i != actingbackfill.end();
 	 ++i) {
       if (*i == pg_whoami) continue;
+
       dout(2) << __func__ << " replica " << *i << " has "
 	      << scrubber.received_maps[*i].objects.size()
 	      << " items" << dendl;
+
       maps[*i] = &scrubber.received_maps[*i];
     }
 
@@ -4564,6 +4660,7 @@ void PG::scrub_compare_maps()
       scrubber.store.get(),
       info.pgid, acting,
       ss);
+
     dout(2) << ss.str() << dendl;
 
     if (!ss.str().empty()) {
@@ -4574,11 +4671,13 @@ void PG::scrub_compare_maps()
 	 i != authoritative.end();
 	 ++i) {
       list<pair<ScrubMap::object, pg_shard_t> > good_peers;
+
       for (list<pg_shard_t>::const_iterator j = i->second.begin();
 	   j != i->second.end();
 	   ++j) {
 	good_peers.push_back(make_pair(maps[*j]->objects[i->first], *j));
       }
+
       scrubber.authoritative.insert(
 	make_pair(
 	  i->first,
@@ -4596,32 +4695,39 @@ void PG::scrub_compare_maps()
   }
 
   ScrubMap for_meta_scrub(get_sort_bitwise());
+
   if (scrubber.end.is_max() ||
       scrubber.cleaned_meta_map.objects.empty()) {
     scrubber.cleaned_meta_map.swap(for_meta_scrub);
   } else {
     auto iter = scrubber.cleaned_meta_map.objects.end();
     --iter; // not empty, see if clause
+
     auto begin = scrubber.cleaned_meta_map.objects.begin();
     while (iter != begin) {
       auto next = iter--;
+
       if (next->first.get_head() != iter->first.get_head()) {
 	++iter;
 	break;
       }
     }
+
     for_meta_scrub.objects.insert(begin, iter);
     scrubber.cleaned_meta_map.objects.erase(begin, iter);
   }
 
   // ok, do the pg-type specific scrubbing
   scrub_snapshot_metadata(for_meta_scrub, missing_digest);
+
   if (!scrubber.store->empty()) {
     if (state_test(PG_STATE_REPAIR)) {
       dout(10) << __func__ << ": discarding scrub results" << dendl;
+
       scrubber.store->flush(nullptr);
     } else {
       dout(10) << __func__ << ": updating scrub object" << dendl;
+
       ObjectStore::Transaction t;
       scrubber.store->flush(&t);
       osd->store->queue_transaction(osr.get(), std::move(t), nullptr);
@@ -4632,8 +4738,10 @@ void PG::scrub_compare_maps()
 bool PG::scrub_process_inconsistent()
 {
   dout(10) << __func__ << ": checking authoritative" << dendl;
+
   bool repair = state_test(PG_STATE_REPAIR);
   bool deep_scrub = state_test(PG_STATE_DEEP_SCRUB);
+
   const char *mode = (repair ? "repair": (deep_scrub ? "deep-scrub" : "scrub"));
   
   // authoriative only store objects which missing or inconsistent.
@@ -4644,8 +4752,10 @@ bool PG::scrub_process_inconsistent()
        << scrubber.inconsistent.size() << " inconsistent objects";
     dout(2) << ss.str() << dendl;
     osd->clog->error(ss);
+
     if (repair) {
       state_clear(PG_STATE_CLEAN);
+
       for (map<hobject_t, list<pair<ScrubMap::object, pg_shard_t> >, hobject_t::BitwiseComparator>::iterator i =
 	     scrubber.authoritative.begin();
 	   i != scrubber.authoritative.end();
@@ -4661,9 +4771,11 @@ bool PG::scrub_process_inconsistent()
 	      i->first,
 	      &(i->second),
 	      *j);
+
 	    ++scrubber.fixed;
 	  }
 	}
+
 	if (scrubber.inconsistent.count(i->first)) {
 	  for (j = scrubber.inconsistent[i->first].begin(); 
 	       j != scrubber.inconsistent[i->first].end(); 
@@ -4671,12 +4783,14 @@ bool PG::scrub_process_inconsistent()
 	    repair_object(i->first, 
 	      &(i->second),
 	      *j);
+
 	    ++scrubber.fixed;
 	  }
 	}
       }
     }
   }
+
   return (!scrubber.authoritative.empty() && repair);
 }
 
@@ -4684,6 +4798,7 @@ bool PG::scrub_process_inconsistent()
 void PG::scrub_finish() 
 {
   bool repair = state_test(PG_STATE_REPAIR);
+
   // if the repair request comes from auto-repair and large number of errors,
   // we would like to cancel auto-repair
   if (repair && scrubber.auto_repair
@@ -4691,6 +4806,7 @@ void PG::scrub_finish()
     state_clear(PG_STATE_REPAIR);
     repair = false;
   }
+
   bool deep_scrub = state_test(PG_STATE_DEEP_SCRUB);
   const char *mode = (repair ? "repair": (deep_scrub ? "deep-scrub" : "scrub"));
 
@@ -4702,17 +4818,22 @@ void PG::scrub_finish()
   {
     stringstream oss;
     oss << info.pgid.pgid << " " << mode << " ";
+
     int total_errors = scrubber.shallow_errors + scrubber.deep_errors;
     if (total_errors)
       oss << total_errors << " errors";
     else
       oss << "ok";
+
     if (!deep_scrub && info.stats.stats.sum.num_deep_scrub_errors)
       oss << " ( " << info.stats.stats.sum.num_deep_scrub_errors
           << " remaining deep scrub error(s) )";
+
     if (repair)
       oss << ", " << scrubber.fixed << " fixed";
+
     oss << "\n";
+
     if (total_errors)
       osd->clog->error(oss);
     else
@@ -4739,6 +4860,7 @@ void PG::scrub_finish()
       scrub_after_recovery = true;
     }
   }
+
   if (deep_scrub) {
     if ((scrubber.shallow_errors == 0) && (scrubber.deep_errors == 0))
       info.history.last_clean_scrub_stamp = now;
@@ -4751,9 +4873,11 @@ void PG::scrub_finish()
     if (scrubber.shallow_errors == 0)
       info.history.last_clean_scrub_stamp = now;
   }
+
   info.stats.stats.sum.num_scrub_errors = 
     info.stats.stats.sum.num_shallow_scrub_errors +
     info.stats.stats.sum.num_deep_scrub_errors;
+
   reg_next_scrub();
 
   {
@@ -4788,15 +4912,18 @@ void PG::share_pg_info()
 
   // share new pg_info_t with replicas
   assert(!actingbackfill.empty());
+
   for (set<pg_shard_t>::iterator i = actingbackfill.begin();
        i != actingbackfill.end();
        ++i) {
     if (*i == pg_whoami) continue;
+
     pg_shard_t peer = *i;
     if (peer_info.count(peer)) {
       peer_info[peer].last_epoch_started = info.last_epoch_started;
       peer_info[peer].history.merge(info.history);
     }
+
     MOSDPGInfo *m = new MOSDPGInfo(get_osdmap()->get_epoch());
     m->pg_list.push_back(
       make_pair(
@@ -4806,6 +4933,7 @@ void PG::share_pg_info()
 	  get_osdmap()->get_epoch(),
 	  info),
 	pg_interval_map_t()));
+
     osd->send_message_osd_cluster(peer.osd, m, get_osdmap()->get_epoch());
   }
 }

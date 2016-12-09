@@ -1157,10 +1157,16 @@ int MonClient::wait_auth_rotating(double timeout)
 
 // ---------
 
+// called by
+// MonClient::_resend_mon_commands
+// MonClient::start_mon_command(rank/name/null)
 void MonClient::_send_command(MonCommand *r)
 {
   if (r->target_rank >= 0 &&
       r->target_rank != monmap.get_rank(cur_mon)) {
+
+    // rank specified
+
     ldout(cct, 10) << "_send_command " << r->tid << " " << r->cmd
 		   << " wants rank " << r->target_rank
 		   << ", reopening session"
@@ -1181,6 +1187,9 @@ void MonClient::_send_command(MonCommand *r)
 
   if (r->target_name.length() &&
       r->target_name != cur_mon) {
+
+    // name specified
+
     ldout(cct, 10) << "_send_command " << r->tid << " " << r->cmd
 		   << " wants mon " << r->target_name
 		   << ", reopening session"
@@ -1201,6 +1210,7 @@ void MonClient::_send_command(MonCommand *r)
 
   ldout(cct, 10) << "_send_command " << r->tid << " " << r->cmd << dendl;
 
+  // will be handled by Monitor::handle_command
   MMonCommand *m = new MMonCommand(monmap.fsid);
 
   m->set_tid(r->tid);
@@ -1306,6 +1316,7 @@ int MonClient::start_mon_command(const vector<string>& cmd,
   Mutex::Locker l(monc_lock);
 
   MonCommand *r = new MonCommand(++last_mon_command_tid);
+
   r->cmd = cmd;
   r->inbl = inbl;
   r->poutbl = outbl;
@@ -1349,6 +1360,7 @@ int MonClient::start_mon_command(const string &mon_name,
   Mutex::Locker l(monc_lock);
 
   MonCommand *r = new MonCommand(++last_mon_command_tid);
+
   r->target_name = mon_name;
   r->cmd = cmd;
   r->inbl = inbl;
@@ -1372,6 +1384,7 @@ int MonClient::start_mon_command(int rank,
   Mutex::Locker l(monc_lock);
 
   MonCommand *r = new MonCommand(++last_mon_command_tid);
+
   r->target_rank = rank;
   r->cmd = cmd;
   r->inbl = inbl;
