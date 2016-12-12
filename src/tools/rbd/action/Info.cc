@@ -86,9 +86,11 @@ static int do_show_info(librados::IoCtx &io_ctx, librbd::Image& image,
   std::string data_pool;
   if (!old_format) {
     int64_t data_pool_id = image.get_data_pool_id();
+
     if (data_pool_id != io_ctx.get_id()) {
       librados::Rados rados(io_ctx);
       librados::IoCtx data_io_ctx;
+
       r = rados.ioctx_create2(data_pool_id, data_io_ctx);
       if (r < 0) {
         data_pool = "<missing data pool " + stringify(data_pool_id) + ">";

@@ -921,9 +921,11 @@ private:
 #endif
   bool _recover_now(uint64_t *available_pushes);
   void _maybe_queue_recovery();
+
   void _queue_for_recovery(
     pair<epoch_t, PGRef> p, uint64_t reserved_pushes) {
     assert(recovery_lock.is_locked_by_me());
+
     pair<PGRef, PGQueueable> to_queue = make_pair(
       p.second,
       PGQueueable(
@@ -932,6 +934,7 @@ private:
 	cct->_conf->osd_recovery_priority,
 	ceph_clock_now(cct),
 	entity_inst_t()));
+
     op_wq.queue(to_queue);
   }
 public:

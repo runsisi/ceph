@@ -521,21 +521,29 @@ bool PG::search_for_missing(
   return found_missing;
 }
 
+// called by
+// ReplicatedPG::is_unreadable_object
 bool PG::MissingLoc::readable_with_acting(
   const hobject_t &hoid,
   const set<pg_shard_t> &acting) const {
   if (!needs_recovery(hoid)) return true;
+
   auto missing_loc_entry = missing_loc.find(hoid);
   if (missing_loc_entry == missing_loc.end()) return false;
+
   const set<pg_shard_t> &locs = missing_loc_entry->second;
+
   dout(10) << __func__ << ": locs:" << locs << dendl;
+
   set<pg_shard_t> have_acting;
+
   for (set<pg_shard_t>::const_iterator i = locs.begin();
        i != locs.end();
        ++i) {
     if (acting.count(*i))
       have_acting.insert(*i);
   }
+
   return (*is_readable)(have_acting);
 }
 
@@ -902,6 +910,9 @@ void PG::remove_down_peer_info(const OSDMapRef osdmap)
 /*
  * Returns true unless there is a non-lost OSD in might_have_unfound.
  */
+// called by
+// PG::RecoveryState::Active::react(const ActMap)
+// ReplicatedPG::do_command, for "mark_unfound_lost"
 bool PG::all_unfound_are_queried_or_lost(const OSDMapRef osdmap) const
 {
   assert(is_primary());
@@ -2617,6 +2628,9 @@ bool PG::check_in_progress_op(
     pg_log.get_log().get_request(r, replay_version, user_version, return_code));
 }
 
+// called by
+// PG::publish_stats_to_osd
+// ReplicatedPG::do_command, for "query"
 void PG::_update_calc_stats()
 {
   info.stats.version = info.last_update;
@@ -2635,9 +2649,11 @@ void PG::_update_calc_stats()
 
   // calc copies, degraded
   unsigned target = get_osdmap()->get_pg_size(info.pgid.pgid);
+
   info.stats.stats.calc_copies(MAX(target, actingbackfill.size()));
   info.stats.stats.sum.num_objects_degraded = 0;
   info.stats.stats.sum.num_objects_misplaced = 0;
+
   if ((is_degraded() || is_undersized() || !is_clean()) && is_peered()) {
     // NOTE: we only generate copies, degraded, unfound values for
     // the summation, not individual stat categories.
@@ -2654,6 +2670,7 @@ void PG::_update_calc_stats()
     // missing on primary
     info.stats.stats.sum.num_objects_missing_on_primary =
       pg_log.get_missing().num_missing();
+
     degraded += pg_log.get_missing().num_missing();
 
     // num_objects_missing on each peer
@@ -2670,10 +2687,12 @@ void PG::_update_calc_stats()
     }
 
     assert(!acting.empty());
+
     for (set<pg_shard_t>::iterator i = actingset.begin();
 	 i != actingset.end();
 	 ++i) {
       if (*i == pg_whoami) continue;
+
       assert(peer_missing.count(*i));
 
       // in missing set
@@ -2684,7 +2703,9 @@ void PG::_update_calc_stats()
       if (diff > 0)
         degraded += diff;
     }
+
     info.stats.stats.sum.num_objects_degraded = degraded;
+    // missing_loc.num_unfound()
     info.stats.stats.sum.num_objects_unfound = get_num_unfound();
 
     // a misplaced object is not stored on the correct OSD
@@ -2694,14 +2715,17 @@ void PG::_update_calc_stats()
 	 p != upset.end();
 	 ++p) {
       const pg_shard_t &s = *p;
+
       if (actingset.count(s)) {
 	++in_place;
       } else {
 	// not where it should be
 	misplaced += num_objects;
+
 	if (actingbackfill.count(s)) {
 	  // ...but partially backfilled
 	  misplaced -= peer_info[s].stats.stats.sum.num_objects;
+
 	  dout(20) << __func__ << " osd." << *p << " misplaced "
 		   << num_objects << " but partially backfilled "
 		   << peer_info[s].stats.stats.sum.num_objects
@@ -2713,9 +2737,11 @@ void PG::_update_calc_stats()
 	}
       }
     }
+
     // count extra replicas in acting but not in up as misplaced
     if (in_place < actingset.size())
       misplaced += (actingset.size() - in_place) * num_objects;
+
     info.stats.stats.sum.num_objects_misplaced = misplaced;
   }
 }
@@ -7170,7 +7196,11 @@ boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
   if (advmap.lastmap->get_pg_size(pg->info.pgid.pgid) !=
       pg->get_osdmap()->get_pg_size(pg->info.pgid.pgid)) {
     if (pg->get_osdmap()->get_pg_size(pg->info.pgid.pgid) <= pg->actingset.size()) {
+
+      // acting set is big enough
+
       pg->state_clear(PG_STATE_UNDERSIZED);
+
       if (pg->needs_recovery()) {
 	pg->state_set(PG_STATE_DEGRADED);
       } else {
@@ -7201,7 +7231,9 @@ boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
 boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   dout(10) << "Active: handling ActMap" << dendl;
+
   assert(pg->is_primary());
 
   if (pg->have_unfound()) {
@@ -7224,6 +7256,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
 
   if (pg->is_active()) {
     dout(10) << "Active: kicking snap trim" << dendl;
+
     pg->kick_snap_trim();
   }
 
@@ -7233,6 +7266,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
       (!pg->get_osdmap()->test_flag(CEPH_OSDMAP_NOREBALANCE) || pg->is_degraded())) {
     pg->queue_recovery();
   }
+
   return forward_event();
 }
 

@@ -5695,17 +5695,21 @@ void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, buffe
       ss << "ignoring empty log message";
       goto out;
     }
+
     string message = msg.front();
     for (vector<string>::iterator a = ++msg.begin(); a != msg.end(); ++a)
       message += " " + *a;
+
     string lvl;
     cmd_getval(cct, cmdmap, "level", lvl);
+
     clog_type level = string_to_clog_type(lvl);
     if (level < 0) {
       r = -EINVAL;
       ss << "unknown level '" << lvl << "'";
       goto out;
     }
+
     clog->do_log(level, message);
   }
 
@@ -5938,6 +5942,7 @@ void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, buffe
     } else {
       string heapcmd;
       cmd_getval(cct, cmdmap, "heapcmd", heapcmd);
+
       // XXX 1-element vector, change at callee or make vector here?
       vector<string> heapcmd_vec;
       get_str_vec(heapcmd, heapcmd_vec);
@@ -5948,6 +5953,7 @@ void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, buffe
   else if (prefix == "debug dump_missing") {
     string file_name;
     cmd_getval(cct, cmdmap, "filename", file_name);
+
     std::ofstream fout(file_name.c_str());
     if (!fout.is_open()) {
 	ss << "failed to open file '" << file_name << "'";
@@ -5956,10 +5962,13 @@ void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, buffe
     }
 
     fout << "*** osd " << whoami << ": dump_missing ***" << std::endl;
+
     RWLock::RLocker l(pg_map_lock);
+
     for (ceph::unordered_map<spg_t, PG*>::const_iterator pg_map_e = pg_map.begin();
 	 pg_map_e != pg_map.end(); ++pg_map_e) {
       PG *pg = pg_map_e->second;
+
       pg->lock();
 
       fout << *pg << std::endl;
@@ -5967,18 +5976,25 @@ void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, buffe
 	pg->pg_log.get_missing().get_items().end();
       std::map<hobject_t, pg_missing_item, hobject_t::BitwiseComparator>::const_iterator mi =
 	pg->pg_log.get_missing().get_items().begin();
+
       for (; mi != mend; ++mi) {
 	fout << mi->first << " -> " << mi->second << std::endl;
+
 	if (!pg->missing_loc.needs_recovery(mi->first))
 	  continue;
+
 	if (pg->missing_loc.is_unfound(mi->first))
 	  fout << " unfound ";
+
 	const set<pg_shard_t> &mls(pg->missing_loc.get_locations(mi->first));
 	if (mls.empty())
 	  continue;
+
 	fout << "missing_loc: " << mls << std::endl;
       }
+
       pg->unlock();
+
       fout << std::endl;
     }
 

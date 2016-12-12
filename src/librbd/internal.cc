@@ -235,9 +235,13 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
   void image_info(ImageCtx *ictx, image_info_t& info, size_t infosize)
   {
     int obj_order = ictx->order;
+
     ictx->snap_lock.get_read();
+
     info.size = ictx->get_image_size(ictx->snap_id);
+
     ictx->snap_lock.put_read();
+
     info.obj_size = 1ULL << obj_order;
     info.num_objs = Striper::get_num_objects(ictx->layout, info.size);
     info.order = obj_order;
@@ -1320,6 +1324,7 @@ int mirror_image_disable_internal(ImageCtx *ictx, bool force,
       return r;
 
     image_info(ictx, info, infosize);
+
     return 0;
   }
 

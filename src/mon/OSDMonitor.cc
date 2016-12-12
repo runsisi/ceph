@@ -6716,6 +6716,11 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     return true;
 
   } else if (prefix == "osd pause") {
+    // will be tested by
+    // Objecter::handle_osd_map
+    // Objecter::_maybe_request_map
+    // Objecter::_op_submit
+    // Objecter::target_should_be_paused
     return prepare_set_flag(op, CEPH_OSDMAP_PAUSERD | CEPH_OSDMAP_PAUSEWR);
 
   } else if (prefix == "osd unpause") {
@@ -6727,6 +6732,11 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     if (key == "full")
       return prepare_set_flag(op, CEPH_OSDMAP_FULL);
     else if (key == "pause")
+      // will be tested by
+      // Objecter::handle_osd_map
+      // Objecter::_maybe_request_map
+      // Objecter::_op_submit
+      // Objecter::target_should_be_paused
       return prepare_set_flag(op, CEPH_OSDMAP_PAUSERD | CEPH_OSDMAP_PAUSEWR);
     else if (key == "noup")
       return prepare_set_flag(op, CEPH_OSDMAP_NOUP);

@@ -372,6 +372,7 @@ void ReplicatedPG::on_local_recover(
     PGLogEntryHandler h{this, t};
     pg_log.roll_forward_to(recovery_info.version, &h);
   }
+
   recover_got(recovery_info.soid, recovery_info.version);
 
   if (is_primary()) {
@@ -391,18 +392,25 @@ void ReplicatedPG::on_local_recover(
     t->register_on_applied_sync(new C_OSD_OndiskWriteUnlock(obc));
 
     publish_stats_to_osd();
+
     assert(missing_loc.needs_recovery(hoid));
+
     missing_loc.add_location(hoid, pg_whoami);
+
     if (!is_unreadable_object(hoid)) {
       auto unreadable_object_entry = waiting_for_unreadable_object.find(hoid);
       if (unreadable_object_entry != waiting_for_unreadable_object.end()) {
 	dout(20) << " kicking unreadable waiters on " << hoid << dendl;
+
 	requeue_ops(unreadable_object_entry->second);
+
 	waiting_for_unreadable_object.erase(unreadable_object_entry);
       }
     }
+
     if (pg_log.get_missing().get_items().size() == 0) {
       requeue_ops(waiting_for_all_missing);
+
       waiting_for_all_missing.clear();
     }
   } else {
@@ -550,6 +558,10 @@ void ReplicatedPG::maybe_kick_recovery(
   }
 }
 
+// called by
+// ReplicatedPG::do_pg_op, for CEPH_OSD_OP_PG_HITSET_GET
+// ReplicatedPG::do_op
+// ReplicatedPG::do_osd_ops, for CEPH_OSD_OP_CACHE_FLUSH
 void ReplicatedPG::wait_for_unreadable_object(
   const hobject_t& soid, OpRequestRef op)
 {
@@ -979,6 +991,7 @@ int ReplicatedPG::do_command(
     }
 
     mark_all_unfound_lost(mode, con, tid);
+
     return -EAGAIN;
   }
   else if (command == "list_missing") {
@@ -10985,6 +10998,7 @@ void ReplicatedPG::on_activate()
   // all clean?
   if (needs_recovery()) {
     dout(10) << "activate not all replicas are up-to-date, queueing recovery" << dendl;
+
     queue_peering_event(
       CephPeeringEvtRef(
 	std::make_shared<CephPeeringEvt>(
@@ -10993,6 +11007,7 @@ void ReplicatedPG::on_activate()
 	  DoRecovery())));
   } else if (needs_backfill()) {
     dout(10) << "activate queueing backfill" << dendl;
+
     queue_peering_event(
       CephPeeringEvtRef(
 	std::make_shared<CephPeeringEvt>(
@@ -11001,6 +11016,7 @@ void ReplicatedPG::on_activate()
 	  RequestBackfill())));
   } else {
     dout(10) << "activate all replicas clean, no recovery" << dendl;
+
     queue_peering_event(
       CephPeeringEvtRef(
 	std::make_shared<CephPeeringEvt>(
@@ -11014,9 +11030,12 @@ void ReplicatedPG::on_activate()
   if (!backfill_targets.empty()) {
     last_backfill_started = earliest_backfill();
     new_backfill = true;
+
     assert(!last_backfill_started.is_max());
+
     dout(5) << "on activate: bft=" << backfill_targets
 	   << " from " << last_backfill_started << dendl;
+
     for (set<pg_shard_t>::iterator i = backfill_targets.begin();
 	 i != backfill_targets.end();
 	 ++i) {
@@ -11300,7 +11319,8 @@ void PG::MissingLoc::check_recovery_sources(const OSDMapRef& osdmap)
   }
 }
   
-// called by ReplicatedPG::do_recovery which called by PGQueueable::RunVis::operator()
+// called by
+// OSD::do_recovery which called by PGQueueable::RunVis::operator()
 // when the PGRecovery op is dequeued from the OSD::ShardedOpWQ
 // the PGRecovery op is enqueued by ReplicatedPG::_queue_for_recovery
 bool ReplicatedPG::start_recovery_ops(
@@ -11311,6 +11331,7 @@ bool ReplicatedPG::start_recovery_ops(
   uint64_t& started = *ops_started;
   started = 0;
   bool work_in_progress = false;
+
   assert(is_primary());
 
   if (!state_test(PG_STATE_RECOVERING) &&
@@ -11335,10 +11356,12 @@ bool ReplicatedPG::start_recovery_ops(
     // Recover the replicas.
     started = recover_replicas(max, handle);
   }
+
   if (!started) {
     // We still have missing objects that we should grab from replicas.
     started += recover_primary(max, handle);
   }
+
   if (!started && num_unfound != get_num_unfound()) {
     // second chance to recovery replicas
     started = recover_replicas(max, handle);
@@ -11348,6 +11371,7 @@ bool ReplicatedPG::start_recovery_ops(
     work_in_progress = true;
 
   bool deferred_backfill = false;
+
   if (recovering.empty() &&
       state_test(PG_STATE_BACKFILL) &&
       !backfill_targets.empty() && started < max &&
@@ -11355,16 +11379,21 @@ bool ReplicatedPG::start_recovery_ops(
       waiting_on_backfill.empty()) {
     if (get_osdmap()->test_flag(CEPH_OSDMAP_NOBACKFILL)) {
       dout(10) << "deferring backfill due to NOBACKFILL" << dendl;
+
       deferred_backfill = true;
     } else if (get_osdmap()->test_flag(CEPH_OSDMAP_NOREBALANCE) &&
 	       !is_degraded())  {
       dout(10) << "deferring backfill due to NOREBALANCE" << dendl;
+
       deferred_backfill = true;
     } else if (!backfill_reserved) {
       dout(10) << "deferring backfill due to !backfill_reserved" << dendl;
+
       if (!backfill_reserving) {
 	dout(10) << "queueing RequestBackfill" << dendl;
+
 	backfill_reserving = true;
+
 	queue_peering_event(
 	  CephPeeringEvtRef(
 	    std::make_shared<CephPeeringEvt>(
@@ -11372,6 +11401,7 @@ bool ReplicatedPG::start_recovery_ops(
 	      get_osdmap()->get_epoch(),
 	      RequestBackfill())));
       }
+
       deferred_backfill = true;
     } else {
       started += recover_backfill(max - started, handle, &work_in_progress);
@@ -11379,6 +11409,7 @@ bool ReplicatedPG::start_recovery_ops(
   }
 
   dout(10) << " started " << started << dendl;
+
   osd->logger->inc(l_osd_rop, started);
 
   if (!recovering.empty() ||
@@ -11394,9 +11425,11 @@ bool ReplicatedPG::start_recovery_ops(
   dout(10) << __func__ << " missing_loc: "
 	   << missing_loc.get_missing_locs()
 	   << dendl;
+
   int unfound = get_num_unfound();
   if (unfound) {
     dout(10) << " still have " << unfound << " unfound" << dendl;
+
     return work_in_progress;
   }
 
@@ -11404,6 +11437,7 @@ bool ReplicatedPG::start_recovery_ops(
     // this shouldn't happen!
     osd->clog->error() << info.pgid << " recovery ending with " << missing.num_missing()
 		       << ": " << missing.get_items() << "\n";
+
     return work_in_progress;
   }
 
@@ -11411,13 +11445,16 @@ bool ReplicatedPG::start_recovery_ops(
     // this shouldn't happen!
     // We already checked num_missing() so we must have missing replicas
     osd->clog->error() << info.pgid << " recovery ending with missing replicas\n";
+
     return work_in_progress;
   }
 
   if (state_test(PG_STATE_RECOVERING)) {
     state_clear(PG_STATE_RECOVERING);
+
     if (needs_backfill()) {
       dout(10) << "recovery done, queuing backfill" << dendl;
+
       queue_peering_event(
         CephPeeringEvtRef(
           std::make_shared<CephPeeringEvt>(
@@ -11426,6 +11463,7 @@ bool ReplicatedPG::start_recovery_ops(
             RequestBackfill())));
     } else {
       dout(10) << "recovery done, no backfill" << dendl;
+
       queue_peering_event(
         CephPeeringEvtRef(
           std::make_shared<CephPeeringEvt>(
@@ -11435,7 +11473,9 @@ bool ReplicatedPG::start_recovery_ops(
     }
   } else { // backfilling
     state_clear(PG_STATE_BACKFILL);
+
     dout(10) << "recovery done, backfill done" << dendl;
+
     queue_peering_event(
       CephPeeringEvtRef(
         std::make_shared<CephPeeringEvt>(

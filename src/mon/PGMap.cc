@@ -1178,8 +1178,10 @@ void PGMap::recovery_summary(Formatter *f, list<string> *psl,
   if (delta_sum.stats.sum.num_objects_degraded && delta_sum.stats.sum.num_object_copies > 0) {
     double pc = (double)delta_sum.stats.sum.num_objects_degraded /
                 (double)delta_sum.stats.sum.num_object_copies * (double)100.0;
+
     char b[20];
     snprintf(b, sizeof(b), "%.3lf", pc);
+
     if (f) {
       f->dump_unsigned("degraded_objects", delta_sum.stats.sum.num_objects_degraded);
       f->dump_unsigned("degraded_total", delta_sum.stats.sum.num_object_copies);
@@ -1188,14 +1190,18 @@ void PGMap::recovery_summary(Formatter *f, list<string> *psl,
       ostringstream ss;
       ss << delta_sum.stats.sum.num_objects_degraded
          << "/" << delta_sum.stats.sum.num_object_copies << " objects degraded (" << b << "%)";
+
       psl->push_back(ss.str());
     }
   }
+
   if (delta_sum.stats.sum.num_objects_misplaced && delta_sum.stats.sum.num_object_copies > 0) {
     double pc = (double)delta_sum.stats.sum.num_objects_misplaced /
                 (double)delta_sum.stats.sum.num_object_copies * (double)100.0;
+
     char b[20];
     snprintf(b, sizeof(b), "%.3lf", pc);
+
     if (f) {
       f->dump_unsigned("misplaced_objects", delta_sum.stats.sum.num_objects_misplaced);
       f->dump_unsigned("misplaced_total", delta_sum.stats.sum.num_object_copies);
@@ -1204,14 +1210,18 @@ void PGMap::recovery_summary(Formatter *f, list<string> *psl,
       ostringstream ss;
       ss << delta_sum.stats.sum.num_objects_misplaced
          << "/" << delta_sum.stats.sum.num_object_copies << " objects misplaced (" << b << "%)";
+
       psl->push_back(ss.str());
     }
   }
+
   if (delta_sum.stats.sum.num_objects_unfound && delta_sum.stats.sum.num_objects) {
     double pc = (double)delta_sum.stats.sum.num_objects_unfound /
                 (double)delta_sum.stats.sum.num_objects * (double)100.0;
+
     char b[20];
     snprintf(b, sizeof(b), "%.3lf", pc);
+
     if (f) {
       f->dump_unsigned("unfound_objects", delta_sum.stats.sum.num_objects_unfound);
       f->dump_unsigned("unfound_total", delta_sum.stats.sum.num_objects);
@@ -1220,6 +1230,7 @@ void PGMap::recovery_summary(Formatter *f, list<string> *psl,
       ostringstream ss;
       ss << delta_sum.stats.sum.num_objects_unfound
          << "/" << delta_sum.stats.sum.num_objects << " unfound (" << b << "%)";
+
       psl->push_back(ss.str());
     }
   }

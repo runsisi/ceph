@@ -337,13 +337,25 @@ public:
     boost::scoped_ptr<IsPGRecoverablePredicate> is_recoverable;
     explicit MissingLoc(PG *pg)
       : pg(pg) {}
+
     void set_backend_predicates(
       IsPGReadablePredicate *_is_readable,
       IsPGRecoverablePredicate *_is_recoverable) {
       is_readable.reset(_is_readable);
       is_recoverable.reset(_is_recoverable);
     }
+
     string gen_prefix() const { return pg->gen_prefix(); }
+
+    // called by
+    // OSD::do_command, for "debug dump_missing"
+    // PG::MissingLoc::readable_with_acting
+    // PG::activate
+    // PG::RecoveryState::Active::react(const AdvMap)
+    // PG::MissingLoc::is_unfound
+    // ReplicatedPG::maybe_kick_recovery
+    // ReplicatedPG::on_activate
+    // ReplicatedPG::start_recovery_ops, for debug only
     bool needs_recovery(
       const hobject_t &hoid,
       eversion_t *v = 0) const {
@@ -351,18 +363,23 @@ public:
 	needs_recovery_map.find(hoid);
       if (i == needs_recovery_map.end())
 	return false;
+
       if (v)
 	*v = i->second.need;
+
       return true;
     }
+
     bool is_unfound(const hobject_t &hoid) const {
       return needs_recovery(hoid) && (
 	!missing_loc.count(hoid) ||
 	!(*is_recoverable)(missing_loc.find(hoid)->second));
     }
+
     bool readable_with_acting(
       const hobject_t &hoid,
       const set<pg_shard_t> &acting) const;
+
     uint64_t num_unfound() const {
       uint64_t ret = 0;
       for (map<hobject_t, pg_missing_item, hobject_t::BitwiseComparator>::const_iterator i =
@@ -372,6 +389,7 @@ public:
 	if (is_unfound(i->first))
 	  ++ret;
       }
+
       return ret;
     }
 
@@ -1042,6 +1060,7 @@ public:
   bool have_unfound() const { 
     return missing_loc.num_unfound() > 0;
   }
+
   int get_num_unfound() const {
     return missing_loc.num_unfound();
   }

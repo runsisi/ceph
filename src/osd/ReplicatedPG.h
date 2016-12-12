@@ -1596,10 +1596,18 @@ private:
   int _rollback_to(OpContext *ctx, ceph_osd_op& op);
 public:
   bool is_missing_object(const hobject_t& oid) const;
+
+  // called by
+  // ReplicatedPG::on_local_recover
+  // ReplicatedPG::wait_for_unreadable_object
+  // ReplicatedPG::do_op
+  // ReplicatedPG::agent_load_hit_sets
+  // ReplicatedPG::do_pg_op, for CEPH_OSD_OP_PG_HITSET_GET
   bool is_unreadable_object(const hobject_t &oid) const {
     return is_missing_object(oid) ||
       !missing_loc.readable_with_acting(oid, actingset);
   }
+
   void maybe_kick_recovery(const hobject_t &soid);
   void wait_for_unreadable_object(const hobject_t& oid, OpRequestRef op);
   void wait_for_all_missing(OpRequestRef op);
