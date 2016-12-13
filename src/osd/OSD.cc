@@ -512,6 +512,7 @@ void OSDService::init()
 
   agent_thread.create("osd_srv_agent");
 
+  // default 0
   if (cct->_conf->osd_recovery_delay_start)
     defer_recovery(cct->_conf->osd_recovery_delay_start);
 }
@@ -1470,7 +1471,8 @@ void OSDService::handle_misdirected_op(PG *pg, OpRequestRef op)
   reply_op_error(op, -ENXIO);
 }
 
-// called by ReplicatedPG::on_shutdown with the second parameter set to 0
+// called by
+// ReplicatedPG::on_shutdown with the second parameter set to 0
 // PG::split_ops with the second parameter set to non-null
 void OSDService::dequeue_pg(PG *pg, list<OpRequestRef> *dequeued)
 {
@@ -2735,13 +2737,19 @@ int OSD::shutdown()
   // Shutdown PGs
   {
     RWLock::RLocker l(pg_map_lock);
+
     for (ceph::unordered_map<spg_t, PG*>::iterator p = pg_map.begin();
         p != pg_map.end();
         ++p) {
       dout(20) << " kicking pg " << p->first << dendl;
+
       p->second->lock();
+
+      // call ReplicatedPG::on_shutdown
       p->second->on_shutdown();
+
       p->second->unlock();
+
       p->second->osr->flush();
     }
   }
@@ -3696,6 +3704,11 @@ void OSD::build_past_intervals_parallel()
  * look up a pg.  if we have it, great.  if not, consider creating it IF the pg mapping
  * hasn't changed since the given epoch and we are the primary.
  */
+// called by
+// OSD::handle_pg_create
+// OSD::handle_pg_notify
+// OSD::handle_pg_log
+// OSD::handle_pg_info
 void OSD::handle_pg_peering_evt(
   spg_t pgid,
   const pg_history_t& orig_history,
@@ -3713,6 +3726,7 @@ void OSD::handle_pg_peering_evt(
     // same primary?
     if (!osdmap->have_pg_pool(pgid.pool()))
       return;
+
     int up_primary, acting_primary;
     vector<int> up, acting;
     osdmap->pg_to_up_acting_osds(
@@ -3763,6 +3777,7 @@ void OSD::handle_pg_peering_evt(
 	*rctx.transaction);
       pg->handle_create(&rctx);
       pg->write_if_dirty(*rctx.transaction);
+
       dispatch_context(rctx, pg, osdmap);
 
       dout(10) << *pg << " is new" << dendl;
@@ -3798,6 +3813,7 @@ void OSD::handle_pg_peering_evt(
 	*rctx.transaction);
       pg->handle_create(&rctx);
       pg->write_if_dirty(*rctx.transaction);
+
       dispatch_context(rctx, pg, osdmap);
 
       dout(10) << *pg << " is new (resurrected)" << dendl;
@@ -3835,6 +3851,7 @@ void OSD::handle_pg_peering_evt(
 	);
       parent->handle_create(&rctx);
       parent->write_if_dirty(*rctx.transaction);
+
       dispatch_context(rctx, parent, osdmap);
 
       dout(10) << *parent << " is new" << dendl;
@@ -3858,7 +3875,9 @@ void OSD::handle_pg_peering_evt(
       pg->unlock();
       return;
     }
+
     pg->queue_peering_event(evt);
+
     pg->unlock();
     return;
   }
@@ -3869,6 +3888,11 @@ void OSD::handle_pg_peering_evt(
  * Fill in the passed history so you know same_interval_since, same_up_since,
  * and same_primary_since.
  */
+// called by
+// OSD::handle_pg_peering_evt
+// OSD::handle_pg_create
+// OSD::handle_pg_query
+// OSD::handle_pg_remove
 bool OSD::project_pg_history(spg_t pgid, pg_history_t& h, epoch_t from,
 			     const vector<int>& currentup,
 			     int currentupprimary,
@@ -3890,10 +3914,12 @@ bool OSD::project_pg_history(spg_t pgid, pg_history_t& h, epoch_t from,
       dout(15) << __func__ << ": found map gap, returning false" << dendl;
       return false;
     }
+
     assert(oldmap->have_pg_pool(pgid.pool()));
 
     int upprimary, actingprimary;
     vector<int> up, acting;
+
     oldmap->pg_to_up_acting_osds(
       pgid.pgid,
       &up,
@@ -3912,14 +3938,17 @@ bool OSD::project_pg_history(spg_t pgid, pg_history_t& h, epoch_t from,
 	       << " -> " << currentacting << "/" << currentup
 	       << " " << currentactingprimary << "/" << currentupprimary
 	       << dendl;
+
       h.same_interval_since = e;
     }
+
     // split?
     if (pgid.is_split(oldmap->get_pg_num(pgid.pool()),
 		      osdmap->get_pg_num(pgid.pool()),
 		      0) && e > h.same_interval_since) {
       h.same_interval_since = e;
     }
+
     // up set change?
     if ((up != currentup || upprimary != currentupprimary)
 	&& e > h.same_up_since) {
@@ -3937,6 +3966,7 @@ bool OSD::project_pg_history(spg_t pgid, pg_history_t& h, epoch_t from,
 	  currentacting) &&
         e > h.same_primary_since) {
       dout(15) << "project_pg_history " << pgid << " primary changed in " << e << dendl;
+
       h.same_primary_since = e;
     }
 
@@ -3949,13 +3979,16 @@ bool OSD::project_pg_history(spg_t pgid, pg_history_t& h, epoch_t from,
   if (e == h.epoch_created) {
     if (!h.same_interval_since)
       h.same_interval_since = e;
+
     if (!h.same_up_since)
       h.same_up_since = e;
+
     if (!h.same_primary_since)
       h.same_primary_since = e;
   }
 
   dout(15) << "project_pg_history end " << h << dendl;
+
   return true;
 }
 
@@ -3965,6 +3998,7 @@ void OSD::_add_heartbeat_peer(int p)
 {
   if (p == whoami)
     return;
+
   HeartbeatInfo *hi;
 
   map<int,HeartbeatInfo>::iterator i = heartbeat_peers.find(p);
@@ -3972,7 +4006,9 @@ void OSD::_add_heartbeat_peer(int p)
     pair<ConnectionRef,ConnectionRef> cons = service.get_con_osd_hb(p, osdmap->get_epoch());
     if (!cons.first)
       return;
+
     hi = &heartbeat_peers[p];
+
     hi->peer = p;
     HeartbeatSession *s = new HeartbeatSession(p);
     hi->con_back = cons.first.get();
@@ -3980,6 +4016,7 @@ void OSD::_add_heartbeat_peer(int p)
     if (cons.second) {
       hi->con_front = cons.second.get();
       hi->con_front->set_priv(s->get());
+
       dout(10) << "_add_heartbeat_peer: new peer osd." << p
 	       << " " << hi->con_back->get_peer_addr()
 	       << " " << hi->con_front->get_peer_addr()
@@ -3990,25 +4027,32 @@ void OSD::_add_heartbeat_peer(int p)
 	       << " " << hi->con_back->get_peer_addr()
 	       << dendl;
     }
+
     s->put();
   } else {
     hi = &i->second;
   }
+
   hi->epoch = osdmap->get_epoch();
 }
 
 void OSD::_remove_heartbeat_peer(int n)
 {
   map<int,HeartbeatInfo>::iterator q = heartbeat_peers.find(n);
+
   assert(q != heartbeat_peers.end());
+
   dout(20) << " removing heartbeat peer osd." << n
 	   << " " << q->second.con_back->get_peer_addr()
 	   << " " << (q->second.con_front ? q->second.con_front->get_peer_addr() : entity_addr_t())
 	   << dendl;
+
   q->second.con_back->mark_down();
+
   if (q->second.con_front) {
     q->second.con_front->mark_down();
   }
+
   heartbeat_peers.erase(q);
 }
 
@@ -4016,25 +4060,38 @@ void OSD::need_heartbeat_peer_update()
 {
   if (is_stopping())
     return;
+
   dout(20) << "need_heartbeat_peer_update" << dendl;
+
   heartbeat_set_peers_need_update();
 }
 
+// called by
+// OSD::tick
+// OSD::_committed_osd_maps
+// OSD::handle_pg_create
 void OSD::maybe_update_heartbeat_peers()
 {
   assert(osd_lock.is_locked());
 
   if (is_waiting_for_healthy()) {
     utime_t now = ceph_clock_now(cct);
+
     if (last_heartbeat_resample == utime_t()) {
       last_heartbeat_resample = now;
+
       heartbeat_set_peers_need_update();
     } else if (!heartbeat_peers_need_update()) {
       utime_t dur = now - last_heartbeat_resample;
+
+      // default 20
       if (dur > cct->_conf->osd_heartbeat_grace) {
 	dout(10) << "maybe_update_heartbeat_peers forcing update after " << dur << " seconds" << dendl;
+
 	heartbeat_set_peers_need_update();
+
 	last_heartbeat_resample = now;
+
 	reset_heartbeat_peers();   // we want *new* peers!
       }
     }
@@ -4042,6 +4099,7 @@ void OSD::maybe_update_heartbeat_peers()
 
   if (!heartbeat_peers_need_update())
     return;
+
   heartbeat_clear_peers_need_update();
 
   Mutex::Locker l(heartbeat_lock);
@@ -4052,22 +4110,28 @@ void OSD::maybe_update_heartbeat_peers()
   // build heartbeat from set
   if (is_active()) {
     RWLock::RLocker l(pg_map_lock);
+
     for (ceph::unordered_map<spg_t, PG*>::iterator i = pg_map.begin();
 	 i != pg_map.end();
 	 ++i) {
       PG *pg = i->second;
+
       pg->heartbeat_peer_lock.Lock();
+
       dout(20) << i->first << " heartbeat_peers " << pg->heartbeat_peers << dendl;
+
       for (set<int>::iterator p = pg->heartbeat_peers.begin();
 	   p != pg->heartbeat_peers.end();
 	   ++p)
 	if (osdmap->is_up(*p))
 	  _add_heartbeat_peer(*p);
+
       for (set<int>::iterator p = pg->probe_targets.begin();
 	   p != pg->probe_targets.end();
 	   ++p)
 	if (osdmap->is_up(*p))
 	  _add_heartbeat_peer(*p);
+
       pg->heartbeat_peer_lock.Unlock();
     }
   }
@@ -4077,12 +4141,14 @@ void OSD::maybe_update_heartbeat_peers()
   int next = osdmap->get_next_up_osd_after(whoami);
   if (next >= 0)
     want.insert(next);
+
   int prev = osdmap->get_previous_up_osd_before(whoami);
   if (prev >= 0 && prev != next)
     want.insert(prev);
 
   for (set<int>::iterator p = want.begin(); p != want.end(); ++p) {
     dout(10) << " adding neighbor peer osd." << *p << dendl;
+
     extras.insert(*p);
     _add_heartbeat_peer(*p);
   }
@@ -4096,9 +4162,11 @@ void OSD::maybe_update_heartbeat_peers()
       _remove_heartbeat_peer(o);
       continue;
     }
+
     if (p->second.epoch < osdmap->get_epoch()) {
       extras.insert(p->first);
     }
+
     ++p;
   }
 
@@ -4109,9 +4177,11 @@ void OSD::maybe_update_heartbeat_peers()
       break;
     if (!extras.count(n) && !want.count(n) && n != whoami) {
       dout(10) << " adding random peer osd." << n << dendl;
+
       extras.insert(n);
       _add_heartbeat_peer(n);
     }
+
     n = osdmap->get_next_up_osd_after(n);
     if (n == start)
       break;  // came full circle; stop
@@ -4123,6 +4193,7 @@ void OSD::maybe_update_heartbeat_peers()
        ++p) {
     if (want.count(*p))
       continue;
+
     _remove_heartbeat_peer(*p);
   }
 
@@ -4302,30 +4373,41 @@ void OSD::handle_osd_ping(MOSDPing *m)
 void OSD::heartbeat_entry()
 {
   Mutex::Locker l(heartbeat_lock);
+
   if (is_stopping())
     return;
+
   while (!heartbeat_stop) {
     heartbeat();
 
+    // default 6
     double wait = .5 + ((float)(rand() % 10)/10.0) * (float)cct->_conf->osd_heartbeat_interval;
     utime_t w;
     w.set_from_double(wait);
+
     dout(30) << "heartbeat_entry sleeping for " << wait << dendl;
+
     heartbeat_cond.WaitInterval(cct, heartbeat_lock, w);
     if (is_stopping())
       return;
+
     dout(30) << "heartbeat_entry woke up" << dendl;
   }
 }
 
+// called by
+// OSD::tick_without_osd_lock
 void OSD::heartbeat_check()
 {
   assert(heartbeat_lock.is_locked());
+
   utime_t now = ceph_clock_now(cct);
 
   // check for heartbeat replies (move me elsewhere?)
   utime_t cutoff = now;
+  // default 20
   cutoff -= cct->_conf->osd_heartbeat_grace;
+
   for (map<int,HeartbeatInfo>::iterator p = heartbeat_peers.begin();
        p != heartbeat_peers.end();
        ++p) {
@@ -4342,12 +4424,14 @@ void OSD::heartbeat_check()
 	     << " last_rx_back " << p->second.last_rx_back
 	     << " last_rx_front " << p->second.last_rx_front
 	     << dendl;
+
     if (p->second.is_unhealthy(cutoff)) {
       if (p->second.last_rx_back == utime_t() ||
 	  p->second.last_rx_front == utime_t()) {
 	derr << "heartbeat_check: no reply from " << p->second.con_front->get_peer_addr().get_sockaddr()
 	     << " osd." << p->first << " ever on either front or back, first ping sent "
 	     << p->second.first_tx << " (cutoff " << cutoff << ")" << dendl;
+
 	// fail
 	failure_queue[p->first] = p->second.last_tx;
       } else {
@@ -4355,6 +4439,7 @@ void OSD::heartbeat_check()
 	     << " osd." << p->first << " since back " << p->second.last_rx_back
 	     << " front " << p->second.last_rx_front
 	     << " (cutoff " << cutoff << ")" << dendl;
+
 	// fail
 	failure_queue[p->first] = MIN(p->second.last_rx_back, p->second.last_rx_front);
       }
@@ -4362,16 +4447,23 @@ void OSD::heartbeat_check()
   }
 }
 
+// called by
+// OSD::heartbeat_entry
 void OSD::heartbeat()
 {
   dout(30) << "heartbeat" << dendl;
 
   // get CPU load avg
   double loadavgs[1];
+
+  // default 6
   int n_samples = 86400 / cct->_conf->osd_heartbeat_interval;
+
   if (getloadavg(loadavgs, 1) == 1) {
     logger->set(l_osd_loadavg, 100 * loadavgs[0]);
+
     daily_loadavg = (daily_loadavg * (n_samples - 1) + loadavgs[0]) / n_samples;
+
     dout(30) << "heartbeat: daily_loadavg " << daily_loadavg << dendl;
   }
 
@@ -4383,6 +4475,7 @@ void OSD::heartbeat()
        p != heartbeat_peers.end();
        ++p)
     hb_peers.push_back(p->first);
+
   service.update_osd_stat(hb_peers);
 
   dout(5) << "heartbeat: " << service.get_osd_stat() << dendl;
@@ -4394,7 +4487,9 @@ void OSD::heartbeat()
        i != heartbeat_peers.end();
        ++i) {
     int peer = i->first;
+
     i->second.last_tx = now;
+
     if (i->second.first_tx == utime_t())
       i->second.first_tx = now;
 
@@ -4416,10 +4511,14 @@ void OSD::heartbeat()
 
   // hmm.. am i all alone?
   dout(30) << "heartbeat lonely?" << dendl;
+
   if (heartbeat_peers.empty()) {
+    // default 30
     if (now - last_mon_heartbeat > cct->_conf->osd_mon_heartbeat_interval && is_active()) {
       last_mon_heartbeat = now;
+
       dout(10) << "i have no heartbeat peers; checking mon for new map" << dendl;
+
       osdmap_subscribe(osdmap->get_epoch() + 1, false);
     }
   }
@@ -4427,30 +4526,40 @@ void OSD::heartbeat()
   dout(30) << "heartbeat done" << dendl;
 }
 
+// called by
+// HeartbeatDispatcher::ms_handle_reset
 bool OSD::heartbeat_reset(Connection *con)
 {
   HeartbeatSession *s = static_cast<HeartbeatSession*>(con->get_priv());
+
   if (s) {
     heartbeat_lock.Lock();
+
     if (is_stopping()) {
       heartbeat_lock.Unlock();
+
       s->put();
       return true;
     }
+
     map<int,HeartbeatInfo>::iterator p = heartbeat_peers.find(s->peer);
     if (p != heartbeat_peers.end() &&
 	(p->second.con_back == con ||
 	 p->second.con_front == con)) {
       dout(10) << "heartbeat_reset failed hb con " << con << " for osd." << p->second.peer
 	       << ", reopening" << dendl;
+
       if (con != p->second.con_back) {
 	p->second.con_back->mark_down();
       }
+
       p->second.con_back.reset(NULL);
       if (p->second.con_front && con != p->second.con_front) {
 	p->second.con_front->mark_down();
       }
+
       p->second.con_front.reset(NULL);
+
       pair<ConnectionRef,ConnectionRef> newcon = service.get_con_osd_hb(p->second.peer, p->second.epoch);
       if (newcon.first) {
 	p->second.con_back = newcon.first.get();
@@ -4462,14 +4571,18 @@ bool OSD::heartbeat_reset(Connection *con)
       } else {
 	dout(10) << "heartbeat_reset failed hb con " << con << " for osd." << p->second.peer
 		 << ", raced with osdmap update, closing out peer" << dendl;
+
 	heartbeat_peers.erase(p);
       }
     } else {
       dout(10) << "heartbeat_reset closing (old) failed hb con " << con << dendl;
     }
+
     heartbeat_lock.Unlock();
+
     s->put();
   }
+
   return true;
 }
 
@@ -4477,9 +4590,12 @@ bool OSD::heartbeat_reset(Connection *con)
 
 // =========================================
 
+// called by
+// OSD::C_Tick::finish, tick interval is 1.0
 void OSD::tick()
 {
   assert(osd_lock.is_locked());
+
   dout(10) << "tick" << dendl;
 
   if (is_active() || is_waiting_for_healthy()) {
@@ -4499,6 +4615,8 @@ void OSD::tick()
   tick_timer.add_event_after(OSD_TICK_INTERVAL, new C_Tick(this));
 }
 
+// called by
+// OSD::C_Tick_WithoutOSDLock::finish, tick interval is 1.0
 void OSD::tick_without_osd_lock()
 {
   assert(tick_timer_lock.is_locked());
@@ -4515,7 +4633,9 @@ void OSD::tick_without_osd_lock()
   // might change when doing the monitor report
   if (is_active() || is_waiting_for_healthy()) {
     heartbeat_lock.Lock();
+
     heartbeat_check();
+
     heartbeat_lock.Unlock();
 
     map_lock.get_read();
@@ -4535,6 +4655,7 @@ void OSD::tick_without_osd_lock()
     // mon's mon_osd_report_timeout (which defaults to 1.5x our
     // value).
     double max = cct->_conf->osd_mon_report_interval_max;
+
     if (!outstanding_pg_stats.empty() &&
 	(now - stats_ack_timeout) > last_pg_stats_ack) {
       dout(1) << __func__ << " mon hasn't acked PGStats in "
@@ -4593,6 +4714,7 @@ void OSD::tick_without_osd_lock()
 
   check_ops_in_flight();
 
+  // kick OSDService::awaiting_throttle and try to requeue on OSDService::op_wq
   service.kick_recovery_queue();
 
   tick_timer_without_osd_lock.add_event_after(OSD_TICK_INTERVAL, new C_Tick_WithoutOSDLock(this));
@@ -6087,6 +6209,7 @@ bool OSD::heartbeat_dispatch(Message *m)
 bool OSD::ms_dispatch(Message *m)
 {
   dout(20) << "OSD::ms_dispatch: " << *m << dendl;
+
   if (m->get_type() == MSG_OSD_MARK_ME_DOWN) {
     service.got_stop_ack();
     m->put();
@@ -6096,8 +6219,10 @@ bool OSD::ms_dispatch(Message *m)
   // lock!
 
   osd_lock.Lock();
+
   if (is_stopping()) {
     osd_lock.Unlock();
+
     m->put();
     return true;
   }
@@ -6366,16 +6491,23 @@ bool OSD::ms_verify_authorizer(Connection *con, int peer_type,
   return true;
 }
 
+// called by
+// OSD::tick
+// OSD::ms_dispatch
 void OSD::do_waiters()
 {
   assert(osd_lock.is_locked());
 
   dout(10) << "do_waiters -- start" << dendl;
+
+  // was inserted by OSD::take_waiters
   while (!finished.empty()) {
     OpRequestRef next = finished.front();
     finished.pop_front();
+
     dispatch_op(next);
   }
+
   dout(10) << "do_waiters -- finish" << dendl;
 }
 
@@ -7700,11 +7832,13 @@ void OSD::activate_map()
   if (osdmap->test_flag(CEPH_OSDMAP_NORECOVER)) {
     if (!service.recovery_is_paused()) {
       dout(1) << "pausing recovery (NORECOVER flag set)" << dendl;
+
       service.pause_recovery();
     }
   } else {
     if (service.recovery_is_paused()) {
       dout(1) << "unpausing recovery (NORECOVER flag unset)" << dendl;
+
       service.unpause_recovery();
     }
   }
@@ -8053,6 +8187,11 @@ void OSD::dispatch_context_transaction(PG::RecoveryCtx &ctx, PG *pg,
   }
 }
 
+// called by
+// OSD::handle_pg_peering_evt
+// OSD::do_recovery
+// C_CompleteSplits::finish
+// OSD::process_peering_events
 void OSD::dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap,
                            ThreadPool::TPHandle *handle)
 {
@@ -8692,44 +8831,73 @@ void OSD::check_replay_queue()
   }
 }
 
+// called by
+// OSDService::finish_recovery_op, called by PG::finish_recovery_op
+// OSDService::release_reserved_pushes, called by OSD::do_recovery or OSD::ShardedOpWQ::dequeue_and_get_ops
+// OSDService::unpause_recovery, called by OSD::activate_map, when CEPH_OSDMAP_NORECOVER is unset
+// OSDService::kick_recovery_queue, called by OSD::tick_without_osd_lock or OSD::handle_conf_change, for "osd_recovery_delay_start"
+// OSDService::queue_for_recovery, called by PG::queue_recovery
 void OSDService::_maybe_queue_recovery() {
   assert(recovery_lock.is_locked_by_me());
+
   uint64_t available_pushes;
+
+  // list<pair<epoch_t, PGRef> >, were inserted by OSDService::queue_for_recovery
   while (!awaiting_throttle.empty() &&
 	 _recover_now(&available_pushes)) {
+    // we can recover right now
+
+    // default 1
     uint64_t to_start = MIN(
       available_pushes,
       cct->_conf->osd_recovery_max_single_start);
+
+    // enqueue on OSDService::op_wq
     _queue_for_recovery(awaiting_throttle.front(), to_start);
+
     awaiting_throttle.pop_front();
+
     recovery_ops_reserved += to_start;
   }
 }
 
+// called by
+// OSDService::_maybe_queue_recovery
 bool OSDService::_recover_now(uint64_t *available_pushes)
 {
+  // default 3
   uint64_t max = cct->_conf->osd_recovery_max_active;
+
   if (max <= recovery_ops_active + recovery_ops_reserved) {
     dout(15) << "_recover_now active " << recovery_ops_active
 	     << " + reserved " << recovery_ops_reserved
 	     << " >= max " << max << dendl;
+
     if (available_pushes)
       *available_pushes = 0;
+
     return false;
   }
 
   if (available_pushes)
     *available_pushes = max - recovery_ops_active - recovery_ops_reserved;
 
+  // set by OSDService::defer_recovery
   if (ceph_clock_now(cct) < defer_recovery_until) {
     dout(15) << "_recover_now defer until " << defer_recovery_until << dendl;
+
     return false;
   }
 
+  // was set by OSDService::pause_recovery, which called by OSD::activate_map,
+  // and will be reset to false by OSDService::unpause_recovery, which also
+  // called by OSD::activate_map
   if (recovery_paused) {
     dout(15) << "_recover_now paused" << dendl;
+
     return false;
   }
+
   return true;
 }
 
@@ -8743,14 +8911,17 @@ void OSD::do_recovery(
 
   if (g_conf->osd_recovery_sleep > 0) {
     handle.suspend_tp_timeout();
+
     pg->unlock();
 
     utime_t t;
     t.set_from_double(g_conf->osd_recovery_sleep);
     t.sleep();
+
     dout(20) << __func__ << " slept for " << t << dendl;
 
     pg->lock();
+
     handle.reset_tp_timeout();
   }
 
@@ -8810,21 +8981,27 @@ void OSD::do_recovery(
     pg->write_if_dirty(*rctx.transaction);
 
     OSDMapRef curmap = pg->get_osdmap();
+
     dispatch_context(rctx, pg, curmap);
   }
 
  out:
   assert(started <= reserved_pushes);
+
   service.release_reserved_pushes(reserved_pushes);
 }
 
+// called by
+// PG::start_recovery_op
 void OSDService::start_recovery_op(PG *pg, const hobject_t& soid)
 {
   Mutex::Locker l(recovery_lock);
+
   dout(10) << "start_recovery_op " << *pg << " " << soid
 	   << " (" << recovery_ops_active << "/"
 	   << cct->_conf->osd_recovery_max_active << " rops)"
 	   << dendl;
+
   recovery_ops_active++;
 
 #ifdef DEBUG_RECOVERY_OIDS
@@ -8834,9 +9011,12 @@ void OSDService::start_recovery_op(PG *pg, const hobject_t& soid)
 #endif
 }
 
+// called by
+// PG::finish_recovery_op
 void OSDService::finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue)
 {
   Mutex::Locker l(recovery_lock);
+
   dout(10) << "finish_recovery_op " << *pg << " " << soid
 	   << " dequeue=" << dequeue
 	   << " (" << recovery_ops_active << "/" << cct->_conf->osd_recovery_max_active << " rops)"
@@ -9178,6 +9358,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
 
     // pop the stashed Op to process
     assert(sdata->pg_for_processing[&*(item.first)].size());
+
     op = sdata->pg_for_processing[&*(item.first)].front();
     sdata->pg_for_processing[&*(item.first)].pop_front();
 
@@ -9204,12 +9385,14 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
   }
 
   lgeneric_subdout(osd->cct, osd, 30) << "dequeue status: ";
+
   Formatter *f = Formatter::create("json");
   f->open_object_section("q");
   dump(f);
   f->close_section();
   f->flush(*_dout);
   delete f;
+
   *_dout << dendl;
 
   // PG::do_request(Op)
@@ -9222,6 +9405,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
       reqid = (*_op)->get_reqid();
     }
 #endif
+
     tracepoint(osd, opwq_process_finish, reqid.name._type,
         reqid.name._num, reqid.tid, reqid.inc);
   }
@@ -9382,6 +9566,8 @@ struct C_CompleteSplits : public Context {
   }
 };
 
+// called by
+// OSD::PeeringWQ::_process
 void OSD::process_peering_events(
   const list<PG*> &pgs,
   ThreadPool::TPHandle &handle
@@ -9529,7 +9715,9 @@ void OSD::handle_conf_change(const struct md_config_t *conf,
 #endif
 
   if (changed.count("osd_recovery_delay_start")) {
+    // default 0
     service.defer_recovery(cct->_conf->osd_recovery_delay_start);
+
     service.kick_recovery_queue();
   }
 

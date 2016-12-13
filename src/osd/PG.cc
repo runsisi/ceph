@@ -884,18 +884,24 @@ bool PG::adjust_need_up_thru(const OSDMapRef osdmap)
   return false;
 }
 
+// called by
+// PG::RecoveryState::Started::react(const AdvMap)
+// PG::RecoveryState::Reset::react(const AdvMap)
 void PG::remove_down_peer_info(const OSDMapRef osdmap)
 {
   // Remove any downed osds from peer_info
   bool removed = false;
+
   map<pg_shard_t, pg_info_t>::iterator p = peer_info.begin();
   while (p != peer_info.end()) {
     if (!osdmap->is_up(p->first.osd)) {
       dout(10) << " dropping down osd." << p->first << " info " << p->second << dendl;
+
       peer_missing.erase(p->first);
       peer_log_requested.erase(p->first);
       peer_missing_requested.erase(p->first);
       peer_info.erase(p++);
+
       removed = true;
     } else
       ++p;
@@ -904,6 +910,8 @@ void PG::remove_down_peer_info(const OSDMapRef osdmap)
   // if we removed anyone, update peers (which include peer_info)
   if (removed)
     update_heartbeat_peers();
+
+  // call ReplicatedPG::check_recovery_sources
   check_recovery_sources(osdmap);
 }
 
@@ -980,6 +988,10 @@ void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
   set_probe_targets(prior_set->probe);
 }
 
+// called by
+// PG::start_peering_interval
+// PG::RecoveryState::Primary::exit
+// ReplicatedPG::on_shutdown
 void PG::clear_primary_state()
 {
   dout(10) << "clear_primary_state" << dendl;
@@ -2119,6 +2131,7 @@ void PG::_activate_committed(epoch_t epoch, epoch_t activation_epoch)
 void PG::all_activated_and_committed()
 {
   dout(10) << "all_activated_and_committed" << dendl;
+
   assert(is_primary());
   assert(peer_activated.size() == actingbackfill.size());
   assert(!actingbackfill.empty());
@@ -2135,13 +2148,17 @@ void PG::all_activated_and_committed()
 bool PG::requeue_scrub()
 {
   assert(is_locked());
+
   if (scrub_queued) {
     dout(10) << __func__ << ": already queued" << dendl;
     return false;
   } else {
     dout(10) << __func__ << ": queueing" << dendl;
+
     scrub_queued = true;
+
     osd->queue_for_scrub(this);
+
     return true;
   }
 }
@@ -2155,7 +2172,7 @@ bool PG::requeue_scrub()
 // Active::react(MLogRec)
 // ReplicatedPG::mark_all_unfound_lost
 // ReplicatedPG::release_object_locks
-// front default to false
+// the parameter front always be false
 void PG::queue_recovery(bool front)
 {
   if (!is_primary() || !is_peered()) {
@@ -2176,6 +2193,7 @@ void PG::queue_recovery(bool front)
 
     recovery_queued = true;
 
+    // push on OSDService::awaiting_throttle and then requeue on OSDService::op_wq
     osd->queue_for_recovery(this, front);
   }
 }
@@ -2183,20 +2201,29 @@ void PG::queue_recovery(bool front)
 bool PG::queue_scrub()
 {
   assert(_lock.is_locked());
+
   if (is_scrubbing()) {
     return false;
   }
+
   scrubber.must_scrub = false;
+
   state_set(PG_STATE_SCRUBBING);
+
   if (scrubber.must_deep_scrub) {
     state_set(PG_STATE_DEEP_SCRUB);
+
     scrubber.must_deep_scrub = false;
   }
+
   if (scrubber.must_repair || scrubber.auto_repair) {
     state_set(PG_STATE_REPAIR);
+
     scrubber.must_repair = false;
   }
+
   requeue_scrub();
+
   return true;
 }
 
@@ -2295,9 +2322,12 @@ unsigned PG::get_backfill_priority()
   return static_cast<unsigned>(ret);
 }
 
+// called by
+// PG::RecoveryState::Clean::Clean
 void PG::finish_recovery(list<Context*>& tfin)
 {
   dout(10) << "finish_recovery" << dendl;
+
   assert(info.last_complete == info.last_update);
 
   clear_recovery_state();
@@ -2306,35 +2336,48 @@ void PG::finish_recovery(list<Context*>& tfin)
    * sync all this before purging strays.  but don't block!
    */
   finish_sync_event = new C_PG_FinishRecovery(this);
+
   tfin.push_back(finish_sync_event);
 }
 
 void PG::_finish_recovery(Context *c)
 {
   lock();
+
   if (deleting) {
     unlock();
     return;
   }
+
   if (c == finish_sync_event) {
     dout(10) << "_finish_recovery" << dendl;
+
     finish_sync_event = 0;
+
     purge_strays();
 
     publish_stats_to_osd();
 
     if (scrub_after_recovery) {
       dout(10) << "_finish_recovery requeueing for scrub" << dendl;
+
       scrub_after_recovery = false;
       scrubber.must_deep_scrub = true;
+
       queue_scrub();
     }
   } else {
     dout(10) << "_finish_recovery -- stale" << dendl;
   }
+
   unlock();
 }
 
+// called by
+// ReplicatedPG::recover_missing
+// ReplicatedPG::prep_object_replica_pushes
+// ReplicatedPG::recover_backfill
+// ReplicatedPG::prep_backfill_object_push
 void PG::start_recovery_op(const hobject_t& soid)
 {
   dout(10) << "start_recovery_op " << soid
@@ -2342,15 +2385,27 @@ void PG::start_recovery_op(const hobject_t& soid)
 	   << " (" << recovering_oids << ")"
 #endif
 	   << dendl;
+
   assert(recovery_ops_active >= 0);
   recovery_ops_active++;
+
 #ifdef DEBUG_RECOVERY_OIDS
   assert(recovering_oids.count(soid) == 0);
   recovering_oids.insert(soid);
 #endif
+
+  // increase counter
   osd->start_recovery_op(this, soid);
 }
 
+// called by
+// PG::clear_recovery_state, with dequeue set to true
+// PG::RecoveryState::Backfilling::react(const RemoteReservationRejected)
+// ReplicatedPG::on_global_recover
+// ReplicatedPG::do_scan
+// ReplicatedPG::do_backfill
+// ReplicatedPG::failed_push
+// ReplicatedPG::cancel_pull
 void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
 {
   dout(10) << "finish_recovery_op " << soid
@@ -2358,15 +2413,23 @@ void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
 	   << " (" << recovering_oids << ")" 
 #endif
 	   << dendl;
+
   assert(recovery_ops_active > 0);
   recovery_ops_active--;
+
 #ifdef DEBUG_RECOVERY_OIDS
   assert(recovering_oids.count(soid));
   recovering_oids.erase(soid);
 #endif
+
+  // decrease counter
   osd->finish_recovery_op(this, soid, dequeue);
 
   if (!dequeue) {
+
+    // we are
+    called by PG::clear_recovery_state
+
     queue_recovery();
   }
 }
@@ -2391,6 +2454,7 @@ static void split_replay_queue(
 
 void PG::split_ops(PG *child, unsigned split_bits) {
   unsigned match = child->info.pgid.ps();
+
   assert(waiting_for_all_missing.empty());
   assert(waiting_for_cache_not_full.empty());
   assert(waiting_for_unreadable_object.empty());
@@ -2398,14 +2462,17 @@ void PG::split_ops(PG *child, unsigned split_bits) {
   assert(waiting_for_ack.empty());
   assert(waiting_for_ondisk.empty());
   assert(waiting_for_active.empty());
+
   split_replay_queue(&replay_queue, &(child->replay_queue), match, split_bits);
 
   osd->dequeue_pg(this, &waiting_for_peered);
 
   OSD::split_list(
     &waiting_for_peered, &(child->waiting_for_peered), match, split_bits);
+
   {
     Mutex::Locker l(map_lock); // to avoid a race with the osd dispatch
+
     OSD::split_list(
       &waiting_for_map, &(child->waiting_for_map), match, split_bits);
   }
@@ -2463,13 +2530,16 @@ void PG::split_into(pg_t child_pgid, PG *child, unsigned split_bits)
   // There can't be recovery/backfill going on now
   int primary, up_primary;
   vector<int> newup, newacting;
+
   get_osdmap()->pg_to_up_acting_osds(
     child->info.pgid.pgid, &newup, &up_primary, &newacting, &primary);
+
   child->init_primary_up_acting(
     newup,
     newacting,
     up_primary,
     primary);
+
   child->role = OSDMap::calc_pg_role(osd->whoami, child->acting);
 
   // this comparison includes primary rank via pg_shard_t
@@ -2496,11 +2566,15 @@ void PG::split_into(pg_t child_pgid, PG *child, unsigned split_bits)
   dirty_big_info = true;
 }
 
+// called by
+// PG::finish_recovery, called by PG::RecoveryState::Clean::Clean
+// PG::cancel_recovery, called by PG::start_peering_interval or ReplicatedPG::on_shutdown
 void PG::clear_recovery_state() 
 {
   dout(10) << "clear_recovery_state" << dendl;
 
   pg_log.reset_recovery_pointers();
+
   finish_sync_event = 0;
 
   hobject_t soid;
@@ -2508,6 +2582,7 @@ void PG::clear_recovery_state()
 #ifdef DEBUG_RECOVERY_OIDS
     soid = *recovering_oids.begin();
 #endif
+
     finish_recovery_op(soid, true);
   }
 
@@ -2515,12 +2590,18 @@ void PG::clear_recovery_state()
   backfill_info.clear();
   peer_backfill_info.clear();
   waiting_on_backfill.clear();
+
+  // call ReplicatedPG::_clear_recovery_state
   _clear_recovery_state();  // pg impl specific hook
 }
 
+// called by
+// PG::start_peering_interval
+// ReplicatedPG::on_shutdown
 void PG::cancel_recovery()
 {
   dout(10) << "cancel_recovery" << dendl;
+
   clear_recovery_state();
 }
 
@@ -5319,6 +5400,7 @@ void PG::start_peering_interval(
 
   acting.swap(oldacting);
   up.swap(oldup);
+
   init_primary_up_acting(
     newup,
     newacting,
@@ -5348,6 +5430,7 @@ void PG::start_peering_interval(
     state_clear(PG_STATE_REMAPPED);
 
   int role = osdmap->calc_pg_role(osd->whoami, acting, acting.size());
+
   if (pool.info.is_replicated() || role == pg_whoami.shard)
     set_role(role);
   else
@@ -5356,14 +5439,18 @@ void PG::start_peering_interval(
   // did acting, up, primary|acker change?
   if (!lastmap) {
     dout(10) << " no lastmap" << dendl;
+
     dirty_info = true;
     dirty_big_info = true;
     info.history.same_interval_since = osdmap->get_epoch();
   } else {
     std::stringstream debug;
+
     assert(info.history.same_interval_since != 0);
+
     boost::scoped_ptr<IsPGRecoverablePredicate> recoverable(
       get_is_recoverable_predicate());
+
     bool new_interval = pg_interval_t::check_new_interval(
       old_acting_primary.osd,
       new_acting_primary,
@@ -5379,12 +5466,16 @@ void PG::start_peering_interval(
       recoverable.get(),
       &past_intervals,
       &debug);
+
     dout(10) << __func__ << ": check_new_interval output: "
 	     << debug.str() << dendl;
+
     if (new_interval) {
       dout(10) << " noting past " << past_intervals.rbegin()->second << dendl;
+
       dirty_info = true;
       dirty_big_info = true;
+
       info.history.same_interval_since = osdmap->get_epoch();
     }
   }
@@ -5393,6 +5484,7 @@ void PG::start_peering_interval(
       oldup != up) {
     info.history.same_up_since = osdmap->get_epoch();
   }
+
   // this comparison includes primary rank via pg_shard_t
   if (old_acting_primary != get_primary()) {
     info.history.same_primary_since = osdmap->get_epoch();
@@ -5424,10 +5516,12 @@ void PG::start_peering_interval(
   if (was_old_primary || is_primary()) {
     osd->remove_want_pg_temp(info.pgid.pgid);
   }
+
   clear_primary_state();
 
     
   // pg->on_*
+  // call ReplicatedPG::on_change
   on_change(t);
 
   projected_last_update = eversion_t();
@@ -5478,6 +5572,7 @@ void PG::start_peering_interval(
       }
     }
   }
+
   cancel_recovery();
 
   if (acting.empty() && !up.empty() && up_primary == pg_whoami) {
@@ -5880,13 +5975,21 @@ bool PG::op_must_wait_for_map(epoch_t cur_epoch, OpRequestRef& op)
   return false;
 }
 
+// called by
+// PG::RecoveryState::Reset::react(const ActMap)
+// PG::RecoveryState::Primary::react(const ActMap)
+// PG::RecoveryState::ReplicaActive::react(const ActMap)
+// PG::RecoveryState::Stray::react(const ActMap)
 void PG::take_waiters()
 {
   dout(10) << "take_waiters" << dendl;
+
   take_op_map_waiters();
+
   for (list<CephPeeringEvtRef>::iterator i = peering_waiters.begin();
        i != peering_waiters.end();
        ++i) osd->queue_for_peering(this);
+
   peering_queue.splice(peering_queue.begin(), peering_waiters,
 		       peering_waiters.begin(), peering_waiters.end());
 }
@@ -5894,13 +5997,17 @@ void PG::take_waiters()
 void PG::handle_peering_event(CephPeeringEvtRef evt, RecoveryCtx *rctx)
 {
   dout(10) << "handle_peering_event: " << evt->get_desc() << dendl;
+
   if (!have_same_or_newer_map(evt->get_epoch_sent())) {
     dout(10) << "deferring event " << evt->get_desc() << dendl;
+
     peering_waiters.push_back(evt);
     return;
   }
+
   if (old_peering_evt(evt))
     return;
+
   recovery_state.handle_event(evt, rctx);
 }
 
@@ -5908,7 +6015,9 @@ void PG::queue_peering_event(CephPeeringEvtRef evt)
 {
   if (old_peering_evt(evt))
     return;
+
   peering_queue.push_back(evt);
+
   osd->queue_for_peering(this);
 }
 
@@ -7085,7 +7194,9 @@ PG::RecoveryState::Clean::Clean(my_context ctx)
   if (pg->info.last_complete != pg->info.last_update) {
     ceph_abort();
   }
+
   pg->finish_recovery(*context< RecoveryMachine >().get_on_safe_context_list());
+
   pg->mark_clean();
 
   pg->share_pg_info();

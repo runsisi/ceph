@@ -1299,6 +1299,8 @@ void ECBackend::filter_read_op(
   }
 }
 
+// called by
+// ReplicatedPG::check_recovery_sources
 void ECBackend::check_recovery_sources(const OSDMapRef& osdmap)
 {
   set<ceph_tid_t> tids_to_filter;
@@ -1322,6 +1324,9 @@ void ECBackend::check_recovery_sources(const OSDMapRef& osdmap)
   }
 }
 
+// called by
+// ReplicatedPG::on_shutdown
+// ReplicatedPG::on_change, called by PG::start_peering_interval
 void ECBackend::on_change()
 {
   dout(10) << __func__ << dendl;
@@ -1335,12 +1340,14 @@ void ECBackend::on_change()
   for (auto &&op: tid_to_op_map) {
     cache.release_write_pin(op.second.pin);
   }
+
   tid_to_op_map.clear();
 
   for (map<ceph_tid_t, ReadOp>::iterator i = tid_to_read_map.begin();
        i != tid_to_read_map.end();
        ++i) {
     dout(10) << __func__ << ": cancelling " << i->second << dendl;
+
     for (map<hobject_t, read_request_t, hobject_t::BitwiseComparator>::iterator j =
 	   i->second.to_read.begin();
 	 j != i->second.to_read.end();
@@ -1349,12 +1356,17 @@ void ECBackend::on_change()
       j->second.cb = 0;
     }
   }
+
   tid_to_read_map.clear();
   in_progress_client_reads.clear();
   shard_to_read_map.clear();
+
   clear_recovery_state();
 }
 
+// called by
+// ECBackend::on_change
+// ReplicatedPG::_clear_recovery_state, which called by PG::clear_recovery_state
 void ECBackend::clear_recovery_state()
 {
   recovery_ops.clear();
