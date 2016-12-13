@@ -2166,13 +2166,13 @@ bool PG::requeue_scrub()
 // called by
 // OSD::do_recovery
 // PG::finish_recovery_op
-// Backfilling::Backfilling
-// Recovering::Recovering
-// Active::react(ActMap)
-// Active::react(MLogRec)
+// PG::RecoveryState::Backfilling::Backfilling
+// PG::RecoveryState::Recovering::Recovering
+// PG::RecoveryState::Active::react(const ActMap)
+// PG::RecoveryState::Active::react(const MLogRec)
 // ReplicatedPG::mark_all_unfound_lost
 // ReplicatedPG::release_object_locks
-// the parameter front always be false
+// NOTE: the parameter front always be false
 void PG::queue_recovery(bool front)
 {
   if (!is_primary() || !is_peered()) {
@@ -6598,9 +6598,12 @@ PG::RecoveryState::Backfilling::Backfilling(my_context ctx)
     NamedState(context< RecoveryMachine >().pg->cct, "Started/Primary/Active/Backfilling")
 {
   context< RecoveryMachine >().log_enter(state_name);
+
   PG *pg = context< RecoveryMachine >().pg;
+
   pg->backfill_reserved = true;
   pg->queue_recovery();
+
   pg->state_clear(PG_STATE_BACKFILL_TOOFULL);
   pg->state_clear(PG_STATE_BACKFILL_WAIT);
   pg->state_set(PG_STATE_BACKFILL);
@@ -6610,13 +6613,16 @@ boost::statechart::result
 PG::RecoveryState::Backfilling::react(const RemoteReservationRejected &)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   pg->osd->local_reserver.cancel_reservation(pg->info.pgid);
+
   pg->state_set(PG_STATE_BACKFILL_TOOFULL);
 
   for (set<pg_shard_t>::iterator it = pg->backfill_targets.begin();
        it != pg->backfill_targets.end();
        ++it) {
     assert(*it != pg->pg_whoami);
+
     ConnectionRef con = pg->osd->get_con_osd_cluster(
       it->osd, pg->get_osdmap()->get_epoch());
     if (con) {
@@ -6630,9 +6636,11 @@ PG::RecoveryState::Backfilling::react(const RemoteReservationRejected &)
   }
 
   pg->waiting_on_backfill.clear();
+
   pg->finish_recovery_op(hobject_t::get_max());
 
   pg->schedule_backfill_full_retry();
+
   return transit<NotBackfilling>();
 }
 
@@ -7432,18 +7440,23 @@ boost::statechart::result PG::RecoveryState::Active::react(const MLogRec& logevt
 {
   dout(10) << "searching osd." << logevt.from
            << " log for unfound items" << dendl;
+
   PG *pg = context< RecoveryMachine >().pg;
+
   pg->proc_replica_log(
     *context<RecoveryMachine>().get_cur_transaction(),
     logevt.msg->info, logevt.msg->log, logevt.msg->missing, logevt.from);
+
   bool got_missing = pg->search_for_missing(
     pg->peer_info[logevt.from],
     pg->peer_missing[logevt.from],
     logevt.from,
     context< RecoveryMachine >().get_recovery_ctx());
+
   if (pg->is_peered() &&
       got_missing)
     pg->queue_recovery();
+
   return discard_event();
 }
 

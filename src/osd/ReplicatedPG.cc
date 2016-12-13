@@ -9362,7 +9362,10 @@ boost::intrusive_ptr<ReplicatedPG::RepGather> ReplicatedPG::new_repop(
   dout(10) << __func__ << ": " << *repop << dendl;
   return boost::intrusive_ptr<RepGather>(repop);
 }
- 
+
+// called by
+// ReplicatedPG::eval_repop
+// ReplicatedPG::apply_and_flush_repops
 void ReplicatedPG::remove_repop(RepGather *repop)
 {
   dout(20) << __func__ << " " << *repop << dendl;
@@ -9375,6 +9378,7 @@ void ReplicatedPG::remove_repop(RepGather *repop)
 
   release_object_locks(
     repop->lock_manager);
+
   repop->put();
 
   osd->logger->dec(l_osd_op_wip);
@@ -10774,6 +10778,8 @@ void ReplicatedPG::do_update_log_missing_reply(OpRequestRef &op)
 
 /* Mark all unfound objects as lost.
  */
+// called by
+// ReplicatedPG::do_command, for "mark_unfound_lost"
 void ReplicatedPG::mark_all_unfound_lost(
   int what,
   ConnectionRef con,
@@ -10799,6 +10805,7 @@ void ReplicatedPG::mark_all_unfound_lost(
   unsigned num_unfound = missing_loc.num_unfound();
   while (m != mend) {
     const hobject_t &oid(m->first);
+
     if (!missing_loc.is_unfound(oid)) {
       // We only care about unfound objects
       ++m;
@@ -10815,14 +10822,18 @@ void ReplicatedPG::mark_all_unfound_lost(
 
     case pg_log_entry_t::LOST_REVERT:
       prev = pick_newest_available(oid);
+
       if (prev > eversion_t()) {
 	// log it
 	pg_log_entry_t e(
 	  pg_log_entry_t::LOST_REVERT, oid, v,
 	  m->second.need, 0, osd_reqid_t(), mtime, 0);
+
 	e.reverting_to = prev;
 	e.mark_unrollbackable();
+
 	log_entries.push_back(e);
+
 	dout(10) << e << dendl;
 
 	// we are now missing the new version; recovery code will sort it out.
@@ -10835,6 +10846,7 @@ void ReplicatedPG::mark_all_unfound_lost(
       {
 	pg_log_entry_t e(pg_log_entry_t::LOST_DELETE, oid, v, m->second.need,
 			 0, osd_reqid_t(), mtime, 0);
+
 	if (get_osdmap()->test_flag(CEPH_OSDMAP_REQUIRE_JEWEL)) {
 	  if (pool.info.require_rollback()) {
 	    e.mod_desc.try_rmobject(v.version);
@@ -10842,7 +10854,9 @@ void ReplicatedPG::mark_all_unfound_lost(
 	    e.mark_unrollbackable();
 	  }
 	} // otherwise, just do what we used to do
+
 	dout(10) << e << dendl;
+
 	log_entries.push_back(e);
 
 	++v.version;
@@ -10865,6 +10879,7 @@ void ReplicatedPG::mark_all_unfound_lost(
 	requeue_ops(waiting_for_all_missing);
 	waiting_for_all_missing.clear();
 	requeue_object_waiters(waiting_for_unreadable_object);
+
 	queue_recovery();
 
 	stringstream ss;
@@ -10873,6 +10888,7 @@ void ReplicatedPG::mark_all_unfound_lost(
 	string rs = ss.str();
 	dout(0) << "do_command r=" << 0 << " " << rs << dendl;
 	osd->clog->info() << rs << "\n";
+
 	if (con) {
 	  MCommandReply *reply = new MCommandReply(0, rs);
 	  reply->set_tid(tid);

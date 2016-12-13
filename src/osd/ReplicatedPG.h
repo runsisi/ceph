@@ -803,6 +803,16 @@ protected:
    *
    * @param ctx [in] ctx to clean up
    */
+  // called by
+  // CopyFromCallback::finish
+  // ReplicatedPG::do_op
+  // ReplicatedPG::execute_ctx
+  // ReplicatedPG::reply_ctx
+  // ReplicatedPG::trim_object
+  // ReplicatedPG::complete_read_ctx
+  // ReplicatedPG::try_flush_mark_clean
+  // ReplicatedPG::on_change
+  // ReplicatedPG::agent_maybe_evict
   void close_op_ctx(OpContext *ctx) {
     release_object_locks(ctx->lock_manager);
 
@@ -822,6 +832,9 @@ protected:
    *
    * @param manager [in] manager with locks to release
    */
+  // called by
+  // ReplicatedPG::remove_repop, called by ReplicatedPG::eval_repop or ReplicatedPG::apply_and_flush_repops
+  // ReplicatedPG::close_op_ctx
   void release_object_locks(
     ObcLockManager &lock_manager) {
     list<pair<hobject_t, list<OpRequestRef> > > to_req;
@@ -835,6 +848,7 @@ protected:
       &requeue_snaptrim);
 
     if (requeue_recovery)
+      // call PG::queue_recovery
       queue_recovery();
 
     if (requeue_snaptrim)
