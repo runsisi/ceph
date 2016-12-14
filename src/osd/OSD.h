@@ -565,27 +565,40 @@ public:
     i->second++;
     return next_osdmap;
   }
+
   /// releases reservation on map
   void release_map(OSDMapRef osdmap) {
     Mutex::Locker l(pre_publish_lock);
+
     map<epoch_t, unsigned>::iterator i =
       map_reservations.find(osdmap->get_epoch());
+
     assert(i != map_reservations.end());
     assert(i->second > 0);
+
     if (--(i->second) == 0) {
       map_reservations.erase(i);
     }
+
     pre_publish_cond.Signal();
   }
+
   /// blocks until there are no reserved maps prior to next_osdmap
+  // called by
+  // OSD::_committed_osd_maps
+  // OSD::consume_map
   void await_reserved_maps() {
     Mutex::Locker l(pre_publish_lock);
+
     assert(next_osdmap);
+
     while (true) {
       map<epoch_t, unsigned>::const_iterator i = map_reservations.cbegin();
+
       if (i == map_reservations.cend() || i->first >= next_osdmap->get_epoch()) {
 	break;
       } else {
+        // will be signalled by OSDService::release_map
 	pre_publish_cond.Wait(pre_publish_lock);
       }
     }
@@ -1092,10 +1105,13 @@ private:
 
 public:
   void _start_split(spg_t parent, const set<spg_t> &children);
+
   void start_split(spg_t parent, const set<spg_t> &children) {
     Mutex::Locker l(in_progress_split_lock);
+
     return _start_split(parent, children);
   }
+
   void mark_split_in_progress(spg_t parent, const set<spg_t> &pgs);
   void complete_split(const set<spg_t> &pgs);
   void cancel_pending_splits_for_parent(spg_t parent);

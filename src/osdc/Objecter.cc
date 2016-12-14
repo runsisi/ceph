@@ -1167,6 +1167,9 @@ void Objecter::_scan_requests(OSDSession *s,
   }
 }
 
+// called by
+// Objecter::ms_dispatch, for CEPH_MSG_OSD_MAP
+// OSD::handle_osd_map, for CEPH_MSG_OSD_MAP
 void Objecter::handle_osd_map(MOSDMap *m)
 {
   shunique_lock sul(rwlock, acquire_unique);
