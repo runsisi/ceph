@@ -163,7 +163,8 @@ static int lock_obj(cls_method_context_t hctx,
   bool exclusive = lock_type == LOCK_EXCLUSIVE;
   lock_info_t linfo;
 
-  // rados::cls::lock::Lock::set_renew will set flags to LOCK_FLAG_RENEW
+  // rados::cls::lock::Lock::set_renew will set flags LOCK_FLAG_RENEW, which
+  // only be called by RGWAsyncLockSystemObj::_send_request and RGWRados::lock_exclusive
   bool fail_if_exists = (flags & LOCK_FLAG_RENEW) == 0;
 
   CLS_LOG(20, "requested lock_type=%s fail_if_exists=%d", cls_lock_type_str(lock_type), fail_if_exists);
@@ -194,6 +195,7 @@ static int lock_obj(cls_method_context_t hctx,
   entity_inst_t inst;
   // op->get_req()->get_orig_source_inst(), always return 0
   r = cls_get_request_origin(hctx, &inst);
+
   id.locker = inst.name;
   assert(r == 0);
 
@@ -323,6 +325,7 @@ static int remove_lock(cls_method_context_t hctx,
   if (iter == lockers.end()) { // no such key
     return -ENOENT;
   }
+
   lockers.erase(iter);
 
   r = write_lock(hctx, name, linfo);

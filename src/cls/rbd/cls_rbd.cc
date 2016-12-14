@@ -842,6 +842,7 @@ int set_flags(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   uint64_t mask;
   uint64_t snap_id = CEPH_NOSNAP;
   bufferlist::iterator iter = in->begin();
+
   try {
     ::decode(flags, iter);
     ::decode(mask, iter);
@@ -858,6 +859,7 @@ int set_flags(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   uint64_t orig_flags = 0;
   cls_rbd_snap snap_meta;
   string snap_meta_key;
+
   if (snap_id == CEPH_NOSNAP) {
     r = read_key(hctx, "flags", &orig_flags);
     if (r < 0 && r != -ENOENT) {
@@ -867,16 +869,19 @@ int set_flags(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     }
   } else {
     key_from_snap_id(snap_id, &snap_meta_key);
+
     r = read_key(hctx, snap_meta_key, &snap_meta);
     if (r < 0) {
       CLS_ERR("Could not read snapshot: snap_id=%" PRIu64 ": %s",
               snap_id, cpp_strerror(r).c_str());
       return r;
     }
+
     orig_flags = snap_meta.flags;
   }
 
   flags = (orig_flags & ~mask) | (flags & mask);
+
   CLS_LOG(20, "set_flags snap_id=%" PRIu64 ", orig_flags=%" PRIu64 ", "
               "new_flags=%" PRIu64 ", mask=%" PRIu64, snap_id, orig_flags,
               flags, mask);
@@ -897,6 +902,7 @@ int set_flags(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     CLS_ERR("error updating flags: %s", cpp_strerror(r).c_str());
     return r;
   }
+
   return 0;
 }
 

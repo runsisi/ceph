@@ -200,6 +200,7 @@ Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
 	break;
       }
 
+      // the flag will be set on image header object by EnableFeaturesRequest<I>::send_update_flags
       m_enable_flags |= RBD_FLAG_OBJECT_MAP_INVALID;
       m_features_mask |= RBD_FEATURE_EXCLUSIVE_LOCK;
     }
@@ -212,6 +213,7 @@ Context *EnableFeaturesRequest<I>::handle_get_mirror_mode(int *result) {
 	break;
       }
 
+      // the flag will be set on image header object by EnableFeaturesRequest<I>::send_update_flags
       m_enable_flags |= RBD_FLAG_FAST_DIFF_INVALID;
       m_features_mask |= (RBD_FEATURE_OBJECT_MAP | RBD_FEATURE_EXCLUSIVE_LOCK);
     }
@@ -435,6 +437,7 @@ Context *EnableFeaturesRequest<I>::handle_create_object_map(int *result) {
   }
 
   send_enable_mirror_image();
+
   return nullptr;
 }
 

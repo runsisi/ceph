@@ -83,6 +83,11 @@ bool SnapshotRollbackRequest::should_complete(int r) {
 }
 
 void SnapshotRollbackRequest::send_read_map() {
+
+  // TODO: runsisi: we need to check the validation of the snapshot's object-map
+
+  // m_snap_id is the snapshot we want to rollback to
+
   // e.g., rbd_object_map.2cf512ae8944a.0000000000000031
   std::string snap_oid(ObjectMap::object_map_name(m_image_ctx.id, m_snap_id));
 
@@ -109,6 +114,7 @@ void SnapshotRollbackRequest::send_write_map() {
 
   CephContext *cct = m_image_ctx.cct;
 
+  // write to HEAD object_map
   std::string snap_oid(ObjectMap::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
 
   ldout(cct, 5) << this << " " << __func__ << ": snap_oid=" << snap_oid

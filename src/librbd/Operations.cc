@@ -923,10 +923,12 @@ int Operations<I>::snap_rollback(const char *snap_name,
       return -ENOENT;
     }
 
+    // we have opened the HEAD image
     if (m_image_ctx.snap_id != CEPH_NOSNAP || m_image_ctx.read_only) {
       return -EROFS;
     }
 
+    // we are to rollback to snap_name
     uint64_t snap_id = m_image_ctx.get_snap_id(snap_name);
     if (snap_id == CEPH_NOSNAP) {
       lderr(cct) << "No such snapshot found." << dendl;
@@ -977,6 +979,7 @@ void Operations<I>::execute_snap_rollback(const std::string &snap_name,
   uint64_t snap_id = m_image_ctx.get_snap_id(snap_name);
   if (snap_id == CEPH_NOSNAP) {
     lderr(cct) << "No such snapshot found." << dendl;
+
     m_image_ctx.snap_lock.put_read();
     on_finish->complete(-ENOENT);
     return;

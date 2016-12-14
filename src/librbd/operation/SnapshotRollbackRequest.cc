@@ -186,6 +186,8 @@ void SnapshotRollbackRequest<I>::send_rollback_object_map() {
         SnapshotRollbackRequest<I>,
         &SnapshotRollbackRequest<I>::handle_rollback_object_map>(this);
 
+      // create librbd::object_map::SnapshotRollbackRequest to rollback, i.e.,
+      // read the object_map of the snap and write to the HEAD object_map
       image_ctx.object_map->rollback(m_snap_id, ctx);
 
       return;
@@ -257,6 +259,7 @@ Context *SnapshotRollbackRequest<I>::handle_rollback_objects(int *result) {
     return this->create_context_finisher(*result);
   }
 
+  // load the snapshot's object_map from the disk
   return send_refresh_object_map();
 }
 

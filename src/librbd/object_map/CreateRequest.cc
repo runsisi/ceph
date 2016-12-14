@@ -36,10 +36,13 @@ void CreateRequest<I>::send() {
   {
     RWLock::WLocker snap_locker(m_image_ctx->snap_lock);
 
+    // HEAD + all snapshots
+
     m_snap_ids.push_back(CEPH_NOSNAP);
 
     for (auto it : m_image_ctx->snap_info) {
       max_size = MAX(max_size, it.second.size);
+
       m_snap_ids.push_back(it.first);
     }
 
@@ -61,9 +64,13 @@ void CreateRequest<I>::send_object_map_resize() {
 
   Context *ctx = create_context_callback<
     CreateRequest<I>, &CreateRequest<I>::handle_object_map_resize>(this);
+
   C_Gather *gather_ctx = new C_Gather(cct, ctx);
 
   for (auto snap_id : m_snap_ids) {
+
+    // create object_map object for HEAD + all snapshots
+
     librados::ObjectWriteOperation op;
     uint64_t snap_size = m_image_ctx->get_image_size(snap_id);
 
@@ -71,12 +78,15 @@ void CreateRequest<I>::send_object_map_resize() {
 				    m_image_ctx->layout, snap_size),
 				  OBJECT_NONEXISTENT);
 
+    // object_map object
     std::string oid(ObjectMap::object_map_name(m_image_ctx->id, snap_id));
+
     librados::AioCompletion *comp = create_rados_ack_callback(gather_ctx->new_sub());
     int r = m_image_ctx->md_ctx.aio_operate(oid, comp, &op);
     assert(r == 0);
     comp->release();
   }
+
   gather_ctx->activate();
 }
 
@@ -89,6 +99,7 @@ Context *CreateRequest<I>::handle_object_map_resize(int *result) {
     lderr(cct) << "object map resize failed: " << cpp_strerror(*result)
 	       << dendl;
   }
+
   return m_on_finish;
 }
 

@@ -19,6 +19,8 @@ namespace object_map {
 using util::create_rados_ack_callback;
 using util::create_rados_safe_callback;
 
+// created by
+// librbd::object_map::RefreshRequest<I>::send_lock
 template <typename I>
 LockRequest<I>::LockRequest(I &image_ctx, Context *on_finish)
   : m_image_ctx(image_ctx), m_on_finish(on_finish), m_broke_lock(false) {
@@ -36,6 +38,8 @@ void LockRequest<I>::send() {
 template <typename I>
 void LockRequest<I>::send_lock() {
   CephContext *cct = m_image_ctx.cct;
+
+  // lock HEAD object_map
   std::string oid(ObjectMap::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
 
   ldout(cct, 10) << this << " " << __func__ << ": oid=" << oid << dendl;

@@ -19,6 +19,8 @@ namespace object_map {
 
 using util::create_rados_ack_callback;
 
+// created by
+// librbd::operation::DisableFeaturesRequest<I>::send_remove_object_map
 template <typename I>
 RemoveRequest<I>::RemoveRequest(I *image_ctx, Context *on_finish)
   : m_image_ctx(image_ctx), m_on_finish(on_finish),
@@ -36,18 +38,28 @@ void RemoveRequest<I>::send_remove_object_map() {
   ldout(cct, 20) << __func__ << dendl;
 
   RWLock::WLocker snap_locker(m_image_ctx->snap_lock);
+
+  // HEAD + all snapshots
   std::vector<uint64_t> snap_ids;
+
   snap_ids.push_back(CEPH_NOSNAP);
+
   for (auto it : m_image_ctx->snap_info) {
     snap_ids.push_back(it.first);
   }
 
   Mutex::Locker locker(m_lock);
+
   assert(m_ref_counter == 0);
 
   for (auto snap_id : snap_ids) {
+
+    // remove object_map object for HEAD + all snapshots
+
     m_ref_counter++;
+
     std::string oid(ObjectMap::object_map_name(m_image_ctx->id, snap_id));
+
     using klass = RemoveRequest<I>;
     librados::AioCompletion *comp =
       create_rados_ack_callback<klass, &klass::handle_remove_object_map>(this);
@@ -65,6 +77,7 @@ Context *RemoveRequest<I>::handle_remove_object_map(int *result) {
 
   {
     Mutex::Locker locker(m_lock);
+
     assert(m_ref_counter > 0);
     m_ref_counter--;
 
@@ -73,13 +86,16 @@ Context *RemoveRequest<I>::handle_remove_object_map(int *result) {
 		 << dendl;
       m_error_result = *result;
     }
+
     if (m_ref_counter > 0) {
       return nullptr;
     }
   }
+
   if (m_error_result < 0) {
     *result = m_error_result;
   }
+
   return m_on_finish;
 }
 

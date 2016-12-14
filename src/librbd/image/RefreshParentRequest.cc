@@ -22,6 +22,9 @@ namespace image {
 using util::create_async_context_callback;
 using util::create_context_callback;
 
+// created by
+// librbd::image::RefreshRequest<I>::send_v2_refresh_parent
+// librbd::image::SetSnapRequest<I>::send_refresh_parent
 template <typename I>
 RefreshParentRequest<I>::RefreshParentRequest(I &child_image_ctx,
                                               const parent_info &parent_md,

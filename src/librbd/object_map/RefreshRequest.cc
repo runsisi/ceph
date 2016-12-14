@@ -25,6 +25,8 @@ using util::create_rados_safe_callback;
 
 namespace object_map {
 
+// created by
+// librbd::ObjectMap::open
 template <typename I>
 RefreshRequest<I>::RefreshRequest(I &image_ctx, ceph::BitVector<2> *object_map,
                                   uint64_t snap_id, Context *on_finish)
@@ -93,6 +95,7 @@ void RefreshRequest<I>::send_lock() {
   Context *ctx = create_context_callback<
     klass, &klass::handle_lock>(this);
 
+  // lock HEAD object_map, e.g., lock rbd_object_map.2cf512ae8944a
   LockRequest<I> *req = LockRequest<I>::create(m_image_ctx, ctx);
 
   req->send();

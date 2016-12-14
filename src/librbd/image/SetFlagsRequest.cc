@@ -42,6 +42,8 @@ void SetFlagsRequest<I>::send_set_flags() {
   RWLock::WLocker snap_locker(m_image_ctx->snap_lock);
 
   std::vector<uint64_t> snap_ids;
+
+  // HEAD + all snapshots, all flags are set on the omap entries of image header object
   snap_ids.push_back(CEPH_NOSNAP);
   for (auto it : m_image_ctx->snap_info) {
     snap_ids.push_back(it.first);

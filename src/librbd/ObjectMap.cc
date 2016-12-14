@@ -157,7 +157,7 @@ void ObjectMap::close(Context *on_finish) {
     return;
   }
 
-  // unlock rbd_object_map.2cf512ae8944a
+  // unlock HEAD object_map, e.g., unlock rbd_object_map.2cf512ae8944a
   object_map::UnlockRequest<> *req = new object_map::UnlockRequest<>(
     m_image_ctx, on_finish);
 
@@ -170,6 +170,7 @@ void ObjectMap::rollback(uint64_t snap_id, Context *on_finish) {
   assert(m_image_ctx.snap_lock.is_locked());
   assert(m_image_ctx.object_map_lock.is_wlocked());
 
+  // snap_id is the snapshot we want to rollback to
   object_map::SnapshotRollbackRequest *req =
     new object_map::SnapshotRollbackRequest(m_image_ctx, snap_id, on_finish);
 

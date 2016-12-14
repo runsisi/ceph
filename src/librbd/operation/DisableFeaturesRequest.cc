@@ -59,6 +59,7 @@ bool DisableFeaturesRequest<I>::should_complete(int r) {
   if (r < 0) {
     lderr(cct) << "encountered error: " << cpp_strerror(r) << dendl;
   }
+
   return true;
 }
 
@@ -88,6 +89,7 @@ Context *DisableFeaturesRequest<I>::handle_prepare_lock(int *result) {
   }
 
   send_block_writes();
+
   return nullptr;
 }
 
@@ -121,6 +123,7 @@ Context *DisableFeaturesRequest<I>::handle_block_writes(int *result) {
 
   {
     RWLock::WLocker locker(image_ctx.owner_lock);
+
     // avoid accepting new requests from peers while we manipulate
     // the image features
     if (image_ctx.exclusive_lock != nullptr &&
@@ -132,6 +135,7 @@ Context *DisableFeaturesRequest<I>::handle_block_writes(int *result) {
   }
 
   send_acquire_exclusive_lock();
+
   return nullptr;
 }
 
@@ -148,6 +152,7 @@ void DisableFeaturesRequest<I>::send_acquire_exclusive_lock() {
 
   {
     RWLock::WLocker locker(image_ctx.owner_lock);
+
     // if disabling features w/ exclusive lock supported, we need to
     // acquire the lock to temporarily block IO against the image
     if (image_ctx.exclusive_lock != nullptr &&
@@ -201,6 +206,7 @@ Context *DisableFeaturesRequest<I>::handle_acquire_exclusive_lock(int *result) {
     }
 
     if ((m_features & RBD_FEATURE_FAST_DIFF) != 0) {
+      // the flag will be set on image header object by DisableFeaturesRequest<I>::send_update_flags
       m_disable_flags |= RBD_FLAG_FAST_DIFF_INVALID;
     }
 
@@ -212,6 +218,7 @@ Context *DisableFeaturesRequest<I>::handle_acquire_exclusive_lock(int *result) {
         break;
       }
 
+      // the flag will be set on image header object by DisableFeaturesRequest<I>::send_update_flags
       m_disable_flags |= RBD_FLAG_OBJECT_MAP_INVALID;
     }
   } while (false);
@@ -500,6 +507,7 @@ void DisableFeaturesRequest<I>::send_remove_object_map() {
 template <typename I>
 Context *DisableFeaturesRequest<I>::handle_remove_object_map(int *result) {
   I &image_ctx = this->m_image_ctx;
+
   CephContext *cct = image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": r=" << *result << dendl;
 

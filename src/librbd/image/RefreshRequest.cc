@@ -26,6 +26,8 @@ using util::create_rados_ack_callback;
 using util::create_async_context_callback;
 using util::create_context_callback;
 
+// created by
+// librbd::image::OpenRequest<I>::send_refresh
 template <typename I>
 RefreshRequest<I>::RefreshRequest(I &image_ctx, bool acquiring_lock,
                                   Context *on_finish)
