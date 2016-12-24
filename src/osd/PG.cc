@@ -326,6 +326,8 @@ std::string PG::gen_prefix() const
   
 /********* PG **********/
 
+// called by
+// PG::RecoveryState::GetLog::react(const GotLog)
 void PG::proc_master_log(
   ObjectStore::Transaction& t, pg_info_t &oinfo,
   pg_log_t &olog, pg_missing_t& omissing, pg_shard_t from)
@@ -8202,9 +8204,12 @@ boost::statechart::result PG::RecoveryState::GetLog::react(const MLogRec& logevt
 boost::statechart::result PG::RecoveryState::GetLog::react(const GotLog&)
 {
   PG *pg = context< RecoveryMachine >().pg;
+
   ldout(pg->cct, 10) << "leaving GetLog" << dendl;
+
   if (msg) {
     ldout(pg->cct, 10) << "processing master log" << dendl;
+
     pg->proc_master_log(*context<RecoveryMachine>().get_cur_transaction(),
 			msg->info, msg->log, msg->missing,
 			auth_log_shard);

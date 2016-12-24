@@ -1500,6 +1500,8 @@ public:
   TrivialEvent(IntervalFlush)
 
   /* Encapsulates PG recovery process */
+  // created by
+  // PG::PG
   class RecoveryState {
     void start_handle(RecoveryCtx *new_ctx);
     void end_handle();
@@ -1511,6 +1513,9 @@ public:
 
     /* States */
     struct Initial;
+
+    // created by
+    // RecoveryState::RecoveryState, which called by PG::PG
     class RecoveryMachine : public boost::statechart::state_machine< RecoveryMachine, Initial > {
       RecoveryState *state;
     public:
@@ -1533,6 +1538,7 @@ public:
       ObjectStore::Transaction* get_cur_transaction() {
 	assert(state->rctx);
 	assert(state->rctx->transaction);
+
 	return state->rctx->transaction;
       }
 
@@ -1576,6 +1582,7 @@ public:
 	(*state->rctx->notify_list)[to.osd].push_back(make_pair(info, pi));
       }
     };
+
     friend class RecoveryMachine;
 
     /* States */
@@ -2118,6 +2125,8 @@ public:
     boost::optional<RecoveryCtx> rctx;
 
   public:
+    // called by
+    // PG::PG
     explicit RecoveryState(PG *pg)
       : machine(this, pg), pg(pg), orig_ctx(0) {
       machine.initiate();
