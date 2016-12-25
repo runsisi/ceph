@@ -1406,6 +1406,7 @@ void Objecter::C_Op_Map_Latest::finish(int r)
   }
 
   Op *op = iter->second;
+
   objecter->check_latest_map_ops.erase(iter);
 
   lgeneric_subdout(objecter->cct, objecter, 20)
@@ -1523,16 +1524,21 @@ void Objecter::_check_op_pool_dne(Op *op, unique_lock& sl)
   }
 }
 
+// called by
+// Objecter::_check_op_pool_dne
+// Objecter::_op_submit
 void Objecter::_send_op_map_check(Op *op)
 {
   // rwlock is locked unique
   // ask the monitor
+  // map<ceph_tid_t, Op*>
   if (check_latest_map_ops.count(op->tid) == 0) {
     op->get();
 
     check_latest_map_ops[op->tid] = op;
 
     C_Op_Map_Latest *c = new C_Op_Map_Latest(this, op->tid);
+
     monc->get_version("osdmap", &c->latest, NULL, c);
   }
 }

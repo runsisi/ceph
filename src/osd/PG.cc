@@ -216,6 +216,7 @@ void PGPool::update(OSDMapRef map)
   }
 
   cached_epoch = map->get_epoch();
+
   lgeneric_subdout(cct, osd, 20)
     << "PGPool::update cached_removed_snaps "
     << cached_removed_snaps
@@ -301,6 +302,7 @@ void PG::lock_suspend_timeout(ThreadPool::TPHandle &handle)
 void PG::lock(bool no_lockdep) const
 {
   _lock.Lock(no_lockdep);
+
   // if we have unrecorded dirty state with the lock dropped, there is a bug
   assert(!dirty_info);
   assert(!dirty_big_info);
@@ -363,7 +365,10 @@ void PG::proc_master_log(
 
   peer_missing[from].claim(omissing);
 }
-    
+
+// called by
+// PG::RecoveryState::Active::react(const MLogRec)
+// PG::RecoveryState::GetMissing::react(const MLogRec)
 void PG::proc_replica_log(
   ObjectStore::Transaction& t,
   pg_info_t &oinfo, pg_log_t &olog, pg_missing_t& omissing,
@@ -391,6 +396,12 @@ void PG::proc_replica_log(
   peer_missing[from].claim(omissing);
 }
 
+// called by
+// PG::RecoveryState::Initial::react(const MNotifyRec)
+// PG::RecoveryState::Primary::react(const MNotifyRec)
+// PG::RecoveryState::Active::react(const MNotifyRec)
+// PG::RecoveryState::GetInfo::react(const MNotifyRec)
+// PG::RecoveryState::Incomplete::react(const MNotifyRec)
 bool PG::proc_replica_info(
   pg_shard_t from, const pg_info_t &oinfo, epoch_t send_epoch)
 {
@@ -438,6 +449,8 @@ bool PG::proc_replica_info(
   return true;
 }
 
+// called by
+// PrimaryLogPG::sub_op_remove
 void PG::remove_snap_mapped_object(
   ObjectStore::Transaction &t, const hobject_t &soid)
 {
@@ -448,6 +461,10 @@ void PG::remove_snap_mapped_object(
   clear_object_snap_mapping(&t, soid);
 }
 
+// called by
+// PG::remove_snap_mapped_object
+// PrimaryLogPG::on_local_recover
+// PrimaryLogPG::pgb_clear_object_snap_mapping
 void PG::clear_object_snap_mapping(
   ObjectStore::Transaction *t, const hobject_t &soid)
 {
@@ -464,6 +481,8 @@ void PG::clear_object_snap_mapping(
   }
 }
 
+// called by
+// PrimaryLogPG::pgb_set_object_snap_mapping
 void PG::update_object_snap_mapping(
   ObjectStore::Transaction *t, const hobject_t &soid, const set<snapid_t> &snaps)
 {
@@ -485,6 +504,10 @@ void PG::update_object_snap_mapping(
     &_t);
 }
 
+// called by
+// PG::proc_master_log
+// PG::RecoveryState::ReplicaActive::react(const MLogRec)
+// PG::RecoveryState::Stray::react(const MLogRec)
 void PG::merge_log(
   ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog, pg_shard_t from)
 {
@@ -493,6 +516,8 @@ void PG::merge_log(
     t, oinfo, olog, from, info, &rollbacker, dirty_info, dirty_big_info);
 }
 
+// called by
+// PG::RecoveryState::Stray::react(const MInfoRec)
 void PG::rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead)
 {
   PGLogEntryHandler rollbacker{this, &t};
@@ -500,6 +525,9 @@ void PG::rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead)
     t, newhead, info, &rollbacker, dirty_info, dirty_big_info);
 }
 
+// called by
+// PG::activate
+// PG::RecoveryState::Active::react(const MLogRec)
 /*
  * Process information from a replica to determine if it could have any
  * objects that i need.
@@ -558,6 +586,8 @@ bool PG::MissingLoc::readable_with_acting(
   return (*is_readable)(have_acting);
 }
 
+// called by
+// PG::activate
 void PG::MissingLoc::add_batch_sources_info(
   const set<pg_shard_t> &sources, ThreadPool::TPHandle* handle)
 {
@@ -576,6 +606,9 @@ void PG::MissingLoc::add_batch_sources_info(
   }
 }
 
+// called by
+// PG::search_for_missing
+// PG::activate
 bool PG::MissingLoc::add_source_info(
   pg_shard_t fromosd,
   const pg_info_t &oinfo,
@@ -641,6 +674,11 @@ bool PG::MissingLoc::add_source_info(
   return found_missing;
 }
 
+// called by
+// OSD::do_recovery
+// PG::activate
+// PG::RecoveryState::Active::react(const ActMap)
+// PG::RecoveryState::Active::react(const MNotifyRec)
 void PG::discover_all_missing(map<int, map<spg_t,pg_query_t> > &query_map)
 {
   auto &missing = pg_log.get_missing();
@@ -713,17 +751,21 @@ bool PG::needs_recovery() const
   }
 
   assert(!actingbackfill.empty());
+
   set<pg_shard_t>::const_iterator end = actingbackfill.end();
   set<pg_shard_t>::const_iterator a = actingbackfill.begin();
   for (; a != end; ++a) {
     if (*a == get_primary()) continue;
+
     pg_shard_t peer = *a;
+
     map<pg_shard_t, pg_missing_t>::const_iterator pm = peer_missing.find(peer);
     if (pm == peer_missing.end()) {
       dout(10) << __func__ << " osd." << peer << " doesn't have missing set"
         << dendl;
       continue;
     }
+
     if (pm->second.num_missing()) {
       dout(10) << __func__ << " osd." << peer << " has "
         << pm->second.num_missing() << " missing" << dendl;
@@ -732,6 +774,7 @@ bool PG::needs_recovery() const
   }
 
   dout(10) << __func__ << " is recovered" << dendl;
+
   return false;
 }
 
@@ -745,6 +788,7 @@ bool PG::needs_backfill() const
   set<pg_shard_t>::const_iterator a = backfill_targets.begin();
   for (; a != end; ++a) {
     pg_shard_t peer = *a;
+
     map<pg_shard_t, pg_info_t>::const_iterator pi = peer_info.find(peer);
     if (!pi->second.last_backfill.is_max()) {
       dout(10) << __func__ << " osd." << peer << " has last_backfill " << pi->second.last_backfill << dendl;
@@ -753,9 +797,13 @@ bool PG::needs_backfill() const
   }
 
   dout(10) << __func__ << " does not need backfill" << dendl;
+
   return false;
 }
 
+// called by
+// OSD::build_past_intervals_parallel
+// PG::generate_past_intervals
 bool PG::_calc_past_interval_range(epoch_t *start, epoch_t *end, epoch_t oldest_map)
 {
   if (info.history.same_interval_since) {
@@ -788,7 +836,10 @@ bool PG::_calc_past_interval_range(epoch_t *start, epoch_t *end, epoch_t oldest_
   return true;
 }
 
-
+// called by
+// PG::build_might_have_unfound
+// PG::RecoveryState::Reset::react(const AdvMap)
+// PG::RecoveryState::GetInfo::GetInfo
 void PG::generate_past_intervals()
 {
   epoch_t cur_epoch, end_epoch;
@@ -866,6 +917,8 @@ void PG::generate_past_intervals()
   dirty_big_info = true;
 }
 
+// called by
+// PG::mark_clean
 /*
  * Trim past_intervals.
  *
@@ -884,7 +937,8 @@ void PG::trim_past_intervals()
   }
 }
 
-
+// called by
+// PG::RecoveryState::Peering::react(const AdvMap)
 bool PG::adjust_need_up_thru(const OSDMapRef osdmap)
 {
   epoch_t up_thru = osdmap->get_up_thru(osd->whoami);
@@ -967,6 +1021,9 @@ bool PG::all_unfound_are_queried_or_lost(const OSDMapRef osdmap) const
   return true;
 }
 
+// called by
+// PG::RecoveryState::GetInfo::GetInfo
+// PG::RecoveryState::GetInfo::react(const MNotifyRec)
 void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
 {
   if (1) {
@@ -977,6 +1034,7 @@ void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
       assert(info.history.last_epoch_started >= it->second.history.last_epoch_started);
     }
   }
+
   prior_set.reset(
     new PriorSet(
       cct,
@@ -988,6 +1046,7 @@ void PG::build_prior(std::unique_ptr<PriorSet> &prior_set)
       acting,
       info,
       this));
+
   PriorSet &prior(*prior_set.get());
 				 
   if (prior.pg_down) {
@@ -1061,6 +1120,8 @@ PG::Scrubber::Scrubber()
 
 PG::Scrubber::~Scrubber() {}
 
+// called by
+// PG::choose_acting
 /**
  * find_best_info
  *
@@ -1159,6 +1220,9 @@ map<pg_shard_t, pg_info_t>::const_iterator PG::find_best_info(
   return best;
 }
 
+// static
+// called by
+// PG::choose_acting
 void PG::calc_ec_acting(
   map<pg_shard_t, pg_info_t>::const_iterator auth_log_shard,
   unsigned size,
@@ -1238,6 +1302,9 @@ void PG::calc_ec_acting(
   _want->swap(want);
 }
 
+// static
+// called by
+// PG::choose_acting
 /**
  * calculate the desired acting set.
  *
@@ -1383,6 +1450,9 @@ void PG::calc_replicated_acting(
   }
 }
 
+// called by
+// PG::RecoveryState::Recovered::Recovered
+// PG::RecoveryState::GetLog::GetLog
 /**
  * choose acting
  *
@@ -2226,6 +2296,8 @@ bool PG::queue_scrub()
   return true;
 }
 
+// called by
+// OSDService::queue_for_scrub
 unsigned PG::get_scrub_priority()
 {
   // a higher value -> a higher priority
@@ -2234,14 +2306,20 @@ unsigned PG::get_scrub_priority()
   return pool_scrub_priority > 0 ? pool_scrub_priority : cct->_conf->osd_scrub_priority;
 }
 
+// created by
+// PG::finish_recovery
 struct C_PG_FinishRecovery : public Context {
   PGRef pg;
+
   explicit C_PG_FinishRecovery(PG *p) : pg(p) {}
+
   void finish(int r) {
     pg->_finish_recovery(this);
   }
 };
 
+// called by
+// PG::RecoveryState::Clean::Clean
 void PG::mark_clean()
 {
   // only mark CLEAN if we have the desired number of replicas AND we
@@ -2265,6 +2343,9 @@ void PG::mark_clean()
   dirty_info = true;
 }
 
+// called by
+// PG::RecoveryState::RepWaitRecoveryReserved::RepWaitRecoveryReserved
+// PG::RecoveryState::WaitLocalRecoveryReserved::WaitLocalRecoveryReserved
 unsigned PG::get_recovery_priority()
 {
   // a higher value -> a higher priority
@@ -2287,6 +2368,9 @@ unsigned PG::get_recovery_priority()
   return static_cast<unsigned>(ret);
 }
 
+// called by
+// PG::RecoveryState::WaitRemoteBackfillReserved::react(const RemoteBackfillReserved)
+// PG::RecoveryState::WaitLocalBackfillReserved::WaitLocalBackfillReserved
 unsigned PG::get_backfill_priority()
 {
   // a higher value -> a higher priority
@@ -2339,6 +2423,8 @@ void PG::finish_recovery(list<Context*>& tfin)
   tfin.push_back(finish_sync_event);
 }
 
+// called by
+// C_PG_FinishRecovery::finish
 void PG::_finish_recovery(Context *c)
 {
   lock();
@@ -2630,6 +2716,8 @@ void PG::purge_strays()
   peer_missing_requested.clear();
 }
 
+// called by
+// PG::build_prior
 void PG::set_probe_targets(const set<pg_shard_t> &probe_set)
 {
   Mutex::Locker l(heartbeat_peer_lock);
@@ -2641,12 +2729,19 @@ void PG::set_probe_targets(const set<pg_shard_t> &probe_set)
   }
 }
 
+// called by
+// PG::RecoveryState::Peering::exit
 void PG::clear_probe_targets()
 {
   Mutex::Locker l(heartbeat_peer_lock);
   probe_targets.clear();
 }
 
+// called by
+// PG::proc_replica_info
+// PG::remove_down_peer_info
+// PG::purge_strays
+// PG::RecoveryState::Reset::react(const ActMap)
 void PG::update_heartbeat_peers()
 {
   assert(is_locked());
@@ -2683,7 +2778,8 @@ void PG::update_heartbeat_peers()
     osd->need_heartbeat_peer_update();
 }
 
-
+// called by
+// PrimaryLogPG::do_op
 bool PG::check_in_progress_op(
   const osd_reqid_t &r,
   eversion_t *version,
@@ -2815,6 +2911,8 @@ void PG::_update_calc_stats()
   }
 }
 
+// called by
+// PG::publish_stats_to_osd
 void PG::_update_blocked_by()
 {
   // set a max on the number of blocking peers we report. if we go

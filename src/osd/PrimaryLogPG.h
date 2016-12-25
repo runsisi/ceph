@@ -368,6 +368,7 @@ public:
     ObjectStore::Transaction *t) override {
     return update_object_snap_mapping(t, soid, snaps);
   }
+
   void pgb_clear_object_snap_mapping(
     const hobject_t &soid,
     ObjectStore::Transaction *t) override {

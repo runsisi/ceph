@@ -127,6 +127,8 @@ void PGLog::trim(
   }
 }
 
+// called by
+// PG::proc_replica_log
 void PGLog::proc_replica_log(
   ObjectStore::Transaction& t,
   pg_info_t &oinfo, const pg_log_t &olog, pg_missing_t& omissing,
@@ -145,6 +147,7 @@ void PGLog::proc_replica_log(
 	     << "for divergent objects" << dendl;
     return;
   }
+
   assert(olog.head >= log.tail);
 
   /*
@@ -229,6 +232,9 @@ void PGLog::proc_replica_log(
   }
 }
 
+// called by
+// PG::rewind_divergent_log
+// PGLog::merge_log
 /**
  * rewind divergent entries at the head of the log
  *
@@ -270,6 +276,8 @@ void PGLog::rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead
   dirty_big_info = true;
 }
 
+// called by
+// PG::merge_log
 void PGLog::merge_log(ObjectStore::Transaction& t,
                       pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
                       pg_info_t &info, LogEntryHandler *rollbacker,
