@@ -983,6 +983,10 @@ public:
 		 pg_info_t &info, LogEntryHandler *rollbacker,
 		 bool &dirty_info, bool &dirty_big_info);
 
+  // called by
+  // PGLog::append_new_log_entries
+  // PGLog::merge_log
+  // PG::merge_new_log_entries
   template <typename missing_type>
   static bool append_log_entries_update_missing(
     const hobject_t &last_backfill,

@@ -2188,6 +2188,9 @@ void PG::_activate_committed(epoch_t epoch, epoch_t activation_epoch)
   unlock();
 }
 
+// called by
+// PG::_activate_committed
+// PG::RecoveryState::Active::react(const MInfoRec)
 /*
  * update info.history.last_epoch_started ONLY after we and all
  * replicas have activated AND committed the activate transaction
@@ -2212,6 +2215,14 @@ void PG::all_activated_and_committed()
         AllReplicasActivated())));
 }
 
+// called by
+// PG::queue_scrub
+// PG::sub_op_scrub_map
+// PG::chunky_scrub
+// PrimaryLogPG::op_applied
+// PrimaryLogPG::kick_object_context_blocked
+// PrimaryLogPG::_applied_recovered_object
+// PrimaryLogPG::scrub_snapshot_metadata
 bool PG::requeue_scrub()
 {
   assert(is_locked());
@@ -3930,6 +3941,8 @@ void PG::unreg_next_scrub()
   }
 }
 
+// called by
+// PrimaryLogPG::do_sub_op, for CEPH_OSD_OP_SCRUB_MAP
 void PG::sub_op_scrub_map(OpRequestRef op)
 {
   MOSDSubOp *m = static_cast<MOSDSubOp *>(op->get_req());
@@ -4361,6 +4374,8 @@ void PG::repair_object(
   }
 }
 
+// called by
+// PrimaryLogPG::do_request, for MSG_OSD_REP_SCRUB
 /* replica_scrub
  *
  * Wait for last_update_applied to match msg->scrub_to as above. Wait
@@ -4843,6 +4858,11 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
   }
 }
 
+// called by
+// PG::chunky_scrub
+// PG::scrub_finish
+// PrimaryLogPG::on_shutdown
+// PrimaryLogPG::on_change
 void PG::scrub_clear_state()
 {
   assert(_lock.is_locked());
@@ -4992,6 +5012,8 @@ void PG::scrub_compare_maps()
   }
 }
 
+// called by
+// PG::scrub_finish
 bool PG::scrub_process_inconsistent()
 {
   dout(10) << __func__ << ": checking authoritative" << dendl;
@@ -5162,6 +5184,12 @@ void PG::scrub_finish()
   }
 }
 
+// called by
+// PG::scrub_finish
+// PG::RecoveryState::Clean::Clean
+// PG::RecoveryState::Active::react(const AllReplicasActivated)
+// PrimaryLogPG::_scrub_finish
+// PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
 void PG::share_pg_info()
 {
   dout(10) << "share_pg_info" << dendl;
@@ -5194,6 +5222,9 @@ void PG::share_pg_info()
   }
 }
 
+// called by
+// PG::merge_new_log_entries
+// PrimaryLogPG::do_update_log_missing
 bool PG::append_log_entries_update_missing(
   const mempool::osd::list<pg_log_entry_t> &entries,
   ObjectStore::Transaction &t)
@@ -5220,7 +5251,8 @@ bool PG::append_log_entries_update_missing(
   return invalidate_stats;
 }
 
-
+// called by
+// PrimaryLogPG::submit_log_entries
 void PG::merge_new_log_entries(
   const mempool::osd::list<pg_log_entry_t> &entries,
   ObjectStore::Transaction &t)
@@ -5229,15 +5261,20 @@ void PG::merge_new_log_entries(
   assert(is_primary());
 
   bool rebuild_missing = append_log_entries_update_missing(entries, t);
+
   for (set<pg_shard_t>::const_iterator i = actingbackfill.begin();
        i != actingbackfill.end();
        ++i) {
     pg_shard_t peer(*i);
+
     if (peer == pg_whoami) continue;
+
     assert(peer_missing.count(peer));
     assert(peer_info.count(peer));
+
     pg_missing_t& pmissing(peer_missing[peer]);
     pg_info_t& pinfo(peer_info[peer]);
+
     bool invalidate_stats = PGLog::append_log_entries_update_missing(
       pinfo.last_backfill,
       info.last_backfill_bitwise,
@@ -5247,8 +5284,10 @@ void PG::merge_new_log_entries(
       pmissing,
       NULL,
       this);
+
     pinfo.last_update = info.last_update;
     pinfo.stats.stats_invalid = pinfo.stats.stats_invalid || invalidate_stats;
+
     rebuild_missing = rebuild_missing || invalidate_stats;
   }
 
@@ -5269,14 +5308,21 @@ void PG::merge_new_log_entries(
   }
 }
 
+// called by
+// PG::RecoveryState::ReplicaActive::react(const MQuery)
+// PG::RecoveryState::Stray::react(const MQuery)
 void PG::update_history_from_master(pg_history_t new_history)
 {
   unreg_next_scrub();
+
   if (info.history.merge(new_history))
     dirty_info = true;
+
   reg_next_scrub();
 }
 
+// called by
+// PG::RecoveryState::Stray::react(const MQuery)
 void PG::fulfill_info(
   pg_shard_t from, const pg_query_t &query,
   pair<pg_shard_t, pg_info_t> &notify_info)
@@ -5289,6 +5335,9 @@ void PG::fulfill_info(
   notify_info = make_pair(from, info);
 }
 
+// called by
+// PG::RecoveryState::ReplicaActive::react(const MQuery)
+// PG::RecoveryState::Stray::react(const MQuery)
 void PG::fulfill_log(
   pg_shard_t from, const pg_query_t &query, epoch_t query_epoch)
 {
@@ -5328,6 +5377,9 @@ void PG::fulfill_log(
   osd->send_message_osd_cluster(mlog, con.get());
 }
 
+// called by
+// PG::RecoveryState::Started::react(const AdvMap)
+// PG::RecoveryState::Reset::react(const AdvMap)
 void PG::check_full_transition(OSDMapRef lastmap, OSDMapRef osdmap)
 {
   bool changed = false;
@@ -5351,6 +5403,9 @@ void PG::check_full_transition(OSDMapRef lastmap, OSDMapRef osdmap)
   }
 }
 
+// called by
+// PG::RecoveryState::Started::react(const AdvMap)
+// PG::RecoveryState::Reset::react(const AdvMap)
 bool PG::should_restart_peering(
   int newupprimary,
   int newactingprimary,
@@ -5379,6 +5434,11 @@ bool PG::should_restart_peering(
   }
 }
 
+// called by
+// PG::can_discard_replica_op
+// PG::can_discard_scan
+// PG::can_discard_backfill
+// PG::old_peering_evt
 bool PG::old_peering_msg(epoch_t reply_epoch, epoch_t query_epoch)
 {
   if (last_peering_reset > reply_epoch ||
@@ -5392,6 +5452,10 @@ bool PG::old_peering_msg(epoch_t reply_epoch, epoch_t query_epoch)
   return false;
 }
 
+// called by
+// PG::start_peering_interval
+// PG::RecoveryState::Initial::react(const MNotifyRec)
+// PG::RecoveryState::Reset::Reset
 void PG::set_last_peering_reset()
 {
   dout(20) << "set_last_peering_reset " << get_osdmap()->get_epoch() << dendl;
@@ -5442,9 +5506,12 @@ void PG::start_flush(ObjectStore::Transaction *t,
   on_safe->push_back(new ContainerContext<FlushStateRef>(flush_trigger));
 }
 
+// called by
+// PG::set_last_peering_reset
 void PG::reset_interval_flush()
 {
   dout(10) << "Clearing blocked outgoing recovery messages" << dendl;
+
   recovery_state.clear_blocked_outgoing();
   
   Context *c = new QueuePeeringEvt<IntervalFlush>(
@@ -5656,6 +5723,10 @@ void PG::start_peering_interval(
   }
 }
 
+// called by
+// PG::split_into
+// PG::init
+// PG::start_peering_interval
 void PG::on_new_interval()
 {
   const OSDMapRef osdmap = get_osdmap();
@@ -5699,6 +5770,8 @@ void PG::on_new_interval()
   _on_new_interval();
 }
 
+// called by
+// PG::RecoveryState::ReplicaActive::react(const MInfoRec)
 void PG::proc_primary_info(ObjectStore::Transaction &t, const pg_info_t &oinfo)
 {
   assert(!is_primary());
@@ -5827,6 +5900,8 @@ ostream& operator<<(ostream& out, const PG& pg)
   return out;
 }
 
+// called by
+// PG::can_discard_request
 bool PG::can_discard_op(OpRequestRef& op)
 {
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
@@ -5851,6 +5926,8 @@ bool PG::can_discard_op(OpRequestRef& op)
   return false;
 }
 
+// called by
+// PG::can_discard_request
 template<typename T, int MSGTYPE>
 bool PG::can_discard_replica_op(OpRequestRef& op)
 {
@@ -5877,6 +5954,8 @@ bool PG::can_discard_replica_op(OpRequestRef& op)
   return false;
 }
 
+// called by
+// PG::can_discard_request
 bool PG::can_discard_scan(OpRequestRef op)
 {
   MOSDPGScan *m = static_cast<MOSDPGScan *>(op->get_req());
@@ -5889,6 +5968,8 @@ bool PG::can_discard_scan(OpRequestRef op)
   return false;
 }
 
+// called by
+// PG::can_discard_request
 bool PG::can_discard_backfill(OpRequestRef op)
 {
   MOSDPGBackfill *m = static_cast<MOSDPGBackfill *>(op->get_req());
@@ -5903,6 +5984,8 @@ bool PG::can_discard_backfill(OpRequestRef op)
 
 }
 
+// called by
+// PrimaryLogPG::do_request
 bool PG::can_discard_request(OpRequestRef& op)
 {
   switch (op->get_req()->get_type()) {
@@ -6118,6 +6201,10 @@ void PG::queue_peering_event(CephPeeringEvtRef evt)
   osd->queue_for_peering(this);
 }
 
+// called by
+// OSD::add_newly_split_pg
+// OSD::handle_pg_peering_evt
+// OSD::consume_map
 void PG::queue_null(epoch_t msg_epoch,
 		    epoch_t query_epoch)
 {
@@ -6128,6 +6215,8 @@ void PG::queue_null(epoch_t msg_epoch,
 					 NullEvt())));
 }
 
+// called by
+// FlushState::~FlushState
 void PG::queue_flushed(epoch_t e)
 {
   dout(10) << "flushed" << dendl;
@@ -6136,6 +6225,8 @@ void PG::queue_flushed(epoch_t e)
 					 FlushedEvt())));
 }
 
+// called by
+// OSD::handle_pg_query
 void PG::queue_query(epoch_t msg_epoch,
 		     epoch_t query_epoch,
 		     pg_shard_t from, const pg_query_t& q)
@@ -6253,6 +6344,8 @@ void PG::handle_create(RecoveryCtx *rctx)
   recovery_state.handle_event(evt2, rctx);
 }
 
+// called by
+// PrimaryLogPG::do_command, for "query"
 void PG::handle_query_state(Formatter *f)
 {
   dout(10) << "handle_query_state" << dendl;
@@ -7907,6 +8000,7 @@ boost::statechart::result PG::RecoveryState::Stray::react(const MQuery& query)
     pair<pg_shard_t, pg_info_t> notify_info;
     pg->update_history_from_master(query.query.history);
     pg->fulfill_info(query.from, query.query, notify_info);
+
     context< RecoveryMachine >().send_notify(
       notify_info.first,
       pg_notify_t(
@@ -8777,6 +8871,8 @@ void PG::RecoveryState::RecoveryMachine::log_exit(const char *state_name, utime_
 #undef dout_prefix
 #define dout_prefix (*_dout << (debug_pg ? debug_pg->gen_prefix() : string()) << " PriorSet: ")
 
+// created by
+// PG::build_prior
 PG::PriorSet::PriorSet(CephContext* cct,
 		       bool ec_pool,
 		       IsPGRecoverablePredicate *c,
@@ -8886,6 +8982,8 @@ PG::PriorSet::PriorSet(CephContext* cct,
 	   << dendl;
 }
 
+// called by
+// PG::RecoveryState::Peering::react(const AdvMap)
 // true if the given map affects the prior set
 bool PG::PriorSet::affected_by_map(const OSDMapRef osdmap, const PG *debug_pg) const
 {
@@ -8963,6 +9061,8 @@ void PG::RecoveryState::start_handle(RecoveryCtx *new_ctx) {
   }
 }
 
+// called by
+// PG::reset_interval_flush
 void PG::RecoveryState::begin_block_outgoing() {
   assert(!messages_pending_flush);
   assert(orig_ctx);
@@ -8973,6 +9073,8 @@ void PG::RecoveryState::begin_block_outgoing() {
   rctx = RecoveryCtx(*messages_pending_flush, *orig_ctx);
 }
 
+// called by
+// PG::reset_interval_flush
 void PG::RecoveryState::clear_blocked_outgoing() {
   assert(orig_ctx);
   assert(rctx);
@@ -8980,6 +9082,9 @@ void PG::RecoveryState::clear_blocked_outgoing() {
   messages_pending_flush = boost::optional<BufferedRecoveryMessages>();
 }
 
+// called by
+// PG::RecoveryState::Started::react(const IntervalFlush)
+// PG::RecoveryState::Reset::react(const IntervalFlush)
 void PG::RecoveryState::end_block_outgoing() {
   assert(messages_pending_flush);
   assert(orig_ctx);
