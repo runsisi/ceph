@@ -206,7 +206,7 @@ void PGLog::proc_replica_log(
     oinfo,
     olog.get_can_rollback_to(),
     omissing,
-    0,
+    0, // optional, LogEntryHandler *rollbacker
     this);
 
   if (lu < oinfo.last_update) {

@@ -987,16 +987,24 @@ public:
     void remove(const hobject_t &hoid) {
       pg->get_pgbackend()->remove(hoid, t);
     }
+
     void try_stash(const hobject_t &hoid, version_t v) {
       pg->get_pgbackend()->try_stash(hoid, v, t);
     }
+
+    // called by
+    // PGLog::_merge_object_divergent_entries
     void rollback(const pg_log_entry_t &entry) {
       assert(entry.can_rollback());
       pg->get_pgbackend()->rollback(entry, t);
     }
+
+    // called by
+    // PGLog::IndexedLog::roll_forward_to
     void rollforward(const pg_log_entry_t &entry) {
       pg->get_pgbackend()->rollforward(entry, t);
     }
+
     void trim(const pg_log_entry_t &entry) {
       pg->get_pgbackend()->trim(entry, t);
     }

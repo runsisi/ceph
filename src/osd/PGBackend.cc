@@ -37,6 +37,8 @@ static ostream& _prefix(std::ostream *_dout, PGBackend *pgb) {
   return *_dout << pgb->get_parent()->gen_dbg_prefix();
 }
 
+// called by
+// PG::PGLogEntryHandler::rollback
 void PGBackend::rollback(
   const pg_log_entry_t &entry,
   ObjectStore::Transaction *t)
@@ -96,6 +98,7 @@ void PGBackend::rollback(
   };
 
   assert(entry.mod_desc.can_rollback());
+
   RollbackVisitor vis(entry.soid, this);
   entry.mod_desc.visit(&vis);
   t->append(vis.t);
@@ -127,6 +130,8 @@ struct Trimmer : public ObjectModDesc::Visitor {
   }
 };
 
+// called by
+// PG::PGLogEntryHandler::rollforward
 void PGBackend::rollforward(
   const pg_log_entry_t &entry,
   ObjectStore::Transaction *t)
@@ -139,6 +144,8 @@ void PGBackend::rollforward(
   entry.mod_desc.visit(&trimmer);
 }
 
+// called by
+// PG::PGLogEntryHandler::trim
 void PGBackend::trim(
   const pg_log_entry_t &entry,
   ObjectStore::Transaction *t)
@@ -149,6 +156,8 @@ void PGBackend::trim(
   entry.mod_desc.visit(&trimmer);
 }
 
+// called by
+// PG::PGLogEntryHandler::try_stash
 void PGBackend::try_stash(
   const hobject_t &hoid,
   version_t v,
@@ -160,6 +169,8 @@ void PGBackend::try_stash(
     ghobject_t(hoid, v, get_parent()->whoami_shard().shard));
 }
 
+// called by
+// PG::PGLogEntryHandler::remove
 void PGBackend::remove(
   const hobject_t &hoid,
   ObjectStore::Transaction *t) {
@@ -170,6 +181,8 @@ void PGBackend::remove(
   get_parent()->pgb_clear_object_snap_mapping(hoid, t);
 }
 
+// called by
+// PrimaryLogPG::on_change
 void PGBackend::on_change_cleanup(ObjectStore::Transaction *t)
 {
   dout(10) << __func__ << dendl;
@@ -186,6 +199,11 @@ void PGBackend::on_change_cleanup(ObjectStore::Transaction *t)
   temp_contents.clear();
 }
 
+// called by
+// PG::chunky_scrub
+// PrimaryLogPG::do_pg_op, for CEPH_OSD_OP_PGNLS, CEPH_OSD_OP_PGLS
+// PrimaryLogPG::scan_range
+// PrimaryLogPG::agent_work
 int PGBackend::objects_list_partial(
   const hobject_t &begin,
   int min,

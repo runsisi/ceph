@@ -512,6 +512,7 @@ void PG::merge_log(
   ObjectStore::Transaction& t, pg_info_t &oinfo, pg_log_t &olog, pg_shard_t from)
 {
   PGLogEntryHandler rollbacker{this, &t};
+
   pg_log.merge_log(
     t, oinfo, olog, from, info, &rollbacker, dirty_info, dirty_big_info);
 }
