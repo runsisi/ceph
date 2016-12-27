@@ -2278,6 +2278,9 @@ void PG::queue_recovery(bool front)
   }
 }
 
+// called by
+// PG::_finish_recovery
+// PG::sched_scrub
 bool PG::queue_scrub()
 {
   assert(_lock.is_locked());
@@ -2530,6 +2533,8 @@ void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
   }
 }
 
+// called by
+// PG::split_into
 void PG::split_ops(PG *child, unsigned split_bits) {
   unsigned match = child->info.pgid.ps();
 
@@ -2554,6 +2559,8 @@ void PG::split_ops(PG *child, unsigned split_bits) {
   }
 }
 
+// called by
+// OSD::split_pgs
 void PG::split_into(pg_t child_pgid, PG *child, unsigned split_bits)
 {
   child->update_snap_mapper_bits(split_bits);
@@ -2632,6 +2639,8 @@ void PG::split_into(pg_t child_pgid, PG *child, unsigned split_bits)
   child->past_intervals = past_intervals;
 
   split_ops(child, split_bits);
+
+  // call PrimaryLogPG::_split_into, which assert(repop_queue.empty())
   _split_into(child_pgid, child, split_bits);
 
   child->on_new_interval();
@@ -2681,7 +2690,9 @@ void PG::cancel_recovery()
   clear_recovery_state();
 }
 
-
+// called by
+// PG::proc_replica_info
+// PG::_finish_recovery
 void PG::purge_strays()
 {
   dout(10) << "purge_strays " << stray_set << dendl;
@@ -2945,6 +2956,37 @@ void PG::_update_blocked_by()
   }
 }
 
+// called by
+// PG::search_for_missing
+// PG::replay_queued_ops
+// PG::_finish_recovery
+// PG::scrub
+// PG::chunky_scrub
+// PG::scrub_clear_state
+// PG::RecoveryState::Primary::react(const ActMap)
+// PG::RecoveryState::Recovered::Recovered
+// PG::RecoveryState::Clean::Clean
+// PG::RecoveryState::Active::Active
+// PG::RecoveryState::Active::react(const AdvMap)
+// PG::RecoveryState::Active::react(const MInfoRec)
+// PG::RecoveryState::Active::react(const AllReplicasActivated)
+// PG::RecoveryState::GetInfo::get_infos
+// PG::RecoveryState::GetInfo::exit
+// PG::RecoveryState::GetLog::GetLog
+// PG::RecoveryState::GetLog::exit
+// PG::RecoveryState::Down::Down
+// PG::RecoveryState::Down::exit
+// PG::RecoveryState::Incomplete::Incomplete
+// PG::RecoveryState::Incomplete::exit
+// PG::RecoveryState::GetMissing::GetMissing
+// PG::RecoveryState::GetMissing::exit
+// PrimaryLogPG::on_local_recover
+// PrimaryLogPG::on_global_recover
+// PrimaryLogPG::on_peer_recover
+// PrimaryLogPG::complete_read_ctx
+// PrimaryLogPG::eval_repop
+// PrimaryLogPG::on_activate
+// PrimaryLogPG::_scrub_finish
 void PG::publish_stats_to_osd()
 {
   if (!is_primary())
@@ -3018,6 +3060,8 @@ void PG::publish_stats_to_osd()
     osd->pg_stat_queue_enqueue(this);
 }
 
+// called by
+// PG::start_peering_interval
 void PG::clear_publish_stats()
 {
   dout(15) << "clear_stats" << dendl;
@@ -3028,6 +3072,8 @@ void PG::clear_publish_stats()
   osd->pg_stat_queue_dequeue(this);
 }
 
+// called by
+// OSD::_create_lock_pg
 /**
  * initialize a newly instantiated pg
  *
@@ -3092,6 +3138,8 @@ void PG::init(
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
+// called by
+// OSD::load_pgs
 void PG::upgrade(ObjectStore *store)
 {
   assert(info_struct_v <= 9);
@@ -3142,6 +3190,10 @@ void PG::upgrade(ObjectStore *store)
 #pragma GCC diagnostic pop
 #pragma GCC diagnostic warning "-Wpragmas"
 
+// static
+// called by
+// PG::prepare_write_info
+// tools/ceph_objectstore_tool.cc/write_info
 int PG::_prepare_write_info(CephContext* cct,
 			    map<string,bufferlist> *km,
 			    epoch_t epoch,
@@ -3207,12 +3259,20 @@ int PG::_prepare_write_info(CephContext* cct,
   return 0;
 }
 
+// static
+// called by
+// OSD::handle_pg_peering_evt
+// PrimaryLogPG::split_colls
 void PG::_create(ObjectStore::Transaction& t, spg_t pgid, int bits)
 {
   coll_t coll(pgid);
   t.create_collection(coll, bits);
 }
 
+// static
+// called by
+// OSD::handle_pg_peering_evt
+// PrimaryLogPG::split_colls
 void PG::_init(ObjectStore::Transaction& t, spg_t pgid, const pg_pool_t *pool)
 {
   coll_t coll(pgid);
@@ -3236,6 +3296,8 @@ void PG::_init(ObjectStore::Transaction& t, spg_t pgid, const pg_pool_t *pool)
   t.omap_setkeys(coll, pgmeta_oid, values);
 }
 
+// called by
+// PG::write_if_dirty
 void PG::prepare_write_info(map<string,bufferlist> *km)
 {
   info.stats.stats.add(unstable_stats);
@@ -3262,6 +3324,10 @@ void PG::prepare_write_info(map<string,bufferlist> *km)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
+// static
+// called by
+// OSD::load_pgs
+// tools/ceph_objectstore_tool.cc/finish_remove_pgs
 bool PG::_has_removal_flag(ObjectStore *store,
 			   spg_t pgid)
 {
@@ -3279,6 +3345,11 @@ bool PG::_has_removal_flag(ObjectStore *store,
   return false;
 }
 
+// static
+// called by
+// OSD::load_pgs
+// tools/ceph_objectstore_tool.cc/mark_pg_for_removal
+// tools/ceph_objectstore_tool.cc/main
 int PG::peek_map_epoch(ObjectStore *store,
 		       spg_t pgid,
 		       epoch_t *pepoch,
@@ -3328,6 +3399,24 @@ int PG::peek_map_epoch(ObjectStore *store,
 #pragma GCC diagnostic pop
 #pragma GCC diagnostic warning "-Wpragmas"
 
+// called by
+// OSD::add_newly_split_pg
+// OSD::load_pgs
+// OSD::build_past_intervals_parallel
+// OSD::handle_pg_peering_evt
+// OSD::split_pgs
+// OSD::handle_pg_trim
+// OSD::do_recovery
+// OSD::process_peering_events
+// PG::init
+// PG::upgrade
+// PG::append_log
+// PG::scrub_finish
+// PG::append_log_entries_update_missing
+// PrimaryLogPG::on_local_recover
+// PrimaryLogPG::do_backfill
+// PrimaryLogPG::on_removal
+// PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
 void PG::write_if_dirty(ObjectStore::Transaction& t)
 {
   map<string,bufferlist> km;
@@ -3338,6 +3427,9 @@ void PG::write_if_dirty(ObjectStore::Transaction& t)
     t.omap_setkeys(coll, pgmeta_oid, km);
 }
 
+// called by
+// OSD::handle_pg_trim
+// PrimaryLogPG::_committed_pushed_object
 void PG::trim_peers()
 {
   assert(is_primary());
@@ -3360,6 +3452,8 @@ void PG::trim_peers()
   }
 }
 
+// called by
+// PG::append_log
 void PG::add_log_entry(const pg_log_entry_t& e, bool applied)
 {
   // raise last_complete only if we were previously up to date
@@ -3380,7 +3474,8 @@ void PG::add_log_entry(const pg_log_entry_t& e, bool applied)
   dout(10) << "add_log_entry " << e << dendl;
 }
 
-
+// called by
+// PrimaryLogPG::log_operation
 void PG::append_log(
   const vector<pg_log_entry_t>& logv,
   eversion_t trim_to,
@@ -3447,12 +3542,15 @@ void PG::append_log(
   write_if_dirty(t);
 }
 
+// called by
+// PG::RecoveryState::Active::react(const ActMap)
 bool PG::check_log_for_corruption(ObjectStore *store)
 {
   /// TODO: this method needs to work with the omap log
   return true;
 }
 
+// not used
 //! Get the name we're going to save our corrupt page log as
 std::string PG::get_corrupt_pg_log_name() const
 {
@@ -3471,6 +3569,12 @@ std::string PG::get_corrupt_pg_log_name() const
   return out;
 }
 
+// static
+// called by
+// PG::read_state
+// tools/ceph_objectstore_tool.cc/mark_pg_for_removal
+// tools/ceph_objectstore_tool.cc/main
+// tools/rebuild_mondb.cc/update_pgmap_pg
 int PG::read_info(
   ObjectStore *store, spg_t pgid, const coll_t &coll, bufferlist &bl,
   pg_info_t &info, map<epoch_t,pg_interval_t> &past_intervals,
@@ -3536,6 +3640,8 @@ int PG::read_info(
   return 0;
 }
 
+// called by
+// OSD::load_pgs
 void PG::read_state(ObjectStore *store, bufferlist &bl)
 {
   int r = read_info(store, pg_id, coll, bl, info, past_intervals,
@@ -3560,6 +3666,9 @@ void PG::read_state(ObjectStore *store, bufferlist &bl)
   log_weirdness();
 }
 
+// called by
+// PG::activate
+// PG::read_state
 void PG::log_weirdness()
 {
   if (pg_log.get_tail() != info.log_tail)
@@ -3593,6 +3702,8 @@ void PG::log_weirdness()
   }
 }
 
+// called by
+// PG::append_log
 void PG::update_snap_map(
   const vector<pg_log_entry_t> &log_entries,
   ObjectStore::Transaction &t)
@@ -3640,6 +3751,9 @@ void PG::update_snap_map(
   }
 }
 
+// called by
+// PrimaryLogPG::make_writeable
+// PrimaryLogPG::finish_promote
 /**
  * filter trimming|trimmed snaps out of snapcontext
  */
@@ -5689,6 +5803,7 @@ void PG::start_peering_interval(
       clear_publish_stats();
     }
 
+    // call PrimaryLogPG::on_role_change, which calls hit_set_clear
     on_role_change();
 
     // take active waiters, queue front of osd->op_wq
@@ -5767,6 +5882,7 @@ void PG::on_new_interval()
     }
   }
 
+  // call PrimaryLogPG::_on_new_interval
   _on_new_interval();
 }
 
@@ -6281,6 +6397,7 @@ void PG::handle_advance_map(
 
   if (pool.info.last_change == osdmap_ref->get_epoch()) {
     // handle cache pool change
+    // call PrimaryLogPG::on_pool_change
     on_pool_change();
 
     // not used by FileStore, used by BlueStore
@@ -7594,6 +7711,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
   }
 
   if (pg->cct->_conf->osd_check_for_log_corruption)
+    // empty body
     pg->check_log_for_corruption(pg->osd->store);
 
   int unfound = pg->missing_loc.num_unfound();
@@ -7773,6 +7891,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const AllReplicasActi
   pg->share_pg_info();
   pg->publish_stats_to_osd();
 
+  // debug only, default do nothing
   pg->check_local();
 
   // waiters

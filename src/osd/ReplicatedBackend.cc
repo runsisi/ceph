@@ -33,6 +33,10 @@ static ostream& _prefix(std::ostream *_dout, ReplicatedBackend *pgb) {
 }
 
 namespace {
+// created by
+// ReplicatedBackend::_do_push
+// ReplicatedBackend::_do_pull_response
+// ReplicatedBackend::sub_op_push
 class PG_SendMessageOnConn: public Context {
   PGBackend::Listener *pg;
   Message *reply;
@@ -47,6 +51,9 @@ class PG_SendMessageOnConn: public Context {
   }
 };
 
+// created by
+// ReplicatedBackend::_do_pull_response
+// ReplicatedBackend::sub_op_push
 class PG_RecoveryQueueAsync : public Context {
   PGBackend::Listener *pg;
   GenContext<ThreadPool::TPHandle&> *c;
@@ -60,6 +67,8 @@ class PG_RecoveryQueueAsync : public Context {
 };
 }
 
+// created by
+// ReplicatedBackend::sub_op_modify
 // replica PG write onreadable callback, see ReplicatedBackend::sub_op_modify
 struct ReplicatedBackend::C_OSD_RepModifyApply : public Context {
   ReplicatedBackend *pg;
@@ -71,6 +80,8 @@ struct ReplicatedBackend::C_OSD_RepModifyApply : public Context {
   }
 };
 
+// created by
+// ReplicatedBackend::sub_op_modify
 // replica PG write ondisk callback, see ReplicatedBackend::sub_op_modify
 struct ReplicatedBackend::C_OSD_RepModifyCommit : public Context {
   ReplicatedBackend *pg;
@@ -82,6 +93,9 @@ struct ReplicatedBackend::C_OSD_RepModifyCommit : public Context {
   }
 };
 
+// called by
+// ReplicatedBackend::sub_op_modify_commit
+// ReplicatedBackend::sub_op_pull
 static void log_subop_stats(
   PerfCounters *logger,
   OpRequestRef op, int subop)
@@ -119,12 +133,13 @@ ReplicatedBackend::ReplicatedBackend(
   CephContext *cct) :
   PGBackend(cct, pg, store, coll, c) {}
 
-// called by C_ReplicatedBackend_OnPullComplete::finish
-// ReplicatedBackend::sub_op_push
+// called by
 // PrimaryLogPG::maybe_kick_recovery
 // PrimaryLogPG::recover_primary
 // PrimaryLogPG::recover_replicas
 // PrimaryLogPG::recover_backfill
+// C_ReplicatedBackend_OnPullComplete::finish
+// ReplicatedBackend::sub_op_push
 void ReplicatedBackend::run_recovery_op(
   PGBackend::RecoveryHandle *_h,
   int priority)
@@ -137,7 +152,8 @@ void ReplicatedBackend::run_recovery_op(
   delete h;
 }
 
-// called by PrimaryLogPG::recover_missing,
+// called by
+// PrimaryLogPG::recover_missing,
 // PrimaryLogPG::prep_object_replica_pushes,
 // PrimaryLogPG::prep_backfill_object_push
 void ReplicatedBackend::recover_object(
@@ -200,6 +216,8 @@ void ReplicatedBackend::check_recovery_sources(const OSDMapRef& osdmap)
   }
 }
 
+// called by
+// PrimaryLogPG::do_request
 bool ReplicatedBackend::can_handle_while_inactive(OpRequestRef op)
 {
   dout(10) << __func__ << ": " << op << dendl;
@@ -225,7 +243,8 @@ bool ReplicatedBackend::can_handle_while_inactive(OpRequestRef op)
   }
 }
 
-// called by PrimaryLogPG::do_request, i.e., the Op has been dequeued from
+// called by
+// PrimaryLogPG::do_request, i.e., the Op has been dequeued from
 // the OSD::OpShardedWQ, so the method name may be a little misleading
 bool ReplicatedBackend::handle_message(
   OpRequestRef op
@@ -343,6 +362,10 @@ void ReplicatedBackend::on_flushed()
 {
 }
 
+// called by
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_SYNC_READ, CEPH_OSD_OP_READ,
+// CEPH_OSD_OP_MAPEXT
+// PrimaryLogPG::fill_in_copy_get
 int ReplicatedBackend::objects_read_sync(
   const hobject_t &hoid,
   uint64_t off,
@@ -353,6 +376,8 @@ int ReplicatedBackend::objects_read_sync(
   return store->read(ch, ghobject_t(hoid), off, len, *bl, op_flags);
 }
 
+// created by
+// ReplicatedBackend::objects_read_async
 struct AsyncReadCallback : public GenContext<ThreadPool::TPHandle&> {
   int r;
   Context *c;
@@ -366,6 +391,8 @@ struct AsyncReadCallback : public GenContext<ThreadPool::TPHandle&> {
   }
 };
 
+// called by
+// PrimaryLogPG::OpContext::start_async_reads
 void ReplicatedBackend::objects_read_async(
   const hobject_t &hoid,
   const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
@@ -402,6 +429,8 @@ void ReplicatedBackend::objects_read_async(
       new AsyncReadCallback(r, on_complete)));
 }
 
+// created by
+// ReplicatedBackend::submit_transaction
 class C_OSD_OnOpCommit : public Context {
   ReplicatedBackend *pg;
   ReplicatedBackend::InProgressOp *op;
@@ -413,6 +442,8 @@ public:
   }
 };
 
+// created by
+// ReplicatedBackend::submit_transaction
 // primary PG local txs onreadable callback
 class C_OSD_OnOpApplied : public Context {
   ReplicatedBackend *pg;
@@ -425,6 +456,8 @@ public:
   }
 };
 
+// called by
+// ReplicatedBackend::submit_transaction
 void generate_transaction(
   PGTransactionUPtr &pgt,
   const coll_t &coll,
@@ -571,7 +604,8 @@ void generate_transaction(
     });
 }
 
-// called by PrimaryLogPG::issue_repop
+// called by
+// PrimaryLogPG::issue_repop
 void ReplicatedBackend::submit_transaction(
   const hobject_t &soid,
   const object_stat_sum_t &delta_stats,
@@ -676,7 +710,9 @@ void ReplicatedBackend::submit_transaction(
   parent->queue_transactions(tls, op.op);
 }
 
-// primary PG txs have been applied, called by C_OSD_OnOpApplied::finish
+// called by
+// C_OSD_OnOpApplied::finish
+// primary PG txs have been applied
 void ReplicatedBackend::op_applied(
   InProgressOp *op)
 {
@@ -705,7 +741,9 @@ void ReplicatedBackend::op_applied(
   }
 }
 
-// primary PG txs committed, called by C_OSD_OnOpCommit::finish
+// called by
+// C_OSD_OnOpCommit::finish
+// primary PG txs committed
 void ReplicatedBackend::op_commit(
   InProgressOp *op)
 {
@@ -731,6 +769,8 @@ void ReplicatedBackend::op_commit(
   }
 }
 
+// called by
+// ReplicatedBackend::handle_message, for MSG_OSD_REPOPREPLY
 // message from replicas
 void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
 {
@@ -823,6 +863,8 @@ void ReplicatedBackend::sub_op_modify_reply(OpRequestRef op)
   }
 }
 
+// called by
+// PGBackend::be_scan_list
 void ReplicatedBackend::be_deep_scrub(
   const hobject_t &poid,
   uint32_t seed,
@@ -928,7 +970,8 @@ void ReplicatedBackend::be_deep_scrub(
 }
 
 /*
-  called by ReplicatedBackend::handle_message with MSG_OSD_PG_PUSH and
+  called by
+  ReplicatedBackend::handle_message, for MSG_OSD_PG_PUSH and
   we are replica
   void do_push(OpRequestRef op) {
     if (is_primary()) {
@@ -971,7 +1014,9 @@ void ReplicatedBackend::_do_push(OpRequestRef op)
   get_parent()->queue_transaction(std::move(t));
 }
 
-// used by ReplicatedBackend::_do_pull_response
+// created by
+// ReplicatedBackend::_do_pull_response
+// ReplicatedBackend::sub_op_push
 struct C_ReplicatedBackend_OnPullComplete : GenContext<ThreadPool::TPHandle&> {
   ReplicatedBackend *bc;
   list<ReplicatedBackend::pull_complete_info> to_continue;
@@ -993,7 +1038,8 @@ struct C_ReplicatedBackend_OnPullComplete : GenContext<ThreadPool::TPHandle&> {
   }
 };
 
-// called by ReplicatedBackend::do_push when we are primary PG
+// called by
+// ReplicatedBackend::do_push when we are primary PG
 /*
   void do_push(OpRequestRef op) {
     if (is_primary()) {
@@ -1003,7 +1049,7 @@ struct C_ReplicatedBackend_OnPullComplete : GenContext<ThreadPool::TPHandle&> {
     }
   }
  */
-// this is a PushOp from replica PG to primary PG, i.e., a reponse of
+// this is a PushOp from replica PG to primary PG, i.e., a response of
 // a previous pull request
 void ReplicatedBackend::_do_pull_response(OpRequestRef op)
 {
@@ -1072,7 +1118,8 @@ void ReplicatedBackend::_do_pull_response(OpRequestRef op)
   get_parent()->queue_transaction(std::move(t));
 }
 
-// called by ReplicatedBackend::handle_message with MSG_OSD_PG_PULL
+// called by
+// ReplicatedBackend::handle_message, for MSG_OSD_PG_PULL
 void ReplicatedBackend::do_pull(OpRequestRef op)
 {
   MOSDPGPull *m = static_cast<MOSDPGPull *>(op->get_req());
@@ -1091,7 +1138,8 @@ void ReplicatedBackend::do_pull(OpRequestRef op)
   send_pushes(m->get_priority(), replies);
 }
 
-// called by ReplicatedBackend::handle_message with MSG_OSD_PG_PUSH_REPLY
+// called by
+// ReplicatedBackend::handle_message, for MSG_OSD_PG_PUSH_REPLY
 void ReplicatedBackend::do_push_reply(OpRequestRef op)
 {
   MOSDPGPushReply *m = static_cast<MOSDPGPushReply *>(op->get_req());
@@ -1113,6 +1161,8 @@ void ReplicatedBackend::do_push_reply(OpRequestRef op)
   send_pushes(m->get_priority(), _replies);
 }
 
+// called by
+// ReplicatedBackend::issue_op
 Message * ReplicatedBackend::generate_subop(
   const hobject_t &soid,
   const eversion_t &at_version,
@@ -1167,6 +1217,8 @@ Message * ReplicatedBackend::generate_subop(
   return wr;
 }
 
+// called by
+// ReplicatedBackend::submit_transaction
 void ReplicatedBackend::issue_op(
   const hobject_t &soid,
   const eversion_t &at_version,
@@ -1222,6 +1274,8 @@ void ReplicatedBackend::issue_op(
   }
 }
 
+// called by
+// ReplicatedBackend::handle_message, for MSG_OSD_SUBOP, MSG_OSD_REPOP
 // sub op modify
 void ReplicatedBackend::sub_op_modify(OpRequestRef op)
 {
@@ -1319,7 +1373,8 @@ void ReplicatedBackend::sub_op_modify(OpRequestRef op)
   // op is cleaned up by oncommit/onapply when both are executed
 }
 
-// called by C_OSD_RepModifyApply::finish which means repop localt tx applied, i.e., onreadable
+// called by
+// C_OSD_RepModifyApply::finish which means repop localt tx applied, i.e., onreadable
 void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
 {
   rm->op->mark_event("sub_op_applied");
@@ -1364,7 +1419,8 @@ void ReplicatedBackend::sub_op_modify_applied(RepModifyRef rm)
   parent->op_applied(version);
 }
 
-// called by C_OSD_RepModifyCommit::finish, which means repop op_t tx committed, i.e., ondisk
+// called by
+// C_OSD_RepModifyCommit::finish, which means repop op_t tx committed, i.e., ondisk
 void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
 {
   rm->op->mark_commit_sent();
@@ -1413,6 +1469,8 @@ void ReplicatedBackend::sub_op_modify_commit(RepModifyRef rm)
 
 // ===========================================================
 
+// called by
+// ReplicatedBackend::prep_push_to_replica
 void ReplicatedBackend::calc_head_subsets(
   ObjectContextRef obc, SnapSet& snapset, const hobject_t& head,
   const pg_missing_t& missing,
@@ -1477,6 +1535,10 @@ void ReplicatedBackend::calc_head_subsets(
 	   << "  clone_subsets " << clone_subsets << dendl;
 }
 
+// called by
+// ReplicatedBackend::prepare_pull
+// ReplicatedBackend::prep_push_to_replica
+// ReplicatedBackend::recalc_subsets
 void ReplicatedBackend::calc_clone_subsets(
   SnapSet& snapset, const hobject_t& soid,
   const pg_missing_t& missing,
@@ -1566,7 +1628,8 @@ void ReplicatedBackend::calc_clone_subsets(
 	   << "  clone_subsets " << clone_subsets << dendl;
 }
 
-// called by ReplicatedBackend::recover_object
+// called by
+// ReplicatedBackend::recover_object
 void ReplicatedBackend::prepare_pull(
   eversion_t v,
   const hobject_t& soid,
@@ -1681,8 +1744,9 @@ void ReplicatedBackend::prepare_pull(
  * intelligently push an object to a replica.  make use of existing
  * clones/heads and dup data ranges where possible.
  */
-// called by ReplicatedBackend::start_pushes which called by
-// ReplicatedBackend::recover_object and C_ReplicatedBackend_OnPullComplete::finish
+// called by
+// ReplicatedBackend::start_pushes, which called by ReplicatedBackend::recover_object
+// and C_ReplicatedBackend_OnPullComplete::finish
 void ReplicatedBackend::prep_push_to_replica(
   ObjectContextRef obc, const hobject_t& soid, pg_shard_t peer,
   PushOp *pop, bool cache_dont_need)
@@ -1762,7 +1826,8 @@ void ReplicatedBackend::prep_push_to_replica(
     std::move(lock_manager));
 }
 
-// called by ReplicatedBackend::prep_push_to_replica
+// called by
+// ReplicatedBackend::prep_push_to_replica
 void ReplicatedBackend::prep_push(ObjectContextRef obc,
 			     const hobject_t& soid, pg_shard_t peer,
 			     PushOp *pop, bool cache_dont_need)
@@ -1777,7 +1842,9 @@ void ReplicatedBackend::prep_push(ObjectContextRef obc,
 	    pop, cache_dont_need, ObcLockManager());
 }
 
-// called by ReplicatedBackend::prep_push_to_replica and ReplicatedBackend::prep_push
+// called by
+// ReplicatedBackend::prep_push_to_replica
+// ReplicatedBackend::prep_push, i.e., the method above
 void ReplicatedBackend::prep_push(
   ObjectContextRef obc,
   const hobject_t& soid, pg_shard_t peer,
@@ -1817,6 +1884,8 @@ void ReplicatedBackend::prep_push(
   pi.recovery_progress = new_progress;
 }
 
+// called by
+// ReplicatedBackend::sub_op_push
 int ReplicatedBackend::send_pull_legacy(int prio, pg_shard_t peer,
 					const ObjectRecoveryInfo &recovery_info,
 					ObjectRecoveryProgress progress)
@@ -1852,7 +1921,8 @@ int ReplicatedBackend::send_pull_legacy(int prio, pg_shard_t peer,
   return 0;
 }
 
-// called by ReplicatedBackend::handle_pull_response and
+// called by
+// ReplicatedBackend::handle_pull_response
 // ReplicatedBackend::handle_push
 void ReplicatedBackend::submit_push_data(
   ObjectRecoveryInfo &recovery_info,
@@ -1928,6 +1998,8 @@ void ReplicatedBackend::submit_push_data(
   }
 }
 
+// called by
+// ReplicatedBackend::submit_push_data
 void ReplicatedBackend::submit_push_complete(ObjectRecoveryInfo &recovery_info,
 					     ObjectStore::Transaction *t)
 {
@@ -1946,6 +2018,8 @@ void ReplicatedBackend::submit_push_complete(ObjectRecoveryInfo &recovery_info,
   }
 }
 
+// called by
+// ReplicatedBackend::handle_pull_response
 ObjectRecoveryInfo ReplicatedBackend::recalc_subsets(
   const ObjectRecoveryInfo& recovery_info,
   SnapSetContext *ssc,
@@ -1966,7 +2040,9 @@ ObjectRecoveryInfo ReplicatedBackend::recalc_subsets(
   return new_info;
 }
 
-// called by ReplicatedBackend::_do_pull_response and ReplicatedBackend::sub_op_push
+// called by
+// ReplicatedBackend::_do_pull_response
+// ReplicatedBackend::sub_op_push
 bool ReplicatedBackend::handle_pull_response(
   pg_shard_t from, PushOp &pop, PullOp *response,
   list<pull_complete_info> *to_continue,
@@ -2079,6 +2155,9 @@ bool ReplicatedBackend::handle_pull_response(
   }
 }
 
+// called by
+// ReplicatedBackend::_do_push
+// ReplicatedBackend::sub_op_push
 void ReplicatedBackend::handle_push(
   pg_shard_t from, PushOp &pop, PushReplyOp *response,
   ObjectStore::Transaction *t)
@@ -2116,8 +2195,10 @@ void ReplicatedBackend::handle_push(
       t);
 }
 
-// called by ReplicatedBackend::run_recovery_op,
-// ReplicatedBackend::do_pull, ReplicatedBackend::do_push_reply
+// called by
+// ReplicatedBackend::run_recovery_op
+// ReplicatedBackend::do_pull
+// ReplicatedBackend::do_push_reply
 void ReplicatedBackend::send_pushes(int prio, map<pg_shard_t, vector<PushOp> > &pushes)
 {
   for (map<pg_shard_t, vector<PushOp> >::iterator i = pushes.begin();
@@ -2160,6 +2241,8 @@ void ReplicatedBackend::send_pushes(int prio, map<pg_shard_t, vector<PushOp> > &
   }
 }
 
+// called by
+// ReplicatedBackend::run_recovery_op
 void ReplicatedBackend::send_pulls(int prio, map<pg_shard_t, vector<PullOp> > &pulls)
 {
   for (map<pg_shard_t, vector<PullOp> >::iterator i = pulls.begin();
@@ -2186,8 +2269,10 @@ void ReplicatedBackend::send_pulls(int prio, map<pg_shard_t, vector<PullOp> > &p
   }
 }
 
-// called by ReplicatedBackend::handle_pull, ReplicatedBackend::handle_push_reply,
+// called by
 // ReplicatedBackend::prep_push
+// ReplicatedBackend::handle_push_reply
+// ReplicatedBackend::handle_pull
 int ReplicatedBackend::build_push_op(const ObjectRecoveryInfo &recovery_info,
 				     const ObjectRecoveryProgress &progress,
 				     ObjectRecoveryProgress *out_progress,
@@ -2371,6 +2456,9 @@ int ReplicatedBackend::build_push_op(const ObjectRecoveryInfo &recovery_info,
   return 0;
 }
 
+// called by
+// ReplicatedBackend::sub_op_push_reply
+// ReplicatedBackend::sub_op_pull
 int ReplicatedBackend::send_push_op_legacy(int prio, pg_shard_t peer, PushOp &pop)
 {
   ceph_tid_t tid = get_parent()->get_tid();
@@ -2400,6 +2488,8 @@ int ReplicatedBackend::send_push_op_legacy(int prio, pg_shard_t peer, PushOp &po
   return 0;
 }
 
+// called by
+// ReplicatedBackend::handle_pull
 void ReplicatedBackend::prep_push_op_blank(const hobject_t& soid, PushOp *op)
 {
   op->recovery_info.version = eversion_t();
@@ -2407,6 +2497,8 @@ void ReplicatedBackend::prep_push_op_blank(const hobject_t& soid, PushOp *op)
   op->soid = soid;
 }
 
+// called by
+// ReplicatedBackend::handle_message, for MSG_OSD_SUBOPREPLY with type CEPH_OSD_OP_PUSH
 void ReplicatedBackend::sub_op_push_reply(OpRequestRef op)
 {
   MOSDSubOpReply *reply = static_cast<MOSDSubOpReply*>(op->get_req());
@@ -2430,6 +2522,9 @@ void ReplicatedBackend::sub_op_push_reply(OpRequestRef op)
     send_push_op_legacy(op->get_req()->get_priority(), peer, pop);
 }
 
+// called by
+// ReplicatedBackend::do_push_reply
+// ReplicatedBackend::sub_op_push_reply
 bool ReplicatedBackend::handle_push_reply(pg_shard_t peer, PushReplyOp &op, PushOp *reply)
 {
   const hobject_t &soid = op.soid;
@@ -2511,6 +2606,8 @@ bool ReplicatedBackend::handle_push_reply(pg_shard_t peer, PushReplyOp &op, Push
   }
 }
 
+// called by
+// ReplicatedBackend::handle_message, for MSG_OSD_SUBOP with type CEPH_OSD_OP_PULL
 /** op_pull
  * process request to pull an entire object.
  * NOTE: called from opqueue.
@@ -2545,7 +2642,9 @@ void ReplicatedBackend::sub_op_pull(OpRequestRef op)
   log_subop_stats(get_parent()->get_logger(), op, l_osd_sop_pull);
 }
 
-// called by ReplicatedBackend::do_pull and ReplicatedBackend::sub_op_pull
+// called by
+// ReplicatedBackend::do_pull
+// ReplicatedBackend::sub_op_pull
 void ReplicatedBackend::handle_pull(pg_shard_t peer, PullOp &op, PushOp *reply)
 {
   const hobject_t &soid = op.soid;
@@ -2587,6 +2686,9 @@ void ReplicatedBackend::handle_pull(pg_shard_t peer, PullOp &op, PushOp *reply)
   }
 }
 
+// static
+// called by
+// ReplicatedBackend::handle_pull_response
 /**
  * trim received data to remove what we don't want
  *
@@ -2634,8 +2736,8 @@ void ReplicatedBackend::trim_pushed_data(
 /** op_push
  * NOTE: called from opqueue.
  */
-// called by ReplicatedBackend::handle_message with MSG_OSD_OP_PUSH with
-// type CEPH_OSD_OP_PUSH
+// called by
+// ReplicatedBackend::handle_message, for MSG_OSD_OP_PUSH with type CEPH_OSD_OP_PUSH
 void ReplicatedBackend::sub_op_push(OpRequestRef op)
 {
   op->mark_started();
@@ -2706,6 +2808,8 @@ void ReplicatedBackend::sub_op_push(OpRequestRef op)
   return;
 }
 
+// called by
+// ReplicatedBackend::handle_pull_response
 void ReplicatedBackend::_failed_push(pg_shard_t from, const hobject_t &soid)
 {
   list<pg_shard_t> fl = { from };
@@ -2728,7 +2832,9 @@ void ReplicatedBackend::clear_pull(
   pulling.erase(piter);
 }
 
-// called by ReplicatedBackend::recover_object and C_ReplicatedBackend_OnPullComplete::finish
+// called by
+// ReplicatedBackend::recover_object
+// C_ReplicatedBackend_OnPullComplete::finish
 int ReplicatedBackend::start_pushes(
   const hobject_t &soid,
   ObjectContextRef obc,

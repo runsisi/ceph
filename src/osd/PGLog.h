@@ -656,6 +656,8 @@ public:
     mark_dirty_to(eversion_t::max());
   }
 
+  // called by
+  // PG::split_into
   void split_into(
       pg_t child_pgid,
       unsigned split_bits,

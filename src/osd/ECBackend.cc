@@ -209,6 +209,8 @@ PGBackend::RecoveryHandle *ECBackend::open_recovery_op()
   return new ECRecoveryHandle;
 }
 
+// called by
+// OnRecoveryReadComplete::finish
 void ECBackend::_failed_push(const hobject_t &hoid,
   pair<RecoveryMessages *, ECBackend::read_result_t &> &in)
 {
@@ -679,6 +681,11 @@ void ECBackend::continue_recovery_op(
   }
 }
 
+// called by
+// PrimaryLogPG::maybe_kick_recovery
+// PrimaryLogPG::recover_primary
+// PrimaryLogPG::recover_replicas
+// PrimaryLogPG::recover_backfill
 void ECBackend::run_recovery_op(
   RecoveryHandle *_h,
   int priority)
@@ -697,6 +704,10 @@ void ECBackend::run_recovery_op(
   delete _h;
 }
 
+// called by
+// PrimaryLogPG::recover_missing,
+// PrimaryLogPG::prep_object_replica_pushes,
+// PrimaryLogPG::prep_backfill_object_push
 void ECBackend::recover_object(
   const hobject_t &hoid,
   eversion_t v,
@@ -729,12 +740,17 @@ void ECBackend::recover_object(
   dout(10) << __func__ << ": built op " << h->ops.back() << dendl;
 }
 
+// called by
+// PrimaryLogPG::do_request
 bool ECBackend::can_handle_while_inactive(
   OpRequestRef _op)
 {
   return false;
 }
 
+// called by
+// PrimaryLogPG::do_request, i.e., the Op has been dequeued from
+// the OSD::OpShardedWQ, so the method name may be a little misleading
 bool ECBackend::handle_message(
   OpRequestRef _op)
 {
@@ -1415,6 +1431,8 @@ void ECBackend::dump_recovery_info(Formatter *f) const
   f->close_section();
 }
 
+// called by
+// PrimaryLogPG::issue_repop
 void ECBackend::submit_transaction(
   const hobject_t &hoid,
   const object_stat_sum_t &delta_stats,
@@ -2028,6 +2046,10 @@ void ECBackend::check_ops()
 	 try_finish_rmw());
 }
 
+// called by
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_SYNC_READ, CEPH_OSD_OP_READ,
+// CEPH_OSD_OP_MAPEXT
+// PrimaryLogPG::fill_in_copy_get
 int ECBackend::objects_read_sync(
   const hobject_t &hoid,
   uint64_t off,
@@ -2038,6 +2060,8 @@ int ECBackend::objects_read_sync(
   return -EOPNOTSUPP;
 }
 
+// called by
+// PrimaryLogPG::OpContext::start_async_reads
 void ECBackend::objects_read_async(
   const hobject_t &hoid,
   const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
@@ -2340,6 +2364,8 @@ void ECBackend::rollback_append(
       old_size));
 }
 
+// called by
+// PGBackend::be_scan_list
 void ECBackend::be_deep_scrub(
   const hobject_t &poid,
   uint32_t seed,

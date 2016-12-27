@@ -3346,6 +3346,8 @@ public:
     missing.erase(m);
   }
 
+  // called by
+  // PGLog::split_into
   void split_into(
     pg_t child_pgid,
     unsigned split_bits,
