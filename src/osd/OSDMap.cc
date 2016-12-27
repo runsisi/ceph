@@ -1116,16 +1116,23 @@ uint64_t OSDMap::get_features(int entity_type, uint64_t *pmask) const
   return features;
 }
 
+// called by
+// OSDMap::apply_incremental
+// OSDMap::post_decode
 void OSDMap::_calc_up_osd_features()
 {
   bool first = true;
+
   cached_up_osd_features = 0;
+
   for (int osd = 0; osd < max_osd; ++osd) {
     if (!is_up(osd))
       continue;
+
     const osd_xinfo_t &xi = get_xinfo(osd);
     if (first) {
       cached_up_osd_features = xi.features;
+
       first = false;
     } else {
       cached_up_osd_features &= xi.features;
@@ -1135,6 +1142,7 @@ void OSDMap::_calc_up_osd_features()
 
 uint64_t OSDMap::get_up_osd_features() const
 {
+  // was set by OSDMap::_calc_up_osd_features
   return cached_up_osd_features;
 }
 
@@ -2255,6 +2263,9 @@ void OSDMap::decode(bufferlist::iterator& bl)
   post_decode();
 }
 
+// called by
+// OSDMap::decode_classic
+// OSDMap::decode
 void OSDMap::post_decode()
 {
   // index pool names

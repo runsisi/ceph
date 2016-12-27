@@ -5058,6 +5058,9 @@ void TestOpsSocketHook::test_ops(OSDService *service, ObjectStore *store,
 }
 
 // =========================================
+
+// called by
+// OSD::RemoveWQ::_process
 bool remove_dir(
   CephContext *cct,
   ObjectStore *store, SnapMapper *mapper,
@@ -5071,7 +5074,9 @@ bool remove_dir(
   int64_t num = 0;
   ObjectStore::Transaction t;
   ghobject_t next;
+
   handle.reset_tp_timeout();
+
   store->collection_list(
     coll,
     next,
@@ -5080,47 +5085,66 @@ bool remove_dir(
     store->get_ideal_list_max(),
     &olist,
     &next);
+
   // default cont to true, this is safe because caller(OSD::RemoveWQ::_process()) 
   // will recheck the answer before it really goes on.
   bool cont = true;
+
   for (vector<ghobject_t>::iterator i = olist.begin();
        i != olist.end();
        ++i) {
     if (i->is_pgmeta())
       continue;
+
     OSDriver::OSTransaction _t(osdriver->get_transaction(&t));
+
     int r = mapper->remove_oid(i->hobj, &_t);
     if (r != 0 && r != -ENOENT) {
       ceph_abort();
     }
+
     t.remove(coll, *i);
+
+    // default 30
     if (++num >= cct->_conf->osd_target_transaction_size) {
       C_SaferCond waiter;
+
       store->queue_transaction(osr, std::move(t), &waiter);
+
       cont = dstate->pause_clearing();
+
       handle.suspend_tp_timeout();
       waiter.wait();
       handle.reset_tp_timeout();
+
       if (cont)
         cont = dstate->resume_clearing();
       if (!cont)
 	return false;
+
       t = ObjectStore::Transaction();
       num = 0;
     }
   }
+
   if (num) {
     C_SaferCond waiter;
+
     store->queue_transaction(osr, std::move(t), &waiter);
+
     cont = dstate->pause_clearing();
+
     handle.suspend_tp_timeout();
     waiter.wait();
     handle.reset_tp_timeout();
+
     if (cont)
       cont = dstate->resume_clearing();
   }
+
   // whether there are more objects to remove in the collection
   *finished = next.is_max();
+
   return cont;
 }
 
@@ -5142,8 +5166,10 @@ void OSD::RemoveWQ::_process(
   bool cont = remove_dir(
     pg->cct, store, &mapper, &driver, pg->osr.get(), coll, item.second,
     &finished, handle);
+
   if (!cont)
     return;
+
   if (!finished) {
     if (item.second->pause_clearing())
       queue_front(item);
@@ -5154,12 +5180,14 @@ void OSD::RemoveWQ::_process(
     return;
 
   ObjectStore::Transaction t;
+
   PGLog::clear_info_log(pg->info.pgid, &t);
 
   if (cct->_conf->osd_inject_failure_on_pg_removal) {
     generic_derr << "osd_inject_failure_on_pg_removal" << dendl;
     _exit(1);
   }
+
   t.remove_collection(coll);
 
   // We need the sequencer to stick around until the op is complete
@@ -5341,20 +5369,28 @@ void OSD::start_boot()
   monc->get_version("osdmap", &c->newest, &c->oldest, c);
 }
 
+// called by
+// C_OSD_GetVersion::finish
 void OSD::_got_mon_epochs(epoch_t oldest, epoch_t newest)
 {
   Mutex::Locker l(osd_lock);
+
   if (is_preboot()) {
     _preboot(oldest, newest);
   }
 }
 
+// called by
+// OSD::_got_mon_epochs
+// OSD::_committed_osd_maps
 void OSD::_preboot(epoch_t oldest, epoch_t newest)
 {
   assert(is_preboot());
 
   dout(10) << __func__ << " _preboot mon has osdmaps "
 	   << oldest << ".." << newest << dendl;
+
+  // test OSDMap::flags
 
   // if our map within recent history, try to add ourselves to the osdmap.
   if (osdmap->test_flag(CEPH_OSDMAP_NOUP)) {
@@ -10171,6 +10207,9 @@ void OSD::handle_conf_change(const struct md_config_t *conf,
   check_config();
 }
 
+// called by
+// OSD::init
+// OSD::handle_conf_change
 void OSD::update_log_config()
 {
   map<string,string> log_to_monitors;
