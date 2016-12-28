@@ -5998,7 +5998,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 
     string args;
     vector<string> argvec;
-    cmd_getval(g_ceph_context, cmdmap, "args", argvec);
+    cmd_getval(g_ceph_context, cmdmap, "args", argve_prepare_remove_poolc);
     map<string,string> loc;
     CrushWrapper::parse_loc_map(argvec, &loc);
 
@@ -8496,6 +8496,8 @@ bool OSDMonitor::prepare_pool_op_create(MonOpRequestRef op)
   return true;
 }
 
+// called by
+// OSDMonitor::_prepare_remove_pool
 int OSDMonitor::_check_remove_pool(int64_t pool, const pg_pool_t *p,
 				   ostream *ss)
 {
@@ -8634,6 +8636,8 @@ bool OSDMonitor::_check_remove_tier(
   return true;
 }
 
+// called by
+// OSDMonitor::prepare_command_impl, for "osd pool delete"/"osd pool rm"
 int OSDMonitor::_prepare_remove_pool(int64_t pool, ostream *ss)
 {
   dout(10) << "_prepare_remove_pool " << pool << dendl;

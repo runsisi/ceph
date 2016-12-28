@@ -358,12 +358,10 @@ public:
     // called by
     // OSD::do_command, for "debug dump_missing"
     // PG::MissingLoc::readable_with_acting
-    // PG::activate
-    // PG::RecoveryState::Active::react(const AdvMap)
     // PG::MissingLoc::is_unfound
-    // ReplicatedPG::maybe_kick_recovery
-    // ReplicatedPG::on_activate
-    // ReplicatedPG::start_recovery_ops, for debug only
+    // PG::MissingLoc::revise_need, assert only
+    // PrimaryLogPG::on_local_recover, assert only
+    // PrimaryLogPG::maybe_kick_recovery
     bool needs_recovery(
       const hobject_t &hoid,
       eversion_t *v = 0) const {

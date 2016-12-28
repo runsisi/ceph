@@ -117,6 +117,9 @@ OpTracker::~OpTracker() {
   }
 }
 
+// called by
+// MDSRankDispatcher::handle_asok_command, for "dump_historic_ops"
+// OSD::asok_command, for "dump_historic_ops"
 bool OpTracker::dump_historic_ops(Formatter *f)
 {
   RWLock::RLocker l(lock);
@@ -128,6 +131,12 @@ bool OpTracker::dump_historic_ops(Formatter *f)
   return true;
 }
 
+// called by
+// MDSRankDispatcher::handle_asok_command, for "dump_ops_in_flight"/"ops"
+// MDSRankDispatcher::handle_asok_command, for "dump_blocked_ops"
+// Monitor::do_admin_command, for "ops"
+// OSD::asok_command, for "dump_ops_in_flight"/"ops"
+// OSD::asok_command, for "dump_blocked_ops"
 bool OpTracker::dump_ops_in_flight(Formatter *f, bool print_only_blocked)
 {
   RWLock::RLocker l(lock);
@@ -171,6 +180,8 @@ bool OpTracker::dump_ops_in_flight(Formatter *f, bool print_only_blocked)
   return true;
 }
 
+// called by
+// TrackedOp::tracking_start
 bool OpTracker::register_inflight_op(TrackedOp *i)
 {
   RWLock::RLocker l(lock);
@@ -194,6 +205,8 @@ bool OpTracker::register_inflight_op(TrackedOp *i)
   return true;
 }
 
+// called by
+// OpTracker::RemoveOnDelete::operator()
 void OpTracker::unregister_inflight_op(TrackedOp *i)
 {
   // caller checks;
@@ -219,6 +232,9 @@ void OpTracker::unregister_inflight_op(TrackedOp *i)
   }
 }
 
+// called by
+// MDSRank::check_ops_in_flight
+// OSD::check_ops_in_flight
 bool OpTracker::check_ops_in_flight(std::vector<string> &warning_vector, int *slow)
 {
   RWLock::RLocker l(lock);

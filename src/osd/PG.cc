@@ -739,6 +739,13 @@ void PG::discover_all_missing(map<int, map<spg_t,pg_query_t> > &query_map)
 }
 
 /******* PG ***********/
+
+// called by
+// PG::activate
+// PG::RecoveryState::Recovered::Recovered, assert only
+// PG::RecoveryState::Active::react(const AdvMap)
+// PrimaryLogPG::on_activate
+// PrimaryLogPG::start_recovery_ops
 bool PG::needs_recovery() const
 {
   assert(is_primary());
@@ -779,6 +786,9 @@ bool PG::needs_recovery() const
   return false;
 }
 
+// called by
+// PrimaryLogPG::on_activate
+// PrimaryLogPG::start_recovery_ops
 bool PG::needs_backfill() const
 {
   assert(is_primary());
@@ -2236,6 +2246,7 @@ bool PG::requeue_scrub()
 
     scrub_queued = true;
 
+    // queue on OSDService::op_wq
     osd->queue_for_scrub(this);
 
     return true;
@@ -2306,6 +2317,7 @@ bool PG::queue_scrub()
     scrubber.must_repair = false;
   }
 
+  // queue on OSDService::op_wq
   requeue_scrub();
 
   return true;
@@ -4010,6 +4022,7 @@ bool PG::sched_scrub()
 	}
       }
 
+      // queue on OSDService::op_wq
       queue_scrub();
     } else {
       // none declined, since scrubber.reserved is set
@@ -4020,6 +4033,15 @@ bool PG::sched_scrub()
   return ret;
 }
 
+// called by
+// OSD::load_pgs
+// OSD::handle_pg_scrub
+// PG::proc_replica_info
+// PG::scrub_finish
+// PG::update_history_from_master
+// PG::on_new_interval
+// PG::proc_primary_info
+// PG::RecoveryState::Stray::react(const MLogRec)
 void PG::reg_next_scrub()
 {
   if (!is_primary())
@@ -4048,6 +4070,15 @@ void PG::reg_next_scrub()
 					       scrubber.must_scrub);
 }
 
+// called by
+// OSD::handle_pg_scrub
+// PG::proc_replica_info
+// PG::scrub_finish
+// PG::update_history_from_master
+// PG::start_peering_interval
+// PG::proc_primary_info
+// PG::RecoveryState::Stray::react(const MLogRec)
+// PrimaryLogPG::on_shutdown
 void PG::unreg_next_scrub()
 {
   if (is_primary()) {
@@ -4098,6 +4129,8 @@ void PG::sub_op_scrub_map(OpRequestRef op)
   }
 }
 
+// called by
+// PG::chunky_scrub
 // send scrub v3 messages (chunky scrub)
 void PG::_request_scrub_map(
   pg_shard_t replica, eversion_t version,
@@ -4120,6 +4153,8 @@ void PG::_request_scrub_map(
     replica.osd, repscrubop, get_osdmap()->get_epoch());
 }
 
+// called by
+// PrimaryLogPG::do_sub_op, for CEPH_OSD_OP_SCRUB_RESERVE
 void PG::sub_op_scrub_reserve(OpRequestRef op)
 {
   MOSDSubOp *m = static_cast<MOSDSubOp*>(op->get_req());
@@ -4141,6 +4176,8 @@ void PG::sub_op_scrub_reserve(OpRequestRef op)
   osd->send_message_osd_cluster(reply, m->get_connection());
 }
 
+// called by
+// PrimaryLogPG::do_sub_op_reply
 void PG::sub_op_scrub_reserve_reply(OpRequestRef op)
 {
   MOSDSubOpReply *reply = static_cast<MOSDSubOpReply*>(op->get_req());
@@ -4180,6 +4217,8 @@ void PG::sub_op_scrub_reserve_reply(OpRequestRef op)
   }
 }
 
+// called by
+// PrimaryLogPG::do_sub_op, for CEPH_OSD_OP_SCRUB_UNRESERVE
 void PG::sub_op_scrub_unreserve(OpRequestRef op)
 {
   assert(op->get_req()->get_type() == MSG_OSD_SUBOP);
@@ -4190,6 +4229,9 @@ void PG::sub_op_scrub_unreserve(OpRequestRef op)
   clear_scrub_reserved();
 }
 
+// called by
+// PG::RecoveryState::RepWaitBackfillReserved::react(const RemoteReservationRejected)
+// PG::RecoveryState::RepRecovering::react(const BackfillTooFull)
 void PG::reject_reservation()
 {
   osd->send_message_osd_cluster(
@@ -4201,6 +4243,9 @@ void PG::reject_reservation()
     get_osdmap()->get_epoch());
 }
 
+// called by
+// PG::RecoveryState::Backfilling::react(const RemoteReservationRejected)
+// PG::RecoveryState::WaitRemoteBackfillReserved::react(const RemoteReservationRejected)
 void PG::schedule_backfill_full_retry()
 {
   Mutex::Locker lock(osd->backfill_request_lock);
@@ -4211,6 +4256,11 @@ void PG::schedule_backfill_full_retry()
       RequestBackfill()));
 }
 
+// called by
+// PG::sched_scrub
+// PG::sub_op_scrub_unreserve
+// PrimaryLogPG::on_shutdown
+// PrimaryLogPG::on_change
 void PG::clear_scrub_reserved()
 {
   scrubber.reserved_peers.clear();
@@ -4222,6 +4272,8 @@ void PG::clear_scrub_reserved()
   }
 }
 
+// called by
+// PG::sched_scrub
 void PG::scrub_reserve_replicas()
 {
   assert(backfill_targets.empty());
@@ -4250,6 +4302,10 @@ void PG::scrub_reserve_replicas()
   }
 }
 
+// called by
+// PG::sched_scrub
+// PG::chunky_scrub
+// PG::scrub_finish
 void PG::scrub_unreserve_replicas()
 {
   assert(backfill_targets.empty());
@@ -4277,6 +4333,8 @@ void PG::scrub_unreserve_replicas()
   }
 }
 
+// called by
+// PG::build_scrub_map_chunk
 void PG::_scan_rollback_obs(
   const vector<ghobject_t> &rollback_obs,
   ThreadPool::TPHandle &handle)
@@ -4306,6 +4364,8 @@ void PG::_scan_rollback_obs(
   }
 }
 
+// called by
+// PG::build_scrub_map_chunk
 void PG::_scan_snaps(ScrubMap &smap) 
 {
   for (map<hobject_t, ScrubMap::object, hobject_t::BitwiseComparator>::iterator i = smap.objects.begin();
@@ -4391,6 +4451,9 @@ void PG::_scan_snaps(ScrubMap &smap)
   }
 }
 
+// called by
+// PG::replica_scrub
+// PG::chunky_scrub
 /*
  * build a scrub map over a chunk without releasing the lock
  * only used by chunky scrub
@@ -4428,6 +4491,9 @@ int PG::build_scrub_map_chunk(
   return 0;
 }
 
+// called by
+// PG::chunky_scrub
+// PrimaryLogPG::on_change
 void PG::Scrubber::cleanup_store(ObjectStore::Transaction *t) {
   if (!store)
     return;
@@ -5188,6 +5254,8 @@ bool PG::scrub_process_inconsistent()
   return (!scrubber.authoritative.empty() && repair);
 }
 
+// called by
+// PG::chunky_scrub
 // the part that actually finalizes a scrub
 void PG::scrub_finish() 
 {

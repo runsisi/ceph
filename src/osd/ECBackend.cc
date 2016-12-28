@@ -2329,6 +2329,8 @@ int ECBackend::send_all_remaining_reads(
   return 0;
 }
 
+// called by
+// PrimaryLogPG::get_object_context
 int ECBackend::objects_get_attrs(
   const hobject_t &hoid,
   map<string, bufferlist> *out)

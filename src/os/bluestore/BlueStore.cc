@@ -4284,6 +4284,7 @@ int BlueStore::mkfs()
 
   {
     string type;
+    // call ObjectStore::read_meta
     r = read_meta("type", &type);
     if (r == 0) {
       if (type != "bluestore") {
@@ -4291,6 +4292,7 @@ int BlueStore::mkfs()
 	return -EIO;
       }
     } else {
+      // call ObjectStore::write_meta
       r = write_meta("type", "bluestore");
       if (r < 0)
         return r;

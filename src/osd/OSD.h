@@ -921,6 +921,7 @@ public:
 
   void queue_for_peering(PG *pg);
   void queue_for_snap_trim(PG *pg);
+
   void queue_for_scrub(PG *pg) {
     op_wq.queue(
       make_pair(
@@ -1066,11 +1067,13 @@ public:
   SimpleLRU<epoch_t, bufferlist> map_bl_inc_cache;
 
   OSDMapRef try_get_map(epoch_t e);
+
   OSDMapRef get_map(epoch_t e) {
     OSDMapRef ret(try_get_map(e));
     assert(ret);
     return ret;
   }
+
   OSDMapRef add_map(OSDMap *o) {
     Mutex::Locker l(map_cache_lock);
     return _add_map(o);
@@ -1081,18 +1084,22 @@ public:
     Mutex::Locker l(map_cache_lock);
     return _add_map_bl(e, bl);
   }
+
   void pin_map_bl(epoch_t e, bufferlist &bl);
   void _add_map_bl(epoch_t e, bufferlist& bl);
+
   bool get_map_bl(epoch_t e, bufferlist& bl) {
     Mutex::Locker l(map_cache_lock);
     return _get_map_bl(e, bl);
   }
+
   bool _get_map_bl(epoch_t e, bufferlist& bl);
 
   void add_map_inc_bl(epoch_t e, bufferlist& bl) {
     Mutex::Locker l(map_cache_lock);
     return _add_map_inc_bl(e, bl);
   }
+
   void pin_map_inc_bl(epoch_t e, bufferlist &bl);
   void _add_map_inc_bl(epoch_t e, bufferlist& bl);
   bool get_inc_map_bl(epoch_t e, bufferlist& bl);
@@ -1119,6 +1126,8 @@ private:
 public:
   void _start_split(spg_t parent, const set<spg_t> &children);
 
+  // called by
+  // OSDService::init_splits_between
   void start_split(spg_t parent, const set<spg_t> &children) {
     Mutex::Locker l(in_progress_split_lock);
 
@@ -1176,16 +1185,19 @@ public:
    */
   void set_epochs(const epoch_t *_boot_epoch, const epoch_t *_up_epoch,
                   const epoch_t *_bind_epoch);
+
   epoch_t get_boot_epoch() const {
     epoch_t ret;
     retrieve_epochs(&ret, NULL, NULL);
     return ret;
   }
+
   epoch_t get_up_epoch() const {
     epoch_t ret;
     retrieve_epochs(NULL, &ret, NULL);
     return ret;
   }
+
   epoch_t get_bind_epoch() const {
     epoch_t ret;
     retrieve_epochs(NULL, NULL, &ret);
@@ -1819,14 +1831,22 @@ public:
       return osd->heartbeat_dispatch(m);
     }
 
+    // called by
+    // Messenger::ms_deliver_handle_reset
     bool ms_handle_reset(Connection *con) {
       return osd->heartbeat_reset(con);
     }
 
+    // called by
+    // Messenger::ms_deliver_handle_remote_reset
     void ms_handle_remote_reset(Connection *con) {}
+
+    // called by
+    // Messenger::ms_deliver_handle_refused
     bool ms_handle_refused(Connection *con) {
       return osd->ms_handle_refused(con);
     }
+
     bool ms_verify_authorizer(Connection *con, int peer_type,
 			      int protocol, bufferlist& authorizer_data, bufferlist& authorizer_reply,
 			      bool& isvalid, CryptoKey& session_key) {
@@ -2159,15 +2179,22 @@ private:
   void add_map_bl(epoch_t e, bufferlist& bl) {
     return service.add_map_bl(e, bl);
   }
+
+  // called by
+  // OSD::handle_osd_map
   void pin_map_bl(epoch_t e, bufferlist &bl) {
     return service.pin_map_bl(e, bl);
   }
+
   bool get_map_bl(epoch_t e, bufferlist& bl) {
     return service.get_map_bl(e, bl);
   }
   void add_map_inc_bl(epoch_t e, bufferlist& bl) {
     return service.add_map_inc_bl(e, bl);
   }
+
+  // called by
+  // OSD::handle_osd_map
   void pin_map_inc_bl(epoch_t e, bufferlist &bl) {
     return service.pin_map_inc_bl(e, bl);
   }
@@ -2303,6 +2330,10 @@ protected:
   epoch_t requested_full_first, requested_full_last;
 
   void request_full_map(epoch_t first, epoch_t last);
+
+  // called by
+  // OSD::ms_handle_connect
+  // OSD::handle_osd_map
   void rerequest_full_maps() {
     epoch_t first = requested_full_first;
     epoch_t last = requested_full_last;
@@ -2310,6 +2341,7 @@ protected:
     requested_full_last = 0;
     request_full_map(first, last);
   }
+
   void got_full_map(epoch_t e);
 
   // -- failures --
@@ -2331,6 +2363,8 @@ protected:
   void handle_pg_stats_ack(class MPGStatsAck *ack);
   void flush_pg_stats();
 
+  // called by
+  // OSDService::pg_stat_queue_enqueue
   void pg_stat_queue_enqueue(PG *pg) {
     pg_stat_queue_lock.Lock();
     if (pg->is_primary() && !pg->stat_queue_item.is_on_list()) {
@@ -2340,12 +2374,18 @@ protected:
     osd_stat_updated = true;
     pg_stat_queue_lock.Unlock();
   }
+
+  // called by
+  // OSDService::pg_stat_queue_dequeue
   void pg_stat_queue_dequeue(PG *pg) {
     pg_stat_queue_lock.Lock();
     if (pg->stat_queue_item.remove_myself())
       pg->put("pg_stat_queue");
     pg_stat_queue_lock.Unlock();
   }
+
+  // called by
+  // OSD::shutdown
   void clear_pg_stat_queue() {
     pg_stat_queue_lock.Lock();
     while (!pg_stat_queue.empty()) {
@@ -2547,6 +2587,8 @@ protected:
   void ms_handle_fast_connect(Connection *con);
   void ms_handle_fast_accept(Connection *con);
   bool ms_handle_reset(Connection *con);
+  // called by
+  // Messenger::ms_deliver_handle_remote_reset
   void ms_handle_remote_reset(Connection *con) {}
   bool ms_handle_refused(Connection *con);
 

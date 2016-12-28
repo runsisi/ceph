@@ -212,6 +212,9 @@ CompatSet OSD::get_osd_initial_compat_set() {
 		   ceph_osd_feature_incompat);
 }
 
+// called by
+// OSD::OSD
+// tools/ceph_objectstore_tool.cc/main
 //Features are added here that this OSD supports.
 CompatSet OSD::get_osd_compat_set() {
   CompatSet compat =  get_osd_initial_compat_set();
@@ -299,6 +302,9 @@ OSDService::~OSDService()
   delete objecter;
 }
 
+// called by
+// OSDService::_maybe_split_pgid
+// OSDService::start_split
 void OSDService::_start_split(spg_t parent, const set<spg_t> &children)
 {
   for (set<spg_t>::const_iterator i = children.begin();
@@ -320,6 +326,8 @@ void OSDService::_start_split(spg_t parent, const set<spg_t> &children)
   }
 }
 
+// called by
+// OSD::advance_pg
 void OSDService::mark_split_in_progress(spg_t parent, const set<spg_t> &children)
 {
   Mutex::Locker l(in_progress_split_lock);
@@ -341,12 +349,17 @@ void OSDService::mark_split_in_progress(spg_t parent, const set<spg_t> &children
     rev_pending_splits.erase(piter);
 }
 
+// called by
+// OSD::_remove_pg
 void OSDService::cancel_pending_splits_for_parent(spg_t parent)
 {
   Mutex::Locker l(in_progress_split_lock);
   _cancel_pending_splits_for_parent(parent);
 }
 
+// called by
+// OSDService::cancel_pending_splits_for_parent
+// OSDService::_cancel_pending_splits_for_parent, recursive call
 void OSDService::_cancel_pending_splits_for_parent(spg_t parent)
 {
   map<spg_t, set<spg_t> >::iterator piter = rev_pending_splits.find(parent);
@@ -480,6 +493,12 @@ void OSDService::expand_pg_num(OSDMapRef old_map,
   }
 }
 
+// called by
+// OSD::handle_pg_peering_evt
+// OSD::split_pgs, assert only
+// OSD::handle_pg_backfill_reserve
+// OSD::handle_pg_recovery_reserve
+// OSD::handle_pg_query
 bool OSDService::splitting(spg_t pgid)
 {
   Mutex::Locker l(in_progress_split_lock);
@@ -487,6 +506,8 @@ bool OSDService::splitting(spg_t pgid)
     pending_splits.count(pgid);
 }
 
+// called by
+// C_CompleteSplits::finish
 void OSDService::complete_split(const set<spg_t> &pgs)
 {
   Mutex::Locker l(in_progress_split_lock);
@@ -500,21 +521,30 @@ void OSDService::complete_split(const set<spg_t> &pgs)
   }
 }
 
+// called by
+// PG::update_heartbeat_peers
 void OSDService::need_heartbeat_peer_update()
 {
   osd->need_heartbeat_peer_update();
 }
 
+// called by
+// PG::publish_stats_to_osd
 void OSDService::pg_stat_queue_enqueue(PG *pg)
 {
   osd->pg_stat_queue_enqueue(pg);
 }
 
+// called by
+// PG::clear_publish_stats
+// PrimaryLogPG::on_shutdown
 void OSDService::pg_stat_queue_dequeue(PG *pg)
 {
   osd->pg_stat_queue_dequeue(pg);
 }
 
+// called by
+// OSD::shutdown
 void OSDService::start_shutdown()
 {
   {
@@ -813,6 +843,10 @@ bool OSDService::check_failsafe_full()
   return false;
 }
 
+// called by
+// PG::RecoveryState::RepNotRecovering::react(const RequestBackfillPrio)
+// PG::RecoveryState::RepWaitBackfillReserved::react(const RemoteBackfillReserved)
+// PrimaryLogPG::do_scan, for MOSDPGScan::OP_SCAN_GET_DIGEST
 bool OSDService::too_full_for_backfill(double *_ratio, double *_max_ratio)
 {
   Mutex::Locker l(full_status_lock);
@@ -825,6 +859,8 @@ bool OSDService::too_full_for_backfill(double *_ratio, double *_max_ratio)
   return cur_ratio >= max_ratio;
 }
 
+// called by
+// OSD::heartbeat
 void OSDService::update_osd_stat(vector<int>& hb_peers)
 {
   Mutex::Locker lock(stat_lock);
@@ -912,7 +948,9 @@ pair<ConnectionRef,ConnectionRef> OSDService::get_con_osd_hb(int peer, epoch_t f
   return ret;
 }
 
-
+// called by
+// PG::choose_acting
+// PG::start_peering_interval
 void OSDService::queue_want_pg_temp(pg_t pgid, vector<int>& want)
 {
   Mutex::Locker l(pg_temp_lock);
@@ -923,6 +961,8 @@ void OSDService::queue_want_pg_temp(pg_t pgid, vector<int>& want)
   }
 }
 
+// called by
+// PG::start_peering_interval
 void OSDService::remove_want_pg_temp(pg_t pgid)
 {
   Mutex::Locker l(pg_temp_lock);
@@ -930,6 +970,9 @@ void OSDService::remove_want_pg_temp(pg_t pgid)
   pg_temp_pending.erase(pgid);
 }
 
+// called by
+// OSDService::requeue_pg_temp
+// OSDService::send_pg_temp
 void OSDService::_sent_pg_temp()
 {
   for (map<pg_t,vector<int> >::iterator p = pg_temp_wanted.begin();
@@ -939,6 +982,8 @@ void OSDService::_sent_pg_temp()
   pg_temp_wanted.clear();
 }
 
+// called by
+// OSD::ms_handle_connect
 void OSDService::requeue_pg_temp()
 {
   Mutex::Locker l(pg_temp_lock);
@@ -952,6 +997,9 @@ void OSDService::requeue_pg_temp()
 	   << pg_temp_wanted.size() << dendl;
 }
 
+// called by
+// OSD::ms_handle_connect
+// OSD::process_peering_events
 void OSDService::send_pg_temp()
 {
   Mutex::Locker l(pg_temp_lock);
@@ -968,6 +1016,9 @@ void OSDService::send_pg_temp()
 // --------------------------------------
 // dispatch
 
+// called by
+// OSDService::should_share_map
+// OSDService::share_map_peer
 epoch_t OSDService::get_peer_epoch(int peer)
 {
   Mutex::Locker l(peer_map_epoch_lock);
@@ -977,6 +1028,10 @@ epoch_t OSDService::get_peer_epoch(int peer)
   return p->second;
 }
 
+// called by
+// OSDService::share_map
+// OSDService::share_map_peer
+// OSD::handle_osd_ping
 epoch_t OSDService::note_peer_epoch(int peer, epoch_t e)
 {
   Mutex::Locker l(peer_map_epoch_lock);
@@ -996,6 +1051,8 @@ epoch_t OSDService::note_peer_epoch(int peer, epoch_t e)
   }
 }
 
+// called by
+// OSD::note_up_osd
 void OSDService::forget_peer_epoch(int peer, epoch_t as_of)
 {
   Mutex::Locker l(peer_map_epoch_lock);
@@ -1012,6 +1069,10 @@ void OSDService::forget_peer_epoch(int peer, epoch_t as_of)
   }
 }
 
+// called by
+// OSDService::share_map
+// OSD::handle_op
+// OSD::handle_replica_op
 bool OSDService::should_share_map(entity_name_t name, Connection *con,
                                   epoch_t epoch, const OSDMapRef& osdmap,
                                   const epoch_t *sent_epoch_p)
@@ -1054,6 +1115,9 @@ bool OSDService::should_share_map(entity_name_t name, Connection *con,
   return should_send;
 }
 
+// called by
+// C_SendMap::finish
+// OSD::dequeue_op
 void OSDService::share_map(
     entity_name_t name,
     Connection *con,
@@ -1095,7 +1159,14 @@ void OSDService::share_map(
   }
 }
 
-
+// called by
+// OSDService::send_message_osd_cluster
+// OSD::handle_osd_ping
+// OSD::do_notifies
+// OSD::do_queries
+// OSD::do_infos
+// OSD::handle_pg_query
+// PG::fulfill_log
 void OSDService::share_map_peer(int peer, Connection *con, OSDMapRef map)
 {
   if (!map)
@@ -1117,6 +1188,8 @@ void OSDService::share_map_peer(int peer, Connection *con, OSDMapRef map)
   }
 }
 
+// called by
+// OSD::sched_scrub
 bool OSDService::can_inc_scrubs_pending()
 {
   bool can_inc = false;
@@ -1133,6 +1206,9 @@ bool OSDService::can_inc_scrubs_pending()
   return can_inc;
 }
 
+// called by
+// PG::sched_scrub
+// PG::sub_op_scrub_reserve
 bool OSDService::inc_scrubs_pending()
 {
   bool result = false;
@@ -1151,6 +1227,8 @@ bool OSDService::inc_scrubs_pending()
   return result;
 }
 
+// called by
+// PG::clear_scrub_reserved
 void OSDService::dec_scrubs_pending()
 {
   sched_scrub_lock.Lock();
@@ -1161,6 +1239,8 @@ void OSDService::dec_scrubs_pending()
   sched_scrub_lock.Unlock();
 }
 
+// called by
+// PG::chunky_scrub
 void OSDService::inc_scrubs_active(bool reserved)
 {
   sched_scrub_lock.Lock();
@@ -1179,6 +1259,8 @@ void OSDService::inc_scrubs_active(bool reserved)
   sched_scrub_lock.Unlock();
 }
 
+// called by
+// PG::scrub_clear_state
 void OSDService::dec_scrubs_active()
 {
   sched_scrub_lock.Lock();
@@ -1189,6 +1271,11 @@ void OSDService::dec_scrubs_active()
   sched_scrub_lock.Unlock();
 }
 
+// called by
+// OSD::_committed_osd_maps
+// OSDService::get_boot_epoch
+// OSDService::get_up_epoch
+// OSDService::get_bind_epoch
 void OSDService::retrieve_epochs(epoch_t *_boot_epoch, epoch_t *_up_epoch,
                                  epoch_t *_bind_epoch) const
 {
@@ -1201,6 +1288,9 @@ void OSDService::retrieve_epochs(epoch_t *_boot_epoch, epoch_t *_up_epoch,
     *_bind_epoch = bind_epoch;
 }
 
+// called by
+// OSD::init
+// OSD::_committed_osd_maps
 void OSDService::set_epochs(const epoch_t *_boot_epoch, const epoch_t *_up_epoch,
                             const epoch_t *_bind_epoch)
 {
@@ -1256,6 +1346,9 @@ bool OSDService::prepare_to_stop()
   return true;
 }
 
+// called by
+// OSD::ms_dispatch
+// OSD::_committed_osd_maps
 void OSDService::got_stop_ack()
 {
   Mutex::Locker l(is_stopping_lock);
@@ -1268,6 +1361,8 @@ void OSDService::got_stop_ack()
   }
 }
 
+// called by
+// OSDService::send_incremental_map
 MOSDMap *OSDService::build_incremental_map_msg(epoch_t since, epoch_t to,
                                                OSDSuperblock& sblock)
 {
@@ -1332,6 +1427,9 @@ void OSDService::send_incremental_map(epoch_t since, Connection *con,
   send_map(m, con);
 }
 
+// called by
+// OSDService::try_get_map
+// OSDService::get_map_bl
 bool OSDService::_get_map_bl(epoch_t e, bufferlist& bl)
 {
   bool found = map_bl_cache.lookup(e, &bl);
@@ -1344,6 +1442,8 @@ bool OSDService::_get_map_bl(epoch_t e, bufferlist& bl)
   return found;
 }
 
+// called by
+// OSDService::build_incremental_map_msg
 bool OSDService::get_inc_map_bl(epoch_t e, bufferlist& bl)
 {
   Mutex::Locker l(map_cache_lock);
@@ -1357,30 +1457,42 @@ bool OSDService::get_inc_map_bl(epoch_t e, bufferlist& bl)
   return found;
 }
 
+// called by
+// OSDService::_get_map_bl
+// OSDService::add_map_bl
 void OSDService::_add_map_bl(epoch_t e, bufferlist& bl)
 {
   dout(10) << "add_map_bl " << e << " " << bl.length() << " bytes" << dendl;
   map_bl_cache.add(e, bl);
 }
 
+// called by
+// OSDService::get_inc_map_bl
+// OSDService::add_map_inc_bl
 void OSDService::_add_map_inc_bl(epoch_t e, bufferlist& bl)
 {
   dout(10) << "add_map_inc_bl " << e << " " << bl.length() << " bytes" << dendl;
   map_bl_inc_cache.add(e, bl);
 }
 
+// called by
+// OSD::pin_map_inc_bl
 void OSDService::pin_map_inc_bl(epoch_t e, bufferlist &bl)
 {
   Mutex::Locker l(map_cache_lock);
   map_bl_inc_cache.pin(e, bl);
 }
 
+// called by
+// OSD::pin_map_bl
 void OSDService::pin_map_bl(epoch_t e, bufferlist &bl)
 {
   Mutex::Locker l(map_cache_lock);
   map_bl_cache.pin(e, bl);
 }
 
+// called by
+// OSD.cc/C_OnMapApply::finish
 void OSDService::clear_map_bl_cache_pins(epoch_t e)
 {
   Mutex::Locker l(map_cache_lock);
@@ -1388,6 +1500,9 @@ void OSDService::clear_map_bl_cache_pins(epoch_t e)
   map_bl_cache.clear_pinned(e);
 }
 
+// called by
+// OSDService::try_get_map
+// OSDService::add_map
 OSDMapRef OSDService::_add_map(OSDMap *o)
 {
   epoch_t e = o->get_epoch();
@@ -1407,6 +1522,14 @@ OSDMapRef OSDService::_add_map(OSDMap *o)
   return l;
 }
 
+// called by
+// OSDService::init_splits_between
+// OSDService::handle_misdirected_op
+// OSD::load_pgs
+// OSD::project_pg_history
+// OSD::advance_pg
+// OSD::handle_op
+// OSDService::get_map
 OSDMapRef OSDService::try_get_map(epoch_t epoch)
 {
   Mutex::Locker l(map_cache_lock);
@@ -1466,6 +1589,8 @@ void OSDService::reply_op_error(OpRequestRef op, int err, eversion_t v,
   m->get_connection()->send_message(reply);
 }
 
+// called by
+// PrimaryLogPG::do_op
 void OSDService::handle_misdirected_op(PG *pg, OpRequestRef op)
 {
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
@@ -1543,6 +1668,8 @@ void OSDService::queue_for_peering(PG *pg)
   peering_wq.queue(pg);
 }
 
+// called by
+// PrimaryLogPG::AwaitAsyncWork::AwaitAsyncWork
 void OSDService::queue_for_snap_trim(PG *pg) {
   dout(10) << "queueing " << *pg << " for snaptrim" << dendl;
 
@@ -1655,6 +1782,9 @@ free_store:
   return ret;
 }
 
+// static
+// called by
+// OSD::mkfs
 int OSD::write_meta(ObjectStore *store, uuid_d& cluster_fsid, uuid_d& osd_fsid, int whoami)
 {
   char val[80];
@@ -1682,6 +1812,9 @@ int OSD::write_meta(ObjectStore *store, uuid_d& cluster_fsid, uuid_d& osd_fsid, 
   return 0;
 }
 
+// static
+// called by
+// ceph_osd.cc/main
 int OSD::peek_meta(ObjectStore *store, std::string& magic,
 		   uuid_d& cluster_fsid, uuid_d& osd_fsid, int& whoami)
 {
@@ -1847,6 +1980,8 @@ void OSD::handle_signal(int signum)
   shutdown();
 }
 
+// called by
+// ceph_osd.cc/main
 int OSD::pre_init()
 {
   Mutex::Locker lock(osd_lock);
@@ -2789,7 +2924,8 @@ void OSD::create_recoverystate_perf()
   cct->get_perfcounters_collection()->add(recoverystate_perf);
 }
 
-// called by OSD::handle_signal
+// called by
+// OSD::handle_signal
 int OSD::shutdown()
 {
   if (!service.prepare_to_stop())
@@ -4193,6 +4329,8 @@ void OSD::_remove_heartbeat_peer(int n)
   heartbeat_peers.erase(q);
 }
 
+// called by
+// OSDService::need_heartbeat_peer_update
 void OSD::need_heartbeat_peer_update()
 {
   if (is_stopping())
@@ -4848,6 +4986,8 @@ void OSD::tick_without_osd_lock()
   tick_timer_without_osd_lock.add_event_after(OSD_TICK_INTERVAL, new C_Tick_WithoutOSDLock(this));
 }
 
+// called by
+// OSD::tick_without_osd_lock
 void OSD::check_ops_in_flight()
 {
   vector<string> warnings;
@@ -5204,6 +5344,8 @@ void OSD::RemoveWQ::_process(
 }
 // =========================================
 
+// called by
+// Messenger::ms_deliver_handle_connect
 void OSD::ms_handle_connect(Connection *con)
 {
   if (con->get_peer_type() == CEPH_ENTITY_TYPE_MON) {
@@ -5241,6 +5383,8 @@ void OSD::ms_handle_connect(Connection *con)
   }
 }
 
+// called by
+// Messenger::ms_deliver_handle_fast_connect
 void OSD::ms_handle_fast_connect(Connection *con)
 {
   if (con->get_peer_type() != CEPH_ENTITY_TYPE_MON &&
@@ -5260,6 +5404,8 @@ void OSD::ms_handle_fast_connect(Connection *con)
   }
 }
 
+// called by
+// Messenger::ms_deliver_handle_fast_accept
 void OSD::ms_handle_fast_accept(Connection *con)
 {
   if (con->get_peer_type() != CEPH_ENTITY_TYPE_MON &&
@@ -5279,6 +5425,8 @@ void OSD::ms_handle_fast_accept(Connection *con)
   }
 }
 
+// called by
+// Messenger::ms_deliver_handle_reset
 bool OSD::ms_handle_reset(Connection *con)
 {
   OSD::Session *session = (OSD::Session *)con->get_priv();
@@ -5296,6 +5444,9 @@ bool OSD::ms_handle_reset(Connection *con)
   return true;
 }
 
+// called by
+// OSD::HeartbeatDispatcher::ms_handle_refused
+// Messenger::ms_deliver_handle_refused
 bool OSD::ms_handle_refused(Connection *con)
 {
   // default true
@@ -5333,6 +5484,8 @@ bool OSD::ms_handle_refused(Connection *con)
   return true;
 }
 
+// created by
+// OSD::start_boot
 struct C_OSD_GetVersion : public Context {
   OSD *osd;
   uint64_t oldest, newest;
@@ -5343,6 +5496,11 @@ struct C_OSD_GetVersion : public Context {
   }
 };
 
+// called by
+// OSD::init
+// OSD::tick
+// OSD::ms_handle_connect
+// OSD::_committed_osd_maps
 void OSD::start_boot()
 {
   if (!_is_healthy()) {
@@ -5419,6 +5577,9 @@ void OSD::_preboot(epoch_t oldest, epoch_t newest)
     osdmap_subscribe(oldest - 1, true);
 }
 
+// called by
+// OSD::start_boot
+// OSD::_committed_osd_maps
 void OSD::start_waiting_for_healthy()
 {
   dout(1) << "start_waiting_for_healthy" << dendl;
@@ -5426,6 +5587,8 @@ void OSD::start_waiting_for_healthy()
   last_heartbeat_resample = utime_t();
 }
 
+// called by
+// OSD::start_boot
 bool OSD::_is_healthy()
 {
   if (!cct->get_heartbeat_map()->is_healthy()) {
@@ -5455,6 +5618,9 @@ bool OSD::_is_healthy()
   return true;
 }
 
+// called by
+// OSD::ms_handle_connect
+// OSD::_preboot
 void OSD::_send_boot()
 {
   dout(10) << "_send_boot" << dendl;
@@ -5523,6 +5689,8 @@ void OSD::_send_boot()
   set_state(STATE_BOOTING);
 }
 
+// called by
+// OSD::_send_boot
 void OSD::_collect_metadata(map<string,string> *pm)
 {
   // config info
@@ -5542,6 +5710,8 @@ void OSD::_collect_metadata(map<string,string> *pm)
   dout(10) << __func__ << " " << *pm << dendl;
 }
 
+// called by
+// OSD::process_peering_events
 void OSD::queue_want_up_thru(epoch_t want)
 {
   map_lock.get_read();
@@ -5561,6 +5731,9 @@ void OSD::queue_want_up_thru(epoch_t want)
   map_lock.put_read();
 }
 
+// called by
+// OSD::ms_handle_connect
+// OSD::queue_want_up_thru
 void OSD::send_alive()
 {
   assert(mon_report_lock.is_locked());
@@ -5574,6 +5747,9 @@ void OSD::send_alive()
   }
 }
 
+// called by
+// OSD::handle_osd_map
+// OSD::rerequest_full_maps
 void OSD::request_full_map(epoch_t first, epoch_t last)
 {
   dout(10) << __func__ << " " << first << ".." << last
@@ -5600,6 +5776,8 @@ void OSD::request_full_map(epoch_t first, epoch_t last)
   monc->send_mon_message(req);
 }
 
+// called by
+// OSD::handle_osd_map
 void OSD::got_full_map(epoch_t e)
 {
   assert(requested_full_first <= requested_full_last);
@@ -5628,6 +5806,8 @@ void OSD::got_full_map(epoch_t e)
            << ", still need more" << dendl;
 }
 
+// called by
+// OSD::ms_handle_connect
 void OSD::requeue_failures()
 {
   Mutex::Locker l(heartbeat_lock);
@@ -5643,6 +5823,9 @@ void OSD::requeue_failures()
 	   << failure_queue.size() << dendl;
 }
 
+// called by
+// OSD::tick_without_osd_lock
+// OSD::ms_handle_connect
 void OSD::send_failures()
 {
   assert(map_lock.is_locked());
@@ -5662,12 +5845,19 @@ void OSD::send_failures()
   }
 }
 
+// called by
+// OSD::handle_osd_ping, for MOSDPing::PING_REPLY
+// OSD::_committed_osd_maps
 void OSD::send_still_alive(epoch_t epoch, const entity_inst_t &i)
 {
   MOSDFailure *m = new MOSDFailure(monc->get_fsid(), i, 0, epoch, MOSDFailure::FLAG_ALIVE);
   monc->send_mon_message(m);
 }
 
+// called by
+// OSD::tick_without_osd_lock
+// OSD::ms_handle_connect
+// OSD::flush_pg_stats
 void OSD::send_pg_stats(const utime_t &now)
 {
   assert(map_lock.is_locked());
@@ -5726,6 +5916,8 @@ void OSD::send_pg_stats(const utime_t &now)
   pg_stat_queue_lock.Unlock();
 }
 
+// called by
+// OSD::_dispatch, for MSG_PGSTATSACK
 void OSD::handle_pg_stats_ack(MPGStatsAck *ack)
 {
   dout(10) << "handle_pg_stats_ack " << dendl;
@@ -5788,6 +5980,8 @@ void OSD::handle_pg_stats_ack(MPGStatsAck *ack)
   ack->put();
 }
 
+// called by
+// OSD::do_command, for "flush_pg_stats"
 void OSD::flush_pg_stats()
 {
   dout(10) << "flush_pg_stats" << dendl;
@@ -6382,12 +6576,13 @@ void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, buffe
   }
 }
 
-
-
-
+// called by
+// OSD::HeartbeatDispatcher::ms_fast_dispatch
+// OSD::HeartbeatDispatcher::ms_dispatch
 bool OSD::heartbeat_dispatch(Message *m)
 {
   dout(30) << "heartbeat_dispatch " << m << dendl;
+
   switch (m->get_type()) {
 
   case CEPH_MSG_PING:
@@ -7252,6 +7447,8 @@ void OSD::wait_for_new_map(OpRequestRef op)
  * assimilate new OSDMap(s).  scan pgs, etc.
  */
 
+// called by
+// OSD::_committed_osd_maps
 void OSD::note_down_osd(int peer)
 {
   assert(osd_lock.is_locked());
@@ -7271,6 +7468,8 @@ void OSD::note_down_osd(int peer)
   heartbeat_lock.Unlock();
 }
 
+// called by
+// OSD::_committed_osd_maps
 void OSD::note_up_osd(int peer)
 {
   service.forget_peer_epoch(peer, osdmap->get_epoch() - 1);
@@ -7305,6 +7504,15 @@ struct C_OnMapApply : public Context {
   }
 };
 
+// called by
+// OSD::handle_osd_ping
+// OSD::heartbeat
+// OSD::_preboot
+// OSD::dispatch_op_fast
+// OSD::wait_for_new_map
+// OSD::handle_osd_map
+// OSD::_committed_osd_maps
+// OSD::activate_map
 void OSD::osdmap_subscribe(version_t epoch, bool force_request)
 {
   OSDMapRef osdmap = service.get_osdmap();
@@ -7317,6 +7525,8 @@ void OSD::osdmap_subscribe(version_t epoch, bool force_request)
   }
 }
 
+// called by
+// OSD::handle_osd_map
 void OSD::trim_maps(epoch_t oldest, int nreceived, bool skip_maps)
 {
   epoch_t min = std::min(oldest, service.map_cache.cached_key_lower_bound());
@@ -10097,6 +10307,8 @@ void OSD::process_peering_events(
 
 // --------------------------------
 
+// called by
+// md_config_t::add_observer
 const char** OSD::get_tracked_conf_keys() const
 {
   static const char* KEYS[] = {
@@ -10129,6 +10341,9 @@ const char** OSD::get_tracked_conf_keys() const
   return KEYS;
 }
 
+// called by
+// md_config_t::_apply_changes
+// md_config_t::call_all_observers
 void OSD::handle_conf_change(const struct md_config_t *conf,
 			     const std::set <std::string> &changed)
 {
@@ -10233,6 +10448,9 @@ void OSD::update_log_config()
   derr << "log_to_monitors " << log_to_monitors << dendl;
 }
 
+// called by
+// OSD::init
+// OSD::handle_conf_change
 void OSD::check_config()
 {
   // some sanity checks
@@ -10248,6 +10466,9 @@ void OSD::check_config()
   }
 }
 
+// called by
+// OSD::init
+// OSD::handle_conf_change
 void OSD::set_disk_tp_priority()
 {
   dout(10) << __func__
@@ -10269,6 +10490,8 @@ void OSD::set_disk_tp_priority()
 
 // --------------------------------
 
+// called by
+// OSD::asok_command, for "get_latest_osdmap"
 void OSD::get_latest_osdmap()
 {
   dout(10) << __func__ << " -- start" << dendl;
@@ -10282,6 +10505,8 @@ void OSD::get_latest_osdmap()
 
 // --------------------------------
 
+// called by
+// PrimaryLogPG::do_op
 int OSD::init_op_flags(OpRequestRef& op)
 {
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());

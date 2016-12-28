@@ -51,42 +51,49 @@ void PGBackend::rollback(
     RollbackVisitor(
       const hobject_t &hoid,
       PGBackend *pg) : hoid(hoid), pg(pg) {}
+
     void append(uint64_t old_size) override {
       ObjectStore::Transaction temp;
       pg->rollback_append(hoid, old_size, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
     void setattrs(map<string, boost::optional<bufferlist> > &attrs) override {
       ObjectStore::Transaction temp;
       pg->rollback_setattrs(hoid, attrs, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
     void rmobject(version_t old_version) override {
       ObjectStore::Transaction temp;
       pg->rollback_stash(hoid, old_version, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
     void try_rmobject(version_t old_version) override {
       ObjectStore::Transaction temp;
       pg->rollback_try_stash(hoid, old_version, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
     void create() override {
       ObjectStore::Transaction temp;
       pg->rollback_create(hoid, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
     void update_snaps(const set<snapid_t> &snaps) override {
       ObjectStore::Transaction temp;
       pg->get_parent()->pgb_set_object_snap_mapping(hoid, snaps, &temp);
       temp.append(t);
       temp.swap(t);
     }
+
     void rollback_extents(
       version_t gen,
       const vector<pair<uint64_t, uint64_t> > &extents) override {
@@ -254,6 +261,8 @@ int PGBackend::objects_list_partial(
   return r;
 }
 
+// called by
+// PG::build_scrub_map_chunk
 int PGBackend::objects_list_range(
   const hobject_t &start,
   const hobject_t &end,
@@ -287,6 +296,13 @@ int PGBackend::objects_list_range(
   return r;
 }
 
+// called by
+// PrimaryLogPG::pgls_filter
+// PrimaryLogPG::do_pg_op, for CEPH_OSD_OP_PGNLS, CEPH_OSD_OP_PGLS
+// PrimaryLogPG::get_object_context
+// PrimaryLogPG::get_snapset_context
+// PrimaryLogPG::scan_range
+// PrimaryLogPG::getattr_maybe_cache
 int PGBackend::objects_get_attr(
   const hobject_t &hoid,
   const string &attr,
@@ -305,6 +321,10 @@ int PGBackend::objects_get_attr(
   return r;
 }
 
+// called by
+// PrimaryLogPG::get_object_context
+// PrimaryLogPG::getattrs_maybe_cache
+// NOTE: only overrided by ECBackend
 int PGBackend::objects_get_attrs(
   const hobject_t &hoid,
   map<string, bufferlist> *out)
@@ -315,6 +335,8 @@ int PGBackend::objects_get_attrs(
     *out);
 }
 
+// called by
+// PGBackend::RollbackVisitor::setattrs
 void PGBackend::rollback_setattrs(
   const hobject_t &hoid,
   map<string, boost::optional<bufferlist> > &old_attrs,
@@ -339,6 +361,8 @@ void PGBackend::rollback_setattrs(
     to_set);
 }
 
+// called by
+// PGBackend::RollbackVisitor::append
 void PGBackend::rollback_append(
   const hobject_t &hoid,
   uint64_t old_size,
@@ -350,6 +374,8 @@ void PGBackend::rollback_append(
     old_size);
 }
 
+// called by
+// PGBackend::RollbackVisitor::rmobject
 void PGBackend::rollback_stash(
   const hobject_t &hoid,
   version_t old_version,
@@ -365,6 +391,8 @@ void PGBackend::rollback_stash(
     ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
 }
 
+// called by
+// PGBackend::RollbackVisitor::try_rmobject
 void PGBackend::rollback_try_stash(
   const hobject_t &hoid,
   version_t old_version,
@@ -379,6 +407,8 @@ void PGBackend::rollback_try_stash(
     ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
 }
 
+// called by
+// PGBackend::RollbackVisitor::rollback_extents
 void PGBackend::rollback_extents(
   version_t gen,
   const vector<pair<uint64_t, uint64_t> > &extents,
@@ -399,6 +429,9 @@ void PGBackend::rollback_extents(
     ghobject_t(hoid, gen, shard));
 }
 
+// called by
+// Trimmer::rmobject
+// Trimmer::rollback_extents
 void PGBackend::trim_rollback_object(
   const hobject_t &hoid,
   version_t old_version,
@@ -408,6 +441,9 @@ void PGBackend::trim_rollback_object(
     coll, ghobject_t(hoid, old_version, get_parent()->whoami_shard().shard));
 }
 
+// static
+// called by
+// PrimaryLogPG::PrimaryLogPG
 PGBackend *PGBackend::build_pg_backend(
   const pg_pool_t &pool,
   const OSDMapRef curmap,
@@ -448,6 +484,8 @@ PGBackend *PGBackend::build_pg_backend(
   }
 }
 
+// called by
+// PG::build_scrub_map_chunk
 /*
  * pg lock may or may not be held
  */
@@ -673,6 +711,8 @@ static int dcount(const object_info_t &oi)
   return count;
 }
 
+// called by
+// PGBackend::be_compare_scrubmaps, which called by PG::scrub_compare_maps
 map<pg_shard_t, ScrubMap *>::const_iterator
   PGBackend::be_select_auth_object(
   const hobject_t &obj,
