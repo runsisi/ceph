@@ -1973,7 +1973,8 @@ void FileStore::queue_op(OpSequencer *osr, Op *o)
   op_wq.queue(osr);
 }
 
-// called by FileStore::queue_transactions
+// called by
+// FileStore::queue_transactions
 void FileStore::op_queue_reserve_throttle(Op *o)
 {
   // BackoffThrottle
@@ -1984,7 +1985,8 @@ void FileStore::op_queue_reserve_throttle(Op *o)
   logger->set(l_filestore_op_queue_bytes, throttle_bytes.get_current());
 }
 
-// called by FileStore::_finish_op which called by FileStore::OpWQ::_finish_process
+// called by
+// FileStore::_finish_op which called by FileStore::OpWQ::_finish_process
 void FileStore::op_queue_release_throttle(Op *o)
 {
   throttle_ops.put();
@@ -2116,7 +2118,8 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
   } else {
     osr = new OpSequencer(cct, next_osr_id.inc());
     osr->set_cct(cct);
-    osr->parent = posr;
+
+    osr->parent = posr; // ceph::shared_ptr<ObjectStore::Sequencer> PG::osr
     posr->p = osr;
 
     dout(5) << "queue_transactions new " << osr << " " << *osr << dendl;
@@ -4738,11 +4741,25 @@ int FileStore::_collection_remove_recursive(const coll_t &cid,
 // --------------------------
 // collections
 
+// called by
+// FuseStore.cc/os_readdir
+// OSD::clear_temp_objects
+// OSD::load_pgs
+// ceph_objectstore_tool.cc/action_on_all_objects_in_pg
+// _action_on_all_objects
+// finish_remove_pgs
+// apply_layout_settings
+// main
+// rebuild_mondb.cc/update_pgmap_pg
 int FileStore::list_collections(vector<coll_t>& ls)
 {
   return list_collections(ls, false);
 }
 
+// called by
+// FileStore::mount
+// FileStore::init_temp_collections
+// FileStore::list_collections(vector<coll_t>& ls)
 int FileStore::list_collections(vector<coll_t>& ls, bool include_temp)
 {
   tracepoint(objectstore, list_collections_enter);
@@ -4824,6 +4841,12 @@ int FileStore::collection_stat(const coll_t& c, struct stat *st)
   return r;
 }
 
+// called by
+// os/FuseStore.cc/os_getattr
+// ceph_objectstore_tool.cc/initiate_new_remove_pg
+// ceph_objectstore_tool.cc/ObjectStoreTool::do_import
+// FileStore::_collection_move_rename
+// FileStore::_split_collection
 bool FileStore::collection_exists(const coll_t& c)
 {
   tracepoint(objectstore, collection_exists_enter, c.c_str());
@@ -4833,6 +4856,9 @@ bool FileStore::collection_exists(const coll_t& c)
   return ret;
 }
 
+// called by
+// os/FuseStore.cc/os_unlink, for FN_COLLECTION
+// FileStore::_collection_hint_expected_num_objs
 int FileStore::collection_empty(const coll_t& c, bool *empty)
 {
   tracepoint(objectstore, collection_empty_enter, c.c_str());
@@ -4861,6 +4887,16 @@ int FileStore::collection_empty(const coll_t& c, bool *empty)
   tracepoint(objectstore, collection_empty_exit, *empty);
   return 0;
 }
+// called by
+// os/FuseStore.cc/os_readdir, for FN_HASH_VAL, FN_ALL
+// OSD::clear_temp_objects
+// OSD::recursive_remove_collection
+// OSD.cc/remove_dir
+// tools/ceph_objectstore_tool.cc/_action_on_all_objects_in_pg
+// tools/ceph_objectstore_tool.cc/ObjectStoreTool::export_files
+// FileStore::_collection_remove_recursive
+// FileStore::collection_list, recursive
+// FileStore::_split_collection
 int FileStore::collection_list(const coll_t& c,
 			       const ghobject_t& orig_start,
 			       const ghobject_t& end,
@@ -4944,6 +4980,8 @@ int FileStore::collection_list(const coll_t& c,
   return 0;
 }
 
+// called by
+// TestOpsSocketHook::test_ops, for "getomap"
 int FileStore::omap_get(const coll_t& _c, const ghobject_t &hoid,
 			bufferlist *header,
 			map<string, bufferlist> *out)
@@ -4971,6 +5009,13 @@ int FileStore::omap_get(const coll_t& _c, const ghobject_t &hoid,
   return 0;
 }
 
+// called by
+// os/FuseStore.cc/os_getattr, for FN_OBJECT_OMAP_HEADER
+// os/FuseStore.cc/os_open, for FN_OBJECT_OMAP_HEADER
+// ReplicatedBackend::be_deep_scrub
+// ReplicatedBackend::build_push_op
+// tools/ceph_objectstore_tool.cc/ObjectStoreTool::export_file
+// tools/ceph_objectstore_tool.cc/do_get_omaphdr
 int FileStore::omap_get_header(
   const coll_t& _c,
   const ghobject_t &hoid,
@@ -5000,6 +5045,8 @@ int FileStore::omap_get_header(
   return 0;
 }
 
+// called by
+// os/FuseStore.cc/os_readdir
 int FileStore::omap_get_keys(const coll_t& _c, const ghobject_t &hoid, set<string> *keys)
 {
   tracepoint(objectstore, omap_get_keys_enter, _c.c_str());
@@ -5025,6 +5072,15 @@ int FileStore::omap_get_keys(const coll_t& _c, const ghobject_t &hoid, set<strin
   return 0;
 }
 
+// called by
+// FuseStore.cc/os_getattr, for FN_OBJECT_OMAP_VAL
+// FuseStore.cc/os_open, for FN_OBJECT_OMAP_VAL
+// FuseStore.cc/os_create, for FN_OBJECT_OMAP_VAL
+// PG::_has_removal_flag
+// PG::peek_map_epoch
+// PG::read_info
+// osd/SnapMapper.cc/OSDriver::get_keys
+// ceph_objectstore_tool.cc/do_get_omap
 int FileStore::omap_get_values(const coll_t& _c, const ghobject_t &hoid,
 			       const set<string> &keys,
 			       map<string, bufferlist> *out)
@@ -5062,6 +5118,7 @@ int FileStore::omap_get_values(const coll_t& _c, const ghobject_t &hoid,
   return r;
 }
 
+// not used
 int FileStore::omap_check_keys(const coll_t& _c, const ghobject_t &hoid,
 			       const set<string> &keys,
 			       set<string> *out)
@@ -5090,6 +5147,16 @@ int FileStore::omap_check_keys(const coll_t& _c, const ghobject_t &hoid,
   return 0;
 }
 
+// called by
+// PGLog::read_log_and_missing
+// FileStore::_omap_rmkeyrange
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_OMAPGETKEYS, CEPH_OSD_OP_OMAPGETVALS
+// PrimaryLogPG::fill_in_copy_get
+// ReplicatedBackend::be_deep_scrub
+// ReplicatedBackend::build_push_op
+// OSDriver::get_next
+// ceph_objectstore_tool.cc/ObjectStoreTool::export_file
+// ceph_objectstore_tool.cc/do_list_omap
 ObjectMap::ObjectMapIterator FileStore::get_omap_iterator(const coll_t& _c,
 							  const ghobject_t &hoid)
 {
@@ -5599,6 +5666,8 @@ int FileStore::_split_collection(const coll_t& cid,
   return r;
 }
 
+// called by
+// FileStore::_do_transaction, for Transaction::OP_SETALLOCHINT
 int FileStore::_set_alloc_hint(const coll_t& cid, const ghobject_t& oid,
                                uint64_t expected_object_size,
                                uint64_t expected_write_size)

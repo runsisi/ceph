@@ -5337,7 +5337,7 @@ void OSD::RemoveWQ::_process(
     0, // onapplied
     0, // oncommit
     0, // onreadable sync
-    new ContainerContext<PGRef>(pg),
+    new ContainerContext<PGRef>(pg), // oncomplete
     TrackedOpRef());
 
   item.second->finish_deleting();
@@ -8758,6 +8758,9 @@ PG::RecoveryCtx OSD::create_context()
   return rctx;
 }
 
+// created by
+// OSD::dispatch_context_transaction
+// OSD::dispatch_context
 struct C_OpenPGs : public Context {
   set<PGRef> pgs;
   ObjectStore *store;

@@ -230,7 +230,9 @@ private:
     list<pair<uint64_t, Context*> > flush_commit_waiters;
     Cond cond;
   public:
+    // will be set by FileStore::queue_transactions
     Sequencer *parent;
+
     Mutex apply_lock;  // for apply mutual exclusion
     int id;
 

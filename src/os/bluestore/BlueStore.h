@@ -1125,6 +1125,8 @@ public:
     bool map_any(std::function<bool(OnodeRef)> f);
   };
 
+  // CollectionImpl only defines a pure virtual interface
+  // get_cid
   struct Collection : public CollectionImpl {
     BlueStore *store;
     Cache *cache;       ///< our cache shard
@@ -1399,6 +1401,9 @@ public:
     }
   };
 
+  // Sequencer_impl only defines two pure virtual interfaces:
+  // flush
+  // flush_commit
   class OpSequencer : public Sequencer_impl {
   public:
     std::mutex qlock;
@@ -1421,6 +1426,7 @@ public:
 
     boost::intrusive::list_member_hook<> wal_osr_queue_item;
 
+    // will be set by BlueStore::queue_transactions
     Sequencer *parent;
 
     std::mutex wal_apply_mutex;
@@ -1760,6 +1766,8 @@ private:
   void _txc_state_proc(TransContext *txc);
   void _txc_aio_submit(TransContext *txc);
 public:
+  // called by
+  // BlueStore.cc/aio_cb
   void _txc_aio_finish(void *p) {
     _txc_state_proc(static_cast<TransContext*>(p));
   }

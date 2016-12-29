@@ -230,7 +230,7 @@ int main(int argc, const char **argv)
     usage();
   }
 
-  // the store
+  // the store, default "filestore"
   string store_type = g_conf->osd_objectstore;
   {
     char fn[PATH_MAX];
@@ -246,6 +246,7 @@ int main(int argc, const char **argv)
       ::close(fd);
     }
   }
+
   ObjectStore *store = ObjectStore::create(g_ceph_context,
 					   store_type,
 					   g_conf->osd_data,

@@ -896,6 +896,8 @@ protected:
   bool pg_stats_publish_valid;
   pg_stat_t pg_stats_publish;
 
+  // created by
+  // PG::PG, by osd->osr_registry.lookup_or_create(p, (stringify(p)))
   // for ordering writes
   ceph::shared_ptr<ObjectStore::Sequencer> osr;
 

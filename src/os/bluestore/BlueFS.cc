@@ -428,6 +428,8 @@ void BlueFS::umount()
   _shutdown_logger();
 }
 
+// called by
+// BlueStore::fsck
 int BlueFS::fsck()
 {
   std::lock_guard<std::mutex> l(lock);

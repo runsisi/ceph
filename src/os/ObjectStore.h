@@ -156,6 +156,7 @@ public:
   struct Sequencer {
     string name;
     spg_t shard_hint;
+    // will be set by BlueStore::queue_transactions, FileStore::queue_transactions
     Sequencer_implRef p;
 
     explicit Sequencer(string n)
@@ -942,12 +943,23 @@ public:
       void decode_attrset(map<string,bufferlist>& aset) {
         ::decode(aset, data_bl_p);
       }
+
+      // called by
+      // BlueStore::_txc_add_transaction, for Transaction::OP_OMAP_SETKEYS
+      // KStore::_txc_add_transaction, for Transaction::OP_OMAP_SETKEYS
+      // MemStore::_do_transaction, for Transaction::OP_OMAP_SETKEYS
       void decode_attrset_bl(bufferlist *pbl) {
 	decode_str_str_map_to_bl(data_bl_p, pbl);
       }
+
       void decode_keyset(set<string> &keys){
         ::decode(keys, data_bl_p);
       }
+
+      // called by
+      // BlueStore::_txc_add_transaction, for Transaction::OP_OMAP_RMKEYS
+      // KStore::_txc_add_transaction, for Transaction::OP_OMAP_RMKEYS
+      // MemStore::_do_transaction, for Transaction::OP_OMAP_RMKEYS
       void decode_keyset_bl(bufferlist *pbl){
         decode_str_set_to_bl(data_bl_p, pbl);
       }
@@ -1438,8 +1450,27 @@ public:
     tls.push_back(std::move(t));
     return apply_transactions(osr, tls, ondisk);
   }
+
+  // called by
+  // ObjectStore::apply_transaction
   unsigned apply_transactions(Sequencer *osr, vector<Transaction>& tls, Context *ondisk=0);
 
+  // called by
+  // OSD.cc/remove_dir
+  // OSD::do_command, for "bench"
+  // OSD::trim_maps
+  // OSD::handle_osd_map
+  // OSD::check_osdmap_features
+  // OSD::dispatch_context_transaction
+  // OSD::dispatch_context
+  // OSD::handle_pg_trim
+  // OSD::_remove_pg
+  // PG::_scan_rollback_obs
+  // PG::chunky_scrub
+  // PG::scrub_compare_maps
+  // PG::scrub_finish
+  // PrimaryLogPG::do_backfill
+  // PrimaryLogPG::submit_log_entries
   int queue_transaction(Sequencer *osr, Transaction&& t, Context *onreadable, Context *ondisk=0,
 				Context *onreadable_sync=0,
 				TrackedOpRef op = TrackedOpRef(),
@@ -1450,6 +1481,11 @@ public:
 	                      op, handle);
   }
 
+  // called by
+  // ObjectStore::apply_transactions
+  // ObjectStore::queue_transaction(..., onreadable, ondisk, onreadable_sync, ...)
+  // ObjectStore::queue_transactions(..., onreadable, ondisk, onreadable_sync, oncomplete, ...)
+  // PrimaryLogPG::queue_transactions
   int queue_transactions(Sequencer *osr, vector<Transaction>& tls,
 			 Context *onreadable, Context *ondisk=0,
 			 Context *onreadable_sync=0,
@@ -1464,12 +1500,18 @@ public:
     return queue_transactions(osr, tls, op, handle);
   }
 
+  // called by
+  // ObjectStore::ObjectStore::queue_transactions(..., onreadable, ondisk, onreadable_sync, ...)
+  // contexts are registered back of txs
   virtual int queue_transactions(
     Sequencer *osr, vector<Transaction>& tls,
     TrackedOpRef op = TrackedOpRef(),
     ThreadPool::TPHandle *handle = NULL) = 0;
 
-  // call oncomplete when both onreadable and oncommit have been completed
+  // called by
+  // ObjectStore::queue_transaction(..., oncomplete, ...) below
+  // wrap another layer on onreadable and oncommit, after this two contexts
+  // have completed, then call oncomplete
   int queue_transactions(
     Sequencer *osr,
     vector<Transaction>& tls,
@@ -1479,7 +1521,8 @@ public:
     Context *oncomplete,
     TrackedOpRef op);
 
-  // called by OSD::RemoveWQ::_process
+  // called by
+  // OSD::RemoveWQ::_process
   int queue_transaction(
     Sequencer *osr,
     Transaction&& t,
@@ -1510,6 +1553,7 @@ public:
     return 0;
   }
 
+  // only overrode by BlueStore
   virtual void get_db_statistics(Formatter *f) { }
   virtual void generate_db_histogram(Formatter *f) { }
   virtual void dump_perf_counters(Formatter *f) {}
@@ -1925,6 +1969,7 @@ public:
     return omap_get_values(c->get_cid(), oid, keys, out);
   }
 
+  // those two interfaces are not used
   /// Filters keys into out which are defined on oid
   virtual int omap_check_keys(
     const coll_t& c,                ///< [in] Collection containing oid
@@ -1954,6 +1999,9 @@ public:
     const coll_t& c,              ///< [in] collection
     const ghobject_t &oid  ///< [in] object
     ) = 0;
+
+  // did not used for public interface, instead the above is used, but BlueStore
+  // overrides the two interfaces both
   virtual ObjectMap::ObjectMapIterator get_omap_iterator(
     CollectionHandle &c,   ///< [in] collection
     const ghobject_t &oid  ///< [in] object

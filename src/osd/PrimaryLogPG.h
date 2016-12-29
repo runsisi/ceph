@@ -282,19 +282,28 @@ public:
   void send_message(int to_osd, Message *m) override {
     osd->send_message_osd_cluster(to_osd, m, get_osdmap()->get_epoch());
   }
+
+  // called by
+  // ECBackend::dispatch_recovery_messages
+  // ReplicatedBackend::_do_push
+  // ReplicatedBackend::_do_pull_response
+  // ReplicatedBackend::sub_op_push
   void queue_transaction(ObjectStore::Transaction&& t,
 			 OpRequestRef op) override {
     // construct a vector of Transaction and call ObjectStore::queue_transactions
     osd->store->queue_transaction(osr.get(), std::move(t), 0, 0, 0, op);
   }
 
-  // called by ReplicatedBackend::submit_transaction, ReplicatedBackend::sub_op_modify
-  // and ECBackend::handle_sub_write
+  // called by
+  // ECBackend::handle_sub_write
+  // ReplicatedBackend::submit_transaction
+  // ReplicatedBackend::sub_op_modify
   void queue_transactions(vector<ObjectStore::Transaction>& tls,
 			  OpRequestRef op) override {
     // do not add additional onreadable, ondisk, onreadable_sync callback
     osd->store->queue_transactions(osr.get(), tls, 0, 0, 0, op, NULL);
   }
+
   epoch_t get_epoch() const override {
     return get_osdmap()->get_epoch();
   }
