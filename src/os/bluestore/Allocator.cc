@@ -8,6 +8,8 @@
 
 #define dout_subsys ceph_subsys_bluestore
 
+// called by
+// BlueStore::_open_alloc
 Allocator *Allocator::create(CephContext* cct, string type,
                              int64_t size, int64_t block_size)
 {

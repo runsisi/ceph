@@ -113,21 +113,30 @@ void BlueFS::_update_logger_stats()
   }
 }
 
+// called by
+// bluefs_tool.cc/main
+// BlueStore::_open_db
 int BlueFS::add_block_device(unsigned id, string path)
 {
   dout(10) << __func__ << " bdev " << id << " path " << path << dendl;
+
   assert(id < bdev.size());
   assert(bdev[id] == NULL);
+
   BlockDevice *b = BlockDevice::create(cct, path, NULL, NULL);
   int r = b->open(path);
   if (r < 0) {
     delete b;
     return r;
   }
+
   dout(1) << __func__ << " bdev " << id << " path " << path
 	  << " size " << pretty_si_t(b->get_size()) << "B" << dendl;
+
   bdev[id] = b;
+
   ioc[id] = new IOContext(cct, NULL);
+
   return 0;
 }
 

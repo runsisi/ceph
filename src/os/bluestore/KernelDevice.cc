@@ -39,7 +39,7 @@ KernelDevice::KernelDevice(CephContext* cct, aio_callback_t cb, void *cbpriv)
     fs(NULL), aio(false), dio(false),
     debug_lock("KernelDevice::debug_lock"),
     flush_lock("KernelDevice::flush_lock"),
-    aio_queue(cct->_conf->bdev_aio_max_queue_depth),
+    aio_queue(cct->_conf->bdev_aio_max_queue_depth), // default 32
     aio_callback(cb),
     aio_callback_priv(cbpriv),
     aio_stop(false),
@@ -63,7 +63,9 @@ int KernelDevice::_lock()
 int KernelDevice::open(const string& p)
 {
   path = p;
+
   int r = 0;
+
   dout(1) << __func__ << " path " << path << dendl;
 
   fd_direct = ::open(path.c_str(), O_RDWR | O_DIRECT);
@@ -72,12 +74,14 @@ int KernelDevice::open(const string& p)
     derr << __func__ << " open got: " << cpp_strerror(r) << dendl;
     return r;
   }
+
   fd_buffered = ::open(path.c_str(), O_RDWR);
   if (fd_buffered < 0) {
     r = -errno;
     derr << __func__ << " open got: " << cpp_strerror(r) << dendl;
     goto out_direct;
   }
+
   dio = true;
   aio = cct->_conf->bdev_aio;
   if (!aio) {
@@ -107,6 +111,7 @@ int KernelDevice::open(const string& p)
     derr << __func__ << " fstat got " << cpp_strerror(r) << dendl;
     goto out_fail;
   }
+
   if (S_ISBLK(st.st_mode)) {
     int64_t s;
     r = get_block_device_size(fd_direct, &s);
@@ -114,6 +119,7 @@ int KernelDevice::open(const string& p)
       goto out_fail;
     }
 
+    // determine from "queue/rotational"
     rotational = block_device_is_rotational(path.c_str());
     size = s;
   } else {
@@ -126,7 +132,7 @@ int KernelDevice::open(const string& p)
   // blksize doesn't strictly matter except that some file systems may
   // require a read/modify/write if we write something smaller than
   // it.
-  block_size = cct->_conf->bdev_block_size;
+  block_size = cct->_conf->bdev_block_size; // default 4096
   if (block_size != (unsigned)st.st_blksize) {
     dout(1) << __func__ << " backing device/file reports st_blksize "
 	    << st.st_blksize << ", using bdev_block_size "
@@ -216,13 +222,16 @@ int KernelDevice::_aio_start()
 {
   if (aio) {
     dout(10) << __func__ << dendl;
+
     int r = aio_queue.init();
     if (r < 0) {
       derr << __func__ << " failed: " << cpp_strerror(r) << dendl;
       return r;
     }
+
     aio_thread.create("bstore_aio");
   }
+
   return 0;
 }
 
@@ -240,18 +249,24 @@ void KernelDevice::_aio_stop()
 void KernelDevice::_aio_thread()
 {
   dout(10) << __func__ << " start" << dendl;
+
   int inject_crash_count = 0;
+
   while (!aio_stop) {
     dout(40) << __func__ << " polling" << dendl;
+
     int max = 16;
     FS::aio_t *aio[max];
+
     int r = aio_queue.get_next_completed(cct->_conf->bdev_aio_poll_ms,
 					 aio, max);
     if (r < 0) {
       derr << __func__ << " got " << cpp_strerror(r) << dendl;
     }
+
     if (r > 0) {
       dout(30) << __func__ << " got " << r << " completed aios" << dendl;
+
       for (int i = 0; i < r; ++i) {
 	IOContext *ioc = static_cast<IOContext*>(aio[i]->priv);
 	_aio_log_finish(ioc, aio[i]->offset, aio[i]->length);
@@ -259,12 +274,15 @@ void KernelDevice::_aio_thread()
 	  std::lock_guard<std::mutex> l(debug_queue_lock);
 	  debug_aio_unlink(*aio[i]);
 	}
+
 	int r = aio[i]->get_return_value();
+
 	dout(10) << __func__ << " finished aio " << aio[i] << " r " << r
 		 << " ioc " << ioc
 		 << " with " << (ioc->num_running.load() - 1)
 		 << " aios left" << dendl;
 	assert(r >= 0);
+
 	int left = --ioc->num_running;
 	// NOTE: once num_running is decremented we can no longer
 	// trust aio[] values; they my be freed (e.g., by BlueFS::_fsync)
@@ -280,6 +298,7 @@ void KernelDevice::_aio_thread()
 	}
       }
     }
+
     if (cct->_conf->bdev_debug_aio) {
       utime_t now = ceph_clock_now();
       std::lock_guard<std::mutex> l(debug_queue_lock);
@@ -299,7 +318,9 @@ void KernelDevice::_aio_thread()
 	}
       }
     }
+
     reap_ioc();
+
     if (cct->_conf->bdev_inject_crash) {
       ++inject_crash_count;
       if (inject_crash_count * cct->_conf->bdev_aio_poll_ms / 1000 >
@@ -311,7 +332,9 @@ void KernelDevice::_aio_thread()
       }
     }
   }
+
   reap_ioc();
+
   dout(10) << __func__ << " end" << dendl;
 }
 

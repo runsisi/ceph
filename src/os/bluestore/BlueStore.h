@@ -1596,13 +1596,13 @@ public:
   // --------------------------------------------------------
   // members
 private:
-  BlueFS *bluefs;
+  BlueFS *bluefs;               // created by BlueStore::_open_db
   unsigned bluefs_shared_bdev;  ///< which bluefs bdev we are sharing
-  KeyValueDB *db;
-  BlockDevice *bdev;
+  KeyValueDB *db;               // created by BlueStore::_open_db
+  BlockDevice *bdev;            // created by BlueStore::_open_bdev
   std::string freelist_type;
-  FreelistManager *fm;
-  Allocator *alloc;
+  FreelistManager *fm;          // created by BlueStore::_open_fm
+  Allocator *alloc;             // created by BlueStore::_open_alloc
   uuid_d fsid;
   int path_fd;  ///< open handle to $path
   int fsid_fd;  ///< open handle (locked) to $path/fsid

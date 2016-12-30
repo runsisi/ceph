@@ -2921,22 +2921,23 @@ BlueStore::BlueStore(CephContext *cct, const string& path)
     fsid_fd(-1),
     mounted(false),
     coll_lock("BlueStore::coll_lock"),
-    throttle_ops(cct, "bluestore_max_ops", cct->_conf->bluestore_max_ops),
-    throttle_bytes(cct, "bluestore_max_bytes", cct->_conf->bluestore_max_bytes),
+    throttle_ops(cct, "bluestore_max_ops", cct->_conf->bluestore_max_ops),      // default 512
+    throttle_bytes(cct, "bluestore_max_bytes", cct->_conf->bluestore_max_bytes), // default 64*1024*1024
     throttle_wal_ops(cct, "bluestore_wal_max_ops",
-		     cct->_conf->bluestore_max_ops +
-		     cct->_conf->bluestore_wal_max_ops),
+		     cct->_conf->bluestore_max_ops +            // default 512
+		     cct->_conf->bluestore_wal_max_ops),        // default 512
     throttle_wal_bytes(cct, "bluestore_wal_max_bytes",
-		       cct->_conf->bluestore_max_bytes +
-		       cct->_conf->bluestore_wal_max_bytes),
+		       cct->_conf->bluestore_max_bytes +        // default 64*1024*1024
+		       cct->_conf->bluestore_wal_max_bytes),    // default 128*1024*1024
     wal_tp(cct,
 	   "BlueStore::wal_tp",
            "tp_wal",
-	   cct->_conf->bluestore_sync_wal_apply ? 0 : cct->_conf->bluestore_wal_threads,
+           // default true
+	   cct->_conf->bluestore_sync_wal_apply ? 0 : cct->_conf->bluestore_wal_threads, // default 4
 	   "bluestore_wal_threads"),
     wal_wq(this,
-	     cct->_conf->bluestore_wal_thread_timeout,
-	     cct->_conf->bluestore_wal_thread_suicide_timeout,
+	     cct->_conf->bluestore_wal_thread_timeout, // default 30
+	     cct->_conf->bluestore_wal_thread_suicide_timeout, // default 120
 	     &wal_tp),
     m_finisher_num(1),
     kv_sync_thread(this),
@@ -2951,7 +2952,9 @@ BlueStore::BlueStore(CephContext *cct, const string& path)
   cct->_conf->add_observer(this);
   set_cache_shards(1);
 
+  // default false
   if (cct->_conf->bluestore_shard_finishers) {
+    // default 5
     m_finisher_num = cct->_conf->osd_op_num_shards;
   }
 
@@ -3267,6 +3270,7 @@ int BlueStore::get_block_device_fsid(CephContext* cct, const string& path,
 int BlueStore::_open_path()
 {
   assert(path_fd < 0);
+
   path_fd = ::open(path.c_str(), O_DIRECTORY);
   if (path_fd < 0) {
     int r = -errno;
@@ -3286,6 +3290,7 @@ void BlueStore::_close_path()
 int BlueStore::_write_bdev_label(string path, bluestore_bdev_label_t label)
 {
   dout(10) << __func__ << " path " << path << " label " << label << dendl;
+
   bufferlist bl;
   ::encode(label, bl);
   uint32_t crc = bl.crc32c(-1);
@@ -3302,6 +3307,7 @@ int BlueStore::_write_bdev_label(string path, bluestore_bdev_label_t label)
 	 << dendl;
     return fd;
   }
+
   int r = bl.write_fd(fd);
   if (r < 0) {
     derr << __func__ << " failed to write to " << path
@@ -3359,6 +3365,7 @@ int BlueStore::_check_or_set_bdev_label(
   string path, uint64_t size, string desc, bool create)
 {
   bluestore_bdev_label_t label;
+
   if (create) {
     label.osd_uuid = fsid;
     label.size = size;
@@ -3371,12 +3378,14 @@ int BlueStore::_check_or_set_bdev_label(
     int r = _read_bdev_label(cct, path, &label);
     if (r < 0)
       return r;
+
     if (label.osd_uuid != fsid) {
       derr << __func__ << " bdev " << path << " fsid " << label.osd_uuid
 	   << " does not match our fsid " << fsid << dendl;
       return -EIO;
     }
   }
+
   return 0;
 }
 
@@ -3400,14 +3409,19 @@ void BlueStore::_set_alloc_sizes(void)
 int BlueStore::_open_bdev(bool create)
 {
   bluestore_bdev_label_t label;
+
   assert(bdev == NULL);
+
   string p = path + "/block";
+
   bdev = BlockDevice::create(cct, p, aio_cb, static_cast<void*>(this));
+
   int r = bdev->open(p);
   if (r < 0)
     goto fail;
 
   if (bdev->supported_bdev_label()) {
+    // false for nvme, true for kernel dev
     r = _check_or_set_bdev_label(p, bdev->get_size(), "main", create);
     if (r < 0)
       goto fail_close;
@@ -3417,6 +3431,7 @@ int BlueStore::_open_bdev(bool create)
   block_size = bdev->get_block_size();
   block_mask = ~(block_size - 1);
   block_size_order = ctz(block_size);
+
   assert(block_size == 1u << block_size_order);
   return 0;
 
@@ -3447,17 +3462,21 @@ void BlueStore::_close_bdev()
 int BlueStore::_open_fm(bool create)
 {
   assert(fm == NULL);
+
   fm = FreelistManager::create(cct, freelist_type, db, PREFIX_ALLOC);
 
   if (create) {
     // initialize freespace
     dout(20) << __func__ << " initializing freespace" << dendl;
+
     KeyValueDB::Transaction t = db->get_transaction();
+
     {
       bufferlist bl;
       bl.append(freelist_type);
       t->set(PREFIX_SUPER, "freelist_type", bl);
     }
+
     fm->create(bdev->get_size(), t);
 
     uint64_t reserved = 0;
@@ -3521,8 +3540,9 @@ int BlueStore::_open_fm(bool create)
 	start += l + u;
       }
     }
+
     db->submit_transaction_sync(t);
-  }
+  } // create
 
   int r = fm->init();
   if (r < 0) {
@@ -3531,6 +3551,7 @@ int BlueStore::_open_fm(bool create)
     fm = NULL;
     return r;
   }
+
   return 0;
 }
 
@@ -3555,6 +3576,7 @@ int BlueStore::_open_alloc()
 {
   assert(alloc == NULL);
   assert(bdev->get_size());
+
   alloc = Allocator::create(cct, cct->_conf->bluestore_allocator,
                             bdev->get_size(),
                             min_alloc_size);
@@ -3597,15 +3619,19 @@ void BlueStore::_close_alloc()
 int BlueStore::_open_fsid(bool create)
 {
   assert(fsid_fd < 0);
+
   int flags = O_RDWR;
+
   if (create)
     flags |= O_CREAT;
+
   fsid_fd = ::openat(path_fd, "fsid", flags, 0644);
   if (fsid_fd < 0) {
     int err = -errno;
     derr << __func__ << " " << cpp_strerror(err) << dendl;
     return err;
   }
+
   return 0;
 }
 
@@ -3708,7 +3734,9 @@ bool BlueStore::test_mount_in_use()
 int BlueStore::_open_db(bool create)
 {
   int r;
+
   assert(!db);
+
   string fn = path + "/db";
   string options;
   stringstream err;
@@ -3716,6 +3744,7 @@ int BlueStore::_open_db(bool create)
 
   string kv_backend;
   if (create) {
+    // default "rocksdb"
     kv_backend = cct->_conf->bluestore_kvbackend;
   } else {
     r = read_meta("kv_backend", &kv_backend);
@@ -3724,10 +3753,13 @@ int BlueStore::_open_db(bool create)
       return -EIO;
     }
   }
+
   dout(10) << __func__ << " kv_backend = " << kv_backend << dendl;
 
   bool do_bluefs;
+
   if (create) {
+    // default true
     do_bluefs = cct->_conf->bluestore_bluefs;
   } else {
     string s;
@@ -3736,6 +3768,7 @@ int BlueStore::_open_db(bool create)
       derr << __func__ << " unable to read 'bluefs' meta" << dendl;
       return -EIO;
     }
+
     if (s == "1") {
       do_bluefs = true;
     } else if (s == "0") {
@@ -3746,15 +3779,19 @@ int BlueStore::_open_db(bool create)
       return -EIO;
     }
   }
+
   dout(10) << __func__ << " do_bluefs = " << do_bluefs << dendl;
 
   rocksdb::Env *env = NULL;
+
   if (do_bluefs) {
     dout(10) << __func__ << " initializing bluefs" << dendl;
+
     if (kv_backend != "rocksdb") {
       derr << " backend must be rocksdb to use bluefs" << dendl;
       return -EINVAL;
     }
+
     bluefs = new BlueFS(cct);
 
     string bfn;
@@ -3781,12 +3818,14 @@ int BlueStore::_open_db(bool create)
           goto free_bluefs;
         }
       }
+
       if (create) {
 	bluefs->add_block_extent(
 	  BlueFS::BDEV_DB,
 	  BLUEFS_START,
 	  bluefs->get_block_device_size(BlueFS::BDEV_DB) - BLUEFS_START);
       }
+
       bluefs_shared_bdev = BlueFS::BDEV_SLOW;
     } else {
       bluefs_shared_bdev = BlueFS::BDEV_DB;
@@ -3800,6 +3839,7 @@ int BlueStore::_open_db(bool create)
 	   << cpp_strerror(r) << dendl;
       goto free_bluefs;
     }
+
     if (create) {
       // note: we might waste a 4k block here if block.db is used, but it's
       // simpler.
@@ -3841,6 +3881,7 @@ int BlueStore::_open_db(bool create)
 	  bluefs->get_block_device_size(BlueFS::BDEV_WAL) -
 	   BDEV_LABEL_BLOCK_SIZE);
       }
+
       cct->_conf->set_val("rocksdb_separate_wal_dir", "true");
     } else {
       cct->_conf->set_val("rocksdb_separate_wal_dir", "false");
@@ -3849,14 +3890,17 @@ int BlueStore::_open_db(bool create)
     if (create) {
       bluefs->mkfs(fsid);
     }
+
     r = bluefs->mount();
     if (r < 0) {
       derr << __func__ << " failed bluefs mount: " << cpp_strerror(r) << dendl;
       goto free_bluefs;
     }
+
     if (cct->_conf->bluestore_bluefs_env_mirror) {
       rocksdb::Env *a = new BlueRocksEnv(bluefs);
       rocksdb::Env *b = rocksdb::Env::Default();
+
       if (create) {
 	string cmd = "rm -rf " + path + "/db " +
 	  path + "/db.slow " +
@@ -3864,6 +3908,7 @@ int BlueStore::_open_db(bool create)
 	int r = system(cmd.c_str());
 	(void)r;
       }
+
       env = new rocksdb::EnvMirror(b, a, false, true);
     } else {
       env = new BlueRocksEnv(bluefs);
@@ -3904,7 +3949,7 @@ int BlueStore::_open_db(bool create)
       return r;
     }
 
-    // wal_dir, too!
+    // wal_dir, too! default false
     if (cct->_conf->rocksdb_separate_wal_dir) {
       string walfn = path + "/db.wal";
       r = ::mkdir(walfn.c_str(), 0755);
@@ -3930,6 +3975,7 @@ int BlueStore::_open_db(bool create)
       delete bluefs;
       bluefs = NULL;
     }
+
     // delete env manually here since we can't depend on db to do this
     // under this case
     delete env;
@@ -3938,17 +3984,21 @@ int BlueStore::_open_db(bool create)
   }
 
   FreelistManager::setup_merge_operators(db);
+
   db->set_merge_operator(PREFIX_STAT, merge_op);
 
   if (kv_backend == "rocksdb")
     options = cct->_conf->bluestore_rocksdb_options;
+
   db->init(options);
   if (create)
     r = db->create_and_open(err);
   else
     r = db->open(err);
+
   if (r) {
     derr << __func__ << " erroring opening db: " << err.str() << dendl;
+
     if (bluefs) {
       bluefs->umount();
       delete bluefs;
@@ -3958,6 +4008,7 @@ int BlueStore::_open_db(bool create)
     db = NULL;
     return -EIO;
   }
+
   dout(1) << __func__ << " opened " << kv_backend
 	  << " path " << fn << " options " << options << dendl;
   return 0;
@@ -4544,6 +4595,7 @@ int BlueStore::mount()
   int r = _open_path();
   if (r < 0)
     return r;
+
   r = _open_fsid(false);
   if (r < 0)
     goto out_path;
@@ -4593,6 +4645,7 @@ int BlueStore::mount()
   for (auto f : finishers) {
     f->start();
   }
+
   wal_tp.start();
   kv_sync_thread.create("bstore_kv_sync");
 
