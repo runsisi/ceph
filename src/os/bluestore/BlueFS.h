@@ -423,10 +423,14 @@ public:
     std::lock_guard<std::mutex> l(lock);
     _invalidate_cache(f, offset, len);
   }
+
+  // called by
+  // BlueRocksWritableFile::Allocate
   int preallocate(FileRef f, uint64_t offset, uint64_t len) {
     std::lock_guard<std::mutex> l(lock);
     return _preallocate(f, offset, len);
   }
+
   int truncate(FileWriter *h, uint64_t offset) {
     std::lock_guard<std::mutex> l(lock);
     return _truncate(h, offset);

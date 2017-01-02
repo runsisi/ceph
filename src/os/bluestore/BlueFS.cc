@@ -335,6 +335,7 @@ int BlueFS::mkfs(uuid_d osd_uuid)
       log_t.op_alloc_add(bdev, q.get_start(), q.get_len());
     }
   }
+
   _flush_and_sync_log(l);
 
   // write supers
@@ -509,6 +510,8 @@ int BlueFS::_write_super()
   return 0;
 }
 
+// called by
+// BlueFS::mount
 int BlueFS::_open_super()
 {
   dout(10) << __func__ << dendl;
@@ -537,11 +540,14 @@ int BlueFS::_open_super()
          << dendl;
     return -EIO;
   }
+
   dout(10) << __func__ << " superblock " << super.version << dendl;
   dout(10) << __func__ << " log_fnode " << super.log_fnode << dendl;
   return 0;
 }
 
+// called by
+// BlueFS::mount
 int BlueFS::_replay(bool noop)
 {
   dout(10) << __func__ << (noop ? " NO-OP" : "") << dendl;
@@ -1063,9 +1069,12 @@ uint64_t BlueFS::_estimate_log_size()
   return ROUND_UP_TO(size, super.block_size);
 }
 
+// never used
 void BlueFS::compact_log()
 {
   std::unique_lock<std::mutex> l(lock);
+
+  // default false
   if (cct->_conf->bluefs_compact_log_sync) {
      _compact_log_sync();
   } else {
@@ -1073,21 +1082,27 @@ void BlueFS::compact_log()
   }
 }
 
+// called by
+// BlueFS::sync_metadata
 bool BlueFS::_should_compact_log()
 {
   uint64_t current = log_writer->file->fnode.size;
   uint64_t expected = _estimate_log_size();
+
   float ratio = (float)current / (float)expected;
+
   dout(10) << __func__ << " current 0x" << std::hex << current
 	   << " expected " << expected << std::dec
 	   << " ratio " << ratio
 	   << (new_log ? " (async compaction in progress)" : "")
 	   << dendl;
+
   if (new_log ||
       current < cct->_conf->bluefs_log_compact_min_size ||
       ratio < cct->_conf->bluefs_log_compact_min_ratio) {
     return false;
   }
+
   return true;
 }
 
@@ -1125,9 +1140,13 @@ void BlueFS::_compact_log_dump_metadata(bluefs_transaction_t *t)
   }
 }
 
+// called by
+// BlueFS::compact_log
+// BlueFS::sync_metadata
 void BlueFS::_compact_log_sync()
 {
   dout(10) << __func__ << dendl;
+
   File *log_file = log_writer->file.get();
 
   // clear out log (be careful who calls us!!!)
@@ -1137,6 +1156,7 @@ void BlueFS::_compact_log_sync()
   _compact_log_dump_metadata(&t);
 
   dout(20) << __func__ << " op_jump_seq " << log_seq << dendl;
+
   t.op_jump_seq(log_seq);
 
   bufferlist bl;
@@ -1144,6 +1164,7 @@ void BlueFS::_compact_log_sync()
   _pad_bl(bl);
 
   uint64_t need = bl.length() + cct->_conf->bluefs_max_log_runway;
+
   dout(20) << __func__ << " need " << need << dendl;
 
   mempool::bluefs::vector<bluefs_extent_t> old_extents;
@@ -1200,10 +1221,15 @@ void BlueFS::_compact_log_sync()
  *
  * 8. Release the old log space.  Clean up.
  */
+// called by
+// BlueFS::compact_log
+// BlueFS::sync_metadata
 void BlueFS::_compact_log_async(std::unique_lock<std::mutex>& l)
 {
   dout(10) << __func__ << dendl;
+
   File *log_file = log_writer->file.get();
+
   assert(!new_log);
   assert(!new_log_writer);
 
@@ -1342,12 +1368,22 @@ void BlueFS::_pad_bl(bufferlist& bl)
   }
 }
 
+// never used
 void BlueFS::flush_log()
 {
   std::unique_lock<std::mutex> l(lock);
+
   _flush_and_sync_log(l);
 }
 
+// called by
+// BlueFS::add_block_extent
+// BlueFS::reclaim_blocks
+// BlueFS::mkfs
+// BlueFS::_compact_log_async
+// BlueFS::flush_log
+// BlueFS::_fsync
+// BlueFS::sync_metadata
 int BlueFS::_flush_and_sync_log(std::unique_lock<std::mutex>& l,
 				uint64_t want_seq,
 				uint64_t jump_to)
@@ -1357,11 +1393,13 @@ int BlueFS::_flush_and_sync_log(std::unique_lock<std::mutex>& l,
 	     << " log is currently flushing, waiting" << dendl;
     log_cond.wait(l);
   }
+
   if (want_seq && want_seq <= log_seq_stable) {
     dout(10) << __func__ << " want_seq " << want_seq << " <= log_seq_stable "
 	     << log_seq_stable << ", done" << dendl;
     return 0;
   }
+
   if (log_t.empty() && dirty_files.empty()) {
     dout(10) << __func__ << " want_seq " << want_seq
 	     << " " << log_t << " not dirty, dirty_files empty, no-op" << dendl;
@@ -1468,6 +1506,7 @@ int BlueFS::_flush_and_sync_log(std::unique_lock<std::mutex>& l,
              << " already >= out seq " << seq
              << ", we lost a race against another log flush, done" << dendl;
   }
+
   _update_logger_stats();
 
   return 0;
@@ -1679,19 +1718,28 @@ void BlueFS::_claim_completed_aios(FileWriter *h, list<FS::aio_t> *ls)
   dout(10) << __func__ << " got " << ls->size() << " aios" << dendl;
 }
 
+// called by
+// BlueFS::_compact_log_sync
+// BlueFS::_compact_log_async
+// BlueFS::_flush_and_sync_log
+// BlueFS::_fsync
 void BlueFS::wait_for_aio(FileWriter *h)
 {
   // NOTE: this is safe to call without a lock, as long as our reference is
   // stable.
   dout(10) << __func__ << " " << h << dendl;
+
   utime_t start = ceph_clock_now();
+
   for (auto p : h->iocv) {
     if (p) {
       p->aio_wait();
     }
   }
+
   utime_t end = ceph_clock_now();
   utime_t dur = end - start;
+
   dout(10) << __func__ << " " << h << " done in " << dur << dendl;
 }
 
@@ -1784,6 +1832,11 @@ int BlueFS::_fsync(FileWriter *h, std::unique_lock<std::mutex>& l)
   return 0;
 }
 
+// called by
+// BlueFS::mkfs
+// BlueFS::_compact_log_sync
+// BlueFS::_compact_log_async
+// BlueFS::_flush_and_sync_log
 void BlueFS::flush_bdev()
 {
   // NOTE: this is safe to call without a lock.
@@ -1799,7 +1852,10 @@ int BlueFS::_allocate(uint8_t id, uint64_t len,
 {
   dout(10) << __func__ << " len 0x" << std::hex << len << std::dec
            << " from " << (int)id << dendl;
+
   assert(id < alloc.size());
+
+  // default 1048576
   uint64_t min_alloc_size = cct->_conf->bluefs_alloc_size;
 
   uint64_t left = ROUND_UP_TO(len, min_alloc_size);
@@ -1807,6 +1863,7 @@ int BlueFS::_allocate(uint8_t id, uint64_t len,
   if (alloc[id]) {
     r = alloc[id]->reserve(left);
   }
+
   if (r < 0) {
     if (id != BDEV_SLOW) {
       if (bdev[id]) {
@@ -1816,8 +1873,10 @@ int BlueFS::_allocate(uint8_t id, uint64_t len,
 		<< "; fallback to bdev " << (int)id + 1
 		<< std::dec << dendl;
       }
+
       return _allocate(id + 1, len, ev);
     }
+
     if (bdev[id])
       derr << __func__ << " failed to allocate 0x" << std::hex << left
 	   << " on bdev " << (int)id
@@ -1825,6 +1884,7 @@ int BlueFS::_allocate(uint8_t id, uint64_t len,
     else
       derr << __func__ << " failed to allocate 0x" << std::hex << left
 	   << " on bdev " << (int)id << ", dne" << std::dec << dendl;
+
     return r;
   }
 
@@ -1859,38 +1919,54 @@ int BlueFS::_allocate(uint8_t id, uint64_t len,
   return 0;
 }
 
+// called by
+// BlueFS::preallocate
 int BlueFS::_preallocate(FileRef f, uint64_t off, uint64_t len)
 {
   dout(10) << __func__ << " file " << f->fnode << " 0x"
 	   << std::hex << off << "~" << len << std::dec << dendl;
+
   if (f->deleted) {
     dout(10) << __func__ << "  deleted, no-op" << dendl;
     return 0;
   }
+
   assert(f->fnode.ino > 1);
+
   uint64_t allocated = f->fnode.get_allocated();
   if (off + len > allocated) {
     uint64_t want = off + len - allocated;
+
     int r = _allocate(f->fnode.prefer_bdev, want, &f->fnode.extents);
     if (r < 0)
       return r;
+
     log_t.op_file_update(f->fnode);
   }
+
   return 0;
 }
 
+// called by
+// BlueFS::umount
+// BlueRocksDirectory::Fsync
 void BlueFS::sync_metadata()
 {
   std::unique_lock<std::mutex> l(lock);
+
   if (log_t.empty()) {
     dout(10) << __func__ << " - no pending log events" << dendl;
     return;
   }
+
   dout(10) << __func__ << dendl;
+
   utime_t start = ceph_clock_now();
   vector<interval_set<uint64_t>> to_release(pending_release.size());
   to_release.swap(pending_release);
+
   _flush_and_sync_log(l);
+
   for (unsigned i = 0; i < to_release.size(); ++i) {
     for (auto p = to_release[i].begin(); p != to_release[i].end(); ++p) {
       alloc[i]->release(p.get_start(), p.get_len());
@@ -1898,6 +1974,7 @@ void BlueFS::sync_metadata()
   }
 
   if (_should_compact_log()) {
+    // default false
     if (cct->_conf->bluefs_compact_log_sync) {
       _compact_log_sync();
     } else {
@@ -1907,9 +1984,13 @@ void BlueFS::sync_metadata()
 
   utime_t end = ceph_clock_now();
   utime_t dur = end - start;
+
   dout(10) << __func__ << " done in " << dur << dendl;
 }
 
+// called by
+// BlueRocksEnv::NewWritableFile
+// BlueRocksEnv::ReuseWritableFile
 int BlueFS::open_for_write(
   const string& dirname,
   const string& filename,

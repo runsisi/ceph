@@ -4272,6 +4272,7 @@ int BlueStore::_setup_block_symlink_or_file(
   int flags = O_RDWR;
   if (create)
     flags |= O_CREAT;
+
   if (epath.length()) {
     r = ::symlinkat(epath.c_str(), path_fd, name.c_str());
     if (r < 0) {
@@ -4297,6 +4298,7 @@ int BlueStore::_setup_block_symlink_or_file(
       VOID_TEMP_FAILURE_RETRY(::close(fd));
     }
   }
+
   if (size) {
     int fd = ::openat(path_fd, name.c_str(), flags, 0644);
     if (fd >= 0) {
@@ -4315,6 +4317,7 @@ int BlueStore::_setup_block_symlink_or_file(
 	  return r;
 	}
 
+	// default false
 	if (cct->_conf->bluestore_block_preallocate_file) {
 #ifdef HAVE_POSIX_FALLOCATE
 	  r = ::posix_fallocate(fd, 0, size);
@@ -4341,9 +4344,11 @@ int BlueStore::_setup_block_symlink_or_file(
 	  }
 #endif
 	}
+
 	dout(1) << __func__ << " resized " << name << " file to "
 		<< pretty_si_t(size) << "B" << dendl;
       }
+
       VOID_TEMP_FAILURE_RETRY(::close(fd));
     } else {
       int r = -errno;
@@ -4354,6 +4359,7 @@ int BlueStore::_setup_block_symlink_or_file(
       }
     }
   }
+
   return 0;
 }
 
@@ -4439,6 +4445,7 @@ int BlueStore::mkfs()
 				   cct->_conf->bluestore_block_create);
   if (r < 0)
     goto out_close_fsid;
+
   if (cct->_conf->bluestore_bluefs) {
     r = _setup_block_symlink_or_file("block.wal", cct->_conf->bluestore_block_wal_path,
 	cct->_conf->bluestore_block_wal_size,
@@ -4452,6 +4459,7 @@ int BlueStore::mkfs()
       goto out_close_fsid;
   }
 
+  // open "block"
   r = _open_bdev(true);
   if (r < 0)
     goto out_close_fsid;
