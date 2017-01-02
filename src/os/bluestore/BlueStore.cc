@@ -3897,6 +3897,7 @@ int BlueStore::_open_db(bool create)
       goto free_bluefs;
     }
 
+    // default false
     if (cct->_conf->bluestore_bluefs_env_mirror) {
       rocksdb::Env *a = new BlueRocksEnv(bluefs);
       rocksdb::Env *b = rocksdb::Env::Default();
@@ -3934,8 +3935,9 @@ int BlueStore::_open_db(bool create)
 
     if (create) {
       env->CreateDir(fn);
+
       if (cct->_conf->rocksdb_separate_wal_dir)
-	env->CreateDir(fn + ".wal");
+        env->CreateDir(fn + ".wal");
       if (cct->_conf->rocksdb_db_paths.length())
 	env->CreateDir(fn + ".slow");
     }
@@ -3991,6 +3993,7 @@ int BlueStore::_open_db(bool create)
     options = cct->_conf->bluestore_rocksdb_options;
 
   db->init(options);
+
   if (create)
     r = db->create_and_open(err);
   else
