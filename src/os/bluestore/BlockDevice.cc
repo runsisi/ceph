@@ -46,6 +46,7 @@ void IOContext::aio_wait()
 }
 
 // called by
+// BlueFS::add_block_device
 // BlueStore::_open_bdev
 BlockDevice *BlockDevice::create(CephContext* cct, const string& path,
 				 aio_callback_t cb, void *cbpriv)

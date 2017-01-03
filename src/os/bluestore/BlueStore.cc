@@ -3784,6 +3784,9 @@ int BlueStore::_open_db(bool create)
   rocksdb::Env *env = NULL;
 
   if (do_bluefs) {
+
+    // create or open
+
     dout(10) << __func__ << " initializing bluefs" << dendl;
 
     if (kv_backend != "rocksdb") {
@@ -3825,8 +3828,10 @@ int BlueStore::_open_db(bool create)
 	  bluefs->get_block_device_size(BlueFS::BDEV_DB) - BLUEFS_START);
       }
 
+      // "/block.db" exists
       bluefs_shared_bdev = BlueFS::BDEV_SLOW;
     } else {
+      // "/block.db" does not exist
       bluefs_shared_bdev = BlueFS::BDEV_DB;
     }
 
@@ -3849,12 +3854,17 @@ int BlueStore::_open_db(bool create)
       // align to bluefs's alloc_size
       initial = P2ROUNDUP(initial, cct->_conf->bluefs_alloc_size);
       initial += cct->_conf->bluefs_alloc_size - BLUEFS_START;
+
       bluefs->add_block_extent(bluefs_shared_bdev, BLUEFS_START, initial);
+
       bluefs_extents.insert(BLUEFS_START, initial);
     }
 
     bfn = path + "/block.wal";
     if (::stat(bfn.c_str(), &st) == 0) {
+
+      // "/block.wal" exists
+
       r = bluefs->add_block_device(BlueFS::BDEV_WAL, bfn);
       if (r < 0) {
         derr << __func__ << " add block device(" << bfn << ") returned: " 
@@ -3881,8 +3891,10 @@ int BlueStore::_open_db(bool create)
 	   BDEV_LABEL_BLOCK_SIZE);
       }
 
+      // "/block.wal" exists
       cct->_conf->set_val("rocksdb_separate_wal_dir", "true");
     } else {
+      // "/block.wal" does not exist
       cct->_conf->set_val("rocksdb_separate_wal_dir", "false");
     }
 
@@ -3918,6 +3930,9 @@ int BlueStore::_open_db(bool create)
     }
 
     if (bluefs_shared_bdev == BlueFS::BDEV_SLOW) {
+
+      // "/block.db" exists
+
       // we have both block.db and block; tell rocksdb!
       // note: the second (last) size value doesn't really matter
       ostringstream db_paths;
@@ -3928,6 +3943,7 @@ int BlueStore::_open_db(bool create)
                << fn + ".slow" << ","
                << (uint64_t)(slow_size * 95 / 100);
       cct->_conf->set_val("rocksdb_db_paths", db_paths.str(), false, false);
+
       dout(10) << __func__ << " set rocksdb_db_paths to "
 	       << cct->_conf->rocksdb_db_paths << dendl;
     }
@@ -3936,11 +3952,18 @@ int BlueStore::_open_db(bool create)
       env->CreateDir(fn);
 
       if (cct->_conf->rocksdb_separate_wal_dir)
+        // "/block.wal" exists
         env->CreateDir(fn + ".wal");
+
       if (cct->_conf->rocksdb_db_paths.length())
+        // "/block.db" exists
 	env->CreateDir(fn + ".slow");
     }
   } else if (create) {
+
+    // create but not use bluefs
+
+    // "/db"
     int r = ::mkdir(fn.c_str(), 0755);
     if (r < 0)
       r = -errno;

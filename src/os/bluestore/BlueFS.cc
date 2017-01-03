@@ -288,6 +288,7 @@ int BlueFS::get_block_extents(unsigned id, interval_set<uint64_t> *extents)
   dout(10) << __func__ << " bdev " << id << dendl;
   if (id >= block_all.size())
     return -EINVAL;
+
   *extents = block_all[id];
   return 0;
 }
@@ -297,6 +298,7 @@ int BlueFS::get_block_extents(unsigned id, interval_set<uint64_t> *extents)
 int BlueFS::mkfs(uuid_d osd_uuid)
 {
   std::unique_lock<std::mutex> l(lock);
+
   dout(1) << __func__
 	  << " osd_uuid " << osd_uuid
 	  << dendl;
@@ -320,14 +322,18 @@ int BlueFS::mkfs(uuid_d osd_uuid)
     cct->_conf->bluefs_max_log_runway,
     &log_file->fnode.extents);
   assert(r == 0);
+
   log_writer = _create_writer(log_file);
 
   // initial txn
   log_t.op_init();
   for (unsigned bdev = 0; bdev < MAX_BDEV; ++bdev) {
+    // block_all was initialized by BlueFS::_init_alloc
     interval_set<uint64_t>& p = block_all[bdev];
+
     if (p.empty())
       continue;
+
     for (interval_set<uint64_t>::iterator q = p.begin(); q != p.end(); ++q) {
       dout(20) << __func__ << " op_alloc_add " << bdev << " 0x"
                << std::hex << q.get_start() << "~" << q.get_len() << std::dec
