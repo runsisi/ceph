@@ -3267,6 +3267,11 @@ int BlueStore::get_block_device_fsid(CephContext* cct, const string& path,
   return 0;
 }
 
+// called by
+// BlueStore::test_mount_in_use
+// BlueStore::mkfs
+// BlueStore::mount
+// BlueStore::fsck
 int BlueStore::_open_path()
 {
   assert(path_fd < 0);
@@ -3717,9 +3722,11 @@ bool BlueStore::test_mount_in_use()
   r = _open_fsid(false);
   if (r < 0)
     goto out_path;
+
   r = _lock_fsid();
   if (r < 0)
     ret = true; // if we can't lock, it is in use
+
   _close_fsid();
  out_path:
   _close_path();
@@ -3824,7 +3831,7 @@ int BlueStore::_open_db(bool create)
       if (create) {
 	bluefs->add_block_extent(
 	  BlueFS::BDEV_DB,
-	  BLUEFS_START,
+	  BLUEFS_START, // 8192
 	  bluefs->get_block_device_size(BlueFS::BDEV_DB) - BLUEFS_START);
       }
 
@@ -4068,14 +4075,17 @@ void BlueStore::_close_db()
 int BlueStore::_reconcile_bluefs_freespace()
 {
   dout(10) << __func__ << dendl;
+
   interval_set<uint64_t> bset;
   int r = bluefs->get_block_extents(bluefs_shared_bdev, &bset);
   assert(r == 0);
+
   if (bset == bluefs_extents) {
     dout(10) << __func__ << " we agree bluefs has 0x" << std::hex << bset
 	     << std::dec << dendl;
     return 0;
   }
+
   dout(10) << __func__ << " bluefs says 0x" << std::hex << bset << std::dec
 	   << dendl;
   dout(10) << __func__ << " super says  0x" << std::hex << bluefs_extents
@@ -4094,10 +4104,12 @@ int BlueStore::_reconcile_bluefs_freespace()
   interval_set<uint64_t> super_extra;
   super_extra = bluefs_extents;
   super_extra.subtract(overlap);
+
   if (!super_extra.empty()) {
     // This is normal: it can happen if we commit to give extents to
     // bluefs and we crash before bluefs commits that it owns them.
     dout(10) << __func__ << " super extra " << super_extra << dendl;
+
     for (interval_set<uint64_t>::iterator p = super_extra.begin();
 	 p != super_extra.end();
 	 ++p) {
@@ -4251,6 +4263,7 @@ void BlueStore::_commit_bluefs_freespace(
 int BlueStore::_open_collections(int *errors)
 {
   assert(coll_map.empty());
+
   KeyValueDB::Iterator it = db->get_iterator(PREFIX_COLL);
   for (it->upper_bound(string());
        it->valid();
@@ -4262,6 +4275,7 @@ int BlueStore::_open_collections(int *errors)
 	  this,
 	  cache_shards[cid.hash_to_shard(cache_shards.size())],
 	  cid));
+
       bufferlist bl = it->value();
       bufferlist::iterator p = bl.begin();
       try {
@@ -4271,14 +4285,18 @@ int BlueStore::_open_collections(int *errors)
              << pretty_binary_string(it->key()) << dendl;
         return -EIO;
       }   
+
       dout(20) << __func__ << " opened " << cid << dendl;
+
       coll_map[cid] = c;
     } else {
       derr << __func__ << " unrecognized collection " << it->key() << dendl;
+
       if (errors)
 	(*errors)++;
     }
   }
+
   return 0;
 }
 
@@ -4390,6 +4408,7 @@ int BlueStore::_setup_block_symlink_or_file(
 int BlueStore::mkfs()
 {
   dout(1) << __func__ << " path " << path << dendl;
+
   int r;
   uuid_d old_fsid;
 
@@ -4829,6 +4848,7 @@ int BlueStore::_fsck_check_extents(
 int BlueStore::fsck(bool deep)
 {
   dout(1) << __func__ << (deep ? " (deep)" : " (shallow)") << " start" << dendl;
+
   int errors = 0;
   set<uint64_t> used_nids;
   set<uint64_t> used_omap_head;

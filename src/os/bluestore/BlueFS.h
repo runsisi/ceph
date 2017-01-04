@@ -355,8 +355,11 @@ public:
     FileReader **h,
     bool random = false);
 
+  // called by
+  // BlueRocksWritableFile::~BlueRocksWritableFile
   void close_writer(FileWriter *h) {
     std::lock_guard<std::mutex> l(lock);
+
     _close_writer(h);
   }
 
@@ -393,18 +396,32 @@ public:
   int reclaim_blocks(unsigned bdev, uint64_t want,
 		     AllocExtentVector *extents);
 
+  // called by
+  // BlueRocksWritableFile::Flush
   void flush(FileWriter *h) {
     std::lock_guard<std::mutex> l(lock);
     _flush(h, false);
   }
+
+  // called by
+  // BlueRocksWritableFile::RangeSync
   void flush_range(FileWriter *h, uint64_t offset, uint64_t length) {
     std::lock_guard<std::mutex> l(lock);
+
     _flush_range(h, offset, length);
   }
+
+  // called by
+  // BlueRocksWritableFile::Sync
   int fsync(FileWriter *h) {
     std::unique_lock<std::mutex> l(lock);
+
     return _fsync(h, l);
   }
+
+  // called by
+  // BlueRocksSequentialFile::Read
+  // bluefs_tool.cc/main
   int read(FileReader *h, FileReaderBuffer *buf, uint64_t offset, size_t len,
 	   bufferlist *outbl, char *out) {
     // no need to hold the global lock here; we only touch h and
@@ -412,6 +429,9 @@ public:
     // atomics and asserts).
     return _read(h, buf, offset, len, outbl, out);
   }
+
+  // called by
+  // BlueRocksRandomAccessFile::Read
   int read_random(FileReader *h, uint64_t offset, size_t len,
 		  char *out) {
     // no need to hold the global lock here; we only touch h and
@@ -419,6 +439,11 @@ public:
     // atomics and asserts).
     return _read_random(h, offset, len, out);
   }
+
+  // called by
+  // BlueRocksSequentialFile::InvalidateCache
+  // BlueRocksRandomAccessFile::InvalidateCache
+  // BlueRocksWritableFile::InvalidateCache
   void invalidate_cache(FileRef f, uint64_t offset, uint64_t len) {
     std::lock_guard<std::mutex> l(lock);
     _invalidate_cache(f, offset, len);
@@ -428,9 +453,11 @@ public:
   // BlueRocksWritableFile::Allocate
   int preallocate(FileRef f, uint64_t offset, uint64_t len) {
     std::lock_guard<std::mutex> l(lock);
+
     return _preallocate(f, offset, len);
   }
 
+  // BlueRocksWritableFile::Close
   int truncate(FileWriter *h, uint64_t offset) {
     std::lock_guard<std::mutex> l(lock);
     return _truncate(h, offset);
