@@ -2405,6 +2405,7 @@ class PrepareBluestoreBlockWAL(PrepareSpace):
         super(PrepareBluestoreBlockWAL, self).__init__(args)
 
     def get_space_size(self):
+        # default 96 * 1024*1024
         block_size = get_conf(
             cluster=self.args.cluster,
             variable='bluestore_block_wal_size',
@@ -2999,6 +3000,8 @@ class PrepareFilestoreData(PrepareData):
         self.populate_data_path_device(*to_prepare_list)
 
 
+# created by
+# PrepareBluestore
 class PrepareBluestoreData(PrepareData):
 
     def get_space_size(self):
