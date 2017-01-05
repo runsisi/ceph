@@ -18,6 +18,7 @@ Allocator *Allocator::create(CephContext* cct, string type,
   } else if (type == "bitmap") {
     return new BitMapAllocator(cct, size, block_size);
   }
+
   lderr(cct) << "Allocator::" << __func__ << " unknown alloc type "
 	     << type << dendl;
   return nullptr;

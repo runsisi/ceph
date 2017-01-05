@@ -3855,11 +3855,11 @@ int BlueStore::_open_db(bool create)
       // note: we might waste a 4k block here if block.db is used, but it's
       // simpler.
       uint64_t initial =
-	bdev->get_size() * (cct->_conf->bluestore_bluefs_min_ratio +
-			    cct->_conf->bluestore_bluefs_gift_ratio);
-      initial = MAX(initial, cct->_conf->bluestore_bluefs_min);
+	bdev->get_size() * (cct->_conf->bluestore_bluefs_min_ratio +    // default 0.02
+			    cct->_conf->bluestore_bluefs_gift_ratio);   // default 0.02
+      initial = MAX(initial, cct->_conf->bluestore_bluefs_min); // default 1*1024*1024*1024
       // align to bluefs's alloc_size
-      initial = P2ROUNDUP(initial, cct->_conf->bluefs_alloc_size);
+      initial = P2ROUNDUP(initial, cct->_conf->bluefs_alloc_size);      // default 1048576
       initial += cct->_conf->bluefs_alloc_size - BLUEFS_START;
 
       bluefs->add_block_extent(bluefs_shared_bdev, BLUEFS_START, initial);
@@ -4154,15 +4154,19 @@ int BlueStore::_balance_bluefs_freespace(PExtentVector *extents)
 
   uint64_t gift = 0;
   uint64_t reclaim = 0;
-  if (bluefs_ratio < cct->_conf->bluestore_bluefs_min_ratio) {
-    gift = cct->_conf->bluestore_bluefs_gift_ratio * total_free;
+
+  if (bluefs_ratio < cct->_conf->bluestore_bluefs_min_ratio) {          // default 0.02
+    gift = cct->_conf->bluestore_bluefs_gift_ratio * total_free;        // default 0.02
+
     dout(10) << __func__ << " bluefs_ratio " << bluefs_ratio
 	     << " < min_ratio " << cct->_conf->bluestore_bluefs_min_ratio
 	     << ", should gift " << pretty_si_t(gift) << dendl;
   } else if (bluefs_ratio > cct->_conf->bluestore_bluefs_max_ratio) {
     reclaim = cct->_conf->bluestore_bluefs_reclaim_ratio * total_free;
+
     if (bluefs_total - reclaim < cct->_conf->bluestore_bluefs_min)
       reclaim = bluefs_total - cct->_conf->bluestore_bluefs_min;
+
     dout(10) << __func__ << " bluefs_ratio " << bluefs_ratio
 	     << " > max_ratio " << cct->_conf->bluestore_bluefs_max_ratio
 	     << ", should reclaim " << pretty_si_t(reclaim) << dendl;
@@ -4171,11 +4175,14 @@ int BlueStore::_balance_bluefs_freespace(PExtentVector *extents)
     cct->_conf->bluestore_bluefs_min <
       (uint64_t)(cct->_conf->bluestore_bluefs_max_ratio * total_free)) {
     uint64_t g = cct->_conf->bluestore_bluefs_min - bluefs_total;
+
     dout(10) << __func__ << " bluefs_total " << bluefs_total
 	     << " < min " << cct->_conf->bluestore_bluefs_min
 	     << ", should gift " << pretty_si_t(g) << dendl;
+
     if (g > gift)
       gift = g;
+
     reclaim = 0;
   }
 

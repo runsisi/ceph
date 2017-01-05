@@ -29,6 +29,7 @@ struct bluefs_fnode_t {
   uint64_t size;
   utime_t mtime;
   uint8_t prefer_bdev;
+
   mempool::bluefs::vector<bluefs_extent_t> extents;
 
   bluefs_fnode_t() : ino(0), size(0), prefer_bdev(0) {}
@@ -37,6 +38,7 @@ struct bluefs_fnode_t {
     uint64_t r = 0;
     for (auto& p : extents)
       r += p.length;
+
     return r;
   }
 

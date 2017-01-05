@@ -174,6 +174,9 @@ public:
     uint64_t get_buf_end() {
       return bl_off + bl.length();
     }
+
+    // called by
+    // BlueFS::_read
     uint64_t get_buf_remaining(uint64_t p) {
       if (p >= bl_off && p < bl_off + bl.length())
 	return bl_off + bl.length() - p;
@@ -192,7 +195,7 @@ public:
     MEMPOOL_CLASS_HELPERS();
 
     FileRef file;
-    FileReaderBuffer buf;
+    FileReaderBuffer buf;       // prefetch buf
     bool random;
     bool ignore_eof;        ///< used when reading our log file
 
@@ -203,6 +206,7 @@ public:
 	ignore_eof(ie) {
       ++file->num_readers;
     }
+
     ~FileReader() {
       --file->num_readers;
     }

@@ -345,8 +345,10 @@ void KernelDevice::_aio_log_start(
 {
   dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
 	   << std::dec << dendl;
+
   if (cct->_conf->bdev_debug_inflight_ios) {
     Mutex::Locker l(debug_lock);
+
     if (debug_inflight.intersects(offset, length)) {
       derr << __func__ << " inflight overlap of 0x"
 	   << std::hex
@@ -354,6 +356,7 @@ void KernelDevice::_aio_log_start(
 	   << " with " << debug_inflight << dendl;
       ceph_abort();
     }
+
     debug_inflight.insert(offset, length);
   }
 }
@@ -388,8 +391,10 @@ void KernelDevice::_aio_log_finish(
 {
   dout(20) << __func__ << " " << aio << " 0x"
 	   << std::hex << offset << "~" << length << std::dec << dendl;
+
   if (cct->_conf->bdev_debug_inflight_ios) {
     Mutex::Locker l(debug_lock);
+
     debug_inflight.erase(offset, length);
   }
 }
@@ -546,13 +551,16 @@ int KernelDevice::read(uint64_t off, uint64_t len, bufferlist *pbl,
   dout(5) << __func__ << " 0x" << std::hex << off << "~" << len << std::dec
 	  << (buffered ? " (buffered)" : " (direct)")
 	  << dendl;
+
   assert(off % block_size == 0);
   assert(len % block_size == 0);
   assert(len > 0);
   assert(off < size);
   assert(off + len <= size);
 
+  // debug only
   _aio_log_start(ioc, off, len);
+
   ++ioc->num_reading;
 
   bufferptr p = buffer::create_page_aligned(len);
@@ -562,6 +570,7 @@ int KernelDevice::read(uint64_t off, uint64_t len, bufferlist *pbl,
     r = -errno;
     goto out;
   }
+
   assert((uint64_t)r == len);
   pbl->push_back(std::move(p));
 
@@ -570,9 +579,13 @@ int KernelDevice::read(uint64_t off, uint64_t len, bufferlist *pbl,
   *_dout << dendl;
 
  out:
+  // debug only
   _aio_log_finish(ioc, off, len);
+
   --ioc->num_reading;
+
   ioc->aio_wake();
+
   return r < 0 ? r : 0;
 }
 
