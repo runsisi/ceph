@@ -1685,6 +1685,7 @@ int BlueFS::_flush_range(FileWriter *h, uint64_t offset, uint64_t length)
   dout(10) << __func__ << " " << h << " pos 0x" << std::hex << h->pos
 	   << " 0x" << offset << "~" << length << std::dec
 	   << " to " << h->file->fnode << dendl;
+
   assert(!h->file->deleted);
   assert(h->file->num_readers.load() == 0);
 
@@ -1698,9 +1699,11 @@ int BlueFS::_flush_range(FileWriter *h, uint64_t offset, uint64_t length)
 
   if (offset + length <= h->pos)
     return 0;
+
   if (offset < h->pos) {
     length -= h->pos - offset;
     offset = h->pos;
+
     dout(10) << " still need 0x"
              << std::hex << offset << "~" << length << std::dec
              << dendl;
@@ -1952,6 +1955,7 @@ void BlueFS::wait_for_aio(FileWriter *h)
 int BlueFS::_flush(FileWriter *h, bool force)
 {
   h->buffer_appender.flush();
+
   uint64_t length = h->buffer.length();
   uint64_t offset = h->pos;
   if (!force &&
@@ -2021,24 +2025,35 @@ int BlueFS::_truncate(FileWriter *h, uint64_t offset)
 int BlueFS::_fsync(FileWriter *h, std::unique_lock<std::mutex>& l)
 {
   dout(10) << __func__ << " " << h << " " << h->file->fnode << dendl;
+
   int r = _flush(h, true);
   if (r < 0)
      return r;
+
   uint64_t old_dirty_seq = h->file->dirty_seq;
+
   list<FS::aio_t> completed_ios;
   _claim_completed_aios(h, &completed_ios);
+
   lock.unlock();
+
   wait_for_aio(h);
   completed_ios.clear();
+
   lock.lock();
+
   if (old_dirty_seq) {
     uint64_t s = log_seq;
+
     dout(20) << __func__ << " file metadata was dirty (" << old_dirty_seq
 	     << ") on " << h->file->fnode << ", flushing log" << dendl;
+
     _flush_and_sync_log(l, old_dirty_seq);
+
     assert(h->file->dirty_seq == 0 ||  // cleaned
 	   h->file->dirty_seq > s);    // or redirtied by someone else
   }
+
   return 0;
 }
 

@@ -3300,7 +3300,9 @@ int BlueStore::_write_bdev_label(string path, bluestore_bdev_label_t label)
   ::encode(label, bl);
   uint32_t crc = bl.crc32c(-1);
   ::encode(crc, bl);
+
   assert(bl.length() <= BDEV_LABEL_BLOCK_SIZE);
+
   bufferptr z(BDEV_LABEL_BLOCK_SIZE - bl.length());
   z.zero();
   bl.append(std::move(z));
@@ -5439,8 +5441,10 @@ void BlueStore::_queue_reap_collection(CollectionRef& c)
 void BlueStore::_reap_collections()
 {
   list<CollectionRef> removed_colls;
+
   {
     std::lock_guard<std::mutex> l(reap_lock);
+
     removed_colls.swap(removed_collections);
   }
 
@@ -5450,20 +5454,28 @@ void BlueStore::_reap_collections()
        p != removed_colls.end();
        ++p) {
     CollectionRef c = *p;
+
     dout(10) << __func__ << " " << c->cid << dendl;
+
     if (c->onode_map.map_any([&](OnodeRef o) {
 	  assert(!o->exists);
+
 	  if (!o->flush_txns.empty()) {
 	    dout(10) << __func__ << " " << c->cid << " " << o->oid
 		     << " flush_txns " << o->flush_txns << dendl;
 	    return false;
 	  }
+
 	  return true;
 	})) {
+
       all_reaped = false;
+
       continue;
     }
+
     c->onode_map.clear();
+
     dout(10) << __func__ << " " << c->cid << " done" << dendl;
   }
 
@@ -5599,6 +5611,7 @@ int BlueStore::read(
   CollectionHandle c = _get_collection(cid);
   if (!c)
     return -ENOENT;
+
   return read(c, oid, offset, length, bl, op_flags, allow_eio);
 }
 
@@ -5613,14 +5626,17 @@ int BlueStore::read(
 {
   Collection *c = static_cast<Collection *>(c_.get());
   const coll_t &cid = c->get_cid();
+
   dout(15) << __func__ << " " << cid << " " << oid
 	   << " 0x" << std::hex << offset << "~" << length << std::dec
 	   << dendl;
+
   if (!c->exists)
     return -ENOENT;
 
   bl.clear();
   int r;
+
   {
     RWLock::RLocker l(c->lock);
 
@@ -5638,11 +5654,13 @@ int BlueStore::read(
 
  out:
   assert(allow_eio || r != -EIO);
+
   c->trim_cache();
   if (r == 0 && _debug_data_eio(oid)) {
     r = -EIO;
     derr << __func__ << " " << c->cid << " " << oid << " INJECT EIO" << dendl;
   }
+
   dout(10) << __func__ << " " << cid << " " << oid
 	   << " 0x" << std::hex << offset << "~" << length << std::dec
 	   << " = " << r << dendl;
@@ -5700,6 +5718,7 @@ int BlueStore::_do_read(
   dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
            << " size 0x" << o->onode.size << " (" << std::dec
            << o->onode.size << ")" << dendl;
+
   bl.clear();
 
   if (offset >= o->onode.size) {
@@ -5711,11 +5730,13 @@ int BlueStore::_do_read(
   bool buffered = false;
   if (op_flags & CEPH_OSD_OP_FLAG_FADVISE_WILLNEED) {
     dout(20) << __func__ << " will do buffered read" << dendl;
+
     buffered = true;
-  } else if (cct->_conf->bluestore_default_buffered_read &&
+  } else if (cct->_conf->bluestore_default_buffered_read && // default true
 	     (op_flags & (CEPH_OSD_OP_FLAG_FADVISE_DONTNEED |
 			  CEPH_OSD_OP_FLAG_FADVISE_NOCACHE)) == 0) {
     dout(20) << __func__ << " defaulting to buffered read" << dendl;
+
     buffered = true;
   }
 
@@ -5726,6 +5747,7 @@ int BlueStore::_do_read(
   o->flush();
 
   o->extent_map.fault_range(db, offset, length);
+
   _dump_onode(o);
 
   ready_regions_t ready_regions;
@@ -5742,11 +5764,14 @@ int BlueStore::_do_read(
       if (hole >= left) {
 	break;
       }
+
       dout(30) << __func__ << "  hole 0x" << std::hex << pos << "~" << hole
 	       << std::dec << dendl;
+
       pos += hole;
       left -= hole;
     }
+
     BlobRef bptr = lp->blob;
     unsigned l_off = pos - lp->logical_offset;
     unsigned b_off = l_off + lp->blob_offset;
@@ -5768,25 +5793,32 @@ int BlueStore::_do_read(
 	  pc->first == b_off) {
 	l = pc->second.length();
 	ready_regions[pos].claim(pc->second);
+
 	dout(30) << __func__ << "    use cache 0x" << std::hex << pos << ": 0x"
 		 << b_off << "~" << l << std::dec << dendl;
+
 	++pc;
       } else {
 	l = b_len;
 	if (pc != cache_res.end()) {
 	  assert(pc->first > b_off);
+
 	  l = pc->first - b_off;
 	}
+
 	dout(30) << __func__ << "    will read 0x" << std::hex << pos << ": 0x"
 		 << b_off << "~" << l << std::dec << dendl;
+
 	blobs2read[bptr].emplace_back(region_t(pos, b_off, l));
 	++num_regions;
       }
+
       pos += l;
       b_off += l;
       left -= l;
       b_len -= l;
     }
+
     ++lp;
   }
 
@@ -5831,10 +5863,12 @@ int BlueStore::_do_read(
 	  reg.r_off -= reg.front;
 	  r_len += reg.front;
 	}
+
 	unsigned tail = r_len % chunk_size;
 	if (tail) {
 	  r_len += chunk_size - tail;
 	}
+
 	dout(20) << __func__ << "    region 0x" << std::hex
 		 << reg.logical_offset
 		 << ": 0x" << reg.blob_xoffset << "~" << reg.length
@@ -5900,6 +5934,7 @@ int BlueStore::_do_read(
 			 reg.logical_offset) < 0) {
 	  return -EIO;
 	}
+
 	if (buffered) {
 	  bptr->shared_blob->bc.did_read(bptr->shared_blob->get_cache(),
 					 reg.r_off, reg.bl);
@@ -5910,6 +5945,7 @@ int BlueStore::_do_read(
 	  reg.bl, reg.front, reg.length);
       }
     }
+
     ++b2r_it;
   }
 
@@ -5922,6 +5958,7 @@ int BlueStore::_do_read(
       dout(30) << __func__ << " assemble 0x" << std::hex << pos
 	       << ": data from 0x" << pr->first << "~" << pr->second.length()
 	       << std::dec << dendl;
+
       pos += pr->second.length();
       bl.claim_append(pr->second);
       ++pr;
@@ -5931,16 +5968,20 @@ int BlueStore::_do_read(
         assert(pr->first > pos + offset);
 	l = pr->first - (pos + offset);
       }
+
       dout(30) << __func__ << " assemble 0x" << std::hex << pos
 	       << ": zeros for 0x" << (pos + offset) << "~" << l
 	       << std::dec << dendl;
+
       bl.append_zero(l);
       pos += l;
     }
   }
+
   assert(bl.length() == length);
   assert(pos == length);
   assert(pr == pr_end);
+
   r = bl.length();
   return r;
 }
@@ -6027,6 +6068,7 @@ int BlueStore::fiemap(
   CollectionHandle c = _get_collection(cid);
   if (!c)
     return -ENOENT;
+
   return fiemap(c, oid, offset, len, bl);
 }
 
@@ -6040,6 +6082,7 @@ int BlueStore::fiemap(
   Collection *c = static_cast<Collection *>(c_.get());
   if (!c->exists)
     return -ENOENT;
+
   interval_set<uint64_t> m;
   {
     RWLock::RLocker l(c->lock);
@@ -6048,6 +6091,7 @@ int BlueStore::fiemap(
     if (!o || !o->exists) {
       return -ENOENT;
     }
+
     _dump_onode(o);
 
     dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
@@ -6066,6 +6110,7 @@ int BlueStore::fiemap(
     ep = o->extent_map.seek_lextent(offset);
     while (length > 0) {
       dout(20) << __func__ << " offset " << offset << dendl;
+
       if (ep != eend && ep->logical_offset + ep->length <= offset) {
         ++ep;
         continue;
@@ -6075,20 +6120,25 @@ int BlueStore::fiemap(
       if (ep != eend && ep->logical_offset <= offset) {
         uint64_t x_off = offset - ep->logical_offset;
         x_len = MIN(x_len, ep->length - x_off);
+
         dout(30) << __func__ << " lextent 0x" << std::hex << offset << "~"
 	         << x_len << std::dec << " blob " << ep->blob << dendl;
+
         m.insert(offset, x_len);
         length -= x_len;
         offset += x_len;
         if (x_off + x_len == ep->length)
 	  ++ep;
+
         continue;
       }
+
       if (ep != eend &&
 	  ep->logical_offset > offset &&
 	  ep->logical_offset - offset < x_len) {
         x_len = ep->logical_offset - offset;
       }
+
       offset += x_len;
       length -= x_len;
     }
@@ -6097,6 +6147,7 @@ int BlueStore::fiemap(
  out:
   c->trim_cache();
   ::encode(m, bl);
+
   dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
 	   << " size = 0x(" << m << ")" << std::dec << dendl;
   return 0;
@@ -9076,6 +9127,7 @@ int BlueStore::_do_write(
 	   << " bytes"
 	   << " fadvise_flags 0x" << std::hex << fadvise_flags << std::dec
 	   << dendl;
+
   _dump_onode(o);
 
   if (length == 0) {
@@ -9087,11 +9139,13 @@ int BlueStore::_do_write(
   WriteContext wctx;
   if (fadvise_flags & CEPH_OSD_OP_FLAG_FADVISE_WILLNEED) {
     dout(20) << __func__ << " will do buffered write" << dendl;
+
     wctx.buffered = true;
-  } else if (cct->_conf->bluestore_default_buffered_write &&
+  } else if (cct->_conf->bluestore_default_buffered_write && // default false
 	     (fadvise_flags & (CEPH_OSD_OP_FLAG_FADVISE_DONTNEED |
 			       CEPH_OSD_OP_FLAG_FADVISE_NOCACHE)) == 0) {
     dout(20) << __func__ << " defaulting to buffered write" << dendl;
+
     wctx.buffered = true;
   }
 

@@ -135,6 +135,7 @@ public:
       ++file->num_writers;
       iocv.fill(nullptr);
     }
+
     // NOTE: caller must call BlueFS::close_writer()
     ~FileWriter() {
       --file->num_writers;
