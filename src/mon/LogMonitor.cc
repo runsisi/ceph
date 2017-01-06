@@ -246,6 +246,8 @@ version_t LogMonitor::get_trim_to()
   return 0;
 }
 
+// called by
+// PaxosService::dispatch, which called by Monitor::handle_command
 bool LogMonitor::preprocess_query(MonOpRequestRef op)
 {
   op->mark_logmon_event("preprocess_query");
@@ -264,6 +266,8 @@ bool LogMonitor::preprocess_query(MonOpRequestRef op)
   }
 }
 
+// called by
+// PaxosService::dispatch, which called by Monitor::handle_command
 bool LogMonitor::prepare_update(MonOpRequestRef op)
 {
   op->mark_logmon_event("prepare_update");
@@ -389,6 +393,7 @@ bool LogMonitor::preprocess_command(MonOpRequestRef op)
 bool LogMonitor::prepare_command(MonOpRequestRef op)
 {
   op->mark_logmon_event("prepare_command");
+
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
   stringstream ss;
   string rs;

@@ -527,6 +527,8 @@ version_t PGMonitor::get_trim_to()
   return 0;
 }
 
+// called by
+// PaxosService::dispatch, which called by Monitor::handle_command
 bool PGMonitor::preprocess_query(MonOpRequestRef op)
 {
   op->mark_pgmon_event(__func__);
@@ -553,6 +555,8 @@ bool PGMonitor::preprocess_query(MonOpRequestRef op)
   }
 }
 
+// called by
+// PaxosService::dispatch, which called by Monitor::handle_command
 bool PGMonitor::prepare_update(MonOpRequestRef op)
 {
   op->mark_pgmon_event(__func__);
@@ -1081,6 +1085,8 @@ void PGMonitor::dump_info(Formatter *f) const
   f->dump_unsigned("pgmap_last_committed", get_last_committed());
 }
 
+// called by
+// PGMonitor::preprocess_query
 bool PGMonitor::preprocess_command(MonOpRequestRef op)
 {
   op->mark_pgmon_event(__func__);
@@ -1425,6 +1431,8 @@ reply:
   return true;
 }
 
+// called by
+// PGMonitor::prepare_update
 bool PGMonitor::prepare_command(MonOpRequestRef op)
 {
   op->mark_pgmon_event(__func__);

@@ -1350,7 +1350,7 @@ void OSDMonitor::encode_trim_extra(MonitorDBStore::TransactionRef tx,
 // -------------
 
 // called by
-// PaxosService::dispatch
+// PaxosService::dispatch, which called by Monitor::handle_command
 bool OSDMonitor::preprocess_query(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
@@ -1390,6 +1390,8 @@ bool OSDMonitor::preprocess_query(MonOpRequestRef op)
   }
 }
 
+// called by
+// PaxosService::dispatch, which called by Monitor::handle_command
 bool OSDMonitor::prepare_update(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
@@ -3377,11 +3379,14 @@ namespace {
     }
 }
 
-
+// called by
+// OSDMonitor::preprocess_query
 bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
+
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
+
   int r = 0;
   bufferlist rdata;
   stringstream ss, ds;
@@ -5779,10 +5784,14 @@ int OSDMonitor::prepare_command_pool_set(map<string,cmd_vartype> &cmdmap,
   return 0;
 }
 
+// called by
+// OSDMonitor::prepare_update
 bool OSDMonitor::prepare_command(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
+
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
+
   stringstream ss;
   map<string, cmd_vartype> cmdmap;
   if (!cmdmap_from_json(m->cmd, &cmdmap, ss)) {
@@ -5804,6 +5813,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 				      map<string,cmd_vartype> &cmdmap)
 {
   op->mark_osdmon_event(__func__);
+
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
   bool ret = false;
   stringstream ss;

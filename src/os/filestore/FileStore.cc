@@ -550,20 +550,20 @@ FileStore::FileStore(CephContext* cct, const std::string &base,
 	cct->_conf->filestore_op_thread_suicide_timeout, &op_tp),
   logger(NULL),
   read_error_lock("FileStore::read_error_lock"),
-  m_filestore_commit_timeout(cct->_conf->filestore_commit_timeout),
-  m_filestore_journal_parallel(cct->_conf->filestore_journal_parallel ),
-  m_filestore_journal_trailing(cct->_conf->filestore_journal_trailing),
-  m_filestore_journal_writeahead(cct->_conf->filestore_journal_writeahead),
-  m_filestore_fiemap_threshold(cct->_conf->filestore_fiemap_threshold),
-  m_filestore_max_sync_interval(cct->_conf->filestore_max_sync_interval),
-  m_filestore_min_sync_interval(cct->_conf->filestore_min_sync_interval),
-  m_filestore_fail_eio(cct->_conf->filestore_fail_eio),
-  m_filestore_fadvise(cct->_conf->filestore_fadvise),
+  m_filestore_commit_timeout(cct->_conf->filestore_commit_timeout),             // default 600
+  m_filestore_journal_parallel(cct->_conf->filestore_journal_parallel ),        // default false, will reset to true by FileStore::mount, for xfs/ext4
+  m_filestore_journal_trailing(cct->_conf->filestore_journal_trailing),         // default false
+  m_filestore_journal_writeahead(cct->_conf->filestore_journal_writeahead),     // default false
+  m_filestore_fiemap_threshold(cct->_conf->filestore_fiemap_threshold),         // default 4096
+  m_filestore_max_sync_interval(cct->_conf->filestore_max_sync_interval),       // default 5
+  m_filestore_min_sync_interval(cct->_conf->filestore_min_sync_interval),       // default 0.1
+  m_filestore_fail_eio(cct->_conf->filestore_fail_eio),         // default true
+  m_filestore_fadvise(cct->_conf->filestore_fadvise),           // default true
   do_update(do_update),
   m_journal_dio(cct->_conf->journal_dio),
   m_journal_aio(cct->_conf->journal_aio),
   m_journal_force_aio(cct->_conf->journal_force_aio),
-  m_osd_rollback_to_cluster_snap(cct->_conf->osd_rollback_to_cluster_snap),
+  m_osd_rollback_to_cluster_snap(cct->_conf->osd_rollback_to_cluster_snap),     // default ""
   m_osd_use_stale_snap(cct->_conf->osd_use_stale_snap),
   m_filestore_do_dump(false),
   m_filestore_dump_fmt(true),
@@ -723,11 +723,14 @@ int FileStore::statfs(struct store_statfs_t *buf0)
   return 0;
 }
 
-
+// called by
+// FileStore::mkjournal
+// FileStore::mount
 void FileStore::new_journal()
 {
   if (journalpath.length()) {
     dout(10) << "open_journal at " << journalpath << dendl;
+
     journal = new FileJournal(cct, fsid, &finisher, &sync_cond,
 			      journalpath.c_str(),
 			      m_journal_dio, m_journal_aio,
@@ -3898,13 +3901,16 @@ void FileStore::sync_entry()
 
   while (!stop) {
     utime_t max_interval;
-    max_interval.set_from_double(m_filestore_max_sync_interval);
+    max_interval.set_from_double(m_filestore_max_sync_interval); // default 5
     utime_t min_interval;
-    min_interval.set_from_double(m_filestore_min_sync_interval);
+    min_interval.set_from_double(m_filestore_min_sync_interval); // default 0.1
 
     utime_t startwait = ceph_clock_now();
+
     if (!force_sync) {
       dout(20) << "sync_entry waiting for max_interval " << max_interval << dendl;
+
+      // could be signalled by FileJournal::check_for_full or manually
       sync_cond.WaitInterval(lock, max_interval);
     } else {
       dout(20) << "sync_entry not waiting, force_sync set" << dendl;
@@ -3912,6 +3918,7 @@ void FileStore::sync_entry()
 
     if (force_sync) {
       dout(20) << "sync_entry force_sync set" << dendl;
+
       force_sync = false;
     } else if (stop) {
       dout(20) << __func__ << " stop set" << dendl;
@@ -3919,6 +3926,7 @@ void FileStore::sync_entry()
     } else {
       // wait for at least the min interval
       utime_t woke = ceph_clock_now();
+
       woke -= startwait;
 
       dout(20) << "sync_entry woke after " << woke << dendl;
@@ -3926,8 +3934,11 @@ void FileStore::sync_entry()
       if (woke < min_interval) {
 	utime_t t = min_interval;
 	t -= woke;
+
 	dout(20) << "sync_entry waiting for another " << t
 		 << " to reach min interval " << min_interval << dendl;
+
+	// could be signalled by FileJournal::check_for_full or manually
 	sync_cond.WaitInterval(lock, t);
       }
     }
@@ -4114,17 +4125,24 @@ void FileStore::_start_sync()
 void FileStore::do_force_sync()
 {
   dout(10) << __func__ << dendl;
+
   Mutex::Locker l(lock);
+
   force_sync = true;
+
   sync_cond.Signal();
 }
 
 void FileStore::start_sync(Context *onsafe)
 {
   Mutex::Locker l(lock);
+
   sync_waiters.push_back(onsafe);
+
   sync_cond.Signal();
+
   force_sync = true;
+
   dout(10) << "start_sync" << dendl;
 }
 
@@ -4174,15 +4192,19 @@ void FileStore::flush()
   }
 
   if (m_filestore_journal_writeahead) {
+    // true, for xfs/ext4, see FileStore::mount
     if (journal)
       journal->flush();
+
     dout(10) << "flush draining ondisk finisher" << dendl;
+
     for (vector<Finisher*>::iterator it = ondisk_finishers.begin(); it != ondisk_finishers.end(); ++it) {
       (*it)->wait_for_empty();
     }
   }
 
   _flush_op_queue();
+
   dout(10) << "flush complete" << dendl;
 }
 
@@ -4194,20 +4216,24 @@ void FileStore::sync_and_flush()
   dout(10) << "sync_and_flush" << dendl;
 
   if (m_filestore_journal_writeahead) {
+    // true, for xfs/ext4, see FileStore::mount
     if (journal)
       journal->flush();
+
     _flush_op_queue();
   } else {
     // includes m_filestore_journal_parallel
     _flush_op_queue();
     sync();
   }
+
   dout(10) << "sync_and_flush done" << dendl;
 }
 
 int FileStore::flush_journal()
 {
   dout(10) << __func__ << dendl;
+
   sync_and_flush();
   sync();
   return 0;

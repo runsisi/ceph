@@ -175,6 +175,8 @@ void MonmapMonitor::on_active()
   apply_mon_features(mon->get_quorum_mon_features());
 }
 
+// called by
+// PaxosService::dispatch, which called by Monitor::handle_command
 bool MonmapMonitor::preprocess_query(MonOpRequestRef op)
 {
   PaxosServiceMessage *m = static_cast<PaxosServiceMessage*>(op->get_req());
@@ -203,6 +205,8 @@ void MonmapMonitor::dump_info(Formatter *f)
   f->close_section();
 }
 
+// called by
+// MonmapMonitor::preprocess_query
 bool MonmapMonitor::preprocess_command(MonOpRequestRef op)
 {
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
@@ -301,7 +305,8 @@ reply:
     return false;
 }
 
-
+// called by
+// PaxosService::dispatch, which called by Monitor::handle_command
 bool MonmapMonitor::prepare_update(MonOpRequestRef op)
 {
   PaxosServiceMessage *m = static_cast<PaxosServiceMessage*>(op->get_req());
@@ -319,6 +324,8 @@ bool MonmapMonitor::prepare_update(MonOpRequestRef op)
   return false;
 }
 
+// called by
+// MonmapMonitor::prepare_update
 bool MonmapMonitor::prepare_command(MonOpRequestRef op)
 {
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());

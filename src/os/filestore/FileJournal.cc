@@ -765,11 +765,15 @@ void FileJournal::write_header_sync()
   dout(20) << __func__ << " finish" << dendl;
 }
 
+// called by
+// FileJournal::prepare_single_write
 int FileJournal::check_for_full(uint64_t seq, off64_t pos, off64_t size)
 {
   // already full?
   if (full_state != FULL_NOTFULL)
     return -ENOSPC;
+
+  // journal not full yet
 
   // take 1 byte off so that we only get pos == header.start on EMPTY, never on FULL.
   off64_t room;
@@ -777,21 +781,26 @@ int FileJournal::check_for_full(uint64_t seq, off64_t pos, off64_t size)
     room = (header.max_size - pos) + (header.start - get_top()) - 1;
   else
     room = header.start - pos - 1;
+
   dout(10) << "room " << room << " max_size " << max_size << " pos " << pos << " header.start " << header.start
 	   << " top " << get_top() << dendl;
 
   if (do_sync_cond) {
+    // was assigned to FileStore::sync_cond by FileStore::new_journal
     if (room >= (header.max_size >> 1) &&
         room - size < (header.max_size >> 1)) {
       dout(10) << " passing half full mark, triggering commit" << dendl;
+
       do_sync_cond->SloppySignal();  // initiate a real commit so we can trim
     }
   }
 
   if (room >= size) {
     dout(10) << "check_for_full at " << pos << " : " << size << " < " << room << dendl;
+
     if (pos + size > header.max_size)
       must_write_header = true;
+
     return 0;
   }
 

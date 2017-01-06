@@ -5985,7 +5985,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 		     << entity << dendl;
             oi.watchers.erase(oi_iter);
 	    t->nop(soid);  // update oi on disk
-	    ctx->watch_diPrimaryLogPG::agent_maybe_evictsconnects.push_back(
+	    ctx->watch_disconnects.push_back(
 	      watch_disconnect_t(cookie, entity, false));
 	  } else {
 	    dout(10) << " can't remove: no watch by " << entity << dendl;
