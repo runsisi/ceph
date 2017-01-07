@@ -141,6 +141,8 @@ struct Task {
   }
 };
 
+// created by
+// NVMEManager::register_ctrlr
 class SharedDriverData {
   unsigned id;
   std::string sn;
@@ -578,8 +580,9 @@ class NVMEManager {
  private:
   Mutex lock;
   bool init = false;
+  // will be registered by NVMEManager::register_ctrlr
   std::vector<SharedDriverData*> shared_driver_datas;
-  std::thread dpdk_thread;
+  std::thread dpdk_thread; // created by NVMEManager::try_get
   std::mutex probe_queue_lock;
   std::condition_variable probe_queue_cond;
   std::list<ProbeContext*> probe_queue;
@@ -679,6 +682,8 @@ static void attach_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
 
   NVMEManager::ProbeContext *ctx = static_cast<NVMEManager::ProbeContext*>(cb_ctx);
 
+  // create an instance of SharedDriverData as the driver and push back of
+  // NVMEManager::shared_driver_datas
   ctx->manager->register_ctrlr(ctx->sn_tag, ctrlr, pci_dev, &ctx->driver);
 }
 
@@ -715,6 +720,10 @@ int NVMEManager::try_get(const string &sn_tag, SharedDriverData **driver)
       return 0;
     }
   }
+
+  // no registered driver, i.e., no instance of SharedDriverData for this
+  // kind of device, so probe the device, create its driver and then
+  // register the driver
 
   if (!init) {
     init = true;
@@ -770,8 +779,10 @@ int NVMEManager::try_get(const string &sn_tag, SharedDriverData **driver)
   {
     std::unique_lock<std::mutex> l(probe_queue_lock);
 
+    // NVMEManager::dpdk_thread will probe this device
     probe_queue.push_back(&ctx);
 
+    // wait the notify from NVMEManager::dpdk_thread
     while (!ctx.done)
       probe_queue_cond.wait(l);
   }
@@ -912,12 +923,16 @@ int NVMEDevice::open(const string& p)
     i++;
   }
   serial_number = string(buf, i);
+
+  // delegate NVMEManager::dpdk_thread to probe the device, create the
+  // driver and then register the driver
   r = manager.try_get(serial_number, &driver);
   if (r < 0) {
     derr << __func__ << " failed to get nvme device with sn " << serial_number << dendl;
     return r;
   }
 
+  // push back of SharedDriverData::registered_devices
   driver->register_device(this);
 
   block_size = driver->get_block_size();
@@ -1059,6 +1074,8 @@ int NVMEDevice::read(uint64_t off, uint64_t len, bufferlist *pbl,
   {
     std::unique_lock<std::mutex> l(ioc->lock);
 
+    // wait the task to finish, if the task fails, it will notify us, see
+    // SharedDriverData::_aio_thread
     while (t->return_code > 0)
       ioc->cond.wait(l);
   }

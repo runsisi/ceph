@@ -2786,6 +2786,7 @@ int Objecter::_calc_target(op_target_t *t, bool any_change)
 
   bool force_resend = false;
   bool need_check_tiering = false;
+
   if (osdmap->get_epoch() == pi->last_force_op_resend) {
     if (t->last_force_resend < pi->last_force_op_resend) {
       t->last_force_resend = pi->last_force_op_resend;
@@ -2794,10 +2795,14 @@ int Objecter::_calc_target(op_target_t *t, bool any_change)
       force_resend = true;
     }
   }
+
+  // see Objecter::handle_osd_op_reply for redirect request
   if (t->target_oid.name.empty() || force_resend) {
     t->target_oid = t->base_oid;
     need_check_tiering = true;
   }
+
+  // see Objecter::handle_osd_op_reply for redirect request
   if (t->target_oloc.empty() || force_resend) {
     t->target_oloc = t->base_oloc;
     need_check_tiering = true;
@@ -2812,6 +2817,8 @@ int Objecter::_calc_target(op_target_t *t, bool any_change)
   }
 
   pg_t pgid;
+
+  // can only be set to true by prepare_pg_read_op
   if (t->precalc_pgid) {
     assert(t->base_oid.name.empty()); // make sure this is a listing op
 
@@ -2837,6 +2844,7 @@ int Objecter::_calc_target(op_target_t *t, bool any_change)
 					   pgid);
     if (ret == -ENOENT) {
       t->osd = -1;
+
       return RECALC_OP_TARGET_POOL_DNE;
     }
   }
@@ -3555,6 +3563,9 @@ uint32_t Objecter::list_nobjects_seek(NListContext *list_context,
   return list_context->current_pg;
 }
 
+// called by
+// librados::IoCtxImpl::nlist
+// Objecter::_nlist_reply
 void Objecter::list_nobjects(NListContext *list_context, Context *onfinish)
 {
   ldout(cct, 10) << "list_objects" << dendl;

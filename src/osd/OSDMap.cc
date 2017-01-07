@@ -1526,6 +1526,7 @@ int OSDMap::object_locator_to_pg(
   const pg_pool_t *pool = get_pg_pool(loc.get_pool());
   if (!pool)
     return -ENOENT;
+
   ps_t ps;
   if (loc.hash >= 0) {
     ps = loc.hash;
@@ -1535,7 +1536,9 @@ int OSDMap::object_locator_to_pg(
     else
       ps = pool->hash_key(oid.name, loc.nspace);
   }
+
   pg = pg_t(ps, loc.get_pool(), -1);
+
   return 0;
 }
 

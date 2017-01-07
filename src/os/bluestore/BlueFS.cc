@@ -1538,6 +1538,7 @@ int BlueFS::_flush_and_sync_log(std::unique_lock<std::mutex>& l,
     dout(10) << __func__ << " want_seq " << want_seq
 	     << " log is currently flushing, waiting" << dendl;
 
+    // will by notified by other caller of this method
     log_cond.wait(l);
   }
 
@@ -1732,7 +1733,7 @@ int BlueFS::_flush_range(FileWriter *h, uint64_t offset, uint64_t length)
       return r;
     }
 
-    // default false
+    // default false, h->writer_type was set by BlueFS::open_for_write
     if (cct->_conf->bluefs_preextend_wal_files &&
 	h->writer_type == WRITER_WAL) {
       // NOTE: this *requires* that rocksdb also has log recycling
@@ -1837,6 +1838,7 @@ int BlueFS::_flush_range(FileWriter *h, uint64_t offset, uint64_t length)
 
   assert(bl.length() == length);
 
+  // h->writer_type was set by BlueFS::open_for_write
   switch (h->writer_type) {
   case WRITER_WAL:
     logger->inc(l_bluefs_bytes_written_wal, length);
@@ -1933,6 +1935,7 @@ void BlueFS::wait_for_aio(FileWriter *h)
 
   utime_t start = ceph_clock_now();
 
+  // std::array<IOContext*,MAX_BDEV>
   for (auto p : h->iocv) {
     if (p) {
       p->aio_wait();
@@ -2365,6 +2368,7 @@ BlueFS::FileWriter *BlueFS::_create_writer(FileRef f)
 void BlueFS::_close_writer(FileWriter *h)
 {
   dout(10) << __func__ << " " << h << " type " << h->writer_type << dendl;
+
   for (unsigned i=0; i<MAX_BDEV; ++i) {
     if (bdev[i]) {
       assert(h->iocv[i]);

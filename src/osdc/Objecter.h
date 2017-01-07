@@ -1211,6 +1211,8 @@ public:
 
     epoch_t last_force_resend = 0;
 
+    // created by
+    // Objecter::Op::Op
     op_target_t(object_t oid, object_locator_t oloc, int flags)
       : flags(flags),
 	base_oid(oid),
@@ -1304,6 +1306,7 @@ public:
       out_bl.resize(ops.size());
       out_rval.resize(ops.size());
       out_handler.resize(ops.size());
+
       for (unsigned i = 0; i < ops.size(); i++) {
 	out_bl[i] = NULL;
 	out_handler[i] = NULL;
@@ -2252,6 +2255,13 @@ public:
     op_submit(o, &tid);
     return tid;
   }
+
+  // called by
+  // librados::IoCtxImpl::hit_set_list
+  // librados::IoCtxImpl::hit_set_get
+  // librados::IoCtxImpl::get_inconsistent_objects
+  // librados::IoCtxImpl::get_inconsistent_snapsets
+  // Objecter::pg_read
   Op *prepare_pg_read_op(
     uint32_t hash, object_locator_t oloc,
     ObjectOperation& op, bufferlist *pbl, int flags,
@@ -2275,6 +2285,11 @@ public:
     }
     return o;
   }
+
+  // called by
+  // Objecter::list_nobjects
+  // Objecter::list_objects
+  // Objecter::enumerate_objects
   ceph_tid_t pg_read(
     uint32_t hash, object_locator_t oloc,
     ObjectOperation& op, bufferlist *pbl, int flags,
@@ -2495,6 +2510,7 @@ public:
     op_submit(o, &tid);
     return tid;
   }
+
   Op *prepare_write_op(
     const object_t& oid, const object_locator_t& oloc,
     uint64_t off, uint64_t len, const SnapContext& snapc,
@@ -2502,7 +2518,9 @@ public:
     Context *oncommit, version_t *objver = NULL,
     ObjectOperation *extra_ops = NULL, int op_flags = 0) {
     vector<OSDOp> ops;
+
     int i = init_ops(ops, 1, extra_ops);
+
     ops[i].op.op = CEPH_OSD_OP_WRITE;
     ops[i].op.extent.offset = off;
     ops[i].op.extent.length = len;
@@ -2510,12 +2528,15 @@ public:
     ops[i].op.extent.truncate_seq = 0;
     ops[i].indata = bl;
     ops[i].op.flags = op_flags;
+
     Op *o = new Op(oid, oloc, ops, flags | global_op_flags.read() |
 		   CEPH_OSD_FLAG_WRITE, oncommit, objver);
     o->mtime = mtime;
     o->snapc = snapc;
+
     return o;
   }
+
   ceph_tid_t write(
     const object_t& oid, const object_locator_t& oloc,
     uint64_t off, uint64_t len, const SnapContext& snapc,

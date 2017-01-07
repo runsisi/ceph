@@ -256,6 +256,7 @@ public:
 
   void combine_with_locator(object_locator_t& orig, string& obj) const {
     orig = redirect_locator;
+
     if (!redirect_object.empty())
       obj = redirect_object;
   }

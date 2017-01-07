@@ -60,6 +60,7 @@ struct IOContext {
     return num_pending.load();
   }
 
+  // wait until num_running && num_reading reach both 0
   void aio_wait();
 
   // called by

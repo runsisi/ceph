@@ -245,7 +245,7 @@ librados::IoCtxImpl::IoCtxImpl(RadosClient *c, Objecter *objecter,
 			       int64_t poolid, snapid_t s)
   : ref_cnt(0), client(c), poolid(poolid), snap_seq(s),
     assert_ver(0), last_objver(0),
-    notify_timeout(c->cct->_conf->client_notify_timeout),
+    notify_timeout(c->cct->_conf->client_notify_timeout), // default 10
     oloc(poolid), aio_write_list_lock("librados::IoCtxImpl::aio_write_list_lock"),
     aio_write_seq(0), objecter(objecter)
 {
@@ -581,6 +581,8 @@ int librados::IoCtxImpl::snap_get_stamp(uint64_t snapid, time_t *t)
 
 // IO
 
+// called by
+// rados_nobjects_list_next
 int librados::IoCtxImpl::nlist(Objecter::NListContext *context, int max_entries)
 {
   Cond cond;
@@ -999,6 +1001,7 @@ int librados::IoCtxImpl::aio_write(const object_t &oid, AioCompletionImpl *c,
   // push back of IoCtxImpl::aio_write_list
   queue_aio_write(c);
 
+  // alloc Objecter::Op and construct it
   Objecter::Op *o = objecter->prepare_write_op(
     oid, oloc,
     off, len, snapc, bl, ut, 0,

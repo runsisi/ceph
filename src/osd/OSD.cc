@@ -5040,11 +5040,13 @@ void TestOpsSocketHook::test_ops(OSDService *service, ObjectStore *store,
 
     string objname, nspace;
     cmd_getval(service->cct, cmdmap, "objname", objname);
+
     std::size_t found = objname.find_first_of('/');
     if (found != string::npos) {
       nspace = objname.substr(0, found);
       objname = objname.substr(found+1);
     }
+
     object_locator_t oloc(pool, nspace);
     r = curmap->object_locator_to_pg(object_t(objname), oloc,  rawpg);
 
@@ -9827,6 +9829,7 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 	    << " client will resend" << dendl;
     return;
   }
+
   if (!send_map->have_pg_pool(pgid.pool())) {
     dout(7) << "dropping request; pool did not exist" << dendl;
     clog->warn() << m->get_source_inst() << " invalid " << m->get_reqid()
@@ -9838,6 +9841,7 @@ void OSD::handle_op(OpRequestRef& op, OSDMapRef& osdmap)
 		      << "\n";
     return;
   }
+
   if (!send_map->osd_is_valid_op_target(pgid.pgid, whoami)) {
     dout(7) << "we are invalid target" << dendl;
     clog->warn() << m->get_source_inst() << " misdirected " << m->get_reqid()

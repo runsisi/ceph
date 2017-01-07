@@ -3775,11 +3775,17 @@ extern "C" void rados_ioctx_locator_set_key(rados_ioctx_t io, const char *key)
 extern "C" void rados_ioctx_set_namespace(rados_ioctx_t io, const char *nspace)
 {
   tracepoint(librados, rados_ioctx_set_namespace_enter, io, nspace);
+
   librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
+
+  // <pool, key, nspace, hash>
+  // librados::IoCtxImpl::IoCtxImpl initialize pool and hash
+
   if (nspace)
     ctx->oloc.nspace = nspace;
   else
     ctx->oloc.nspace = "";
+
   tracepoint(librados, rados_ioctx_set_namespace_exit);
 }
 
@@ -4401,7 +4407,9 @@ extern "C" uint32_t rados_objects_list_get_pg_hash_position(
 extern "C" int rados_nobjects_list_next(rados_list_ctx_t listctx, const char **entry, const char **key, const char **nspace)
 {
   tracepoint(librados, rados_nobjects_list_next_enter, listctx);
+
   librados::ObjListCtx *lh = (librados::ObjListCtx *)listctx;
+
   if (!lh->new_request) {
     int retval = rados_objects_list_next(listctx, entry, key);
     // Let's return nspace as you would expect even when asking
@@ -4410,6 +4418,7 @@ extern "C" int rados_nobjects_list_next(rados_list_ctx_t listctx, const char **e
       *nspace = lh->ctx->oloc.nspace.c_str();
     return retval;
   }
+
   Objecter::NListContext *h = lh->nlc;
 
   // if the list is non-empty, this method has been called before
