@@ -5917,19 +5917,28 @@ void FileStore::set_xattr_limits_via_conf()
   switch (m_fs_type) {
 #if defined(__linux__)
   case XFS_SUPER_MAGIC:
+    // default 65536
     fs_xattr_size = cct->_conf->filestore_max_inline_xattr_size_xfs;
+    // default 10
     fs_xattrs = cct->_conf->filestore_max_inline_xattrs_xfs;
+    // default 64<<10
     fs_xattr_max_value_size = cct->_conf->filestore_max_xattr_value_size_xfs;
     break;
   case BTRFS_SUPER_MAGIC:
+    // default 2048
     fs_xattr_size = cct->_conf->filestore_max_inline_xattr_size_btrfs;
+    // default 10
     fs_xattrs = cct->_conf->filestore_max_inline_xattrs_btrfs;
+    // default 64<<10
     fs_xattr_max_value_size = cct->_conf->filestore_max_xattr_value_size_btrfs;
     break;
 #endif
   default:
+    // default 512
     fs_xattr_size = cct->_conf->filestore_max_inline_xattr_size_other;
+    // default 2
     fs_xattrs = cct->_conf->filestore_max_inline_xattrs_other;
+    // default 1<<10
     fs_xattr_max_value_size = cct->_conf->filestore_max_xattr_value_size_other;
     break;
   }
@@ -5952,6 +5961,7 @@ void FileStore::set_xattr_limits_via_conf()
   else
     m_filestore_max_xattr_value_size = fs_xattr_max_value_size;
 
+  // default 2048
   if (m_filestore_max_xattr_value_size < cct->_conf->osd_max_object_name_len) {
     derr << "WARNING: max attr value size ("
 	 << m_filestore_max_xattr_value_size

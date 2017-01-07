@@ -2011,7 +2011,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
 		 CEPH_NOSNAP, m->get_pg().ps(),
 		 info.pgid.pool(), m->get_object_locator().nspace);
 
-  // object name too long?
+  // object name too long?, default 2048
   if (m->get_oid().name.size() > cct->_conf->osd_max_object_name_len) {
     dout(4) << "do_op name is longer than "
 	    << cct->_conf->osd_max_object_name_len
@@ -2040,6 +2040,8 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
     return;
   }
 
+  // for BlueStore always return 0, for FileStore the escaped length of the object must
+  // not exceed 64<<10
   if (int r = osd->store->validate_hobject_key(head)) {
     dout(4) << "do_op object " << head << " invalid for backing store: "
 	    << r << dendl;
@@ -2098,7 +2100,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
       return;
     }
 
-    // too big?
+    // too big? default 90
     if (cct->_conf->osd_max_write_size &&
         m->get_data_len() > cct->_conf->osd_max_write_size << 20) {
       // journal can't hold commit!
@@ -2544,7 +2546,9 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
   // latency from dequeued from the op_wq to sent to backend
   utime_t prepare_latency = ceph_clock_now();
   prepare_latency -= op->get_dequeued_time();
+
   osd->logger->tinc(l_osd_op_prepare_lat, prepare_latency);
+
   if (op->may_read() && op->may_write()) {
     osd->logger->tinc(l_osd_op_rw_prepare_lat, prepare_latency);
   } else if (op->may_read()) {
