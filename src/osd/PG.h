@@ -296,9 +296,13 @@ public:
   bool dirty_info, dirty_big_info;
 
 public:
+  // called by
+  // OSDService::handle_misdirected_op
+  // PG::repair_object
   bool is_ec_pg() const {
     return pool.info.ec_pool();
   }
+
   // pg state
   pg_info_t info;               ///< current pg info
   pg_info_t last_written_info;  ///< last written info

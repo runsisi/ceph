@@ -1189,8 +1189,12 @@ bool librados::IoCtx::pool_requires_alignment()
   return io_ctx_impl->client->pool_requires_alignment(get_id());
 }
 
+// called by
+// RGWRados::get_required_alignment
+// rados.cc/rados_tool_common
 int librados::IoCtx::pool_requires_alignment2(bool *requires)
 {
+  // test if it is ec pool and FLAG_EC_OVERWRITES is not set
   return io_ctx_impl->client->pool_requires_alignment2(get_id(), requires);
 }
 
@@ -3729,12 +3733,16 @@ extern "C" int rados_ioctx_pool_requires_alignment2(rados_ioctx_t io,
 	int *requires)
 {
   tracepoint(librados, rados_ioctx_pool_requires_alignment_enter2, io);
+
   librados::IoCtxImpl *ctx = (librados::IoCtxImpl *)io;
   bool requires_alignment;
+  // test if it is ec pool and FLAG_EC_OVERWRITES is not set
   int retval = ctx->client->pool_requires_alignment2(ctx->get_id(), 
   	&requires_alignment);
+
   tracepoint(librados, rados_ioctx_pool_requires_alignment_exit2, retval, 
   	requires_alignment);
+
   if (requires)
     *requires = requires_alignment;
   return retval;

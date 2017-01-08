@@ -1318,6 +1318,7 @@ protected:
 		  unsigned dest_obj_fadvise_flags);
   void process_copy_chunk(hobject_t oid, ceph_tid_t tid, int r);
   void _write_copy_chunk(CopyOpRef cop, PGTransaction *t);
+
   uint64_t get_copy_chunk_size() const {
     uint64_t size = cct->_conf->osd_copyfrom_max_chunk;
     if (pool.info.requires_aligned_append()) {
@@ -1328,6 +1329,7 @@ protected:
     }
     return size;
   }
+
   void _copy_some(ObjectContextRef obc, CopyOpRef cop);
   void finish_copyfrom(OpContext *ctx);
   void finish_promote(int r, CopyResults *results, ObjectContextRef obc);

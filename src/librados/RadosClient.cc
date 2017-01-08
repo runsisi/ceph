@@ -108,6 +108,11 @@ bool librados::RadosClient::pool_requires_alignment(int64_t pool_id)
   return requires;
 }
 
+// called by
+// librados::IoCtx::pool_requires_alignment2
+// rados_ioctx_pool_requires_alignment2
+// librados::RadosClient::pool_requires_alignment
+// rados/RadosImport.cc/RadosImport::get_object_rados
 // a safer version of pool_requires_alignment
 int librados::RadosClient::pool_requires_alignment2(int64_t pool_id,
 						    bool *requires)
@@ -124,6 +129,8 @@ int librados::RadosClient::pool_requires_alignment2(int64_t pool_id,
       if (!o.have_pg_pool(pool_id)) {
 	return -ENOENT;
       }
+
+      // test if it is ec pool and FLAG_EC_OVERWRITES is not set
       *requires = o.get_pg_pool(pool_id)->requires_aligned_append();
       return 0;
     });

@@ -186,6 +186,8 @@ public:
     mtime = ceph::real_clock::to_timespec(mt);
   }
 
+  // called by
+  // write, writefull, zero, truncate, remove, read, stat below
   // ops
   void add_simple_op(int o, uint64_t off, uint64_t len) {
     OSDOp osd_op;
@@ -194,11 +196,14 @@ public:
     osd_op.op.extent.length = len;
     ops.push_back(osd_op);
   }
+
   void write(uint64_t off, uint64_t len, bufferlist& bl) {
     add_simple_op(CEPH_OSD_OP_WRITE, off, len);
     data.claim(bl);
     header.data_off = off;
   }
+
+  // never used
   void writefull(bufferlist& bl) {
     add_simple_op(CEPH_OSD_OP_WRITEFULL, 0, bl.length());
     data.claim(bl);

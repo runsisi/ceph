@@ -952,6 +952,7 @@ int PrimaryLogPG::get_pgls_filter(bufferlist::iterator& iter, PGLSFilter **pfilt
 
     const std::string class_name = type.substr(0, dot);
     const std::string filter_name = type.substr(dot + 1);
+
     ClassHandler::ClassData *cls = NULL;
     int r = osd->class_handler->open_class(class_name, &cls);
     if (r != 0) {
@@ -970,6 +971,7 @@ int PrimaryLogPG::get_pgls_filter(bufferlist::iterator& iter, PGLSFilter **pfilt
            << class_name << dendl;
       return -EINVAL;
     }
+
     filter = class_filter->fn();
     if (!filter) {
       // Object classes are obliged to return us something, but let's
@@ -981,6 +983,7 @@ int PrimaryLogPG::get_pgls_filter(bufferlist::iterator& iter, PGLSFilter **pfilt
   }
 
   assert(filter);
+
   int r = filter->init(iter);
   if (r < 0) {
     derr << "Error initializing filter " << type << ": "
@@ -1185,6 +1188,8 @@ int PrimaryLogPG::do_command(
 
 // ==========================================================
 
+// called by
+// PrimaryLogPG::do_op
 bool PrimaryLogPG::pg_op_must_wait(MOSDOp *op)
 {
   if (pg_log.get_missing().get_items().empty())
@@ -1226,6 +1231,7 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
   for (vector<OSDOp>::iterator p = ops.begin(); p != ops.end(); ++p) {
     OSDOp& osd_op = *p;
     bufferlist::iterator bp = p->indata.begin();
+
     switch (p->op.op) {
     case CEPH_OSD_OP_PGNLS_FILTER:
       try {
@@ -1237,10 +1243,12 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
 	result = -EINVAL;
 	break;
       }
+
       if (filter) {
 	delete filter;
 	filter = NULL;
       }
+
       result = get_pgls_filter(bp, &filter);
       if (result < 0)
         break;
@@ -1259,8 +1267,10 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
 	unsigned list_size = MIN(cct->_conf->osd_max_pgls, p->op.pgls.count);
 
         dout(10) << " pgnls pg=" << m->get_pg() << " count " << list_size << dendl;
-	// read into a buffer
+
+        // read into a buffer
         vector<hobject_t> sentries;
+
         pg_nls_response_t response;
 	try {
 	  ::decode(response.handle, bp);
@@ -1275,8 +1285,10 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
 	hobject_t lower_bound = response.handle;
 	hobject_t pg_start = info.pgid.pgid.get_hobj_start();
 	hobject_t pg_end = info.pgid.pgid.get_hobj_end(pool.info.get_pg_num());
-        dout(10) << " pgnls lower_bound " << lower_bound
+
+	dout(10) << " pgnls lower_bound " << lower_bound
 		 << " pg_end " << pg_end << dendl;
+
 	if (get_sort_bitwise() &&
 	    ((!lower_bound.is_max() &&
 	      cmp_bitwise(lower_bound, pg_end) >= 0) ||
@@ -1290,7 +1302,9 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
 	}
 
 	hobject_t current = lower_bound;
+
 	osr->flush();
+
 	int r = pgbackend->objects_list_partial(
 	  current,
 	  list_size,
@@ -1324,17 +1338,22 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
 	  hobject_t candidate;
 	  if (mcand == lcand) {
 	    candidate = mcand;
+
 	    if (!mcand.is_max()) {
 	      ++ls_iter;
 	      ++missing_iter;
 	    }
 	  } else if (cmp(mcand, lcand, get_sort_bitwise()) < 0) {
 	    candidate = mcand;
+
 	    assert(!mcand.is_max());
+
 	    ++missing_iter;
 	  } else {
 	    candidate = lcand;
+
 	    assert(!lcand.is_max());
+
 	    ++ls_iter;
 	  }
 
@@ -1364,6 +1383,7 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
 		candidate,
 		SS_ATTR,
 		&bl);
+
 	      SnapSet snapset(bl);
 	      if (snapid <= snapset.seq)
 		continue;
@@ -1371,6 +1391,7 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
 	      bufferlist attr_bl;
 	      pgbackend->objects_get_attr(
 		candidate, OI_ATTR, &attr_bl);
+
 	      object_info_t oi(attr_bl);
 	      vector<snapid_t>::iterator i = find(oi.snaps.begin(),
 						  oi.snaps.end(),
@@ -1447,6 +1468,7 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
       }
 
       if (filter) {
+        // delete filter for the last iteration
 	delete filter;
 	filter = NULL;
       }
@@ -1470,7 +1492,8 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
 	unsigned list_size = MIN(cct->_conf->osd_max_pgls, p->op.pgls.count);
 
         dout(10) << " pgls pg=" << m->get_pg() << " count " << list_size << dendl;
-	// read into a buffer
+
+        // read into a buffer
         vector<hobject_t> sentries;
         pg_ls_response_t response;
 	try {
@@ -1602,6 +1625,7 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
 	     p != info.hit_set.history.end();
 	     ++p)
 	  ls.push_back(make_pair(p->begin, p->end));
+
 	if (hit_set)
 	  ls.push_back(make_pair(hit_set_start_stamp, utime_t()));
 	::encode(ls, osd_op.outdata);
@@ -1983,6 +2007,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
   } else {
     // normal case; must be primary
     if (!is_primary()) {
+      // drop or reply with ENXIO
       osd->handle_misdirected_op(this, op);
       return;
     }
@@ -1993,6 +2018,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
     // op targets to the pg
 
     if (pg_op_must_wait(m)) {
+      // has missing and has any op that not request for head
       wait_for_all_missing(op);
       return;
     }
@@ -4714,14 +4740,18 @@ void PrimaryLogPG::maybe_create_new_object(
   bool ignore_transaction)
 {
   ObjectState& obs = ctx->new_obs;
+
   if (!obs.exists) {
     ctx->delta_stats.num_objects++;
+
     obs.exists = true;
     obs.oi.new_object();
+
     if (!ignore_transaction)
       ctx->op_t->create(obs.oi.soid);
   } else if (obs.oi.is_whiteout()) {
     dout(10) << __func__ << " clearing whiteout on " << obs.oi.soid << dendl;
+
     ctx->new_obs.oi.clear_flag(object_info_t::FLAG_WHITEOUT);
     --ctx->delta_stats.num_whiteouts;
   }
@@ -5658,6 +5688,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	if (pool.info.has_flag(pg_pool_t::FLAG_WRITE_FADVISE_DONTNEED))
 	  op.flags = op.flags | CEPH_OSD_OP_FLAG_FADVISE_DONTNEED;
 
+	// ec pool without FLAG_EC_OVERWRITES requires aligned append
 	if (pool.info.requires_aligned_append() &&
 	    (op.extent.offset % pool.info.required_alignment() != 0)) {
 	  result = -EOPNOTSUPP;
@@ -5852,6 +5883,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 
     case CEPH_OSD_OP_TRUNCATE:
       tracepoint(osd, do_osd_op_pre_truncate, soid.oid.name.c_str(), soid.snap.val, oi.size, oi.truncate_seq, op.extent.offset, op.extent.length, op.extent.truncate_size, op.extent.truncate_seq);
+
       if (pool.info.requires_aligned_append()) {
 	result = -EOPNOTSUPP;
 	break;

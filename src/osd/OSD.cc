@@ -1594,6 +1594,7 @@ void OSDService::reply_op_error(OpRequestRef op, int err, eversion_t v,
 void OSDService::handle_misdirected_op(PG *pg, OpRequestRef op)
 {
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
+
   assert(m->get_type() == CEPH_MSG_OSD_OP);
 
   assert(m->get_map_epoch() >= pg->info.history.same_primary_since);
@@ -1616,16 +1617,21 @@ void OSDService::handle_misdirected_op(PG *pg, OpRequestRef op)
        * them without an error (the client will resend anyway).
        */
     assert(m->get_map_epoch() <= superblock.newest_map);
+
     OSDMapRef opmap = try_get_map(m->get_map_epoch());
     if (!opmap) {
       dout(7) << __func__ << ": " << *pg << " no longer have map for "
 	      << m->get_map_epoch() << ", dropping" << dendl;
       return;
     }
+
     pg_t _pgid = m->get_pg();
+
     spg_t pgid;
+
     if ((m->get_flags() & CEPH_OSD_FLAG_PGOP) == 0)
       _pgid = opmap->raw_pg_to_pg(_pgid);
+
     if (opmap->get_primary_shard(_pgid, &pgid) &&
 	pgid.shard != pg->info.pgid.shard) {
       dout(7) << __func__ << ": " << *pg << " primary changed since "
@@ -1635,6 +1641,7 @@ void OSDService::handle_misdirected_op(PG *pg, OpRequestRef op)
   }
 
   dout(7) << *pg << " misdirected op in " << m->get_map_epoch() << dendl;
+
   clog->warn() << m->get_source_inst() << " misdirected " << m->get_reqid()
 	       << " pg " << m->get_pg()
 	       << " to osd." << whoami

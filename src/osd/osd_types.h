@@ -1411,9 +1411,16 @@ public:
     return !(get_type() == TYPE_ERASURE);
   }
 
+  // called by
+  // librados::RadosClient::pool_requires_alignment2
+  // PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_WRITE, CEPH_OSD_OP_ZERO,
+  // CEPH_OSD_OP_TRUNCATE,
+  // PrimaryLogPG::_write_copy_chunk
+  // PrimaryLogPG::get_copy_chunk_size
   bool requires_aligned_append() const {
     return is_erasure() && !has_flag(FLAG_EC_OVERWRITES);
   }
+
   uint64_t required_alignment() const { return stripe_width; }
 
   bool is_hacky_ecoverwrites() const {
