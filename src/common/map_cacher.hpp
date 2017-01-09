@@ -72,6 +72,9 @@ public:
   virtual ~StoreDriver() {}
 };
 
+// created by
+// member of Scrub::Store
+// member of SnapMapper
 /**
  * Uses SharedPtrRegistry to cache objects of in progress writes
  * allowing the user to read/write a consistent view of the map
@@ -83,7 +86,9 @@ private:
   StoreDriver<K, V> *driver;
 
   SharedPtrRegistry<K, boost::optional<V> > in_progress;
+
   typedef typename SharedPtrRegistry<K, boost::optional<V> >::VPtr VPtr;
+  // Context holding a VPtr instance
   typedef ContainerContext<set<VPtr> > TransHolder;
 
 public:

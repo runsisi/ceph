@@ -571,6 +571,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
       return -EINVAL;
     }
 
+    // std::map<int, boost::variant<std::string,uint64_t>>
     image_options_t::const_iterator j = (*opts_)->find(optname);
 
     if (j == (*opts_)->end()) {
@@ -982,6 +983,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 	     int *order)
   {
     uint64_t order_ = *order;
+
     ImageOptions opts;
 
     int r = opts.set(RBD_IMAGE_OPTION_ORDER, order_);
@@ -991,6 +993,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 
     int r1 = opts.get(RBD_IMAGE_OPTION_ORDER, &order_);
     assert(r1 == 0);
+
     *order = order_;
 
     return r;

@@ -1998,6 +1998,8 @@ void FileStore::op_queue_release_throttle(Op *o)
   logger->set(l_filestore_op_queue_bytes, throttle_bytes.get_current());
 }
 
+// called by
+// FileStore::OpWQ::process
 void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
 {
   if (!m_disable_wbthrottle) {
@@ -2016,6 +2018,7 @@ void FileStore::_do_op(OpSequencer *osr, ThreadPool::TPHandle &handle)
 
   osr->apply_lock.Lock();
 
+  // FileStore::OpSequencer::q.front()
   Op *o = osr->peek_queue();
 
   apply_manager.op_apply_start(o->op);
@@ -2067,7 +2070,8 @@ void FileStore::_finish_op(OpSequencer *osr)
   delete o;
 }
 
-
+// created by
+// FileStore::queue_transactions
 struct C_JournaledAhead : public Context {
   FileStore *fs;
   FileStore::OpSequencer *osr;
@@ -2076,6 +2080,7 @@ struct C_JournaledAhead : public Context {
 
   C_JournaledAhead(FileStore *f, FileStore::OpSequencer *os, FileStore::Op *o, Context *ondisk):
     fs(f), osr(os), o(o), ondisk(ondisk) { }
+
   void finish(int r) {
     fs->_journaled_ahead(osr, o, ondisk);
   }
@@ -2272,6 +2277,8 @@ int FileStore::queue_transactions(Sequencer *posr, vector<Transaction>& tls,
   return r;
 }
 
+// called by
+// C_JournaledAhead::finish, which created by FileStore::queue_transactions
 void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
 {
   dout(5) << "_journaled_ahead " << o << " seq " << o->op << " " << *osr << " " << o->tls << dendl;
@@ -2287,6 +2294,7 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
   // getting blocked behind an ondisk completion.
   if (ondisk) {
     dout(10) << " queueing ondisk " << ondisk << dendl;
+
     ondisk_finishers[osr->id % m_ondisk_finisher_num]->queue(ondisk);
   }
 

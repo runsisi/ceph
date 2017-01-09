@@ -1371,6 +1371,7 @@ namespace librbd {
       tracepoint(librbd, aio_write_exit, -EINVAL);
       return -EINVAL;
     }
+
     ictx->aio_work_queue->aio_write(get_aio_completion(c), off, len, bl.c_str(),
                                     0);
     tracepoint(librbd, aio_write_exit, 0);

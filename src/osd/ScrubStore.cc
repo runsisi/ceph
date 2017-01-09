@@ -93,6 +93,8 @@ string last_snap_key(int64_t pool)
 
 namespace Scrub {
 
+// called by
+// PG::chunky_scrub
 Store*
 Store::create(ObjectStore* store,
 	      ObjectStore::Transaction* t,
@@ -101,8 +103,11 @@ Store::create(ObjectStore* store,
 {
   assert(store);
   assert(t);
+
+  // object name: ss << "scrub_" << pgid in a temp pool: hobject_t::POOL_TEMP_START - pgid.pool()
   ghobject_t oid = make_scrub_object(pgid);
   t->touch(coll, oid);
+
   return new Store{coll, oid, store};
 }
 
@@ -110,7 +115,7 @@ Store::Store(const coll_t& coll, const ghobject_t& oid, ObjectStore* store)
   : coll(coll),
     hoid(oid),
     driver(store, coll, hoid),
-    backend(&driver)
+    backend(&driver) // MapCacher::MapCacher<std::string, bufferlist>
 {}
 
 Store::~Store()

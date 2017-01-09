@@ -223,6 +223,7 @@ private:
     uint64_t ops, bytes;
     TrackedOpRef osd_op;
   };
+
   class OpSequencer : public Sequencer_impl {
     Mutex qlock; // to protect q, for benefit of flush (peek/dequeue also protected by lock)
     list<Op*> q;
@@ -289,16 +290,19 @@ private:
       Mutex::Locker l(qlock);
       jq.push_back(s);
     }
+
     void dequeue_journal(list<Context*> *to_queue) {
       Mutex::Locker l(qlock);
       jq.pop_front();
       cond.Signal();
       _wake_flush_waiters(to_queue);
     }
+
     void queue(Op *o) {
       Mutex::Locker l(qlock);
       q.push_back(o);
     }
+
     Op *peek_queue() {
       Mutex::Locker l(qlock);
       assert(apply_lock.is_locked());
@@ -403,12 +407,15 @@ private:
       store->op_queue.pop_front();
       return osr;
     }
+
     void _process(OpSequencer *osr, ThreadPool::TPHandle &handle) override {
       store->_do_op(osr, handle);
     }
+
     void _process_finish(OpSequencer *osr) {
       store->_finish_op(osr);
     }
+
     void _clear() {
       assert(store->op_queue.empty());
     }

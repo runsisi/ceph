@@ -275,6 +275,7 @@ void CreateRequest<I>::send() {
 
 template<typename I>
 void CreateRequest<I>::validate_pool() {
+  // default true
   if (!m_cct->_conf->rbd_validate_pool) {
     create_id_object();
     return;

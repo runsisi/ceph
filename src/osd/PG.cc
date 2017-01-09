@@ -4810,8 +4810,11 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 	  ObjectStore::Transaction t;
 
 	  scrubber.cleanup_store(&t);
+
+	  // create a object in temp pool
 	  scrubber.store.reset(Scrub::Store::create(osd->store, &t,
 						    info.pgid, coll));
+
 	  osd->store->queue_transaction(osr.get(), std::move(t), nullptr);
 	}
 
@@ -4822,6 +4825,7 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 	{
 	  bool repair = state_test(PG_STATE_REPAIR);
 	  bool deep_scrub = state_test(PG_STATE_DEEP_SCRUB);
+
 	  const char *mode = (repair ? "repair": (deep_scrub ? "deep-scrub" : "scrub"));
 	  stringstream oss;
 	  oss << info.pgid.pgid << " " << mode << " starts" << std::endl;
@@ -4876,6 +4880,7 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 		       "Somehow we got more than 2 objects which"
 		       "have the same head but are not clones");
 	      }
+
 	      back = objects.back();
 	    }
 	    if (candidate_end.has_snapset()) {
