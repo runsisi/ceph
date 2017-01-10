@@ -169,6 +169,8 @@ void librados::ObjectOperation::assert_exists()
 void librados::ObjectOperation::exec(const char *cls, const char *method, bufferlist& inbl)
 {
   ::ObjectOperation *o = &impl->o;
+
+  // add an op for CEPH_OSD_OP_CALL, encode cls, method, inbl into osd_op.indata
   o->call(cls, method, inbl);
 }
 

@@ -1471,6 +1471,8 @@ void ECBackend::submit_transaction(
   dout(10) << "onreadable_sync: " << op->on_local_applied_sync << dendl;
 }
 
+// called by
+// PrimaryLogPG::submit_log_entries
 void ECBackend::call_write_ordered(std::function<void(void)> &&cb) {
   if (!waiting_state.empty()) {
     waiting_state.back().on_write.emplace_back(std::move(cb));

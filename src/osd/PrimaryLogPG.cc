@@ -2566,7 +2566,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
 
   op->mark_started();
 
-  // update version for write op, prepare transaction, issue repop, eval repop
+  // reset ctx->op_t, then call prepare_transaction
   execute_ctx(ctx);
 
   // latency from dequeued from the op_wq to sent to backend
@@ -3423,10 +3423,14 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
   // set ctx->new_obs, ctx->new_snapset and ctx->snapset
   ctx->reset_obs(ctx->obc);
 
+  // PrimaryLogPG::prepare_transaction may set this to true if this is
+  // a write op and PrimaryLogPG::prepare_transaction failed or prepared into a noop
   ctx->update_log_only = false; // reset in case finish_copyfrom() is re-running execute_ctx
 
   OpRequestRef op = ctx->op;
+
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
+
   ObjectContextRef obc = ctx->obc;
   const hobject_t& soid = obc->obs.oi.soid;
 
@@ -3608,24 +3612,32 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
   }
 
   if (ctx->update_log_only) {
+
+    // write op and failed or prepared into a noop
+
     if (result >= 0)
       do_osd_op_effects(ctx, m->get_connection());
 
     dout(20) << __func__ << " update_log_only -- result=" << result << dendl;
+
     // save just what we need from ctx
     MOSDOpReply *reply = ctx->reply;
     ctx->reply = nullptr;
     reply->claim_op_out_data(ctx->ops);
     reply->get_header().data_off = ctx->data_off;
+
     close_op_ctx(ctx);
 
     if (result == -ENOENT) {
       reply->set_enoent_reply_versions(info.last_update,
 				       info.last_user_version);
     }
+
     reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
+
     // append to pg log for dup detection - don't save buffers for now
     record_write_error(op, soid, reply, result);
+
     return;
   }
 
@@ -4777,6 +4789,29 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 
   bool first_read = true;
 
+  // tx is for
+  // CEPH_OSD_OP_SETALLOCHINT
+  // CEPH_OSD_OP_WRITE
+  // CEPH_OSD_OP_WRITEFULL
+  // CEPH_OSD_OP_WRITESAME
+  // CEPH_OSD_OP_ROLLBACK
+  // CEPH_OSD_OP_ZERO
+  // CEPH_OSD_OP_CREATE
+  // CEPH_OSD_OP_TRIMTRUNC
+  // CEPH_OSD_OP_TRUNCATE
+  // CEPH_OSD_OP_DELETE
+  // CEPH_OSD_OP_CLONERANGE
+  // CEPH_OSD_OP_WATCH
+  // CEPH_OSD_OP_SETXATTR
+  // CEPH_OSD_OP_RMXATTR
+  // CEPH_OSD_OP_STARTSYNC
+  // CEPH_OSD_OP_APPEND
+  // CEPH_OSD_OP_OMAPSETVALS
+  // CEPH_OSD_OP_OMAPSETHEADER
+  // CEPH_OSD_OP_OMAPCLEAR
+  // CEPH_OSD_OP_OMAPRMKEYS
+  // CEPH_OSD_OP_TMAPXXX
+  // CEPH_OSD_OP_CALL, methods will do other CEPH_OSD_OP_XXX ops eventually
   PGTransaction* t = ctx->op_t.get();
 
   dout(10) << "do_osd_op " << soid << " " << ops << dendl;
@@ -5093,6 +5128,8 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
       {
 	string cname, mname;
 	bufferlist indata;
+
+	// decode the method and args to call
 	try {
 	  bp.copy(op.cls.class_len, cname);
 	  bp.copy(op.cls.method_len, mname);
@@ -5106,6 +5143,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  tracepoint(osd, do_osd_op_pre_call, soid.oid.name.c_str(), soid.snap.val, "???", "???");
 	  break;
 	}
+
 	tracepoint(osd, do_osd_op_pre_call, soid.oid.name.c_str(), soid.snap.val, cname.c_str(), mname.c_str());
 
 	ClassHandler::ClassData *cls;
@@ -5124,9 +5162,13 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  ctx->user_modify = true;
 
 	bufferlist outdata;
+
 	dout(10) << "call method " << cname << "." << mname << dendl;
+
 	int prev_rd = ctx->num_read;
 	int prev_wr = ctx->num_write;
+
+	// call the class method, i.e., method->cxx_func/method->func
 	result = method->exec((cls_method_context_t)&ctx, indata, outdata);
 
 	if (ctx->num_read > prev_rd && !(flags & CLS_METHOD_RD)) {
@@ -5134,6 +5176,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  result = -EIO;
 	  break;
 	}
+
 	if (ctx->num_write > prev_wr && !(flags & CLS_METHOD_WR)) {
 	  derr << "method " << cname << "." << mname << " tried to update object but is not marked WR" << dendl;
 	  result = -EIO;
@@ -5141,8 +5184,10 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	}
 
 	dout(10) << "method called response length=" << outdata.length() << dendl;
+
 	op.extent.length = outdata.length();
 	osd_op.outdata.claim_append(outdata);
+
 	dout(30) << "out dump: ";
 	osd_op.outdata.hexdump(*_dout);
 	*_dout << dendl;
@@ -5852,7 +5897,9 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
       ++ctx->num_write;
       {
 	tracepoint(osd, do_osd_op_pre_create, soid.oid.name.c_str(), soid.snap.val);
+
         int flags = le32_to_cpu(op.flags);
+
 	if (obs.exists && !oi.is_whiteout() &&
 	    (flags & CEPH_OSD_OP_FLAG_EXCL)) {
           result = -EEXIST; /* this is an exclusive create */
@@ -6539,13 +6586,16 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	tracepoint(osd, do_osd_op_pre_omaprmkeys, soid.oid.name.c_str(), soid.snap.val);
 	break;
       }
+
       ++ctx->num_write;
+
       {
 	if (!obs.exists || oi.is_whiteout()) {
 	  result = -ENOENT;
 	  tracepoint(osd, do_osd_op_pre_omaprmkeys, soid.oid.name.c_str(), soid.snap.val);
 	  break;
 	}
+
 	bufferlist to_rm_bl;
 	try {
 	  decode_str_set_to_bl(bp, &to_rm_bl);
@@ -6555,10 +6605,14 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  tracepoint(osd, do_osd_op_pre_omaprmkeys, soid.oid.name.c_str(), soid.snap.val);
 	  goto fail;
 	}
+
 	tracepoint(osd, do_osd_op_pre_omaprmkeys, soid.oid.name.c_str(), soid.snap.val);
+
 	t->omap_rmkeys(soid, to_rm_bl);
+
 	ctx->delta_stats.num_wr++;
       }
+
       obs.oi.clear_omap_digest();
       break;
 
@@ -7423,8 +7477,11 @@ int PrimaryLogPG::prepare_transaction(OpContext *ctx)
       // but do nothing else
       ctx->update_log_only = true;
     }
+
     return result;
   }
+
+  // no error
 
   // read-op?  write-op noop? done?
   if (ctx->op_t->empty() && !ctx->modify) {
@@ -7432,10 +7489,12 @@ int PrimaryLogPG::prepare_transaction(OpContext *ctx)
     // ctx->modify indicates force modification even if op_t is empty
 
     unstable_stats.add(ctx->delta_stats);
+
     if (ctx->op->may_write() &&
 	get_osdmap()->test_flag(CEPH_OSDMAP_REQUIRE_KRAKEN)) {
       ctx->update_log_only = true;
     }
+
     return result;
   }
 
@@ -9714,6 +9773,7 @@ void PrimaryLogPG::submit_log_entries(
   int r)
 {
   dout(10) << __func__ << " " << entries << dendl;
+
   assert(is_primary());
 
   eversion_t version;
@@ -9739,6 +9799,7 @@ void PrimaryLogPG::submit_log_entries(
     [this, entries, repop, on_complete]() {
       ObjectStore::Transaction t;
       eversion_t old_last_update = info.last_update;
+
       merge_new_log_entries(entries, t);
 
 
@@ -9747,17 +9808,23 @@ void PrimaryLogPG::submit_log_entries(
 	   i != actingbackfill.end();
 	   ++i) {
 	pg_shard_t peer(*i);
+
 	if (peer == pg_whoami) continue;
+
 	assert(peer_missing.count(peer));
 	assert(peer_info.count(peer));
+
 	if (get_osdmap()->test_flag(CEPH_OSDMAP_REQUIRE_JEWEL)) {
 	  assert(repop);
+
+	  // will be handled by PrimaryLogPG::do_update_log_missing
 	  MOSDPGUpdateLogMissing *m = new MOSDPGUpdateLogMissing(
 	    entries,
 	    spg_t(info.pgid.pgid, i->shard),
 	    pg_whoami.shard,
 	    get_osdmap()->get_epoch(),
 	    repop->rep_tid);
+
 	  osd->send_message_osd_cluster(
 	    peer.osd, m, get_osdmap()->get_epoch());
 	  waiting_on.insert(peer);
@@ -9769,10 +9836,12 @@ void PrimaryLogPG::submit_log_entries(
 	  m->log.log = entries;
 	  m->log.tail = old_last_update;
 	  m->log.head = info.last_update;
+
 	  osd->send_message_osd_cluster(
 	    peer.osd, m, get_osdmap()->get_epoch());
 	}
       }
+
       if (get_osdmap()->test_flag(CEPH_OSDMAP_REQUIRE_JEWEL)) {
 	ceph_tid_t rep_tid = repop->rep_tid;
 	waiting_on.insert(pg_whoami);
@@ -9781,6 +9850,7 @@ void PrimaryLogPG::submit_log_entries(
 	    rep_tid,
 	    LogUpdateCtx{std::move(repop), std::move(waiting_on)}
 	    ));
+
 	struct OnComplete : public Context {
 	  PrimaryLogPGRef pg;
 	  ceph_tid_t rep_tid;
@@ -9806,6 +9876,7 @@ void PrimaryLogPG::submit_log_entries(
 	    pg->unlock();
 	  }
 	};
+
 	t.register_on_commit(
 	  new OnComplete{this, rep_tid, get_osdmap()->get_epoch()});
       } else {
@@ -9828,14 +9899,17 @@ void PrimaryLogPG::submit_log_entries(
 	      pg->unlock();
 	    }
 	  };
+
 	  t.register_on_complete(
 	    new OnComplete{
 	      this, *on_complete, get_osdmap()->get_epoch()
 		});
 	}
       }
+
       t.register_on_applied(
 	new C_OSD_OnApplied{this, get_osdmap()->get_epoch(), info.last_update});
+
       int r = osd->store->queue_transaction(osr.get(), std::move(t), NULL);
       assert(r == 0);
     });
@@ -11092,6 +11166,7 @@ eversion_t PrimaryLogPG::pick_newest_available(const hobject_t& oid)
 // PrimaryLogPG::do_request, for MSG_OSD_PG_UPDATE_LOG_MISSING
 void PrimaryLogPG::do_update_log_missing(OpRequestRef &op)
 {
+  // sent by PrimaryLogPG::submit_log_entries
   MOSDPGUpdateLogMissing *m = static_cast<MOSDPGUpdateLogMissing*>(
     op->get_req());
 

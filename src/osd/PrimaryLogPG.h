@@ -619,6 +619,7 @@ public:
 	snapset = &obc->ssc->snapset;
       }
     }
+
     OpContext(OpRequestRef _op, osd_reqid_t _reqid,
               vector<OSDOp>& _ops, PrimaryLogPG *_pg) :
       op(_op), reqid(_reqid), ops(_ops), obs(NULL), snapset(0),
@@ -932,10 +933,12 @@ protected:
     boost::optional<std::function<void(void)> > &&on_complete,
     OpRequestRef op = OpRequestRef(),
     int r = 0);
+
   struct LogUpdateCtx {
     boost::intrusive_ptr<RepGather> repop;
     set<pg_shard_t> waiting_on;
   };
+
   void cancel_log_updates();
   map<ceph_tid_t, LogUpdateCtx> log_entry_update_waiting_on;
 

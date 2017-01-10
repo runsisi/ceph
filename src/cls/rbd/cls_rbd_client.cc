@@ -161,6 +161,7 @@ namespace librbd {
       ::encode(object_prefix, bl);
       ::encode(data_pool_id, bl);
 
+      // cls = "rbd", method = "create", indata = bl
       op->exec("rbd", "create", bl);
     }
 

@@ -930,6 +930,8 @@ string RocksDBStore::past_prefix(const string &prefix)
   return limit;
 }
 
+// called by
+// KeyValueDB::IteratorImpl::get_iterator
 RocksDBStore::WholeSpaceIterator RocksDBStore::_get_iterator()
 {
   return std::make_shared<RocksDBWholeSpaceIteratorImpl>(

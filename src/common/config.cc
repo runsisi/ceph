@@ -691,19 +691,27 @@ void md_config_t::_apply_changes(std::ostream *oss)
   std::set <std::string> empty_set;
   char buf[128];
   char *bufptr = (char*)buf;
+
   for (changed_set_t::const_iterator c = changed.begin();
        c != changed.end(); ++c) {
     const std::string &key(*c);
+
+    // std::multimap <std::string, md_config_obs_t*>
     pair < obs_map_t::iterator, obs_map_t::iterator >
       range(observers.equal_range(key));
+
     if ((oss) &&
 	(!_get_val(key.c_str(), &bufptr, sizeof(buf))) &&
 	!_internal_field(key)) {
+      // NOTE: "internal_safe_to_start_threads" is internal field
       (*oss) << key << " = '" << buf << "' ";
+
       if (range.first == range.second) {
+        // no observer for this conf found
 	(*oss) << "(not observed, change may require restart) ";
       }
     }
+
     for (obs_map_t::iterator r = range.first; r != range.second; ++r) {
       rev_obs_map_t::value_type robs_val(r->second, empty_set);
       pair < rev_obs_map_t::iterator, bool > robs_ret(robs.insert(robs_val));

@@ -460,7 +460,11 @@ void CreateRequest<I>::create_image() {
   }
 
   librados::ObjectWriteOperation op;
+  // create image header object exclusively, i.e., return EEXIST if
+  // the object already exists, see PrimaryLogPG::do_osd_ops for CEPH_OSD_OP_CREATE
   op.create(true);
+
+  // add an rbd "create" cls op, encode args: size, order, features, object_prefix, data_pool_id
   cls_client::create_image(&op, m_size, m_order, m_features, oss.str(),
                            m_data_pool_id);
 

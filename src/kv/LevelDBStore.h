@@ -386,6 +386,8 @@ err:
 
 
 protected:
+  // called by
+  // KeyValueDB::IteratorImpl::get_iterator
   WholeSpaceIterator _get_iterator() {
     return std::make_shared<LevelDBWholeSpaceIteratorImpl>(
 	db->NewIterator(leveldb::ReadOptions()));

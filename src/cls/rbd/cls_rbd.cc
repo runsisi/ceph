@@ -1998,9 +1998,11 @@ static int dir_add_image_helper(cls_method_context_t hctx,
   bufferlist id_bl, name_bl;
   ::encode(id, id_bl);
   ::encode(name, name_bl);
+
   map<string, bufferlist> omap_vals;
   omap_vals[name_key] = id_bl;
   omap_vals[id_key] = name_bl;
+
   return cls_cxx_map_set_vals(hctx, &omap_vals);
 }
 
@@ -2013,12 +2015,14 @@ static int dir_remove_image_helper(cls_method_context_t hctx,
   string stored_name, stored_id;
   string name_key = dir_key_for_name(name);
   string id_key = dir_key_for_id(id);
+
   int r = read_key(hctx, name_key, &stored_id);
   if (r < 0) {
     if (r != -ENOENT)
       CLS_ERR("error reading name to id mapping: %s", cpp_strerror(r).c_str());
     return r;
   }
+
   r = read_key(hctx, id_key, &stored_name);
   if (r < 0) {
     CLS_ERR("error reading id to name mapping: %s", cpp_strerror(r).c_str());
@@ -2233,6 +2237,7 @@ int dir_list(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
  */
 int dir_add_image(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 {
+  // create the rbd_directory object first if needed
   int r = cls_cxx_create(hctx, false);
   if (r < 0) {
     CLS_ERR("could not create directory: %s", cpp_strerror(r).c_str());
