@@ -1593,26 +1593,37 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id, bool *history_les_bound)
   if (want != acting) {
     dout(10) << "choose_acting want " << want << " != acting " << acting
 	     << ", requesting pg_temp change" << dendl;
+
     want_acting = want;
 
     if (want_acting == up) {
       // There can't be any pending backfill if
       // want is the same as crush map up OSDs.
       assert(compat_mode || want_backfill.empty());
+
       vector<int> empty;
       osd->queue_want_pg_temp(info.pgid.pgid, empty);
     } else
       osd->queue_want_pg_temp(info.pgid.pgid, want);
+
     return false;
   }
+
+  // want == acting
+
   want_acting.clear();
+
   actingbackfill = want_acting_backfill;
+
   dout(10) << "actingbackfill is " << actingbackfill << dendl;
+
   assert(backfill_targets.empty() || backfill_targets == want_backfill);
+
   if (backfill_targets.empty()) {
     // Caller is GetInfo
     backfill_targets = want_backfill;
   }
+
   // Will not change if already set because up would have had to change
   // Verify that nothing in backfill is in stray_set
   for (set<pg_shard_t>::iterator i = want_backfill.begin();
@@ -1620,6 +1631,7 @@ bool PG::choose_acting(pg_shard_t &auth_log_shard_id, bool *history_les_bound)
       ++i) {
     assert(stray_set.find(*i) == stray_set.end());
   }
+
   dout(10) << "choose_acting want " << want << " (== acting) backfill_targets " 
 	   << want_backfill << dendl;
   return true;
@@ -5434,8 +5446,10 @@ bool PG::append_log_entries_update_missing(
   }
 
   info.stats.stats_invalid = info.stats.stats_invalid || invalidate_stats;
+
   dirty_info = true;
   write_if_dirty(t);
+
   return invalidate_stats;
 }
 
@@ -5448,6 +5462,7 @@ void PG::merge_new_log_entries(
   dout(10) << __func__ << " " << entries << dendl;
   assert(is_primary());
 
+  // call pg_log.append_new_log_entries
   bool rebuild_missing = append_log_entries_update_missing(entries, t);
 
   for (set<pg_shard_t>::const_iterator i = actingbackfill.begin();

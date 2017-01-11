@@ -9777,13 +9777,16 @@ void PrimaryLogPG::submit_log_entries(
   assert(is_primary());
 
   eversion_t version;
+
   if (!entries.empty()) {
     assert(entries.rbegin()->version >= projected_last_update);
+
     version = projected_last_update = entries.rbegin()->version;
   }
 
   boost::intrusive_ptr<RepGather> repop;
   boost::optional<std::function<void(void)> > on_complete;
+
   if (get_osdmap()->test_flag(CEPH_OSDMAP_REQUIRE_JEWEL)) {
     repop = new_repop(
       version,
@@ -9795,6 +9798,7 @@ void PrimaryLogPG::submit_log_entries(
     on_complete = std::move(_on_complete);
   }
 
+  // for ReplicatedBackend, call the lambda directly
   pgbackend->call_write_ordered(
     [this, entries, repop, on_complete]() {
       ObjectStore::Transaction t;
@@ -9827,8 +9831,12 @@ void PrimaryLogPG::submit_log_entries(
 
 	  osd->send_message_osd_cluster(
 	    peer.osd, m, get_osdmap()->get_epoch());
+
 	  waiting_on.insert(peer);
 	} else {
+
+	  // pre jewel
+
 	  MOSDPGLog *m = new MOSDPGLog(
 	    peer.shard, pg_whoami.shard,
 	    info.last_update.epoch,
@@ -9840,11 +9848,16 @@ void PrimaryLogPG::submit_log_entries(
 	  osd->send_message_osd_cluster(
 	    peer.osd, m, get_osdmap()->get_epoch());
 	}
-      }
+      } // for actingbackfill
 
       if (get_osdmap()->test_flag(CEPH_OSDMAP_REQUIRE_JEWEL)) {
 	ceph_tid_t rep_tid = repop->rep_tid;
+
+	// peers + myself
 	waiting_on.insert(pg_whoami);
+
+	// primary will wait all peers + myself to finish the tx
+	// see also PrimaryLogPG::do_update_log_missing_reply
 	log_entry_update_waiting_on.insert(
 	  make_pair(
 	    rep_tid,
@@ -9855,24 +9868,32 @@ void PrimaryLogPG::submit_log_entries(
 	  PrimaryLogPGRef pg;
 	  ceph_tid_t rep_tid;
 	  epoch_t epoch;
+
 	  OnComplete(
 	    PrimaryLogPGRef pg,
 	    ceph_tid_t rep_tid,
 	    epoch_t epoch)
 	    : pg(pg), rep_tid(rep_tid), epoch(epoch) {}
+
 	  void finish(int) override {
 	    pg->lock();
+
 	    if (!pg->pg_has_reset_since(epoch)) {
 	      auto it = pg->log_entry_update_waiting_on.find(rep_tid);
 	      assert(it != pg->log_entry_update_waiting_on.end());
+
 	      auto it2 = it->second.waiting_on.find(pg->pg_whoami);
 	      assert(it2 != it->second.waiting_on.end());
+
 	      it->second.waiting_on.erase(it2);
+
 	      if (it->second.waiting_on.empty()) {
 		pg->repop_all_committed(it->second.repop.get());
+
 		pg->log_entry_update_waiting_on.erase(it);
 	      }
 	    }
+
 	    pg->unlock();
 	  }
 	};
@@ -9880,7 +9901,13 @@ void PrimaryLogPG::submit_log_entries(
 	t.register_on_commit(
 	  new OnComplete{this, rep_tid, get_osdmap()->get_epoch()});
       } else {
+
+        // pre jewel
+
 	if (on_complete) {
+
+	  // always be true, the caller always set this
+
 	  struct OnComplete : public Context {
 	    PrimaryLogPGRef pg;
 	    std::function<void(void)> on_complete;
@@ -9907,6 +9934,7 @@ void PrimaryLogPG::submit_log_entries(
 	}
       }
 
+      // t is for merged pg log entries, see PrimaryLogPG::merge_new_log_entries
       t.register_on_applied(
 	new C_OSD_OnApplied{this, get_osdmap()->get_epoch(), info.last_update});
 
@@ -11231,6 +11259,7 @@ void PrimaryLogPG::do_update_log_missing_reply(OpRequestRef &op)
   MOSDPGUpdateLogMissingReply *m =
     static_cast<MOSDPGUpdateLogMissingReply*>(
     op->get_req());
+
   dout(20) << __func__ << " got reply from "
 	   << m->get_from() << dendl;
 
@@ -11247,6 +11276,7 @@ void PrimaryLogPG::do_update_log_missing_reply(OpRequestRef &op)
 
     if (it->second.waiting_on.empty()) {
       repop_all_committed(it->second.repop.get());
+
       log_entry_update_waiting_on.erase(it);
     }
   } else {

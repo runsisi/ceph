@@ -917,6 +917,7 @@ public:
   bool is_actingbackfill(pg_shard_t osd) const {
     return actingbackfill.count(osd);
   }
+
   bool is_acting(pg_shard_t osd) const {
     if (pool.info.ec_pool()) {
       return acting.size() > (unsigned)osd.shard && acting[osd.shard] == osd.osd;
@@ -924,6 +925,7 @@ public:
       return std::find(acting.begin(), acting.end(), osd.osd) != acting.end();
     }
   }
+
   bool is_up(pg_shard_t osd) const {
     if (pool.info.ec_pool()) {
       return up.size() > (unsigned)osd.shard && up[osd.shard] == osd.osd;

@@ -1008,20 +1008,25 @@ public:
     LogEntryHandler *rollbacker,
     const DoutPrefixProvider *dpp) {
     bool invalidate_stats = false;
+
     if (log && !entries.empty()) {
       assert(log->head < entries.begin()->version);
     }
+
     for (list<pg_log_entry_t>::const_iterator p = entries.begin();
 	 p != entries.end();
 	 ++p) {
       invalidate_stats = invalidate_stats || !p->is_error();
+
       if (log) {
 	ldpp_dout(dpp, 20) << "update missing, append " << *p << dendl;
 	log->add(*p);
       }
+
       if (cmp(p->soid, last_backfill, last_backfill_bitwise) <= 0 &&
 	  !p->is_error()) {
 	missing.add_next_event(*p);
+
 	if (rollbacker) {
 	  // hack to match PG::mark_all_unfound_lost
 	  if (maintain_rollback && p->is_lost_delete() && p->can_rollback()) {
@@ -1032,8 +1037,12 @@ public:
 	}
       }
     }
+
     return invalidate_stats;
   }
+
+  // called by
+  // PG::append_log_entries_update_missing
   bool append_new_log_entries(
     const hobject_t &last_backfill,
     bool last_backfill_bitwise,
@@ -1048,9 +1057,11 @@ public:
       missing,
       rollbacker,
       this);
+
     if (!entries.empty()) {
       mark_writeout_from(entries.begin()->version);
     }
+
     return invalidate_stats;
   }
 
