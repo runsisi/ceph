@@ -1421,7 +1421,9 @@ void Journal<I>::handle_start_external_replay(int r,
 
 // STATE_REPLAYING -> STATE_READY
 
-// called by ImageReplayer<I>::replay_flush, ImageReplayer<I>::shut_down
+// called by
+// ImageReplayer<I>::replay_flush
+// ImageReplayer<I>::shut_down
 template <typename I>
 void Journal<I>::stop_external_replay() {
   CephContext *cct = m_image_ctx.cct;

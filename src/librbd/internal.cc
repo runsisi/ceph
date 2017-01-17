@@ -2628,6 +2628,10 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return r;
   }
 
+  // called by
+  // Image::invalidate_cache
+  // rbd_invalidate_cache
+  // InvalidateCacheCommand::call
   int invalidate_cache(ImageCtx *ictx)
   {
     CephContext *cct = ictx->cct;
@@ -3611,25 +3615,30 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     ictx->md_lock.put_write();
     
     pair<uint64_t, uint64_t> readahead_extent = ictx->readahead.update(image_extents, image_size);
+
     uint64_t readahead_offset = readahead_extent.first;
     uint64_t readahead_length = readahead_extent.second;
 
     if (readahead_length > 0) {
       ldout(ictx->cct, 20) << "(readahead logical) " << readahead_offset << "~" << readahead_length << dendl;
+
       map<object_t,vector<ObjectExtent> > readahead_object_extents;
       Striper::file_to_extents(ictx->cct, ictx->format_string, &ictx->layout,
 			       readahead_offset, readahead_length, 0, readahead_object_extents);
+
       for (map<object_t,vector<ObjectExtent> >::iterator p = readahead_object_extents.begin(); p != readahead_object_extents.end(); ++p) {
 	for (vector<ObjectExtent>::iterator q = p->second.begin(); q != p->second.end(); ++q) {
 	  ldout(ictx->cct, 20) << "(readahead) oid " << q->oid << " " << q->offset << "~" << q->length << dendl;
 
 	  Context *req_comp = new C_RBD_Readahead(ictx, q->oid, q->offset, q->length);
 	  ictx->readahead.inc_pending();
+
 	  ictx->aio_read_from_cache(q->oid, q->objectno, NULL,
 				    q->length, q->offset,
 				    req_comp, 0);
 	}
       }
+
       ictx->perfcounter->inc(l_librbd_readahead);
       ictx->perfcounter->inc(l_librbd_readahead_bytes, readahead_length);
     }

@@ -898,6 +898,7 @@ void JournalMetadata::handle_refresh_complete(C_Refresh *refresh, int r) {
 	ldout(m_cct, 0) << "client flagged disconnected: " << m_client_id
 			<< dendl;
       }
+
       m_minimum_set = MAX(m_minimum_set, refresh->minimum_set);
       m_active_set = MAX(m_active_set, refresh->active_set);
 

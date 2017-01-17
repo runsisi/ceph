@@ -68,12 +68,14 @@ class ObjectCacher::C_RetryRead : public Context {
 public:
   C_RetryRead(ObjectCacher *_oc, OSDRead *r, ObjectSet *os, Context *c)
     : oc(_oc), rd(r), oset(os), onfinish(c) {}
+
   void finish(int r) {
     if (r < 0) {
       if (onfinish)
         onfinish->complete(r);
       return;
     }
+
     int ret = oc->_readx(rd, oset, onfinish, false);
     if (ret != 0 && onfinish) {
       onfinish->complete(ret);
@@ -1348,6 +1350,9 @@ int ObjectCacher::readx(OSDRead *rd, ObjectSet *oset, Context *onfinish)
   return _readx(rd, oset, onfinish, true);
 }
 
+// called by
+// ObjectCacher::readx
+// ObjectCacher::C_RetryRead::finish
 int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 			 bool external_call)
 {
@@ -2473,19 +2478,24 @@ uint64_t ObjectCacher::release_all()
 void ObjectCacher::clear_nonexistence(ObjectSet *oset)
 {
   assert(lock.is_locked());
+
   ldout(cct, 10) << "clear_nonexistence() " << oset << dendl;
 
   for (xlist<Object*>::iterator p = oset->objects.begin();
        !p.end(); ++p) {
     Object *ob = *p;
+
     if (!ob->exists) {
       ldout(cct, 10) << " setting exists and complete on " << *ob << dendl;
+
       ob->exists = true;
       ob->complete = false;
     }
+
     for (xlist<C_ReadFinish*>::iterator q = ob->reads.begin();
 	 !q.end(); ++q) {
       C_ReadFinish *comp = *q;
+
       comp->distrust_enoent();
     }
   }

@@ -243,15 +243,20 @@ void JournalRecorder::advance_object_set() {
   ldout(m_cct, 20) << __func__ << ": advance to object set " << m_current_set
                    << dendl;
 
+  // journal_recorder->handle_advance_object_set, m_current_set has been
+  // inc by JournalRecorder::close_and_advance_object_set
   m_journal_metadata->set_active_set(m_current_set, new C_AdvanceObjectSet(
     this));
 }
 
+// called by
+// C_AdvanceObjectSet::finish
 void JournalRecorder::handle_advance_object_set(int r) {
   Mutex::Locker locker(m_lock);
 
   ldout(m_cct, 20) << __func__ << ": r=" << r << dendl;
 
+  // was inc by JournalRecorder::close_and_advance_object_set
   assert(m_in_flight_advance_sets > 0);
   --m_in_flight_advance_sets;
 
@@ -261,10 +266,15 @@ void JournalRecorder::handle_advance_object_set(int r) {
   }
 
   if (m_in_flight_advance_sets == 0 && m_in_flight_object_closes == 0) {
+    // object set closed and journal metadata updated
     open_object_set();
   }
 }
 
+// called by
+// JournalRecorder::handle_advance_object_set
+// JournalRecorder::handle_update
+// JournalRecorder::handle_closed
 void JournalRecorder::open_object_set() {
   assert(m_lock.is_locked());
 
@@ -274,10 +284,13 @@ void JournalRecorder::open_object_set() {
   uint8_t splay_width = m_journal_metadata->get_splay_width();
 
   lock_object_recorders();
+
   for (ObjectRecorderPtrs::iterator it = m_object_ptrs.begin();
        it != m_object_ptrs.end(); ++it) {
     ObjectRecorderPtr object_recorder = it->second;
+
     uint64_t object_number = object_recorder->get_object_number();
+
     if (object_number / splay_width != m_current_set) {
       assert(object_recorder->is_closed());
 
@@ -285,18 +298,24 @@ void JournalRecorder::open_object_set() {
       create_next_object_recorder_unlock(object_recorder);
     } else {
       uint8_t splay_offset = object_number % splay_width;
+
       m_object_locks[splay_offset]->Unlock();
     }
   }
 }
 
+// called by
+// JournalRecorder::close_and_advance_object_set
+// JournalRecorder::handle_update
 bool JournalRecorder::close_object_set(uint64_t active_set) {
   assert(m_lock.is_locked());
 
   // object recorders will invoke overflow handler as they complete
   // closing the object to ensure correct order of future appends
   uint8_t splay_width = m_journal_metadata->get_splay_width();
+
   lock_object_recorders();
+
   for (ObjectRecorderPtrs::iterator it = m_object_ptrs.begin();
        it != m_object_ptrs.end(); ++it) {
     ObjectRecorderPtr object_recorder = it->second;
@@ -314,10 +333,15 @@ bool JournalRecorder::close_object_set(uint64_t active_set) {
       }
     }
   }
+
   unlock_object_recorders();
+
   return (m_in_flight_object_closes == 0);
 }
 
+// called by
+// JournalRecorder::JournalRecorder
+// JournalRecorder::create_next_object_recorder_unlock
 ObjectRecorderPtr JournalRecorder::create_object_recorder(
     uint64_t object_number, shared_ptr<Mutex> lock) {
   ObjectRecorderPtr object_recorder(new ObjectRecorder(
@@ -330,6 +354,8 @@ ObjectRecorderPtr JournalRecorder::create_object_recorder(
   return object_recorder;
 }
 
+// called by
+// JournalRecorder::open_object_set
 void JournalRecorder::create_next_object_recorder_unlock(
     ObjectRecorderPtr object_recorder) {
   assert(m_lock.is_locked());
@@ -401,7 +427,7 @@ void JournalRecorder::handle_update() {
 }
 
 // called by
-// journal::ObjectHandler::handle_closed, see journal::ObjectRecorder::notify_handler_unlock
+// JournalRecorder::ObjectHandler::closed, which called by journal::ObjectRecorder::notify_handler_unlock
 void JournalRecorder::handle_closed(ObjectRecorder *object_recorder) {
   ldout(m_cct, 10) << __func__ << ": " << object_recorder->get_oid() << dendl;
 
@@ -427,21 +453,19 @@ void JournalRecorder::handle_closed(ObjectRecorder *object_recorder) {
     // all objects of this set have been closed
 
     if (m_in_flight_advance_sets == 0) {
-      // peer forced closing of object set, we are notified that the active
-      // set has been advanced, so we do not have to advance the active
-      // set again, see JournalRecorder::handle_update
-
+      // peer forced closing of object set, i.e., JournalRecorder::close_object_set
+      // was issued by JournalRecorder::handle_update
       open_object_set();
     } else {
-      // local overflow advanced object set, see JournalRecorder::close_and_advance_object_set
-
+      // local overflow advanced object set, i.e., JournalRecorder::close_object_set
+      // was issued by JournalRecorder::close_and_advance_object_set
       advance_object_set();
     }
   }
 }
 
 // called by
-// journal::ObjectHandler::handle_closed, see journal::ObjectRecorder::notify_handler_unlock
+// JournalRecorder::ObjectHandler::overflow, which called by ObjectRecorder::notify_handler_unlock
 void JournalRecorder::handle_overflow(ObjectRecorder *object_recorder) {
   ldout(m_cct, 10) << __func__ << ": " << object_recorder->get_oid() << dendl;
 
@@ -459,6 +483,7 @@ void JournalRecorder::handle_overflow(ObjectRecorder *object_recorder) {
                    << active_object_recorder->get_oid() << " overflowed"
                    << dendl;
 
+  // overflow will drive us to close the object set
   close_and_advance_object_set(object_number / splay_width);
 }
 

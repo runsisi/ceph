@@ -6,6 +6,8 @@
 
 namespace journal {
 
+// created by
+// JournalRecorder::append
 FutureImpl::FutureImpl(uint64_t tag_tid, uint64_t entry_tid,
                        uint64_t commit_tid)
   : RefCountedObject(NULL, 0), m_tag_tid(tag_tid), m_entry_tid(entry_tid),
@@ -15,7 +17,8 @@ FutureImpl::FutureImpl(uint64_t tag_tid, uint64_t entry_tid,
     m_consistent_ack(this) {
 }
 
-// called by JournalRecorder::append
+// called by
+// JournalRecorder::append
 void FutureImpl::init(const FutureImplPtr &prev_future) {
   // chain ourself to the prior future (if any) to that we known when the
   // journal is consistent
@@ -35,6 +38,9 @@ void FutureImpl::init(const FutureImplPtr &prev_future) {
   }
 }
 
+// called by
+// Future::flush
+// ObjectRecorder::flush
 void FutureImpl::flush(Context *on_safe) {
 
   bool complete;
@@ -53,6 +59,8 @@ void FutureImpl::flush(Context *on_safe) {
         m_contexts.push_back(on_safe);
       }
 
+      // m_flush_state = FLUSH_STATE_REQUESTED, and insert {m_flush_handler, this}
+      // into flush_handlers
       prev_future = prepare_flush(&flush_handlers, m_lock);
     }
   }
@@ -72,11 +80,14 @@ void FutureImpl::flush(Context *on_safe) {
     // this one.  possible to become detached while lock is released, so flush
     // will be re-requested by the object if it doesn't own the future
     for (auto &pair : flush_handlers) {
+      // ObjectRecorder::FlushHandler::flush, i.e., object_recorder->flush(future)
       pair.first->flush(pair.second);
     }
   }
 }
 
+// called by
+// FutureImpl::flush
 FutureImplPtr FutureImpl::prepare_flush(FlushHandlers *flush_handlers) {
   Mutex::Locker locker(m_lock);
   return prepare_flush(flush_handlers, m_lock);
@@ -89,10 +100,12 @@ FutureImplPtr FutureImpl::prepare_flush(FlushHandlers *flush_handlers,
   if (m_flush_state == FLUSH_STATE_NONE) {
     m_flush_state = FLUSH_STATE_REQUESTED;
 
+    // m_flush_handler was set by FutureImpl::attach, which called by ObjectRecorder::append
     if (m_flush_handler && flush_handlers->count(m_flush_handler) == 0) {
       flush_handlers->insert({m_flush_handler, this});
     }
   }
+
   return m_prev_future;
 }
 
@@ -126,6 +139,8 @@ int FutureImpl::get_return_value() const {
   return m_return_value;
 }
 
+// called by
+// ObjectRecorder::append
 bool FutureImpl::attach(const FlushHandlerPtr &flush_handler) {
   Mutex::Locker locker(m_lock);
 
@@ -135,7 +150,9 @@ bool FutureImpl::attach(const FlushHandlerPtr &flush_handler) {
   return m_flush_state != FLUSH_STATE_NONE;
 }
 
-// called by ObjectRecorder::handle_append_flushed
+// called by
+// ObjectRecorder::handle_append_flushed, which called by ObjectRecorder::C_AppendFlush::finish
+// which created by ObjectRecorder::send_appends_aio
 void FutureImpl::safe(int r) {
   m_lock.Lock();
 
@@ -159,7 +176,8 @@ void FutureImpl::safe(int r) {
   }
 }
 
-// called by FutureImpl::C_ConsistentAck::complete, i.e., the previous
+// called by
+// FutureImpl::C_ConsistentAck::complete, i.e., the previous
 // futureimpl's FutureImpl::safe
 void FutureImpl::consistent(int r) {
   m_lock.Lock();

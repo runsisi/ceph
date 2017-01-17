@@ -897,6 +897,8 @@ struct C_InvalidateCache : public Context {
     flush_cache(new C_InvalidateCache(this, true, false, shut_down));
   }
 
+  // called by
+  // librbd::invalidate_cache
   int ImageCtx::invalidate_cache(bool purge_on_error) {
     flush_async_operations();
     if (object_cacher == NULL) {
@@ -914,6 +916,9 @@ struct C_InvalidateCache : public Context {
     return result;
   }
 
+  // called by
+  // ResizeRequest<I>::send_invalidate_cache
+  // SnapshotRollbackRequest<I>::send_invalidate_cache
   void ImageCtx::invalidate_cache(bool purge_on_error, Context *on_finish) {
     if (object_cacher == NULL) {
       op_work_queue->queue(on_finish, 0);
@@ -927,10 +932,14 @@ struct C_InvalidateCache : public Context {
     flush_cache(new C_InvalidateCache(this, purge_on_error, false, on_finish));
   }
 
+  // called by
+  // RefreshParentRequest<I>::apply
   void ImageCtx::clear_nonexistence_cache() {
     assert(cache_lock.is_locked());
+
     if (!object_cacher)
       return;
+
     object_cacher->clear_nonexistence(object_set);
   }
 
