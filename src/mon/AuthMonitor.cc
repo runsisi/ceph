@@ -235,11 +235,15 @@ void AuthMonitor::increase_max_global_id()
 {
   assert(mon->is_leader());
 
+  // default 10000
   max_global_id += g_conf->mon_globalid_prealloc;
+
   dout(10) << "increasing max_global_id to " << max_global_id << dendl;
+
   Incremental inc;
   inc.inc_type = GLOBAL_ID;
   inc.max_global_id = max_global_id;
+
   pending_auth.push_back(inc);
 }
 
@@ -372,7 +376,7 @@ uint64_t AuthMonitor::assign_global_id(MonOpRequestRef op, bool should_increase_
 
   // bump the max?
   while (mon->is_leader() &&
-	 (max_global_id < g_conf->mon_globalid_prealloc ||
+	 (max_global_id < g_conf->mon_globalid_prealloc || // default 10000
 	  next_global_id >= max_global_id - g_conf->mon_globalid_prealloc / 2)) {
     increase_max_global_id();
   }
@@ -502,9 +506,12 @@ bool AuthMonitor::prep_auth(MonOpRequestRef op, bool paxos_writable)
 	dout(10) << "not the leader, requesting more ids from leader" << dendl;
 
 	int leader = mon->get_leader();
+
 	MMonGlobalID *req = new MMonGlobalID();
 	req->old_max_id = max_global_id;
+
 	mon->messenger->send_message(req, mon->monmap->get_inst(leader));
+
 	wait_for_finished_proposal(op, new C_RetryMessage(this, op));
 
 	return true;
@@ -1068,9 +1075,12 @@ done:
   return false;
 }
 
+// called by
+// AuthMonitor::prepare_update, for MSG_MON_GLOBAL_ID
 bool AuthMonitor::prepare_global_id(MonOpRequestRef op)
 {
   dout(10) << "AuthMonitor::prepare_global_id" << dendl;
+
   increase_max_global_id();
 
   return true;

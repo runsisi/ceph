@@ -64,6 +64,7 @@ std::string generate_image_id(librados::IoCtx &ioctx) {
     id = id.substr(id.length() - RBD_MAX_IMAGE_ID_LENGTH);
   }
 
+  // the unique is guaranteed by cls_rbd::dir_add_image_helper
   return id;
 }
 

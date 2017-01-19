@@ -463,6 +463,7 @@ int librados::RadosClient::async_watch_flush(AioCompletionImpl *c)
 
 uint64_t librados::RadosClient::get_instance_id()
 {
+  // was set by librados::RadosClient::connect
   return instance_id;
 }
 

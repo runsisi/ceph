@@ -2340,6 +2340,7 @@ void librados::Rados::shutdown()
 
 uint64_t librados::Rados::get_instance_id()
 {
+  // refer to monclient.get_global_id
   return client->get_instance_id();
 }
 
