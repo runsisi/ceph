@@ -663,6 +663,10 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return 0;
   }
 
+  // called by
+  // RBD::list
+  // rbd_list
+  // rbd_group_list
   int list(IoCtx& io_ctx, vector<string>& names)
   {
     CephContext *cct = (CephContext *)io_ctx.cct();
