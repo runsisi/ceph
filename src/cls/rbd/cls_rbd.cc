@@ -2189,7 +2189,10 @@ int dir_list(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 
   while (r == max_read && images.size() < max_return) {
     map<string, bufferlist> vals;
+
     CLS_LOG(20, "last_read = '%s'", last_read.c_str());
+
+    // "name_"
     r = cls_cxx_map_get_vals(hctx, last_read, RBD_DIR_NAME_KEY_PREFIX,
 			     max_read, &vals);
     if (r < 0) {

@@ -285,7 +285,9 @@ void ImageState<I>::open(bool skip_open_parent, Context *on_finish) {
   ldout(cct, 20) << __func__ << dendl;
 
   m_lock.Lock();
+
   assert(m_state == STATE_UNINITIALIZED);
+
   m_skip_open_parent_image = skip_open_parent;
 
   Action action(ACTION_TYPE_OPEN);

@@ -452,6 +452,7 @@ void CreateRequest<I>::create_image() {
   if (m_data_pool_id != -1) {
     oss << stringify(m_ioctx.get_id()) << ".";
   }
+
   oss << m_image_id;
   if (oss.str().length() > RBD_MAX_BLOCK_NAME_PREFIX_LENGTH) {
     lderr(m_cct) << "object prefix '" << oss.str() << "' too large" << dendl;

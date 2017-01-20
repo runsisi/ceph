@@ -18,6 +18,7 @@ namespace librbd {
       bufferlist bl, empty_bl;
       snapid_t snap = CEPH_NOSNAP;
       ::encode(snap, bl);
+
       op->exec("rbd", "get_size", bl);
       op->exec("rbd", "get_object_prefix", empty_bl);
     }
@@ -43,6 +44,7 @@ namespace librbd {
 			       std::string *object_prefix, uint8_t *order)
     {
       librados::ObjectReadOperation op;
+      // size, object_prefix
       get_immutable_metadata_start(&op);
 
       bufferlist out_bl;

@@ -123,6 +123,7 @@ static int read_lock(cls_method_context_t hctx, const string& name, lock_info_t 
 
 static int write_lock(cls_method_context_t hctx, const string& name, const lock_info_t& lock)
 {
+  // "lock."
   string key = LOCK_PREFIX;
   key.append(name);
 

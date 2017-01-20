@@ -93,6 +93,7 @@ void OpenRequest<I>::send_v2_detect_header() {
     librados::AioCompletion *comp =
       create_rados_ack_callback<klass, &klass::handle_v2_detect_header>(this);
     m_out_bl.clear();
+    // RBD_ID_PREFIX + name
     m_image_ctx->md_ctx.aio_operate(util::id_obj_name(m_image_ctx->name),
                                    comp, &op, &m_out_bl);
     comp->release();
