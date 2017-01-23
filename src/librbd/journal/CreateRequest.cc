@@ -75,8 +75,7 @@ void CreateRequest<I>::get_pool_id() {
     return;
   }
 
-  // if we did not provide the pool name, then the m_pool_id will has the
-  // default value -1
+  // journal data pool provided, git its id
   m_pool_id = data_ioctx.get_id();
 
   create_journal();
