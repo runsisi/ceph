@@ -29,6 +29,8 @@ struct JournalTrimmer::C_RemoveSet : public Context {
   }
 };
 
+// created by
+// Journaler::init_complete
 JournalTrimmer::JournalTrimmer(librados::IoCtx &ioctx,
                                const std::string &object_oid_prefix,
                                const JournalMetadataPtr &journal_metadata)
@@ -159,7 +161,9 @@ void JournalTrimmer::remove_set(uint64_t object_set) {
   }
 }
 
-// called by MetadataListener::handle_update, which registered by JournalTrimmer::JournalTrimmer
+// called by
+// JournalMetadata::handle_refresh_complete, registered to listen JournalMetadata
+// by ctor of JournalTrimmer
 void JournalTrimmer::handle_metadata_updated() {
   ldout(m_cct, 20) << __func__ << dendl;
 

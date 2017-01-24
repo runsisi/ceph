@@ -1884,8 +1884,9 @@ void ImageReplayer<I>::handle_shut_down(int r) {
   }
 }
 
-// called by ImageReplayer<I>::RemoteJournalerListener::handle_update,
-// which registered by ImageReplayer<I>::handle_init_remote_journaler
+// called by
+// JournalMetadata::handle_refresh_complete, registered to listen JournalMetadata
+// by ImageReplayer<I>::handle_init_remote_journaler
 template <typename I>
 void ImageReplayer<I>::handle_remote_journal_metadata_updated() {
   dout(20) << dendl;

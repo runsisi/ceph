@@ -2235,8 +2235,9 @@ struct C_RefreshTags : public Context {
   }
 };
 
-// called by MetadataListener::handle_update, which registered by
-// Journal<I>::handle_initialized
+// called by
+// JournalMetadata::handle_refresh_complete, registered to listen JournalMetadata
+// by Journal<I>::create_journaler
 template <typename I>
 void Journal<I>::handle_metadata_updated() {
   CephContext *cct = m_image_ctx.cct;
@@ -2348,7 +2349,8 @@ void Journal<I>::handle_refresh_metadata(uint64_t refresh_sequence,
   m_listener_cond.Signal();
 }
 
-// called by ImageReplayer<I>::handle_bootstrap
+// called by
+// ImageReplayer<I>::handle_bootstrap
 template <typename I>
 void Journal<I>::add_listener(journal::Listener *listener) {
   Mutex::Locker locker(m_lock);

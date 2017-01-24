@@ -45,6 +45,8 @@ struct C_Flush : public Context {
 
 } // anonymous namespace
 
+// created by
+// Journaler::start_append
 JournalRecorder::JournalRecorder(librados::IoCtx &ioctx,
                                  const std::string &object_oid_prefix,
                                  const JournalMetadataPtr& journal_metadata,
@@ -398,8 +400,9 @@ void JournalRecorder::create_next_object_recorder_unlock(
   m_object_ptrs[splay_offset] = new_object_recorder;
 }
 
-// JournalRecorder::m_listener, registered to JournalMetadata in ctor
-// of JournalRecorder
+// called by
+// JournalMetadata::handle_refresh_complete, registered to listen JournalMetadata
+// by ctor of JournalRecorder
 void JournalRecorder::handle_update() {
   Mutex::Locker locker(m_lock);
 

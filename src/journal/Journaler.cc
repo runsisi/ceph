@@ -143,7 +143,7 @@ void Journaler::init(Context *on_init) {
   // 2) get immutable and mutable metadata etc.
   // 3) create JournalTrimmer instance
 
-  // call Journaler::init_complete to create JournalTrimmer instance
+  // C_InitJournaler will call Journaler::init_complete
   m_metadata->init(new C_InitJournaler(this, on_init));
 }
 
@@ -300,10 +300,11 @@ void Journaler::flush_commit_position(Context *on_safe) {
 }
 
 // called by
-// Journal<I>::handle_initialized, then Journal will register its own listeners
+// Journal<I>::create_journaler, then Journal will register its own listeners
 // ImageReplayer<I>::handle_init_remote_journaler
 void Journaler::add_listener(JournalMetadataListener *listener) {
-  // push back of JournalMetadata::m_listeners
+  // push back of JournalMetadata::m_listeners, will be notified
+  // by JournalMetadata::handle_refresh_complete
   m_metadata->add_listener(listener);
 }
 

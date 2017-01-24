@@ -434,9 +434,11 @@ struct C_AssertActiveTag : public Context {
 
 } // anonymous namespace
 
-// C_GetClient, C_AllocateTag, C_GetTag, C_GetTags, C_AssertActiveTag
-// C_FlushCommitPosition
+// C_GetClient, C_AllocateTag, C_GetTag, C_GetTags,
+// C_FlushCommitPosition, C_AssertActiveTag
 
+// createed by
+// Journaler::set_up, which called by Journaler::Journaler
 JournalMetadata::JournalMetadata(ContextWQ *work_queue, SafeTimer *timer,
                                  Mutex *timer_lock, librados::IoCtx &ioctx,
                                  const std::string &oid, // "journal." + journal_id(i.e., image local id)
@@ -459,6 +461,8 @@ JournalMetadata::~JournalMetadata() {
   assert(!m_initialized);
 }
 
+// called by
+// Journaler::init
 void JournalMetadata::init(Context *on_finish) {
   {
     Mutex::Locker locker(m_lock);
@@ -470,7 +474,7 @@ void JournalMetadata::init(Context *on_finish) {
   on_finish = utils::create_async_context_callback(
     this, on_finish);
 
-  // journal_metadata->handle_immutable_metadata will refresh
+  // journal_metadata->handle_immutable_metadata will get
   // mutable metadata
   on_finish = new C_ImmutableMetadata(this, on_finish);
 
@@ -678,7 +682,7 @@ void JournalMetadata::get_tags(uint64_t start_after_tag_tid,
   ctx->send();
 }
 
-// called by:
+// called by
 // Journaler::add_listener
 // JournalRecorder::JournalRecorder
 // JournalTrimmer::JournalTrimmer
@@ -842,6 +846,8 @@ bool JournalMetadata::get_last_allocated_entry_tid(uint64_t tag_tid,
   return true;
 }
 
+// called by
+// C_ImmutableMetadata::finish, which created by JournalMetadata::init
 void JournalMetadata::handle_immutable_metadata(int r, Context *on_init) {
   if (r < 0) {
     lderr(m_cct) << "failed to initialize immutable metadata: "
@@ -856,6 +862,7 @@ void JournalMetadata::handle_immutable_metadata(int r, Context *on_init) {
 
   ldout(m_cct, 10) << "initialized immutable metadata" << dendl;
 
+  // get_mutable_metadata
   refresh(on_init);
 }
 
@@ -866,7 +873,8 @@ void JournalMetadata::handle_immutable_metadata(int r, Context *on_init) {
 void JournalMetadata::refresh(Context *on_complete) {
   ldout(m_cct, 10) << "refreshing mutable metadata" << dendl;
 
-  // journal_metadata->handle_refresh_complete
+  // journal_metadata->handle_refresh_complete, which will notify
+  // Journaler, JournalRecorder, JournalTrimmer
   C_Refresh *refresh = new C_Refresh(this, on_complete);
 
   // mutable metadata are stashed in C_Refresh instance
@@ -874,7 +882,8 @@ void JournalMetadata::refresh(Context *on_complete) {
 		       &refresh->registered_clients, refresh);
 }
 
-// called by JournalMetadata::C_Refresh::finish
+// called by
+// JournalMetadata::C_Refresh::finish
 void JournalMetadata::handle_refresh_complete(C_Refresh *refresh, int r) {
   ldout(m_cct, 10) << "refreshed mutable metadata: r=" << r << dendl;
 
@@ -909,6 +918,9 @@ void JournalMetadata::handle_refresh_complete(C_Refresh *refresh, int r) {
       ++m_update_notifications;
 
       m_lock.Unlock();
+
+      // notify 1) Journaler, which effectively notify Journal and ImageReplayer,
+      // 2) JournalRecorder, 3) JournalTrimmer
       for (Listeners::iterator it = m_listeners.begin();
            it != m_listeners.end(); ++it) {
 
@@ -917,6 +929,7 @@ void JournalMetadata::handle_refresh_complete(C_Refresh *refresh, int r) {
 
         (*it)->handle_update(this);
       }
+
       m_lock.Lock();
 
       if (--m_update_notifications == 0) {
