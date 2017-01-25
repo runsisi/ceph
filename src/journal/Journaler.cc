@@ -69,6 +69,9 @@ Journaler::Threads::~Threads() {
   delete thread_pool;
 }
 
+// created by
+// librbd::journal::PromoteRequest<I>::send_open
+// Journal.cc/librbd::anon::C_IsTagOwner::C_IsTagOwner
 Journaler::Journaler(librados::IoCtx &header_ioctx,
                      const std::string &journal_id,
                      const std::string &client_id, const Settings &settings)
@@ -78,6 +81,10 @@ Journaler::Journaler(librados::IoCtx &header_ioctx,
          header_ioctx, journal_id, settings);
 }
 
+// created by
+// librbd::journal::CreateRequest<I>::create_journal
+// librbd::journal::RemoveRequest<I>::stat_journal
+// ImageReplayer<I>::start
 Journaler::Journaler(ContextWQ *work_queue, SafeTimer *timer,
                      Mutex *timer_lock, librados::IoCtx &header_ioctx,
 		     const std::string &journal_id,

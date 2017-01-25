@@ -209,13 +209,15 @@ struct C_InvalidateCache : public Context {
     // struct rbd_obj_header_ondisk
     memset(&header, 0, sizeof(header));
 
+    // "librbd::thread_pool"
+    // NOTE: journaling will has its own thread pool, i.e., "librbd::journal::thread_pool"
     ThreadPool *thread_pool_singleton = get_thread_pool_instance(cct);
 
     aio_work_queue = new AioImageRequestWQ(this, "librbd::aio_work_queue",
-                                           cct->_conf->rbd_op_thread_timeout,
+                                           cct->_conf->rbd_op_thread_timeout, // default 60
                                            thread_pool_singleton);
     op_work_queue = new ContextWQ("librbd::op_work_queue",
-                                  cct->_conf->rbd_op_thread_timeout,
+                                  cct->_conf->rbd_op_thread_timeout, // default 60
                                   thread_pool_singleton);
 
     if (cct->_conf->rbd_auto_exclusive_lock_until_manual_request) {
@@ -1278,6 +1280,12 @@ struct C_InvalidateCache : public Context {
     journal_policy = policy;
   }
 
+  // static
+  // called by
+  // ImageCtx::ImageCtx
+  // librbd::create
+  // librbd::Journal<I>::create
+  // librbd::Journal<I>::remove
   ThreadPool *ImageCtx::get_thread_pool_instance(CephContext *cct) {
     // inherited from ThreadPool, start on ctor and stop on dtor
     ThreadPoolSingleton *thread_pool_singleton;

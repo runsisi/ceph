@@ -683,7 +683,8 @@ void JournalMetadata::get_tags(uint64_t start_after_tag_tid,
 }
 
 // called by
-// Journaler::add_listener
+// Journaler::add_listener, which called by Journal<I>::create_journaler
+// and ImageReplayer<I>::handle_init_remote_journaler
 // JournalRecorder::JournalRecorder
 // JournalTrimmer::JournalTrimmer
 void JournalMetadata::add_listener(JournalMetadataListener *listener) {
@@ -920,13 +921,10 @@ void JournalMetadata::handle_refresh_complete(C_Refresh *refresh, int r) {
       m_lock.Unlock();
 
       // notify 1) Journaler, which effectively notify Journal and ImageReplayer,
-      // 2) JournalRecorder, 3) JournalTrimmer
+      // i.e., the external listeners, and 2) JournalRecorder, JournalTrimmer,
+      // i.e., the internal listeners
       for (Listeners::iterator it = m_listeners.begin();
            it != m_listeners.end(); ++it) {
-
-        // notify JournalRecorder and JournalTrimmer that the journal
-        // mutable metadata has been updated
-
         (*it)->handle_update(this);
       }
 
@@ -1050,7 +1048,8 @@ void JournalMetadata::handle_watch_reset() {
   }
 }
 
-// called by JournalMetadata::C_WatchCtx::handle_notify, the watch was initiated by
+// called by
+// JournalMetadata::C_WatchCtx::handle_notify, the watch was initiated by
 // JournalMetadata::init or JournalMetadata::handle_watch_reset
 void JournalMetadata::handle_watch_notify(uint64_t notify_id, uint64_t cookie) {
   ldout(m_cct, 10) << "journal header updated" << dendl;

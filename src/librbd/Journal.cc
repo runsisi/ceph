@@ -313,14 +313,20 @@ Journal<I>::Journal(I &image_ctx)
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 5) << this << ": ictx=" << &m_image_ctx << dendl;
 
+  // create thread pool for journaling
+  // NOTE: for ImageCtx, it has its own thread pool, see ImageCtx::ImageCtx,
+  // and for Journal<I>::create, Journal<I>::remove they create temporary
+  // WQ with thread pool of ImageCtx
+
   ThreadPoolSingleton *thread_pool_singleton;
   cct->lookup_or_create_singleton_object<ThreadPoolSingleton>(
     thread_pool_singleton, "librbd::journal::thread_pool");
 
   m_work_queue = new ContextWQ("librbd::journal::work_queue",
-                               cct->_conf->rbd_op_thread_timeout,
+                               cct->_conf->rbd_op_thread_timeout, // default 60
                                thread_pool_singleton);
 
+  // "librbd::journal::safe_timer"
   ImageCtx::get_timer_instance(cct, &m_timer, &m_timer_lock);
 }
 
@@ -360,6 +366,7 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
   C_SaferCond cond;
   journal::TagData tag_data(LOCAL_MIRROR_UUID);
 
+  // "librbd::thread_pool"
   ContextWQ op_work_queue("librbd::op_work_queue",
                           cct->_conf->rbd_op_thread_timeout,
                           ImageCtx::get_thread_pool_instance(cct));
@@ -388,6 +395,7 @@ int Journal<I>::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
 
   C_SaferCond cond;
 
+  // "librbd::thread_pool"
   ContextWQ op_work_queue("librbd::op_work_queue",
                           cct->_conf->rbd_op_thread_timeout,
                           ImageCtx::get_thread_pool_instance(cct));
@@ -504,6 +512,7 @@ void Journal<I>::is_tag_owner(librados::IoCtx& io_ctx, std::string& image_id,
 
   C_IsTagOwner<I> *is_tag_owner_ctx =  new C_IsTagOwner<I>(
     io_ctx, image_id, is_tag_owner, op_work_queue, on_finish);
+
   get_tags(cct, is_tag_owner_ctx->journaler, &is_tag_owner_ctx->client,
 	   &is_tag_owner_ctx->client_meta, &is_tag_owner_ctx->tag_tid,
 	   &is_tag_owner_ctx->tag_data, is_tag_owner_ctx);
@@ -771,6 +780,8 @@ journal::TagData Journal<I>::get_tag_data() const {
   return m_tag_data;
 }
 
+// called by
+// librbd::mirror_image_demote
 // tag owner: LOCAL_MIRROR_UUID -> ORPHAN_MIRROR_UUID
 template <typename I>
 int Journal<I>::demote() {

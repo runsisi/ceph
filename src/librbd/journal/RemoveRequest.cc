@@ -20,6 +20,11 @@ using util::create_context_callback;
 
 namespace journal {
 
+// created by
+// DisableFeaturesRequest<I>::send_remove_journal
+// Journal<I>::remove
+// librbd::image::CreateRequest<I>::journal_remove, upon failure
+// librbd::journal::CreateRequest<I>::remove_journal, upon failure
 template<typename I>
 RemoveRequest<I>::RemoveRequest(IoCtx &ioctx, const std::string &image_id,
                                               const std::string &client_id,
