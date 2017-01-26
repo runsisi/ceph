@@ -76,11 +76,14 @@ void MonmapMonitor::update_from_paxos(bool *need_bootstrap)
   check_subs();
 }
 
+// called by
+// PaxosService::_active
 void MonmapMonitor::create_pending()
 {
   pending_map = *mon->monmap;
   pending_map.epoch++;
   pending_map.last_changed = ceph_clock_now();
+
   dout(10) << "create_pending monmap epoch " << pending_map.epoch << dendl;
 }
 
@@ -147,7 +150,9 @@ void MonmapMonitor::apply_mon_features(const mon_feature_t& features)
   dout(5) << __func__ << " applying new features to monmap;"
           << " had " << pending_map.persistent_features
           << ", will have " << new_features << dendl;
+
   pending_map.persistent_features = new_features;
+
   propose_pending();
 }
 
@@ -310,6 +315,7 @@ reply:
 bool MonmapMonitor::prepare_update(MonOpRequestRef op)
 {
   PaxosServiceMessage *m = static_cast<PaxosServiceMessage*>(op->get_req());
+
   dout(7) << "prepare_update " << *m << " from " << m->get_orig_source_inst() << dendl;
   
   switch (m->get_type()) {
@@ -325,7 +331,7 @@ bool MonmapMonitor::prepare_update(MonOpRequestRef op)
 }
 
 // called by
-// MonmapMonitor::prepare_update
+// MonmapMonitor::prepare_update, which called by PaxosService::dispatch
 bool MonmapMonitor::prepare_command(MonOpRequestRef op)
 {
   MMonCommand *m = static_cast<MMonCommand*>(op->get_req());
@@ -465,8 +471,11 @@ bool MonmapMonitor::prepare_command(MonOpRequestRef op)
 
     pending_map.add(name, addr);
     pending_map.last_changed = ceph_clock_now();
+
     ss << "adding mon." << name << " at " << addr;
+
     propose = true;
+
     dout(0) << __func__ << " proposing new mon." << name << dendl;
 
   } else if (prefix == "mon remove" ||
@@ -530,6 +539,7 @@ bool MonmapMonitor::prepare_command(MonOpRequestRef op)
 reply:
   getline(ss, rs);
   mon->reply_command(op, err, rs, get_last_committed());
+
   // we are returning to the user; do not propose.
   return propose;
 }

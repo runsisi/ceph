@@ -93,9 +93,15 @@ bool PaxosService::dispatch(MonOpRequestRef op)
 
   // update
   if (prepare_update(op)) {
+
+    // to propose
+
     double delay = 0.0;
 
     if (should_propose(delay)) {
+
+      // always be true, either delay or no delay
+
       if (delay == 0.0) {
 	propose_pending();
       } else {
@@ -122,6 +128,7 @@ bool PaxosService::dispatch(MonOpRequestRef op)
 	    }
 	  };
 
+	  // ps->propose_pending()
 	  proposal_timer = new C_Propose(this);
 
 	  dout(10) << " setting proposal_timer " << proposal_timer << " with delay of " << delay << dendl;
@@ -181,8 +188,8 @@ bool PaxosService::should_propose(double& delay)
     delay = 0.0;
   else {
     utime_t now = ceph_clock_now();
-    if ((now - paxos->last_commit_time) > g_conf->paxos_propose_interval)
-      delay = (double)g_conf->paxos_min_wait;
+    if ((now - paxos->last_commit_time) > g_conf->paxos_propose_interval) // default 1.0
+      delay = (double)g_conf->paxos_min_wait; // default 0.05
     else
       delay = (double)(g_conf->paxos_propose_interval + paxos->last_commit_time
 		       - now);
@@ -297,6 +304,9 @@ void PaxosService::restart()
   on_restart();
 }
 
+// called by
+// Monitor::_finish_svc_election
+// Monitor::win_election
 void PaxosService::election_finished()
 {
   dout(10) << "election_finished" << dendl;
@@ -307,6 +317,10 @@ void PaxosService::election_finished()
   _active();
 }
 
+// called by
+// C_Committed::finish
+// PaxosService::election_finished
+// C_Active::finish
 void PaxosService::_active()
 {
   if (is_proposing()) {

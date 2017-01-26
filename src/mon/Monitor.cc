@@ -5557,6 +5557,7 @@ void Monitor::tick()
   if (is_leader() && paxos->is_active() && fingerprint.is_zero()) {
     // this is only necessary on upgraded clusters.
     MonitorDBStore::TransactionRef t = paxos->get_pending_transaction();
+
     prepare_new_fingerprint(t);
     paxos->trigger_propose();
   }
