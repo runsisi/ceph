@@ -582,6 +582,7 @@ Future Journaler::append(uint64_t tag_tid, const bufferlist &payload_bl) {
   return m_recorder->append(tag_tid, payload_bl);
 }
 
+// never used
 void Journaler::flush_append(Context *on_safe) {
   m_recorder->flush(on_safe);
 }

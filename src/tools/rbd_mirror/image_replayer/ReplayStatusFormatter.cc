@@ -30,12 +30,15 @@ ReplayStatusFormatter<I>::ReplayStatusFormatter(Journaler *journaler,
     m_lock(unique_lock_name("ReplayStatusFormatter::m_lock", this)) {
 }
 
+// called by
+// ImageReplayer<I>::send_mirror_status_update
 template <typename I>
 bool ReplayStatusFormatter<I>::get_or_send_update(std::string *description,
 						  Context *on_finish) {
   dout(20) << dendl;
 
   bool in_progress = false;
+
   {
     Mutex::Locker locker(m_lock);
     if (m_on_finish) {
@@ -85,6 +88,8 @@ bool ReplayStatusFormatter<I>::get_or_send_update(std::string *description,
     return false;
   }
 
+  // e.g., master_position=[object_number=23, tag_tid=11, entry_tid=1927], \
+  // mirror_position=[object_number=23, tag_tid=11, entry_tid=1919], entries_behind_master=8
   format(description);
 
   {
@@ -115,14 +120,17 @@ bool ReplayStatusFormatter<I>::calculate_behind_master_or_send_update() {
   while (master.tag_tid != mirror_tag_tid) {
     auto tag_it = m_tag_cache.find(master.tag_tid);
     if (tag_it == m_tag_cache.end()) {
+      // needs to update tag cache, i.e., m_tag_cache
       send_update_tag_cache(master.tag_tid, mirror_tag_tid);
       return false;
     }
+
     librbd::journal::TagData &tag_data = tag_it->second;
     m_entries_behind_master += master.entry_tid;
     master = cls::journal::ObjectPosition(0, tag_data.predecessor.tag_tid,
 					  tag_data.predecessor.entry_tid);
   }
+
   m_entries_behind_master += master.entry_tid - m_mirror_position.entry_tid;
 
   dout(20) << "clearing tags not needed any more (below mirror position)"
@@ -135,6 +143,7 @@ bool ReplayStatusFormatter<I>::calculate_behind_master_or_send_update() {
     if (tag_it == m_tag_cache.end()) {
       break;
     }
+
     librbd::journal::TagData &tag_data = tag_it->second;
 
     dout(20) << "erasing tag " <<  tag_data << "for tag_tid " << tag_tid
@@ -158,6 +167,7 @@ void ReplayStatusFormatter<I>::send_update_tag_cache(uint64_t master_tag_tid,
 
   if (master_tag_tid == mirror_tag_tid) {
     Context *on_finish = nullptr;
+
     {
       Mutex::Locker locker(m_lock);
       std::swap(m_on_finish, on_finish);
@@ -172,6 +182,7 @@ void ReplayStatusFormatter<I>::send_update_tag_cache(uint64_t master_tag_tid,
     [this, master_tag_tid, mirror_tag_tid](int r) {
       handle_update_tag_cache(master_tag_tid, mirror_tag_tid, r);
     });
+
   m_journaler->get_tag(master_tag_tid, &m_tag, ctx);
 }
 
@@ -205,6 +216,7 @@ void ReplayStatusFormatter<I>::handle_update_tag_cache(uint64_t master_tag_tid,
   dout(20) << "decoded tag " << master_tag_tid << ": " << tag_data << dendl;
 
   m_tag_cache.insert(std::make_pair(master_tag_tid, tag_data));
+
   send_update_tag_cache(tag_data.predecessor.tag_tid, mirror_tag_tid);
 }
 

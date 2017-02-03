@@ -536,8 +536,11 @@ void BootstrapRequest<I>::handle_open_local_image(int r) {
   }
 
   I *local_image_ctx = (*m_local_image_ctx);
+
+
   {
     RWLock::RLocker snap_locker(local_image_ctx->snap_lock);
+
     if (local_image_ctx->journal == nullptr) {
       derr << ": local image does not support journaling" << dendl;
       m_ret_val = -EINVAL;
@@ -1085,6 +1088,7 @@ void BootstrapRequest<I>::handle_close_remote_image(int r) {
          << dendl;
   }
 
+  // call BaseRequest::finish
   finish(m_ret_val);
 }
 

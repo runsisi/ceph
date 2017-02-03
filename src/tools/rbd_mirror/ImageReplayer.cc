@@ -349,7 +349,8 @@ void ImageReplayer<I>::set_state_description(int r, const std::string &desc) {
   m_state_desc = desc;
 }
 
-// called by Replayer::start_image_replayer and ImageReplayer<I>::restart
+// called by
+// Replayer::start_image_replayer and ImageReplayer<I>::restart
 template <typename I>
 void ImageReplayer<I>::start(Context *on_finish, bool manual)
 {
@@ -800,6 +801,7 @@ void ImageReplayer<I>::stop(Context *on_finish, bool manual, int r,
 	  dout(20) << "canceling start" << dendl;
 
 	  if (m_bootstrap_request) {
+	    // bootstraping has not finished, see ImageReplayer<I>::handle_bootstrap
             bootstrap_request = m_bootstrap_request;
             bootstrap_request->get();
 	  }
@@ -1495,6 +1497,10 @@ void ImageReplayer<I>::finish_mirror_image_status_update() {
   }
 }
 
+// called by
+// ImageReplayer<I>::update_mirror_image_status
+// ImageReplayer<I>::handle_mirror_status_update
+// ImageReplayer<I>::reschedule_update_status_task
 template <typename I>
 void ImageReplayer<I>::queue_mirror_image_status_update(const OptionalState &state) {
   dout(20) << dendl;
@@ -1514,21 +1520,26 @@ void ImageReplayer<I>::send_mirror_status_update(const OptionalState &opt_state)
   int last_r;
   bool bootstrapping;
   bool stopping_replay;
+
   {
     Mutex::Locker locker(m_lock);
+
     state = m_state;
     state_desc = m_state_desc;
     last_r = m_last_r;
+    // see ImageReplayer<I>::handle_bootstrap
     bootstrapping = (m_bootstrap_request != nullptr);
     stopping_replay = (m_local_image_ctx != nullptr);
   }
 
+  // only true for ImageReplayer<I>::shut_down
   if (opt_state) {
     state = *opt_state;
   }
 
   cls::rbd::MirrorImageStatus status;
   status.up = true;
+
   switch (state) {
   case STATE_STARTING:
     if (bootstrapping) {
@@ -1541,11 +1552,15 @@ void ImageReplayer<I>::send_mirror_status_update(const OptionalState &opt_state)
     break;
   case STATE_REPLAYING:
   case STATE_REPLAY_FLUSHING:
+    // the status.state and status.description will be retrieved by
+    // cls_client::mirror_image_status_get
     status.state = cls::rbd::MIRROR_IMAGE_STATUS_STATE_REPLAYING;
+
     {
       Context *on_req_finish = new FunctionContext(
         [this](int r) {
           dout(20) << "replay status ready: r=" << r << dendl;
+
           if (r >= 0) {
             send_mirror_status_update(boost::none);
           } else if (r == -EAGAIN) {
@@ -1557,9 +1572,11 @@ void ImageReplayer<I>::send_mirror_status_update(const OptionalState &opt_state)
       std::string desc;
       if (!m_replay_status_formatter->get_or_send_update(&desc,
                                                          on_req_finish)) {
+        // needs to update tag cache
         dout(20) << "waiting for replay status" << dendl;
         return;
       }
+
       status.description = "replaying, " + desc;
     }
     break;
@@ -1596,7 +1613,8 @@ void ImageReplayer<I>::send_mirror_status_update(const OptionalState &opt_state)
   aio_comp->release();
 }
 
-// called by ImageReplayer<I>::send_mirror_status_update
+// called by
+// ImageReplayer<I>::send_mirror_status_update
 template <typename I>
 void ImageReplayer<I>::handle_mirror_status_update(int r) {
   dout(20) << "r=" << r << dendl;

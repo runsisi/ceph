@@ -7114,6 +7114,9 @@ PG::RecoveryState::WaitRemoteBackfillReserved::WaitRemoteBackfillReserved(my_con
   post_event(RemoteBackfillReserved());
 }
 
+// driven by
+// PG::RecoveryState::WaitRemoteBackfillReserved::WaitRemoteBackfillReserved, for the first REQEUST
+// OSD::handle_pg_backfill_reserve, for the subsequent REQUESTs
 boost::statechart::result
 PG::RecoveryState::WaitRemoteBackfillReserved::react(const RemoteBackfillReserved &evt)
 {
@@ -7331,6 +7334,7 @@ PG::RecoveryState::RepNotRecovering::react(const RequestBackfillPrio &evt)
 		       << max_ratio << dendl;
     post_event(RemoteReservationRejected());
   } else {
+    // queue callback, i.e., QueuePeeringEvt on finisher of remote_reserver
     pg->osd->remote_reserver.request_reservation(
       pg->info.pgid,
       new QueuePeeringEvt<RemoteBackfillReserved>(

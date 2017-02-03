@@ -163,6 +163,7 @@ public:
       in_progress.erase(item);
     }
 
+    // to queue the next callback(s)
     do_queues();
   }
 

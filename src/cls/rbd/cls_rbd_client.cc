@@ -1260,6 +1260,8 @@ namespace librbd {
       return 0;
     }
 
+    // called by
+    // Replayer::set_sources
     int mirror_uuid_get(librados::IoCtx *ioctx, std::string *uuid) {
       bufferlist in_bl;
       bufferlist out_bl;

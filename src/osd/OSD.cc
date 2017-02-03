@@ -10363,7 +10363,7 @@ void OSD::handle_conf_change(const struct md_config_t *conf,
 {
   if (changed.count("osd_max_backfills")) {
     service.local_reserver.set_max(cct->_conf->osd_max_backfills);
-    service.remote_reserver.set_max(cct->_conf->osd_max_backfills);
+    service.remote_reserver.set_max(cct->_conf->osd_max_backfills); // default 1
   }
   if (changed.count("osd_min_recovery_priority")) {
     service.local_reserver.set_min_priority(cct->_conf->osd_min_recovery_priority);

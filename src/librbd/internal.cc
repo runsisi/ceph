@@ -2722,6 +2722,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     // is mirroring not enabled for the parent? 
     {
       RWLock::RLocker l(ictx->parent_lock);
+
       ImageCtx *parent = ictx->parent;
       if(parent) {
         cls::rbd::MirrorImage mirror_image_internal;

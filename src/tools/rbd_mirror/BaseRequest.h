@@ -26,9 +26,11 @@ protected:
     if (m_cct) {
       lsubdout(m_cct, rbd_mirror, 20) << m_name << "::finish: r=" << r << dendl;
     }
+
     if (m_on_finish) {
       m_on_finish->complete(r);
     }
+
     put();
   }
 
