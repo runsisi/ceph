@@ -48,8 +48,11 @@ JournalTrimmer::~JournalTrimmer() {
   assert(m_shutdown);
 }
 
+// called by
+// Journaler::shut_down
 void JournalTrimmer::shut_down(Context *on_finish) {
   ldout(m_cct, 20) << __func__ << dendl;
+
   {
     Mutex::Locker locker(m_lock);
     assert(!m_shutdown);
@@ -78,6 +81,10 @@ void JournalTrimmer::remove_objects(bool force, Context *on_finish) {
       }
 
       if (!force) {
+
+        // non-force, remove only if no mirror peer clients, i.e., only
+        // master client
+
         JournalMetadata::RegisteredClients registered_clients;
         m_journal_metadata->get_registered_clients(&registered_clients);
 

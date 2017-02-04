@@ -1726,7 +1726,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
   // librbd::clone, when failed
   int remove(IoCtx& io_ctx, const std::string &image_name,
              const std::string &image_id, ProgressContext& prog_ctx,
-             bool force)
+             bool force) // force default to false, no one calls it with true
   {
     CephContext *cct((CephContext *)io_ctx.cct());
 
@@ -1740,6 +1740,7 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
 
     ImageCtx *ictx = new ImageCtx(
       (id.empty() ? name : std::string()), id, nullptr, io_ctx, false);
+
     int r = ictx->state->open(true);
     if (r < 0) {
       ldout(cct, 2) << "error opening image: " << cpp_strerror(-r) << dendl;

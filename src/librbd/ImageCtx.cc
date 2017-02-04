@@ -1208,19 +1208,31 @@ struct C_InvalidateCache : public Context {
     ASSIGN_OPTION(mirroring_replay_delay);
   }
 
+  // called by
+  // librbd::image::RefreshRequest<I>::send_v2_init_exclusive_lock
   ExclusiveLock<ImageCtx> *ImageCtx::create_exclusive_lock() {
     return new ExclusiveLock<ImageCtx>(*this);
   }
 
+  // called by
+  // librbd::exclusive_lock::PostAcquireRequest<I>::send_open_object_map
+  // librbd::image::RefreshRequest<I>::send_v2_open_object_map
+  // librbd::operation::SnapshotRollbackRequest<I>::send_refresh_object_map
+  // rbd::mirror::ImageSync<I>::send_refresh_object_map
   ObjectMap<ImageCtx> *ImageCtx::create_object_map(uint64_t snap_id) {
     return new ObjectMap<ImageCtx>(*this, snap_id);
   }
 
-  // called in RefreshRequest<I>::send_v2_open_journal and AcquireRequest<I>::send_open_journal
+  // called by
+  // librbd::exclusive_lock::PostAcquireRequest<I>::send_open_journal
+  // librbd::image::RefreshRequest<I>::send_v2_open_journal
   Journal<ImageCtx> *ImageCtx::create_journal() {
     return new Journal<ImageCtx>(*this);
   }
 
+  // called by
+  // librbd::operation::RenameRequest<I>::apply
+  // librbd::Operations<I>::rename
   void ImageCtx::set_image_name(const std::string &image_name) {
     // update the name so rename can be invoked repeatedly
     RWLock::RLocker owner_locker(owner_lock);

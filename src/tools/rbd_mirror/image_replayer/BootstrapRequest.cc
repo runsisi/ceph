@@ -298,8 +298,7 @@ void BootstrapRequest<I>::register_client() {
     BootstrapRequest<I>, &BootstrapRequest<I>::handle_register_client>(
       this);
 
-  // register a mirror peer client of the remote journal, the client
-  // id is m_local_mirror_uuid which means ourself
+  // m_journaler was created by ImageReplayer<I>::start
   m_journaler->register_client(client_data_bl, ctx);
 }
 
@@ -972,6 +971,7 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
     dout(20) << ": remote image was demoted/promoted" << dendl;
   } else {
     derr << ": split-brain detected -- skipping image replay" << dendl;
+
     m_ret_val = -EEXIST;
     close_local_image();
     return;

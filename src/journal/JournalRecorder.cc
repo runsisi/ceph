@@ -167,8 +167,12 @@ Future JournalRecorder::append(uint64_t tag_tid,
   return Future(future);
 }
 
+// called by
+// Journaler::stop_append
+// Journaler::flush_append, which never used
 void JournalRecorder::flush(Context *on_safe) {
   C_Flush *ctx;
+
   {
     Mutex::Locker locker(m_lock);
 

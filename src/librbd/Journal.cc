@@ -668,7 +668,8 @@ void Journal<I>::wait_for_journal_ready(Context *on_ready) {
   }
 }
 
-// called in AcquireRequest<I>::send_open_journal
+// called by
+// librbd::exclusive_lock::PostAcquireRequest<I>::send_open_journal
 template <typename I>
 void Journal<I>::open(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -693,7 +694,8 @@ void Journal<I>::open(Context *on_finish) {
 }
 
 // called by
-// librbd::exclusive_lock::ReleaseRequest<I>::send_close_journal
+// librbd::exclusive_lock::PreReleaseRequest<I>::send_close_journal
+// librbd::operation::DisableFeaturesRequest<I>::send_close_journal
 template <typename I>
 void Journal<I>::close(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -720,6 +722,7 @@ void Journal<I>::close(Context *on_finish) {
   // only ImageReplayer<I>::m_journal_listener registered listener by
   // ImageReplayer<I>::handle_bootstrap
   for (auto listener : listeners) {
+    // call ImageReplayer<I>::JournalListener::handle_close
     listener->handle_close();
   }
 
@@ -2174,7 +2177,8 @@ void Journal<I>::wait_for_steady_state(Context *on_state) {
   m_wait_for_state_contexts.push_back(on_state);
 }
 
-// called by ImageReplayer<I>::handle_bootstrap
+// called by
+// ImageReplayer<I>::handle_bootstrap
 template <typename I>
 int Journal<I>::is_resync_requested(bool *do_resync) {
   Mutex::Locker l(m_lock);
@@ -2346,10 +2350,13 @@ void Journal<I>::handle_refresh_metadata(uint64_t refresh_sequence,
 
   if (promoted_to_primary) {
     for (auto listener : listeners) {
+      // call ImageReplayer<I>::JournalListener::handle_promoted
       listener->handle_promoted();
     }
   } else if (resync_requested) {
+    // the local mirror image needs to be resync
     for (auto listener : listeners) {
+      // call ImageReplayer<I>::JournalListener::handle_resync
       listener->handle_resync();
     }
   }

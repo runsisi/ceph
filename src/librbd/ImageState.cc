@@ -432,6 +432,11 @@ void ImageState<I>::snap_set(const std::string &snap_name, Context *on_finish) {
   execute_action_unlock(action, on_finish);
 }
 
+// called by
+// librbd::exclusive_lock::PreAcquireRequest<I>::send_prepare_lock
+// librbd::exclusive_lock::PreReleaseRequest<I>::send_prepare_lock
+// librbd::operation::DisableFeaturesRequest<I>::send_prepare_lock
+// librbd::operation::EnableFeaturesRequest<I>::send_prepare_lock
 template <typename I>
 void ImageState<I>::prepare_lock(Context *on_ready) {
   CephContext *cct = m_image_ctx->cct;
@@ -456,6 +461,13 @@ void ImageState<I>::prepare_lock(Context *on_ready) {
   execute_action_unlock(action, nullptr);
 }
 
+// called by
+// librbd::exclusive_lock::PostAcquireRequest<I>::~PostAcquireRequest
+// librbd::exclusive_lock::PostAcquireRequest<I>::apply
+// librbd::exclusive_lock::PreReleaseRequest<I>::~PreReleaseRequest
+// librbd::operation::DisableFeaturesRequest<I>::handle_finish
+// librbd::operation::EnableFeaturesRequest<I>::handle_finish
+// librbd::exclusive_lock::ExclusiveLock<I>::post_acquire_lock_handler, upon failure
 template <typename I>
 void ImageState<I>::handle_prepare_lock_complete() {
   CephContext *cct = m_image_ctx->cct;
@@ -802,7 +814,8 @@ void ImageState<I>::handle_set_snap(int r) {
   complete_action_unlock(STATE_OPEN, r);
 }
 
-// called by ImageState<I>::execute_next_action_unlock for ACTION_TYPE_LOCK
+// called by
+// ImageState<I>::execute_next_action_unlock for ACTION_TYPE_LOCK
 template <typename I>
 void ImageState<I>::send_prepare_lock_unlock() {
   CephContext *cct = m_image_ctx->cct;

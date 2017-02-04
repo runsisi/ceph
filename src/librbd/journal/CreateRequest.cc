@@ -90,6 +90,7 @@ void CreateRequest<I>::create_journal() {
 
   ImageCtx::get_timer_instance(m_cct, &m_timer, &m_timer_lock);
 
+  // create an Journaler instance, the same as RemoveRequest<I>::stat_journal
   m_journaler = new Journaler(m_op_work_queue, m_timer, m_timer_lock,
                               m_ioctx, m_image_id, m_image_client_id, {});
 

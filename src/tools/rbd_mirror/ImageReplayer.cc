@@ -409,14 +409,18 @@ void ImageReplayer<I>::start(Context *on_finish, bool manual)
   CephContext *cct = static_cast<CephContext *>(m_local->cct());
 
   journal::Settings settings;
-  settings.commit_interval = cct->_conf->rbd_mirror_journal_commit_age;
-  settings.max_fetch_bytes = cct->_conf->rbd_mirror_journal_max_fetch_bytes;
+  settings.commit_interval = cct->_conf->rbd_mirror_journal_commit_age; // default 5
+  settings.max_fetch_bytes = cct->_conf->rbd_mirror_journal_max_fetch_bytes; // default 32768
 
+  // m_remote_image_id -> journal_id
+  // m_local_mirror_uuid -> client_id
   m_remote_journaler = new Journaler(m_threads->work_queue,
                                      m_threads->timer,
 				     &m_threads->timer_lock, m_remote_ioctx,
-				     m_remote_image_id, m_local_mirror_uuid,
+				     m_remote_image_id, // journal_id
+				     m_local_mirror_uuid, // client_id
                                      settings);
+
   bootstrap();
 }
 
@@ -477,6 +481,7 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
     on_start_fail(0, "remote image is non-primary or local image is primary");
     return;
   } else if (r == -EEXIST) {
+    // see BootstrapRequest<I>::handle_get_remote_tags
     on_start_fail(r, "split-brain detected");
     return;
   } else if (r < 0) {
@@ -494,10 +499,14 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
     RWLock::RLocker snap_locker(m_local_image_ctx->snap_lock);
 
     if (m_local_image_ctx->journal != nullptr) {
+      // for local mirror image, its features are copied from the remote
+      // primary image, so it must have journaling enabled, see
+      // src/tools/rbd_mirror/image_replayer/CreateImageRequest<I>::create_image
       m_local_journal = m_local_image_ctx->journal;
 
       // m_journal_listener is an instance of JournalListener, which was
       // allocated by ImageReplayer<I>::ImageReplayer
+      // NOTE: we also have a listener m_remote_listener for remote journaler
       m_local_journal->add_listener(m_journal_listener);
     }
   }
@@ -586,10 +595,12 @@ void ImageReplayer<I>::handle_init_remote_journaler(int r) {
   // push back of JournalMetadata::m_listeners, the callback is
   // ImageReplayer<I>::handle_remote_journal_metadata_updated,
   // m_remote_listener constructed by ImageReplayer<I>::ImageReplayer
+  // NOTE: we also have a listener m_journal_listener for local journal
   m_remote_journaler->add_listener(&m_remote_listener);
 
   cls::journal::Client client;
 
+  // m_local_mirror_uuid is client_id of m_remote_journaler
   r = m_remote_journaler->get_cached_client(m_local_mirror_uuid, &client);
   if (r < 0) {
     derr << "error retrieving remote journal client: " << cpp_strerror(r)
@@ -1917,6 +1928,7 @@ void ImageReplayer<I>::handle_remote_journal_metadata_updated() {
     if (!is_running_()) {
       return;
     }
+
 
     int r = m_remote_journaler->get_cached_client(m_local_mirror_uuid, &client);
     if (r < 0) {

@@ -26,6 +26,8 @@ using util::create_async_context_callback;
 using util::create_context_callback;
 using util::create_rados_ack_callback;
 
+// created by
+// librbd::Operations<I>::execute_update_features
 template <typename I>
 EnableFeaturesRequest<I>::EnableFeaturesRequest(I &image_ctx,
                                                 Context *on_finish,
