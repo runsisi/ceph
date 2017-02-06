@@ -128,6 +128,8 @@ private:
 
 } // anonymous namespace
 
+// created by
+// Replayer::run
 class ReplayerAdminSocketHook : public AdminSocketHook {
 public:
   ReplayerAdminSocketHook(CephContext *cct, const std::string &name,
@@ -248,6 +250,7 @@ Replayer::~Replayer()
   if (m_replayer_thread.is_started()) {
     m_replayer_thread.join();
   }
+
   if (m_leader_watcher) {
     m_leader_watcher->shut_down();
   }
@@ -381,6 +384,7 @@ int Replayer::init_rados(const std::string &cluster_name,
     return r;
   }
 
+  // cmd args, see src/tools/rbd_mirror/main.cc/main
   if (!m_args.empty()) {
     // librados::Rados::conf_parse_argv
     args = m_args;
@@ -403,6 +407,7 @@ int Replayer::init_rados(const std::string &cluster_name,
 
   cct->put();
 
+  // the first statement of RadosClient::connect is common_init_finish
   r = (*rados_ref)->connect();
   if (r < 0) {
     derr << "error connecting to " << description << ": "
@@ -678,6 +683,9 @@ void Replayer::flush()
   }
 }
 
+// called by
+// Mirror::release_leader, which called by Mirror.cc/LeaderReleaseCommand::call
+// Replayer.cc/LeaderReleaseCommand::call
 void Replayer::release_leader()
 {
   dout(20) << "enter" << dendl;

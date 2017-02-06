@@ -97,7 +97,7 @@ struct DeleteJournalPolicy : public librbd::journal::Policy {
 } // anonymous namespace
 
 // created by
-// ImageDeleter::ImageDeleter
+// ImageDeleter::ImageDeleter, which created by Mirror::init
 class ImageDeleterAdminSocketHook : public AdminSocketHook {
 public:
   ImageDeleterAdminSocketHook(CephContext *cct, ImageDeleter *image_del) :

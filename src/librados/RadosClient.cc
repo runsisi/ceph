@@ -279,6 +279,7 @@ int librados::RadosClient::connect()
   monclient.set_messenger(messenger);
   mgrclient.set_messenger(messenger);
 
+  // register perf counter and admin socket command "objecter_requests"
   objecter->init();
 
   messenger->add_dispatcher_head(&mgrclient);

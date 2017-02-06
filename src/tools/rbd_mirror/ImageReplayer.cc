@@ -53,6 +53,8 @@ std::ostream &operator<<(std::ostream &os,
 
 namespace {
 
+// created by
+// ImageReplayer<I>::handle_start_replay
 template <typename I>
 struct ReplayHandler : public ::journal::ReplayHandler {
   ImageReplayer<I> *replayer;
@@ -68,6 +70,7 @@ struct ReplayHandler : public ::journal::ReplayHandler {
     if (r < 0) {
       ss << "replay completed with error: " << cpp_strerror(r);
     }
+
     replayer->handle_replay_complete(r, ss.str());
   }
 };
@@ -452,11 +455,8 @@ void ImageReplayer<I>::bootstrap() {
 
   reschedule_update_status_task(10);
 
-  // bootstrap will do image sync
-  // note: Journaler::init has not been called, so the journal metadata
-  // obejct has not been watched, immutable and mutable metadata have
-  // not been fetched, see ImageReplayer<I>::handle_bootstrap
-  // and Journaler::init
+  // open/create local mirror image, then sync if the mirror peer client
+  // is not in state MIRROR_PEER_STATE_REPLAYING
   request->send();
 }
 
@@ -627,7 +627,7 @@ void ImageReplayer<I>::handle_init_remote_journaler(int r) {
     return;
   }
 
-  // start external replay
+  // create an instance of librbd::journal::Replay
   start_replay();
 }
 
@@ -708,10 +708,11 @@ void ImageReplayer<I>::handle_start_replay(int r) {
 
   {
     CephContext *cct = static_cast<CephContext *>(m_local->cct());
-    double poll_seconds = cct->_conf->rbd_mirror_journal_poll_age;
+    double poll_seconds = cct->_conf->rbd_mirror_journal_poll_age; // default 5
 
     Mutex::Locker locker(m_lock);
 
+    // instance of rbd::mirror::anon::ReplayHandler
     // ReplayHandler::handle_entries_available -> ImageReplayer<I>::handle_replay_ready
     // ReplayHandler::handle_complete -> ImageReplayer<I>::handle_replay_complete
     m_replay_handler = new ReplayHandler<I>(this);
@@ -914,8 +915,9 @@ void ImageReplayer<I>::on_stop_journal_replay(int r, const std::string &desc)
 }
 
 // called by:
-// ReplayHandler::handle_entries_available
+// rbd::mirror::anon::ReplayHandler::handle_entries_available
 // ImageReplayer<I>::handle_process_entry_ready
+// NOTE: the difference between rbd::mirror::anon::ReplayHandler and librbd::Journal::ReplayHandler
 // try to get a replay entry and process it
 template <typename I>
 void ImageReplayer<I>::handle_replay_ready()

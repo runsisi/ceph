@@ -13,6 +13,8 @@
 
 namespace journal {
 
+// created by
+// JournalTrimmer::remove_set
 struct JournalTrimmer::C_RemoveSet : public Context {
   JournalTrimmer *journal_trimmer;
   uint64_t object_set;
@@ -108,10 +110,13 @@ void JournalTrimmer::remove_objects(bool force, Context *on_finish) {
   m_async_op_tracker.wait_for_ops(on_finish);
 }
 
+// called by
+// Journaler::committed(const ReplayEntry)
+// Journaler::committed(const Future)
 void JournalTrimmer::committed(uint64_t commit_tid) {
   ldout(m_cct, 20) << __func__ << ": commit_tid=" << commit_tid << dendl;
 
-  // callback is an instance of JournalTrimmer::C_CommitPositionSafe
+  // callback is a lambda that creates instance of JournalTrimmer::C_CommitPositionSafe
   m_journal_metadata->committed(commit_tid,
                                 m_create_commit_position_safe_context);
 }
@@ -144,6 +149,7 @@ void JournalTrimmer::remove_set(uint64_t object_set) {
 
   uint8_t splay_width = m_journal_metadata->get_splay_width();
 
+  // JournalTrimmer::handle_set_removed
   C_RemoveSet *ctx = new C_RemoveSet(this, object_set, splay_width);
 
   ldout(m_cct, 20) << __func__ << ": removing object set " << object_set
@@ -200,6 +206,7 @@ void JournalTrimmer::handle_metadata_updated() {
 
     for (auto &position : client.commit_position.object_positions) {
       uint64_t object_set = position.object_number / splay_width;
+
       if (object_set < minimum_commit_set) {
         minimum_client_id = client.id;
         minimum_commit_set = object_set;
@@ -208,6 +215,8 @@ void JournalTrimmer::handle_metadata_updated() {
   }
 
   if (minimum_commit_set > minimum_set) {
+    // the minimum commit set for all clients is beyond the minimum
+    // existing set, so we can remove some set(s) in [min set, min commit set]
     trim_objects(minimum_commit_set);
   } else {
     ldout(m_cct, 20) << "object set " << minimum_commit_set << " still "
@@ -215,6 +224,8 @@ void JournalTrimmer::handle_metadata_updated() {
   }
 }
 
+// called by
+// JournalTrimmer::C_RemoveSet::finish
 void JournalTrimmer::handle_set_removed(int r, uint64_t object_set) {
   ldout(m_cct, 20) << __func__ << ": r=" << r << ", set=" << object_set << ", "
                    << "trim=" << m_remove_set << dendl;

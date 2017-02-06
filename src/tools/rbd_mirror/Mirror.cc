@@ -119,6 +119,8 @@ private:
 
 } // anonymous namespace
 
+// created by
+// Mirror::Mirror
 class MirrorAdminSocketHook : public AdminSocketHook {
 public:
   MirrorAdminSocketHook(CephContext *cct, Mirror *mirror) :
@@ -196,6 +198,8 @@ private:
   Commands commands;
 };
 
+// created by
+// src/tools/rbd_mirror/main.cc/main
 Mirror::Mirror(CephContext *cct, const std::vector<const char*> &args) :
   m_cct(cct),
   m_args(args),
@@ -280,6 +284,7 @@ void Mirror::run()
       // for the local pool
       update_replayers(m_local_cluster_watcher->get_pool_peers());
     }
+
     m_cond.WaitInterval(
       m_lock,
       utime_t(m_cct->_conf->rbd_mirror_pool_replayers_refresh_interval, 0));
@@ -423,6 +428,8 @@ void Mirror::flush()
   }
 }
 
+// called by
+// Mirror.cc/LeaderReleaseCommand::call
 void Mirror::release_leader()
 {
   dout(20) << "enter" << dendl;

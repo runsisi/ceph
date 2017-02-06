@@ -274,7 +274,9 @@ bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
   return true;
 }
 
-// called by JournalPlayer::handle_fetched and JournalPlayer::handle_watch
+// called by
+// JournalPlayer::handle_fetched
+// JournalPlayer::handle_watch
 void JournalPlayer::process_state(uint64_t object_number, int r) {
   ldout(m_cct, 10) << __func__ << ": object_num=" << object_number << ", "
                    << "r=" << r << dendl;
@@ -319,6 +321,8 @@ void JournalPlayer::process_state(uint64_t object_number, int r) {
   }
 }
 
+// called by
+// JournalPlayer::process_state, for STATE_PREFETCH
 int JournalPlayer::process_prefetch(uint64_t object_number) {
   ldout(m_cct, 10) << __func__ << ": object_num=" << object_number << dendl;
 
@@ -480,7 +484,8 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   return 0;
 }
 
-// called by JournalPlayer::process_state when we have fetched an object
+// called by
+// JournalPlayer::process_state, for STATE_PLAYBACK
 int JournalPlayer::process_playback(uint64_t object_number) {
   ldout(m_cct, 10) << __func__ << ": object_num=" << object_number << dendl;
 
@@ -976,7 +981,8 @@ void JournalPlayer::schedule_watch(bool immediate) {
   object_player->watch(ctx, watch_interval);
 }
 
-// called by C_Watch::finish, i.e., the scheduled fetch has finished, so name it 
+// called by
+// C_Watch::finish, i.e., the scheduled fetch has finished, so name it
 // handle_scheduled_fetch should be better
 void JournalPlayer::handle_watch(uint64_t object_num, int r) {
   ldout(m_cct, 10) << __func__ << ": r=" << r << dendl;
@@ -1047,6 +1053,9 @@ void JournalPlayer::handle_watch_assert_active(int r) {
   m_async_op_tracker.finish_op();
 }
 
+// called by
+// JournalPlayer::process_prefetch
+// JournalPlayer::process_playback
 void JournalPlayer::notify_entries_available() {
   assert(m_lock.is_locked());
 
@@ -1065,7 +1074,10 @@ void JournalPlayer::notify_entries_available() {
 
   ldout(m_cct, 10) << __func__ << ": entries available" << dendl;
 
-  // replay_handler->handle_entries_available, i.e., Journal::handle_replay_ready
+  // replay_handler->handle_entries_available, which was registered by
+  // JournalPlayer::JournalPlayer, i.e.,
+  // librbd::Journal::handle_replay_ready, or
+  // ImageReplayer<I>::handle_replay_ready
   m_journal_metadata->queue(new C_HandleEntriesAvailable(
     m_replay_handler), 0);
 }
@@ -1077,7 +1089,10 @@ void JournalPlayer::notify_complete(int r) {
 
   ldout(m_cct, 10) << __func__ << ": replay complete: r=" << r << dendl;
 
-  // Journal::handle_replay_complete
+  // replay_handler->handle_complete, which was registered by
+  // JournalPlayer::JournalPlayer, i.e.,
+  // librbd::Journal::handle_replay_complete
+  // ImageReplayer<I>::handle_replay_complete
   m_journal_metadata->queue(new C_HandleComplete(
     m_replay_handler), r);
 }

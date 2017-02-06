@@ -260,6 +260,9 @@ private:
     }
   };
 
+  // created by
+  // member or Journal, i.e., Journal::m_replay_handler, this is for primary image replay
+  // NOTE: rbd::mirror::anon::ReplayHandler is for mirror image replay
   struct ReplayHandler : public ::journal::ReplayHandler {
     Journal *journal;
     ReplayHandler(Journal *_journal) : journal(_journal) {
@@ -296,6 +299,7 @@ private:
   int m_error_result;
   Contexts m_wait_for_state_contexts;
 
+  // registered by Journal<I>::handle_open
   ReplayHandler m_replay_handler;
   bool m_close_pending;
 

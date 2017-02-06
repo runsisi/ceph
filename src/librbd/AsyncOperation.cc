@@ -47,6 +47,7 @@ void AsyncOperation::start_op(ImageCtx &image_ctx) {
 
   Mutex::Locker l(m_image_ctx->async_ops_lock);
 
+  // ImageCtx::flush_async_operations needs this
   m_image_ctx->async_ops.push_front(&m_xlist_item);
 }
 

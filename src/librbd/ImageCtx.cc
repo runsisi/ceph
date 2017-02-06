@@ -269,6 +269,8 @@ struct C_InvalidateCache : public Context {
     delete state;
   }
 
+  // called by
+  // librbd::image::OpenRequest<I>::send_register_watch
   void ImageCtx::init() {
     assert(!header_oid.empty());
     assert(old_format || !id.empty());
@@ -996,6 +998,8 @@ struct C_InvalidateCache : public Context {
     {
       Mutex::Locker l(async_ops_lock);
 
+      // the op was pushed front by AioCompletion::start_op or
+      // CopyupRequest::CopyupRequest
       if (!async_ops.empty()) {
         ldout(cct, 20) << "flush async operations: " << on_finish << " "
                        << "count=" << async_ops.size() << dendl;
@@ -1024,7 +1028,7 @@ struct C_InvalidateCache : public Context {
       on_safe = new C_FlushCache(this, on_safe);
     }
 
-    // check if ImageCtx::async_ops is empty
+    // add callback to the last op of ImageCtx::async_ops
     flush_async_operations(on_safe);
   }
 

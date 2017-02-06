@@ -260,6 +260,8 @@ int md_config_t::parse_config_files(const char *conf_files,
     else {
       if (flags & CINIT_FLAG_NO_DEFAULT_CONFIG_FILE)
 	return 0;
+
+      // "$data_dir/config, /etc/ceph/$cluster.conf, ~/.ceph/$cluster.conf, $cluster.conf"
       conf_files = CEPH_CONF_FILE_DEFAULT;
     }
   }
@@ -392,6 +394,7 @@ void md_config_t::parse_env()
   Mutex::Locker l(lock);
   if (internal_safe_to_start_threads)
     return;
+
   if (getenv("CEPH_KEYRING")) {
     set_val_or_die("keyring", getenv("CEPH_KEYRING"));
   }

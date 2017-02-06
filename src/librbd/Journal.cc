@@ -1364,6 +1364,9 @@ typename Journal<I>::Future Journal<I>::wait_event(Mutex &lock, uint64_t tid,
 
 // STATE_READY -> STATE_REPLAYING
 
+// this is for mirror image, see Journal<I>::handle_open for primary image replay
+// NOTE: ImageReplayer only has an instance of remote Journaler, not Journal
+// replay
 // called by
 // ImageReplayer<I>::start_replay
 // ImageReplayer<I>::replay_flush
@@ -1464,7 +1467,9 @@ void Journal<I>::stop_external_replay() {
   start_append();
 }
 
-// called by Journal<I>::open and Journal<I>::handle_journal_destroyed
+// called by
+// Journal<I>::open
+// Journal<I>::handle_journal_destroyed
 template <typename I>
 void Journal<I>::create_journaler() {
   CephContext *cct = m_image_ctx.cct;

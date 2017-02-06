@@ -122,7 +122,8 @@ void complain_about_parse_errors(CephContext *cct,
 
 /* Please be sure that this can safely be called multiple times by the
  * same application. */
-// called by all daemons, utils, and librados::RadosClient::connect
+// called by
+// all daemons, utils, and librados::RadosClient::connect
 void common_init_finish(CephContext *cct)
 {
   cct->init_crypto();

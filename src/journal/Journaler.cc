@@ -143,6 +143,11 @@ void Journaler::exists(Context *on_finish) const {
   comp->release();
 }
 
+// called by
+// ImageReplayer<I>::init_remote_journaler
+// librbd::journal::OpenRequest<I>::send_init
+// librbd::journal::RemoveRequest<I>::init_journaler
+// Journal<I>::reset
 void Journaler::init(Context *on_init) {
   m_initialized = true;
 
@@ -177,7 +182,8 @@ int Journaler::init_complete() {
     }
   }
 
-  // used by Journaler::committed and Journaler::remove
+  // used by Journaler::committed and Journaler::remove, and register itself
+  // as a listener of JournalMetadata
   m_trimmer = new JournalTrimmer(m_data_ioctx, m_object_oid_prefix,
                                  m_metadata);
   return 0;
@@ -275,6 +281,7 @@ void Journaler::create(uint8_t order, uint8_t splay_width,
 
 // called by
 // journal::RemoveRequest<I>::remove_journal, with force set to true
+// Journal<I>::reset, with force set to true
 void Journaler::remove(bool force, Context *on_finish) {
   // chain journal removal (reverse order)
   on_finish = new FunctionContext([this, on_finish](int r) {
@@ -435,6 +442,7 @@ void Journaler::get_tags(uint64_t start_after_tag_tid, uint64_t tag_class,
   m_metadata->get_tags(start_after_tag_tid, tag_class, tags, on_finish);
 }
 
+// for local replay
 // called by
 // Journal<I>::handle_get_tags
 // rbd::action::journal::JournalPlayer::exec
@@ -442,15 +450,20 @@ void Journaler::start_replay(ReplayHandler *replay_handler) {
   // m_player = new JournalPlayer(replay_handler)
   create_player(replay_handler);
 
+  // this is for local replay, i.e., for master client
   m_player->prefetch();
 }
 
+// for remote replay
 // called by
 // ImageReplayer<I>::handle_start_replay
 void Journaler::start_live_replay(ReplayHandler *replay_handler,
                                   double interval) {
   create_player(replay_handler); // m_player = new JournalPlayer
 
+  // this is for remote replay, i.e., for mirror peer client, so
+  // there must be timer to fetch periodically, see
+  // ImageReplayer<I>::handle_replay_ready
   m_player->prefetch_and_watch(interval);
 }
 

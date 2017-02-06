@@ -401,7 +401,7 @@ Context *OpenRequest<I>::handle_v2_apply_metadata(int *result) {
 
 template <typename I>
 void OpenRequest<I>::send_register_watch() {
-  // setup admin socket and object cache
+  // setup admin socket and rbd cache
   m_image_ctx->init();
 
   if (m_image_ctx->read_only) {

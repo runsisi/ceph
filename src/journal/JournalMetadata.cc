@@ -1227,7 +1227,8 @@ void JournalMetadata::committed(uint64_t commit_tid,
 
     stale_ctx = m_commit_position_ctx;
 
-    // JournalTrimmer::C_CommitPositionSafe, actually do nothing
+    // JournalTrimmer::C_CommitPositionSafe, actually do nothing except
+    // inc/dec aync ops, see JournalTrimmer::m_async_op_tracker
     m_commit_position_ctx = create_context();
 
     m_commit_position = commit_position;

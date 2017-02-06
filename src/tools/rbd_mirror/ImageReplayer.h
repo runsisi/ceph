@@ -267,7 +267,10 @@ private:
   decltype(ImageCtxT::journal) m_local_journal = nullptr;
   librbd::journal::Replay<ImageCtxT> *m_local_replay = nullptr;
   Journaler* m_remote_journaler = nullptr;
+
+  // registered by ImageReplayer<I>::handle_start_replay
   ::journal::ReplayHandler *m_replay_handler = nullptr;
+
   librbd::journal::Listener *m_journal_listener;
   bool m_stopping_for_resync = false;
 
