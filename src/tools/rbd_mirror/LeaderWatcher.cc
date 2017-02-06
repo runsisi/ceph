@@ -60,6 +60,7 @@ void LeaderWatcher<I>::init(Context *on_finish) {
   assert(m_on_finish == nullptr);
   m_on_finish = on_finish;
 
+  // create "rbd_mirror_leader" object
   create_leader_object();
 }
 
@@ -241,7 +242,9 @@ bool LeaderWatcher<I>::is_leader(Mutex &lock) {
   assert(m_lock.is_locked());
 
   bool leader = m_leader_lock && m_leader_lock->is_leader();
+
   dout(20) << leader << dendl;
+
   return leader;
 }
 
@@ -269,11 +272,18 @@ void LeaderWatcher<I>::cancel_timer_task() {
   }
 
   dout(20) << m_timer_task << dendl;
+
   bool canceled = m_threads->timer->cancel_event(m_timer_task);
   assert(canceled);
+
   m_timer_task = nullptr;
 }
 
+// called by
+// LeaderWatcher<I>::handle_break_leader_lock
+// LeaderWatcher<I>::handle_get_locker
+// LeaderWatcher<I>::handle_release_leader_lock
+// LeaderWatcher<I>::handle_notify_heartbeat
 template <typename I>
 void LeaderWatcher<I>::schedule_timer_task(const std::string &name,
                                            int delay_factor, bool leader,
@@ -286,19 +296,24 @@ void LeaderWatcher<I>::schedule_timer_task(const std::string &name,
   m_timer_task = new FunctionContext(
     [this, cb, leader](int r) {
       assert(m_threads->timer_lock.is_locked());
+
       m_timer_task = nullptr;
+
       Mutex::Locker locker(m_lock);
       if (is_leader(m_lock) != leader) {
         return;
       }
+
       (this->*cb)();
     });
 
+  // default 5
   int after = delay_factor *
     max(1, m_cct->_conf->rbd_mirror_leader_heartbeat_interval);
 
   dout(20) << "scheduling " << name << " after " << after << " sec (task "
            << m_timer_task << ")" << dendl;
+
   m_threads->timer->add_event_after(after, m_timer_task);
 }
 
@@ -447,11 +462,20 @@ void LeaderWatcher<I>::handle_get_locker(int r,
   }
 }
 
+// called by
+// LeaderWatcher<I>::schedule_timer_task
 template <typename I>
 void LeaderWatcher<I>::acquire_leader_lock() {
     return acquire_leader_lock(false);
 }
 
+// called by
+// LeaderWatcher<I>::handle_register_watch
+// LeaderWatcher<I>::break_leader_lock
+// LeaderWatcher<I>::handle_break_leader_lock
+// LeaderWatcher<I>::handle_get_locker
+// LeaderWatcher<I>::acquire_leader_lock(), i.e., above, the only caller with arg set to false
+// LeaderWatcher<I>::handle_lock_released
 template <typename I>
 void LeaderWatcher<I>::acquire_leader_lock(bool reset_attempt_counter) {
   dout(20) << "reset_attempt_counter=" << reset_attempt_counter << dendl;
@@ -497,6 +521,7 @@ void LeaderWatcher<I>::handle_acquire_leader_lock(int r) {
     } else {
       get_locker();
     }
+
     return;
   }
 
@@ -511,6 +536,10 @@ void LeaderWatcher<I>::handle_acquire_leader_lock(int r) {
   notify_heartbeat();
 }
 
+// called by
+// LeaderWatcher<I>::release_leader
+// LeaderWatcher<I>::handle_acquire_leader_lock
+// LeaderWatcher<I>::handle_notify_heartbeat
 template <typename I>
 void LeaderWatcher<I>::release_leader_lock() {
   dout(20) << dendl;
@@ -684,6 +713,7 @@ void LeaderWatcher<I>::handle_notify_lock_acquired(int r) {
     if (r < 0 && r != -ETIMEDOUT) {
       derr << "error notifying leader lock acquired: " << cpp_strerror(r)
 	   << dendl;
+
       m_notify_error = r;
     }
 
