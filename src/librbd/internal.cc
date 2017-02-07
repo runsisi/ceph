@@ -150,13 +150,14 @@ int mirror_image_enable_internal(ImageCtx *ictx) {
 }
 
 // called by
-// librbd::remove(force, !force)
-// mirror_image_disable(force, true)
+// librbd::remove(force, !force), false, true
+// mirror_image_disable(force, true), if called by mirror_mode_set then (false, true), if called
+// by cli then (true/false, true)
 // force means even if the image is not primary we still to disable mirroring
 // remove means if there are mirror peer clients for this image should we
-// remove omap pairs from RBD_MIRRORING object for this image
+// remove registered omap pairs from RBD_MIRRORING object for this image
 int mirror_image_disable_internal(ImageCtx *ictx, bool force,
-                                  bool remove=true) {
+                                  bool remove=true) { // always be true, remove omap from RBD_MIRRORING
   CephContext *cct = ictx->cct;
   C_SaferCond cond;
 
@@ -2743,8 +2744,9 @@ void filter_out_mirror_watchers(ImageCtx *ictx,
     return 0;
   }
 
-  // called by rbd_mirror_image_disable/Image::mirror_image_disable
-  // and mirror_mode_set
+  // called by
+  // rbd_mirror_image_disable/Image::mirror_image_disable, force get from cli
+  // mirror_mode_set, false
   int mirror_image_disable(ImageCtx *ictx, bool force) {
     CephContext *cct = ictx->cct;
     ldout(cct, 20) << "mirror_image_disable " << ictx << dendl;

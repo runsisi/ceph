@@ -3399,6 +3399,7 @@ int image_remove(cls_method_context_t hctx, const string &image_id) {
     return r;
   }
 
+  // "status_global_"
   r = cls_cxx_map_remove_key(hctx,
                              status_global_key(mirror_image.global_image_id));
   if (r < 0 && r != -ENOENT) {

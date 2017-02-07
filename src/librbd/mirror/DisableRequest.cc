@@ -26,7 +26,7 @@ using util::create_rados_ack_callback;
 
 // called by
 // librbd::mirror_image_disable_internal
-// librbd::operation::DisableFeaturesRequest<I>::send_disable_mirror_image
+// librbd::operation::DisableFeaturesRequest<I>::send_disable_mirror_image, force->false, remove->true
 template <typename I>
 DisableRequest<I>::DisableRequest(I *image_ctx, bool force, bool remove,
                                   Context *on_finish)
@@ -44,6 +44,7 @@ void DisableRequest<I>::send_get_mirror_image() {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
+  // to get mirror state of this image
   librados::ObjectReadOperation op;
   cls_client::mirror_image_get_start(&op, m_image_ctx->id);
 
@@ -115,6 +116,8 @@ Context *DisableRequest<I>::handle_get_tag_owner(int *result) {
     return m_on_finish;
   }
 
+  // 1) the image is primary or 2) non-primary, but force to disable mirror
+
   send_set_mirror_image();
 
   return nullptr;
@@ -164,6 +167,7 @@ void DisableRequest<I>::send_notify_mirroring_watcher() {
   Context *ctx = util::create_context_callback<
     klass, &klass::handle_notify_mirroring_watcher>(this);
 
+  // no one cares this notification, coz MirroringWatcher never be instanced
   MirroringWatcher<I>::notify_image_updated(
     m_image_ctx->md_ctx, cls::rbd::MIRROR_IMAGE_STATE_DISABLING,
     m_image_ctx->id, m_mirror_image.global_image_id, ctx);
@@ -200,6 +204,8 @@ void DisableRequest<I>::send_promote_image() {
   using klass = DisableRequest<I>;
   Context *ctx = util::create_context_callback<
     klass, &klass::handle_promote_image>(this);
+
+  // force promote
   auto req = journal::PromoteRequest<I>::create(m_image_ctx, true, ctx);
   req->send();
 }
@@ -449,6 +455,7 @@ void DisableRequest<I>::send_remove_mirror_image() {
 
   librados::ObjectWriteOperation op;
 
+  // remove omap "image_", "global_", "status_global_" from RBD_MIRRORING object
   cls_client::mirror_image_remove(&op, m_image_ctx->id);
 
   using klass = DisableRequest<I>;

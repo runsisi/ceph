@@ -1522,6 +1522,8 @@ namespace librbd {
     return librbd::mirror_image_enable(ictx);
   }
 
+  // called by
+  // rbd::action::mirror_image::execute_enable_disable
   int Image::mirror_image_disable(bool force) {
     ImageCtx *ictx = (ImageCtx *)ctx;
     return librbd::mirror_image_disable(ictx, force);
