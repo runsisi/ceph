@@ -1072,6 +1072,12 @@ void Operations<I>::snap_remove(const char *snap_name, Context *on_finish) {
   }
 }
 
+// called by
+// src/librd/journal/Replay.cc/librbd::journal::anon::ExecuteOp::execute(const journal::SnapRemoveEvent)
+// librbd::mirror::DisableRequest<I>::send_remove_snap
+// ImageWatcher<I>::handle_payload(const SnapRemovePayload)
+// Operations<I>::snap_remove, i.e., above
+// rbd::mirror::image_sync::SnapshotCopyRequest<I>::send_snap_remove
 template <typename I>
 void Operations<I>::execute_snap_remove(const std::string &snap_name,
                                         Context *on_finish) {

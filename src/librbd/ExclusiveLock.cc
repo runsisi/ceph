@@ -24,6 +24,10 @@ using namespace exclusive_lock;
 template <typename I>
 using ML = ManagedLock<I>;
 
+// created by
+// SetSnapRequest<I>::send_init_exclusive_lock
+// ImageCtx::create_exclusive_lock
+// librbd::lock_get_owners
 template <typename I>
 ExclusiveLock<I>::ExclusiveLock(I &image_ctx)
   : ML<I>(image_ctx.md_ctx, image_ctx.op_work_queue, image_ctx.header_oid,
@@ -99,7 +103,7 @@ void ExclusiveLock<I>::init(uint64_t features, Context *on_init) {
 
   // block r/w until exclusive lock locked, see ExclusiveLock<I>::handle_acquire_lock
 
-  // ExclusiveLock<I>::handle_init_complete
+  // ExclusiveLock<I>::handle_init_complete, then call on_init
   m_image_ctx.aio_work_queue->block_writes(new C_InitComplete(this, features,
                                                               on_init));
 }

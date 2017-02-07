@@ -147,6 +147,7 @@ namespace librbd {
     ImageState<ImageCtx> *state;
     Operations<ImageCtx> *operations;
 
+    // created by RefreshRequest<I>::send_v2_init_exclusive_lock
     ExclusiveLock<ImageCtx> *exclusive_lock;
     ObjectMap<ImageCtx> *object_map;
 

@@ -33,18 +33,23 @@ ClusterWatcher::ClusterWatcher(RadosRef cluster, Mutex &lock) :
 {
 }
 
+// called by
+// Mirror::run
 const ClusterWatcher::PoolPeers& ClusterWatcher::get_pool_peers() const
 {
   assert(m_lock.is_locked());
   return m_pool_peers;
 }
 
+// never called
 const ClusterWatcher::PoolNames& ClusterWatcher::get_pool_names() const
 {
   assert(m_lock.is_locked());
   return m_pool_names;
 }
 
+// called by
+// Mirror::run
 void ClusterWatcher::refresh_pools()
 {
   dout(20) << "enter" << dendl;
@@ -62,6 +67,8 @@ void ClusterWatcher::refresh_pools()
   // about config changes for existing pools
 }
 
+// called by
+// ClusterWatcher::refresh_pools
 void ClusterWatcher::read_pool_peers(PoolPeers *pool_peers,
 				     PoolNames *pool_names)
 {

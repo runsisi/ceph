@@ -1042,7 +1042,8 @@ void Replay<I>::handle_aio_flush_complete(Context *on_flush_safe,
   }
 }
 
-// called by Replay<I>::handle_event
+// called by
+// Replay<I>::handle_event
 template <typename I>
 Context *Replay<I>::create_op_context_callback(uint64_t op_tid,
                                                Context *on_ready,

@@ -60,6 +60,9 @@ using librbd::util::unique_lock_name;
 using managed_lock::util::decode_lock_cookie;
 using managed_lock::util::encode_lock_cookie;
 
+// derived by
+// ExclusiveLock
+// LeaderLock
 template <typename I>
 ManagedLock<I>::ManagedLock(librados::IoCtx &ioctx, ContextWQ *work_queue,
                             const string& oid, Watcher *watcher, Mode mode,
@@ -626,6 +629,8 @@ void ManagedLock<I>::handle_pre_release_lock(int r) {
       m_work_queue, m_oid, m_cookie,
       create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_release_lock>(this));
+
+  // ReleaseRequest::send
   m_work_queue->queue(new C_SendLockRequest<ReleaseRequest<I>>(req), 0);
 }
 

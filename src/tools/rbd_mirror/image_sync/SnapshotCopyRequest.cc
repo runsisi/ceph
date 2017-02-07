@@ -43,6 +43,8 @@ const std::string &get_snapshot_name(I *image_ctx, librados::snap_t snap_id) {
 using librbd::util::create_context_callback;
 using librbd::util::unique_lock_name;
 
+// created by
+// ImageSync<I>::send_copy_snapshots
 template <typename I>
 SnapshotCopyRequest<I>::SnapshotCopyRequest(I *local_image_ctx,
                                             I *remote_image_ctx,

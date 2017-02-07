@@ -952,7 +952,8 @@ struct C_InvalidateCache : public Context {
     return object_cacher->set_is_empty(object_set);
   }
 
-  // called by OpenRequest<I>::send_register_watch
+  // called by
+  // librbd::image::OpenRequest<I>::send_register_watch
   void ImageCtx::register_watch(Context *on_finish) {
     assert(image_watcher == NULL);
 

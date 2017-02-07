@@ -382,6 +382,7 @@ int ImageState<I>::refresh_if_required() {
 
   {
     m_lock.Lock();
+
     Action action(ACTION_TYPE_REFRESH);
     action.refresh_seq = m_refresh_seq;
 
