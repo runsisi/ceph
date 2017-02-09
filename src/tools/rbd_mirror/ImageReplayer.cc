@@ -594,6 +594,8 @@ void ImageReplayer<I>::init_remote_journaler() {
   Context *ctx = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_init_remote_journaler>(this);
 
+  // call m_remote_journaler->init to watch journal metadata object and
+  // get immutable and mutable metadata
   m_remote_journaler->init(ctx);
 }
 

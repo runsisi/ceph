@@ -198,7 +198,7 @@ void JournalTrimmer::handle_metadata_updated() {
     }
 
     if (client.commit_position.object_positions.empty()) {
-      // client hasn't recorded any commits
+      // client hasn't recorded any commits, this is for image replay after sync
       minimum_commit_set = minimum_set;
       minimum_client_id = client.id;
       break;
