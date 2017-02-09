@@ -101,6 +101,12 @@ struct C_AioCompletion : public Context {
   }
 };
 
+// created by
+// C_OpenAfterCloseComplete::finish
+// RBD::aio_open
+// RBD::aio_open_read_only
+// rbd_aio_open
+// rbd_aio_open_read_only
 struct C_OpenComplete : public C_AioCompletion {
   librbd::ImageCtx *ictx;
   void **ictxp;
@@ -122,6 +128,9 @@ struct C_OpenComplete : public C_AioCompletion {
   }
 };
 
+// created by
+// RBD::aio_open
+// RBD::aio_open_read_only
 struct C_OpenAfterCloseComplete : public Context {
   librbd::ImageCtx *ictx;
   librbd::io::AioCompletion* comp;
@@ -141,6 +150,9 @@ struct C_OpenAfterCloseComplete : public Context {
   }
 };
 
+// created by
+// rbd_update_watch
+// rbd_update_unwatch
 struct C_UpdateWatchCB : public librbd::UpdateWatchCtx {
   rbd_update_callback_t watch_cb;
   void *arg;

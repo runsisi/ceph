@@ -82,6 +82,7 @@ Journaler::Journaler(librados::IoCtx &header_ioctx,
 }
 
 // created by
+// Journal<I>::create_journaler, i.e., member of Journal
 // librbd::journal::CreateRequest<I>::create_journal
 // librbd::journal::RemoveRequest<I>::stat_journal
 // ImageReplayer<I>::start
@@ -407,19 +408,21 @@ int Journaler::get_cached_client(const std::string &client_id,
   return 0;
 }
 
-// not used by anyone
+// not used by anyone, even Journal<I>::create will call Journaler::allocate_tag
+// below with tag_class set to Tag::TAG_CLASS_NEW explicitly
 void Journaler::allocate_tag(const bufferlist &data, cls::journal::Tag *tag,
                              Context *on_finish) {
   m_metadata->allocate_tag(cls::journal::Tag::TAG_CLASS_NEW, data, tag,
                            on_finish);
 }
 
+// called when write ownership whenever changed
 // called by
 // librbd::image::CreateRequest<I>::journal_create -> CreateRequest<I>::allocate_journal_tag
 // Journal<I>::reset -> Journal<I>::create -> CreateRequest<I>::allocate_journal_tag
 // Journal<I>::promote -> allocate_journaler_tag
 // Journal<I>::demote -> allocate_journaler_tag,
-// Journal<I>::allocate_tag
+// Journal<I>::allocate_tag, which called by journal::StandardPolicy::allocate_tag_on_lock, ImageReplayer<I>::handle_get_remote_tag
 void Journaler::allocate_tag(uint64_t tag_class, const bufferlist &data,
                              cls::journal::Tag *tag, Context *on_finish) {
   // allocate a tag with specified tag class and tag data

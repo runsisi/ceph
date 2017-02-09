@@ -379,8 +379,7 @@ bool Journal<I>::is_journal_supported(I &image_ctx) {
 
 // static
 // called by
-// Journal<I>::reset
-// librbd::update_features
+// Journal<I>::reset, which never be used
 template <typename I>
 int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
                        uint8_t order, uint8_t splay_width,
@@ -403,7 +402,8 @@ int Journal<I>::create(librados::IoCtx &io_ctx, const std::string &image_id,
 }
 
 // static
-// called by librbd::remove
+// called by
+// librbd::remove
 template <typename I>
 int Journal<I>::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
   CephContext *cct = reinterpret_cast<CephContext *>(io_ctx.cct());
@@ -422,6 +422,7 @@ int Journal<I>::remove(librados::IoCtx &io_ctx, const std::string &image_id) {
 }
 
 // static
+// never be called, for cli, we use Image::update_features to reset the journal
 template <typename I>
 int Journal<I>::reset(librados::IoCtx &io_ctx, const std::string &image_id) {
   CephContext *cct = reinterpret_cast<CephContext *>(io_ctx.cct());
@@ -600,7 +601,8 @@ int Journal<I>::request_resync(I *image_ctx) {
 }
 
 // static
-// called by librbd::mirror_image_promote
+// called by
+// librbd::mirror_image_promote
 // tag owner: last tag.mirror uuid(maybe m_remote_mirror_uuid) -> LOCAL_MIRROR_UUID
 template <typename I>
 void Journal<I>::promote(I *image_ctx, Context *on_finish) {

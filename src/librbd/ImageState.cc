@@ -272,6 +272,7 @@ ImageState<I>::~ImageState() {
   delete m_update_watchers;
 }
 
+// only called by librbd::remove with skip_open_parent set to true
 template <typename I>
 int ImageState<I>::open(bool skip_open_parent) {
   C_SaferCond ctx;

@@ -954,6 +954,7 @@ int journal_tag_create(cls_method_context_t hctx, bufferlist *in,
     return r;
   }
 
+  // only Journal<I>::create allocates tag with tag_class set to TAG_CLASS_NEW
   if (tag_class == cls::journal::Tag::TAG_CLASS_NEW) {
     // allocate a new tag class
     tag_class = next_tag_class;

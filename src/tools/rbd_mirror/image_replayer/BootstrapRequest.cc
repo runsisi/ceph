@@ -78,6 +78,7 @@ BootstrapRequest<I>::~BootstrapRequest() {
 
 template <typename I>
 void BootstrapRequest<I>::send() {
+  // will be checked and set by BootstrapRequest<I>::handle_open_local_image
   *m_do_resync = false;
 
   // try to get local image id by remote image's global id, so we can know
@@ -85,7 +86,8 @@ void BootstrapRequest<I>::send() {
   get_local_image_id();
 }
 
-// called by ImageReplayer<I>::stop if we are in bootstrap stage
+// called by
+// ImageReplayer<I>::stop, for STATE_STARTING
 template <typename I>
 void BootstrapRequest<I>::cancel() {
   dout(20) << dendl;
@@ -784,6 +786,7 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
       return;
     }
 
+    // NOTE: OpenLocalImageRequest<I>::send_lock_image has acquired the exclusive lock
     // Journal::m_tag_tid and Journal::m_tag_data are updated with
     // newly allocated tags accordingly
     local_tag_tid = local_image_ctx->journal->get_tag_tid();
@@ -825,8 +828,6 @@ void BootstrapRequest<I>::handle_get_remote_tags(int r) {
 
       continue;
     }
-
-    // 1) never
 
     try {
       bufferlist::iterator it = remote_tag.data.begin();
@@ -1006,7 +1007,7 @@ void BootstrapRequest<I>::image_sync() {
                                          m_timer_lock,
                                          m_local_mirror_uuid, m_journaler,
                                          m_client_meta, m_work_queue, ctx,
-                                         m_progress_ctx);
+                                         m_progress_ctx); // i.e., ImageReplayer::m_progress_cxt
       return;
     }
   }
@@ -1089,6 +1090,8 @@ void BootstrapRequest<I>::handle_close_remote_image(int r) {
   finish(m_ret_val);
 }
 
+// called by
+// BootstrapRequest<I>::handle_get_client
 template <typename I>
 bool BootstrapRequest<I>::decode_client_meta() {
   dout(20) << dendl;
@@ -1126,6 +1129,7 @@ template <typename I>
 void BootstrapRequest<I>::update_progress(const std::string &description) {
   dout(20) << ": " << description << dendl;
 
+  // i.e., ImageReplayer::m_progress_cxt
   if (m_progress_ctx) {
     m_progress_ctx->update_progress(description);
   }

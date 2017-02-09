@@ -53,6 +53,8 @@ void ImageSync<I>::send() {
   send_prune_catch_up_sync_point();
 }
 
+// called by
+// ImageSyncThrottler<I>::cancel_sync, which called by BootstrapRequest<I>::cancel
 template <typename I>
 void ImageSync<I>::cancel() {
   Mutex::Locker locker(m_lock);
@@ -397,6 +399,7 @@ template <typename I>
 void ImageSync<I>::update_progress(const std::string &description) {
   dout(20) << ": " << description << dendl;
 
+  // i.e., ImageReplayer::m_progress_cxt
   if (m_progress_ctx) {
     m_progress_ctx->update_progress("IMAGE_SYNC/" + description);
   }

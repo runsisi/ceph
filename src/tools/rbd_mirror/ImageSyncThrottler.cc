@@ -120,6 +120,8 @@ void ImageSyncThrottler<I>::start_sync(I *local_image_ctx, I *remote_image_ctx,
   }
 }
 
+// called by
+// BootstrapRequest<I>::cancel
 template <typename I>
 void ImageSyncThrottler<I>::cancel_sync(librados::IoCtx &local_io_ctx,
                                         const std::string local_image_id) {

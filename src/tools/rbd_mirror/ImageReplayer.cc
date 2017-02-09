@@ -331,6 +331,11 @@ ImageReplayer<I>::~ImageReplayer()
   delete m_asok_hook;
 }
 
+// called by
+// ImageReplayer<I>::BootstrapProgressContext::update_progress
+// ImageReplayer<I>::on_start_fail
+// ImageReplayer<I>::on_stop_journal_replay
+// ImageReplayer<I>::handle_replay_complete
 template <typename I>
 void ImageReplayer<I>::add_remote_image(const std::string &mirror_uuid,
                                         const std::string &image_id,
@@ -368,7 +373,9 @@ void ImageReplayer<I>::set_state_description(int r, const std::string &desc) {
 }
 
 // called by
-// Replayer::start_image_replayer and ImageReplayer<I>::restart
+// rbd::mirror::anon::StartCommand::call
+// Replayer::start_image_replayer
+// ImageReplayer<I>::restart
 template <typename I>
 void ImageReplayer<I>::start(Context *on_finish, bool manual)
 {
@@ -468,8 +475,7 @@ void ImageReplayer<I>::bootstrap() {
 
   reschedule_update_status_task(10);
 
-  // open/create local mirror image, then sync if the mirror peer client
-  // is not in state MIRROR_PEER_STATE_REPLAYING
+  // open/create local mirror image, then sync
   request->send();
 }
 
@@ -644,6 +650,8 @@ void ImageReplayer<I>::handle_init_remote_journaler(int r) {
   start_replay();
 }
 
+// called by
+// ImageReplayer<I>::handle_init_remote_journaler, i.e., above
 template <typename I>
 void ImageReplayer<I>::start_replay() {
   dout(20) << dendl;
@@ -794,7 +802,8 @@ bool ImageReplayer<I>::on_start_interrupted()
 }
 
 // called by
-// ImageReplayer<I>::restart
+// rbd::mirror::anon::StopCommand::call
+// ImageReplayer<I>::restart, which called by rbd::mirror::anon::RestartCommand::call
 // ImageReplayer<I>::resync_image
 // ImageReplayer<I>::handle_remote_journal_metadata_updated
 template <typename I>
@@ -823,10 +832,15 @@ void ImageReplayer<I>::stop(Context *on_finish, bool manual, int r,
 
       if (!is_stopped_()) {
 	if (m_state == STATE_STARTING) {
+
+	  // m_state changed to STATE_REPLAYING from STATE_STARTING
+	  // by ImageReplayer<I>::handle_start_replay
+
 	  dout(20) << "canceling start" << dendl;
 
 	  if (m_bootstrap_request) {
-	    // bootstraping has not finished, see ImageReplayer<I>::handle_bootstrap
+	    // bootstraping has not finished, coz ImageReplayer<I>::handle_bootstrap
+	    // sets ImageReplayer<I>::m_bootstrap_request to nullptr
             bootstrap_request = m_bootstrap_request;
             bootstrap_request->get();
 	  }
@@ -973,6 +987,8 @@ void ImageReplayer<I>::handle_replay_ready()
   replay_flush();
 }
 
+// called by
+// rbd::mirror::anon::RestartCommand::call
 template <typename I>
 void ImageReplayer<I>::restart(Context *on_finish)
 {
@@ -989,6 +1005,8 @@ void ImageReplayer<I>::restart(Context *on_finish)
   stop(ctx);
 }
 
+// called by
+// rbd::mirror::anon::FlushCommand::call
 template <typename I>
 void ImageReplayer<I>::flush(Context *on_finish)
 {

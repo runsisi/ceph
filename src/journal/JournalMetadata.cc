@@ -578,7 +578,8 @@ void JournalMetadata::get_mutable_metadata(uint64_t *minimum_set,
 			       on_finish);
 }
 
-// called by Journaler::register_client
+// called by
+// Journaler::register_client
 void JournalMetadata::register_client(const bufferlist &data,
 				      Context *on_finish) {
   ldout(m_cct, 10) << __func__ << ": " << m_client_id << dendl;
