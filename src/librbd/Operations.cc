@@ -154,6 +154,10 @@ struct C_InvokeAsyncRequest : public Context {
     send_refresh_image();
   }
 
+  // called by
+  // send, i.e., above
+  // handle_remote_request
+  // handle_local_request
   void send_refresh_image() {
     if (!image_ctx.state->is_refresh_required()) {
       send_acquire_exclusive_lock();
@@ -255,14 +259,16 @@ struct C_InvokeAsyncRequest : public Context {
         C_InvokeAsyncRequest<I>,
         &C_InvokeAsyncRequest<I>::handle_acquire_exclusive_lock>(this));
 
-    if (request_lock) {
+    if (request_lock) { // was set by C_InvokeAsyncRequest::handle_remote_request
       // current lock owner doesn't support op -- try to perform
       // the action locally
       request_lock = false;
+
       image_ctx.exclusive_lock->acquire_lock(ctx);
     } else {
       image_ctx.exclusive_lock->try_acquire_lock(ctx);
     }
+
     owner_lock.put_read();
   }
 
@@ -322,7 +328,9 @@ struct C_InvokeAsyncRequest : public Context {
     if (r == -EOPNOTSUPP) {
       ldout(cct, 5) << request_type << " not supported by current lock owner"
                     << dendl;
+
       request_lock = true;
+
       send_refresh_image();
       return;
     } else if (r != -ETIMEDOUT && r != -ERESTART) {
@@ -801,7 +809,8 @@ void Operations<I>::execute_resize(uint64_t size, bool allow_shrink, ProgressCon
   req->send();
 }
 
-// called by Image::snap_create or rbd_snap_create
+// called by
+// Image::snap_create or rbd_snap_create
 template <typename I>
 int Operations<I>::snap_create(const char *snap_name,
 			       const cls::rbd::SnapshotNamespace &snap_namespace) {

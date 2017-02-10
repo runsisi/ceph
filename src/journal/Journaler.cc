@@ -253,7 +253,7 @@ void Journaler::get_mutable_metadata(uint64_t *minimum_set,
 }
 
 // called by
-// Journal<I>::create
+// Journal<I>::create, which called by Journal::reset, which never be used
 // librbd::image::CreateRequest<I>::create_journal
 void Journaler::create(uint8_t order, uint8_t splay_width,
                       int64_t pool_id, Context *on_finish) {
@@ -282,7 +282,7 @@ void Journaler::create(uint8_t order, uint8_t splay_width,
 
 // called by
 // journal::RemoveRequest<I>::remove_journal, with force set to true
-// Journal<I>::reset, with force set to true
+// Journal<I>::reset, with force set to true, which never be used
 void Journaler::remove(bool force, Context *on_finish) {
   // chain journal removal (reverse order)
   on_finish = new FunctionContext([this, on_finish](int r) {

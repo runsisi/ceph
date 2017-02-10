@@ -22,6 +22,8 @@ namespace image_replayer {
 
 using librbd::util::unique_lock_name;
 
+// created by
+// ImageReplayer<I>::handle_start_replay
 template <typename I>
 ReplayStatusFormatter<I>::ReplayStatusFormatter(Journaler *journaler,
 						const std::string &mirror_uuid)
