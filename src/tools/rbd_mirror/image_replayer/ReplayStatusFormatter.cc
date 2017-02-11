@@ -27,8 +27,8 @@ using librbd::util::unique_lock_name;
 template <typename I>
 ReplayStatusFormatter<I>::ReplayStatusFormatter(Journaler *journaler,
 						const std::string &mirror_uuid)
-  : m_journaler(journaler),
-    m_mirror_uuid(mirror_uuid),
+  : m_journaler(journaler), // remote Journaler
+    m_mirror_uuid(mirror_uuid), // local mirror uuid
     m_lock(unique_lock_name("ReplayStatusFormatter::m_lock", this)) {
 }
 
