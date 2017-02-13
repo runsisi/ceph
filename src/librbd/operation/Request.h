@@ -74,12 +74,14 @@ protected:
 
         Context *ctx = util::create_context_callback<T, MF>(request);
 
+        // call librbd::operation::Request<I>::replay_op_ready
         replay_op_ready(ctx);
 
         return true;
       } else if (image_ctx.journal->is_journal_appending()) {
 
-        // Journal is in state of STATE_READY
+        // Journal is in state of STATE_READY, -AND- jounal policy for append
+        // has not been disabled, see OpenLocalImageRequest/MirrorJournalPolicy
 
         Context *ctx = util::create_context_callback<T, MF>(request);
 

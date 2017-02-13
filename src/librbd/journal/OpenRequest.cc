@@ -109,10 +109,12 @@ void OpenRequest<I>::send_get_tags() {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 20) << dendl;
 
+  // util::C_DecodeTags::process
   C_DecodeTags *tags_ctx = new C_DecodeTags(
     cct, m_lock, m_tag_tid, m_tag_data, create_async_context_callback(
       *m_image_ctx, create_context_callback<
         OpenRequest<I>, &OpenRequest<I>::handle_get_tags>(this)));
+
   m_journaler->get_tags(m_tag_class, &tags_ctx->tags, tags_ctx);
 }
 

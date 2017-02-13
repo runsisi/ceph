@@ -1188,7 +1188,9 @@ void Journal<I>::commit_op_event(uint64_t op_tid, int r, Context *on_safe) {
                                    op_finish_future, on_safe)));
 }
 
-// called by librbd::operation::Request<I>::replay_op_ready
+// called by
+// librbd::operation::Request<I>::replay_op_ready,
+// which called by librbd::operation::Request<I>::append_op_event(T)
 template <typename I>
 void Journal<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   CephContext *cct = m_image_ctx.cct;
@@ -1199,6 +1201,7 @@ void Journal<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
 
     assert(m_journal_replay != nullptr);
 
+    // on_resume -> XxxRequest<I>::handle_append_op_event
     m_journal_replay->replay_op_ready(op_tid, on_resume);
   }
 }

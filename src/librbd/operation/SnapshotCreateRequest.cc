@@ -101,13 +101,16 @@ void SnapshotCreateRequest<I>::send_append_op_event() {
 
   // see http://stackoverflow.com/questions/5533354/what-does-a-call-to-this-template-somename-do
   // will call the template librbd::operation::Request::append_op_event(T *request),
-  // append_op_event only returns false when image_ctx.journal is nullptr
+  // NOTE: append_op_event only returns false when image_ctx.journal is nullptr or
+  // journal is not in replay state && appending has not been disabled by
+  // journal policy
   if (!this->template append_op_event<
         SnapshotCreateRequest<I>,
         &SnapshotCreateRequest<I>::handle_append_op_event>(this)) {
 
-    // image_ctx.journal is nullptr, so we can leverage the append_op_event
-    // to continue the state machine, so we continue it manually
+    // image_ctx.journal is nullptr, or journal is not in replay
+    // state && appending has not been disabled by journal policy,
+    // we need to continue the state machine manually
 
     send_allocate_snap_id();
     return;

@@ -27,6 +27,8 @@ static const uint64_t IN_FLIGHT_IO_HIGH_WATER_MARK(64);
 
 static NoOpProgressContext no_op_progress_callback;
 
+// created by
+// librbd::journal::Replay<I>::handle_event
 // C_ExecuteOp should be a better name
 template <typename I, typename E>
 struct ExecuteOp : public Context {
@@ -341,10 +343,12 @@ void Replay<I>::flush(Context *on_finish) {
   io::ImageRequest<I>::aio_flush(&m_image_ctx, aio_comp);
 }
 
-// called by Journal<I>::replay_op_ready, which is only used for
+// called by
+// Journal<I>::replay_op_ready, which is only used for
 // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, when this method
 // is called, the aio write has been blocked, so we can try to pop
 // the next replay entry
+// on_resume -> XxxRequest<I>::handle_append_op_event
 template <typename I>
 void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   CephContext *cct = m_image_ctx.cct;

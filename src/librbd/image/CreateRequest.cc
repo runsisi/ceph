@@ -700,6 +700,8 @@ void CreateRequest<I>::mirror_image_enable() {
     return;
   }
 
+  // mirror mode is 'pool', or this is a local mirror image
+
   ldout(m_cct, 20) << this << " " << __func__ << dendl;
   auto ctx = create_context_callback<
     CreateRequest<I>, &CreateRequest<I>::handle_mirror_image_enable>(this);

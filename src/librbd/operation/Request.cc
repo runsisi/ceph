@@ -201,7 +201,8 @@ void Request<I>::handle_commit_op_event(int r, int original_ret_val) {
   finish(r);
 }
 
-// called by librbd::operation::Request<I>::append_op_event(T *request)
+// called by
+// librbd::operation::Request<I>::append_op_event(T *request)
 template <typename I>
 void Request<I>::replay_op_ready(Context *on_safe) {
   I &image_ctx = this->m_image_ctx;
@@ -214,7 +215,8 @@ void Request<I>::replay_op_ready(Context *on_safe) {
 
   m_appended_op_event = true;
 
-  // will call Replay<I>::replay_op_ready eventually
+  // call Journal<I>::replay_op_ready, which calls
+  // librbd::journal::Replay<I>::replay_op_ready eventually
   image_ctx.journal->replay_op_ready(
     m_op_tid, util::create_async_context_callback(image_ctx, on_safe));
 }

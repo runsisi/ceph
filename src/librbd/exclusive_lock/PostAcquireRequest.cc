@@ -125,6 +125,8 @@ void PostAcquireRequest<I>::send_open_journal() {
   using klass = PostAcquireRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_open_journal>(
     this);
+
+  // new Journal<ImageCtx>
   m_journal = m_image_ctx.create_journal();
 
   // journal playback requires object map (if enabled) and itself
