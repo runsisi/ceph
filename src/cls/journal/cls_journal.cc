@@ -673,6 +673,7 @@ int journal_client_update_data(cls_method_context_t hctx, bufferlist *in,
     return -EINVAL;
   }
 
+  // "client_"
   std::string key(key_from_client_id(id));
   cls::journal::Client client;
   int r = read_key(hctx, key, &client);
