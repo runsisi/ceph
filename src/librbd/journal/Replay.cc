@@ -373,10 +373,8 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
          op_event.on_finish_ready == nullptr &&
          op_event.on_finish_safe == nullptr);
 
-  // op_event.on_start_ready and op_event.op_in_progress were both set for:
-  // SnapCreateEvent
-  // ResizeEvent
-  // UpdateFeaturesEvent
+  // op_event.on_start_ready and op_event.op_in_progress were only set for:
+  // SnapCreateEvent, ResizeEvent, UpdateFeaturesEvent
 
   // op_event.on_start_ready is either ImageReplayer<I>::handle_process_entry_ready or
   // Journal<I>::handle_replay_process_ready to fetch the next Op event
@@ -544,13 +542,19 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
     op_event.on_finish_ready = on_ready;
     op_event.on_finish_safe = on_safe;
 
-    // op_event.op_in_progress was set for:
-    // SnapCreateEvent
-    // ResizeEvent
-    // UpdateFeaturesEvent
+    // op_event.on_start_ready and op_event.op_in_progress were only set for:
+    // SnapCreateEvent, ResizeEvent, UpdateFeaturesEvent
     op_in_progress = op_event.op_in_progress;
 
     std::swap(on_op_complete, op_event.on_op_complete);
+
+    // op_event.on_op_finish_event was set by Replay<I>::replay_op_ready to
+    // resume the Op state machine for SnapCreateEvent, ResizeEvent, UpdateFeaturesEvent,
+    // the Op state machine has blocked the IO, the journaled Op will only be
+    // executed until the OpFinishEvent received
+
+    // for other Op, the op_event.on_op_finish_event was set to ExecuteOp, i.e.,
+    // the journaled Op will only be executed until the OpFinishEvent received
     std::swap(on_op_finish_event, op_event.on_op_finish_event);
 
     // special errors which indicate op never started but was recorded
@@ -565,7 +569,7 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
 
     if (op_in_progress) {
 
-      // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent
+      // Op of type SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent
 
       // op_event.on_op_finish_event should be on_resume, i.e., XxxRequest<I>::handle_append_op_event,
       // we need to pass the error to it
@@ -573,6 +577,8 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
       // bubble the error up to the in-progress op to cancel it
       on_op_finish_event->complete(event.r);
     } else {
+
+      // other Op
 
       // op_event.on_op_finish_event should be C_RefreshIfRequired, now we should
       // skip the mediate callbacks, i.e., C_RefreshIfRequired and ExecuteOp and
@@ -592,9 +598,9 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
     return;
   }
 
-  // for other events we apply the op now, and for SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent
-  // we resume the paused state machine which stopped after blocking
-  // the writes
+  // for other events we send the request now, i.e., do ExecuteOp, or
+  // for SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, we resume the
+  // paused state machine which stopped after blocked IO
 
   // journal recorded success -- apply the op now
   on_op_finish_event->complete(0);
@@ -1114,7 +1120,8 @@ Context *Replay<I>::create_op_context_callback(uint64_t op_tid,
 
 // called by
 // librbd::journal::Replay<I>::C_OpOnComplete::finish
-// Replay<I>::handle_event(OpFinishEvent), when the op event failed
+// Replay<I>::handle_event(OpFinishEvent), upon Op event failure for events
+// other than SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent
 template <typename I>
 void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
   CephContext *cct = m_image_ctx.cct;
