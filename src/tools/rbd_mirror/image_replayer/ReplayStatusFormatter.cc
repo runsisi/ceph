@@ -104,6 +104,8 @@ bool ReplayStatusFormatter<I>::get_or_send_update(std::string *description,
   return true;
 }
 
+// called by
+// ReplayStatusFormatter<I>::get_or_send_update
 template <typename I>
 bool ReplayStatusFormatter<I>::calculate_behind_master_or_send_update() {
   dout(20) << "m_master_position=" << m_master_position

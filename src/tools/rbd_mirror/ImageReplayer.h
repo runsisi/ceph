@@ -300,6 +300,7 @@ private:
   ImageCtxT *m_local_image_ctx = nullptr;
 
   decltype(ImageCtxT::journal) m_local_journal = nullptr;
+  // will be created by ImageReplayer<I>::start_replay
   librbd::journal::Replay<ImageCtxT> *m_local_replay = nullptr;
   Journaler* m_remote_journaler = nullptr;
 

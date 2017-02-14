@@ -1093,6 +1093,7 @@ void Operations<I>::execute_snap_remove(const std::string &snap_name,
 
   {
     if ((m_image_ctx.features & RBD_FEATURE_FAST_DIFF) != 0) {
+      // see 883169f7, librbd: snap_remove proxy requests require fast diff feature
       assert(m_image_ctx.exclusive_lock == nullptr ||
              m_image_ctx.exclusive_lock->is_lock_owner());
     }

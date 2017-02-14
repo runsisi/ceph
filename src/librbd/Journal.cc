@@ -1106,7 +1106,8 @@ void Journal<I>::commit_io_event_extent(uint64_t tid, uint64_t offset,
   complete_event(it, event.ret_val);
 }
 
-// called by librbd::operation::Request<I>::append_op_event(Context *on_safe),
+// called by
+// librbd::operation::Request<I>::append_op_event(Context *on_safe),
 // which called by Request<I>::append_op_event() and Request<I>::append_op_event(T *request)
 template <typename I>
 void Journal<I>::append_op_event(uint64_t op_tid,
@@ -1308,6 +1309,7 @@ void Journal<I>::start_external_replay(journal::Replay<I> **journal_replay,
     });
 
   // safely flush all in-flight events before starting external replay
+  // and delete Journaler::m_recorder
   m_journaler->stop_append(util::create_async_context_callback(m_image_ctx,
                                                                on_start));
 }
@@ -1564,6 +1566,7 @@ void Journal<I>::handle_open(int r) {
   m_tag_class = m_client_meta.tag_class;
   // journal object size - (journal entry header + remainder)
   m_max_append_size = m_journaler->get_max_append_size();
+
   ldout(cct, 20) << this << " " << __func__ << ": "
                  << "tag_class=" << m_tag_class << ", "
                  << "max_append_size=" << m_max_append_size << dendl;
@@ -1577,9 +1580,8 @@ void Journal<I>::handle_open(int r) {
   // for external replay, see Journal<I>::start_external_replay
   m_journal_replay = journal::Replay<I>::create(m_image_ctx);
 
-  // fetch journaled but has not committed Journal::EventEntry(s) and
-  // replay, after flushing the replay, will transit into STATE_READY,
-  // see Journal<I>::handle_flushing_replay
+  // for ImageReplayer, it calls Journaler::start_live_replay, see
+  // ImageReplayer<I>::handle_start_replay
   m_journaler->start_replay(&m_replay_handler);
 }
 

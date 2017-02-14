@@ -372,9 +372,9 @@ void ImageRequestWQ::unblock_writes() {
 }
 
 // called by:
-// librbd::ExclusiveLock<I>::init
-// librbd::exclusive_lock::ReleaseRequest<I>::send_block_writes
-// librbd::image::RefreshRequest<I>::send_v2_block_writes
+// librbd::ExclusiveLock<I>::handle_init_complete
+// librbd::exclusive_lock::PreReleaseRequest<I>::send_block_writes
+// librbd::image::RefreshRequest<I>::send_v2_open_journal
 void ImageRequestWQ::set_require_lock_on_read() {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << __func__ << dendl;

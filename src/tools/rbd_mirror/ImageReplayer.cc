@@ -648,6 +648,7 @@ void ImageReplayer<I>::handle_init_remote_journaler(int r) {
     return;
   }
 
+  // local journal state transit to Journal::STATE_REPLAYING and
   // create an instance of librbd::journal::Replay
   start_replay();
 }
@@ -661,11 +662,13 @@ void ImageReplayer<I>::start_replay() {
   Context *start_ctx = create_context_callback<
     ImageReplayer, &ImageReplayer<I>::handle_start_replay>(this);
 
-  // to create a librbd::journal::Replay instance
+
+  // local journal state was in Journal::STATE_READY, which is the state
+  // after the journal opened and replayed, now we transit to
+  // Journal::STATE_REPLAYING and create a librbd::journal::Replay instance
   m_local_journal->start_external_replay(&m_local_replay, start_ctx);
 }
 
-// STATE_STARTING -> STATE_REPLAYING
 template <typename I>
 void ImageReplayer<I>::handle_start_replay(int r) {
   dout(20) << "r=" << r << dendl;
@@ -1014,6 +1017,10 @@ void ImageReplayer<I>::flush(Context *on_finish)
 {
   dout(20) << "enter" << dendl;
 
+  // 1. flush image
+  // 2. flush commit position
+  // 3. update mirror image status
+
   {
     Mutex::Locker locker(m_lock);
 
@@ -1049,6 +1056,7 @@ void ImageReplayer<I>::on_flush_local_replay_flush_start(Context *on_flush)
 
   assert(m_state == STATE_REPLAYING);
 
+  // AioImageRequest<I>::aio_flush
   m_local_replay->flush(ctx);
 }
 
@@ -1151,7 +1159,8 @@ void ImageReplayer<I>::handle_replay_complete(int r, const std::string &error_de
   on_replay_interrupted();
 }
 
-// called by ImageReplayer<I>::handle_replay_ready
+// called by
+// ImageReplayer<I>::handle_replay_ready
 template <typename I>
 void ImageReplayer<I>::replay_flush() {
   dout(20) << dendl;
@@ -1465,6 +1474,16 @@ void ImageReplayer<I>::handle_process_entry_safe(const ReplayEntry& replay_entry
   m_event_replay_tracker.finish_op();
 }
 
+// called by
+// ImageReplayer<I>::shut_down called with <true, STATE_STOPPED>,
+// ImageReplayer<I>::handle_start_replay called with <true, boost::none>
+// others called with <false, boost::none>, i.e.,
+// ImageReplayer<I>::BootstrapProgressContext::update_progress
+// ImageReplayer<I>::bootstrap
+// ImageReplayer<I>::handle_bootstrap
+// ImageReplayer<I>::on_start_fail
+// ImageReplayer<I>::on_stop_journal_replay
+// ImageReplayer<I>::on_flush_flush_commit_position_finish
 template <typename I>
 bool ImageReplayer<I>::update_mirror_image_status(bool force,
                                                   const OptionalState &state) {
@@ -1487,6 +1506,10 @@ bool ImageReplayer<I>::update_mirror_image_status(bool force,
   return true;
 }
 
+// called by
+// ImageReplayer<I>::update_mirror_image_status
+// ImageReplayer<I>::handle_mirror_status_update
+// ImageReplayer<I>::reschedule_update_status_task
 template <typename I>
 bool ImageReplayer<I>::start_mirror_image_status_update(bool force,
                                                         bool restarting) {
@@ -1500,6 +1523,7 @@ bool ImageReplayer<I>::start_mirror_image_status_update(bool force,
     } else if (m_in_flight_status_updates > (restarting ? 1 : 0)) {
       dout(20) << "already sending update" << dendl;
 
+      // will be tested by ImageReplayer<I>::handle_mirror_status_update
       m_update_status_requested = true;
       return false;
     }
@@ -1607,15 +1631,21 @@ void ImageReplayer<I>::send_mirror_status_update(const OptionalState &opt_state)
           if (r >= 0) {
             send_mirror_status_update(boost::none);
           } else if (r == -EAGAIN) {
+            // there is already an in progress request which is wait for tag cache update
+
             // decrement in-flight status update counter
             handle_mirror_status_update(r);
           }
         });
 
+      // m_replay_status_formatter was created by ImageReplayer<I>::handle_start_replay
       std::string desc;
       if (!m_replay_status_formatter->get_or_send_update(&desc,
                                                          on_req_finish)) {
-        // needs to update tag cache
+        // 1) previous request is in progress which needs to wait for updating tag cache,
+        // on_req_finish will be finished with -EAGAIN
+        // or 2) this is the first request but needs to wait for updating tag cache,
+        // m_req_finish will be stashed by m_replay_status_formatter->m_on_finish
         dout(20) << "waiting for replay status" << dendl;
         return;
       }
@@ -1668,6 +1698,7 @@ void ImageReplayer<I>::handle_mirror_status_update(int r) {
   {
     Mutex::Locker locker(m_lock);
 
+    // m_update_status_requested was set by ImageReplayer<I>::start_mirror_image_status_update
     bool update_status_requested = false;
     std::swap(update_status_requested, m_update_status_requested);
 
@@ -1913,6 +1944,7 @@ void ImageReplayer<I>::handle_shut_down(int r) {
 
   m_local_ioctx.close();
 
+  // m_replay_status_formatter was created by ImageReplayer<I>::handle_start_replay
   ReplayStatusFormatter<I>::destroy(m_replay_status_formatter);
   m_replay_status_formatter = nullptr;
 

@@ -182,6 +182,9 @@ struct C_RefreshIfRequired : public Context {
 #define dout_prefix *_dout << "librbd::journal::Replay: " << this << " " \
                            << __func__
 
+// created by
+// Journal<I>::handle_start_external_replay, which started by ImageReplayer<I>::start_replay
+// Journal<I>::handle_open
 template <typename I>
 Replay<I>::Replay(I &image_ctx)
   : m_image_ctx(image_ctx), m_lock("Replay<I>::m_lock") {
@@ -207,7 +210,9 @@ int Replay<I>::decode(bufferlist::iterator *it, EventEntry *event_entry) {
   return 0;
 }
 
-// on_safe is C_ReplayCommitted, see ImageReplayer<I>::process_entry
+// called by
+// Journal<I>::handle_replay_ready
+// ImageReplayer<I>::process_entry
 template <typename I>
 void Replay<I>::process(const EventEntry &event_entry,
                         Context *on_ready, Context *on_safe) {

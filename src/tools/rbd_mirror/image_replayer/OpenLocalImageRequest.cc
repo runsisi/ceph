@@ -33,6 +33,9 @@ namespace {
 // AutomaticPolicy -> <true, release upon requested>
 // StandardPolicy -> <false, return -EROFS>
 // MirrorExclusiveLockPolicy -> <false, return -EROFS>
+
+// created by
+// OpenLocalImageRequest<I>::send_open_image
 struct MirrorExclusiveLockPolicy : public librbd::exclusive_lock::Policy {
 
   // checked by librbd::AioImageRequestWQ::queue and librbd::lock_acquire
@@ -54,6 +57,9 @@ struct MirrorExclusiveLockPolicy : public librbd::exclusive_lock::Policy {
 // StandardPolicy -> <false, false, allocate tag if is primary else return -EPERM>
 // MirrorJournalPolicy -> <true, false, finish with do nothing>
 // DeleteJournalPolicy -> <true, false, finish with do nothing>
+
+// created by
+// OpenLocalImageRequest<I>::send_open_image
 struct MirrorJournalPolicy : public librbd::journal::Policy {
   ContextWQ *work_queue;
 

@@ -30,11 +30,8 @@ void Request<I>::send() {
   if (can_affect_io() || !append_op_event()) {
 
     // 1) ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
-    // affects concurrent IO ops, need to block and flush ImageCtx::async_ops, see:
-    // ResizeRequest<I>::send_pre_block_writes,
-    // SnapshotCreateRequest<I>::send_suspend_aio,
-    // EnableFeaturesRequest<I>::handle_prepare_lock,
-    // DisableFeaturesRequest<I>::handle_prepare_lock
+    // affects concurrent IO ops, need to block and flush ImageCtx::async_ops, then
+    // call Request<I>::append_op_event(T *request) to append the Op event
     // or
     // 2) journaling not available currently now
 
@@ -109,9 +106,10 @@ void Request<I>::finish(int r) {
   AsyncRequest<I>::finish(r);
 }
 
-// called by Request<I>::send if the op does not affect io, i.e.,
-// can_affect_io() returns false, i.e., requests except:
-// ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
+// called by
+// librbd::operation::Request<I>::send, if can_affect_io() returns false,
+// i.e., requests except: ResizeRequest, SnapshotCreateRequest,
+// EnableFeaturesRequest, DisableFeaturesRequest
 template <typename I>
 bool Request<I>::append_op_event() {
   I &image_ctx = this->m_image_ctx;
@@ -123,11 +121,7 @@ bool Request<I>::append_op_event() {
   if (image_ctx.journal != nullptr &&
       image_ctx.journal->is_journal_appending()) {
 
-    // STATE_READY
-
-    // if the journal are opened by acquiring exclusive lock, then
-    // ImageCtx::journal is set before the journal has opened, see
-    // AcquireRequest<I>::send_open_journal
+    // STATE_READY -AND- journal policy has not disabled the appending
 
     // allocate op event tid and append the op event now
     append_op_event(util::create_context_callback<

@@ -43,6 +43,11 @@ protected:
 
   // T is a specific request type, can be:
   // ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
+  // called by
+  // DisableFeaturesRequest<I>::send_append_op_event
+  // EnableFeaturesRequest<I>::send_append_op_event
+  // ResizeRequest<I>::send_append_op_event
+  // SnapshotCreateRequest<I>::send_append_op_event
   template <typename T, Context*(T::*MF)(int*)>
   bool append_op_event(T *request) {
     ImageCtxT &image_ctx = this->m_image_ctx;
@@ -65,12 +70,11 @@ protected:
       // DisableFeaturesRequest<I>::handle_append_op_event
 
       if (image_ctx.journal->is_journal_replaying()) {
+        // m_state == STATE_REPLAYING || STATE_FLUSHING_REPLAY ||
+        // STATE_FLUSHING_RESTART || STATE_RESTARTING_REPLAY
 
-        // Journal is in state of:
-        // STATE_REPLAYING, STATE_FLUSHING_REPLAY, STATE_FLUSHING_RESTART, STATE_RESTARTING_REPLAY
-
-        // we are in replaying, see Replay<I>::handle_event(SnapCreateEvent/ResizeEvent/
-        // UpdateFeaturesEvent)
+        // this is an journaled Op we are replaying of, either by
+        // Journal local replay or ImageReplayer, see Replay<I>::handle_event(XxxEvent)
 
         Context *ctx = util::create_context_callback<T, MF>(request);
 
@@ -80,8 +84,13 @@ protected:
         return true;
       } else if (image_ctx.journal->is_journal_appending()) {
 
-        // Journal is in state of STATE_READY, -AND- jounal policy for append
-        // has not been disabled, see OpenLocalImageRequest/MirrorJournalPolicy
+        // Journal is in state of STATE_READY, -AND-
+        // jounal policy for append has not been disabled
+
+        // NOTE: for local mirror image, the Journal has re-transit into
+        // STATE_REPLAYING after the journal opened(which was in STATE_READY),
+        // and the journal policy has disabled the appending, see ImageReplayer<I>::start_replay
+        // and OpenLocalImageRequest/MirrorJournalPolicy
 
         Context *ctx = util::create_context_callback<T, MF>(request);
 
@@ -92,6 +101,8 @@ protected:
         return true;
       }
     }
+
+    // journaling not enabled,
 
     return false;
   }
