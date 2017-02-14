@@ -373,6 +373,14 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
          op_event.on_finish_ready == nullptr &&
          op_event.on_finish_safe == nullptr);
 
+  // op_event.on_start_ready and op_event.op_in_progress were both set for:
+  // SnapCreateEvent
+  // ResizeEvent
+  // UpdateFeaturesEvent
+
+  // op_event.on_start_ready is either ImageReplayer<I>::handle_process_entry_ready or
+  // Journal<I>::handle_replay_process_ready to fetch the next Op event
+
   // resume processing replay events
   Context *on_start_ready = nullptr;
   std::swap(on_start_ready, op_event.on_start_ready);
@@ -536,6 +544,10 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
     op_event.on_finish_ready = on_ready;
     op_event.on_finish_safe = on_safe;
 
+    // op_event.op_in_progress was set for:
+    // SnapCreateEvent
+    // ResizeEvent
+    // UpdateFeaturesEvent
     op_in_progress = op_event.op_in_progress;
 
     std::swap(on_op_complete, op_event.on_op_complete);
