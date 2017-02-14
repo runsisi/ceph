@@ -417,7 +417,6 @@ void Replay<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   }
 }
 
-// called by Replay<I>::process
 template <typename I>
 void Replay<I>::handle_event(const journal::AioDiscardEvent &event,
                              Context *on_ready, Context *on_safe) {
@@ -546,6 +545,7 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
     // SnapCreateEvent, ResizeEvent, UpdateFeaturesEvent
     op_in_progress = op_event.op_in_progress;
 
+    // op_event was set by Replay<I>::create_op_context_callback
     std::swap(on_op_complete, op_event.on_op_complete);
 
     // op_event.on_op_finish_event was set by Replay<I>::replay_op_ready to
@@ -578,7 +578,7 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
       on_op_finish_event->complete(event.r);
     } else {
 
-      // other Op
+      // other Op except SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent
 
       // op_event.on_op_finish_event should be C_RefreshIfRequired, now we should
       // skip the mediate callbacks, i.e., C_RefreshIfRequired and ExecuteOp and
@@ -614,6 +614,9 @@ void Replay<I>::handle_event(const journal::SnapCreateEvent &event,
 
   Mutex::Locker locker(m_lock);
 
+  // 1. create op_event
+  // 2. op_event->on_start_safe = on_safe
+  // 3. op_event->on_op_complete = new C_OpOnComplete, i.e., Replay::handle_op_complete
   OpEvent *op_event;
   Context *on_op_complete = create_op_context_callback(event.op_tid, on_ready,
                                                        on_safe, &op_event);
@@ -1148,11 +1151,13 @@ void Replay<I>::handle_op_complete(uint64_t op_tid, int r) {
   // op_event.on_start_ready can only be set by Replay<I>::handle_event for
   // SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, normally it should
   // have been set to nullptr by Replay<I>::replay_op_ready
-  // for SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, if r < 0, we will
-  // be called with op_event.on_start_ready not nullptr, see ExecuteOp::finish
+  // for SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, but if r < 0, we will
+  // be called with on_op_complete directly, which omits the call of Replay<I>::replay_op_ready,
+  // see ExecuteOp::finish
   assert(op_event.on_start_ready == nullptr || (r < 0 && r != -ERESTART));
 
   if (op_event.on_start_ready != nullptr) {
+    // failure for snapcreate/resize/updatefeatures
 
     // Replay<I>::handle_op_complete was called by C_RefreshIfRequired::finish -> ExecuteOp::finish
     // with r < 0
