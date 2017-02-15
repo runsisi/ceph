@@ -882,6 +882,9 @@ int librados::RadosClient::mon_command(const vector<string>& cmd,
 }
 
 
+// called by
+// librados::Rados::mgr_command
+// rados_mgr_command
 int librados::RadosClient::mgr_command(const vector<string>& cmd,
 				       const bufferlist &inbl,
 				       bufferlist *outbl, string *outs)

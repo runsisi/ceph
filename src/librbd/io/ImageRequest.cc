@@ -671,6 +671,8 @@ ObjectRequestHandle *ImageWriteRequest<I>::create_object_request(
   return req;
 }
 
+// called by
+// AbstractAioImageWrite<I>::send_request
 template <typename I>
 void ImageWriteRequest<I>::update_stats(size_t length) {
   I &image_ctx = this->m_image_ctx;
@@ -811,6 +813,8 @@ ObjectRequestHandle *ImageDiscardRequest<I>::create_object_request(
   return req;
 }
 
+// called by
+// AbstractAioImageWrite<I>::send_request
 template <typename I>
 void ImageDiscardRequest<I>::update_stats(size_t length) {
   I &image_ctx = this->m_image_ctx;

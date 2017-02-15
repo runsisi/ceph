@@ -45,6 +45,8 @@ void ClusterState::load_digest(MMgrDigest *m)
   mon_status_json = std::move(m->mon_status_json);
 }
 
+// called by
+// DaemonServer::ms_dispatch
 void ClusterState::ingest_pgstats(MPGStats *stats)
 {
   Mutex::Locker l(lock);

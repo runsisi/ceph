@@ -26,6 +26,8 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "mgr.server " << __func__ << " "
 
+// created by
+// member of Mgr
 DaemonServer::DaemonServer(MonClient *monc_,
   DaemonStateIndex &daemon_state_,
   ClusterState &cluster_state_,

@@ -42,7 +42,7 @@ void Request<I>::send() {
   }
 }
 
-// called by:
+// called by
 // ResizeRequest, SnapshotCreateRequest, and SnapshotRollbackRequest,
 // EnableFeaturesRequest, DisableFeaturesRequest
 template <typename I>
@@ -51,11 +51,15 @@ Context *Request<I>::create_context_finisher(int r) {
   if (m_appended_op_event && !m_committed_op_event &&
       commit_op_event(r)) {
 
+    // appending not replaying
+
     // commit op event initiated, Request<I>::handle_commit_op_event will
     // be called after the op event committed
 
     return nullptr;
   }
+
+  // replaying or journaling disabled
 
   I &image_ctx = this->m_image_ctx;
 
@@ -65,7 +69,8 @@ Context *Request<I>::create_context_finisher(int r) {
   return util::create_context_callback<Request<I>, &Request<I>::finish>(this);
 }
 
-// called by librbd::AsyncRequest::complete
+// called by
+// librbd::AsyncRequest::complete
 template <typename I>
 void Request<I>::finish_and_destroy(int r) {
   I &image_ctx = this->m_image_ctx;
@@ -143,8 +148,9 @@ bool Request<I>::commit_op_event(int r) {
 
   RWLock::RLocker snap_locker(image_ctx.snap_lock);
 
-  // m_appended_op_event was set to true in Request<I>::replay_op_ready or
-  // C_OpEventSafe::finish(r >= 0), see librbd/operation/Request.h
+  // m_appended_op_event was set to true by
+  // Request<I>::replay_op_ready or
+  // Request<I>::C_AppendOpEvent::finish(r >= 0)
 
   if (!m_appended_op_event) {
     // actually, this check is no need, bc we are only be called
@@ -165,7 +171,7 @@ bool Request<I>::commit_op_event(int r) {
     // ops will be canceled / completed before closing journal
     assert(image_ctx.journal->is_journal_ready());
 
-    // C_CommitOpEvent::finish will call request->handle_commit_op_event
+    // Request<I>::handle_commit_op_event
     image_ctx.journal->commit_op_event(m_op_tid, r,
                                        new C_CommitOpEvent(this, r));
 
@@ -175,7 +181,8 @@ bool Request<I>::commit_op_event(int r) {
   return false;
 }
 
-// called by Request<I>::C_CommitOpEvent::finish
+// called by
+// Request<I>::C_CommitOpEvent::finish
 template <typename I>
 void Request<I>::handle_commit_op_event(int r, int original_ret_val) {
   I &image_ctx = this->m_image_ctx;
@@ -232,7 +239,7 @@ void Request<I>::append_op_event(Context *on_safe) {
   m_op_tid = image_ctx.journal->allocate_op_tid();
 
   // librbd::Journal must be STATE_READY
-  // C_AppendOpEvent::finish will set request->m_appended_op_event = true and
+  // C_AppendOpEvent::finish will set m_appended_op_event to true and
   // call on_safe->complete(r)
   image_ctx.journal->append_op_event(
     m_op_tid, journal::EventEntry{create_event(m_op_tid)},

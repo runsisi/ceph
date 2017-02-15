@@ -30,7 +30,12 @@ public:
 
 protected:
   void finish(int r) override;
-  // called by send and Request<I>::handle_op_event_safe
+
+  // called by
+  // Request<I>::send, for SnapshotCreateRequest/ResizeRequest/EnableFeaturesRequest/DisableFeaturesRequest
+  //    i.e., send Op to block IO first then append Op event and resume the Op state machine
+  // Request<I>::handle_op_event_safe, for other requests
+  //    i.e., append Op event first then send Op to start the Op state machine
   virtual void send_op() = 0;
 
   // only ResizeRequest, SnapshotCreateRequest, EnableFeaturesRequest, DisableFeaturesRequest
@@ -75,6 +80,8 @@ protected:
 
         // this is an journaled Op we are replaying of, either by
         // Journal local replay or ImageReplayer, see Replay<I>::handle_event(XxxEvent)
+        // do not append journal, setup op_event.on_op_finish_event and wait the
+        // OpFinishEvent to drive the Op state machine to resume
 
         Context *ctx = util::create_context_callback<T, MF>(request);
 
@@ -85,7 +92,7 @@ protected:
       } else if (image_ctx.journal->is_journal_appending()) {
 
         // Journal is in state of STATE_READY, -AND-
-        // jounal policy for append has not been disabled
+        // journal policy for append has not been disabled
 
         // NOTE: for local mirror image, the Journal has re-transit into
         // STATE_REPLAYING after the journal opened(which was in STATE_READY),
@@ -114,7 +121,8 @@ protected:
   void finish_and_destroy(int r) override;
 
 private:
-  // used by Request<I>::append_op_event(Context *on_safe)
+  // created by
+  // Request<I>::append_op_event(Context *on_safe)
   struct C_AppendOpEvent : public Context {
     Request *request;
     Context *on_safe;

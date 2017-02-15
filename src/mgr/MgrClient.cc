@@ -63,6 +63,7 @@ bool MgrClient::ms_dispatch(Message *m)
   case MSG_MGR_MAP:
     return handle_mgr_map(static_cast<MMgrMap*>(m));
   case MSG_MGR_CONFIGURE:
+    // sent by DaemonServer::handle_open
     return handle_mgr_configure(static_cast<MMgrConfigure*>(m));
   case MSG_COMMAND_REPLY:
     if (m->get_source().type() == CEPH_ENTITY_TYPE_MGR) {

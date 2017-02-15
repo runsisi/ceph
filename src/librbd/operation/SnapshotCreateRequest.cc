@@ -100,9 +100,13 @@ void SnapshotCreateRequest<I>::send_append_op_event() {
   I &image_ctx = this->m_image_ctx;
 
   // see http://stackoverflow.com/questions/5533354/what-does-a-call-to-this-template-somename-do
-  // will call the template librbd::operation::Request::append_op_event(T *request),
-  // NOTE: append_op_event only returns false when image_ctx.journal is nullptr or
-  // journal is not in replay state && appending has not been disabled by
+  // will call the template librbd::operation::Request::append_op_event(T *request)
+
+  // NOTE:
+  // SnapshotCreateRequest/ResizeEvent/UpdateFeaturesEvent could be
+  // requested by user request or replay process
+  // append_op_event only returns false when image_ctx.journal is nullptr or
+  // journal is not in replaying state && appending has not been disabled by
   // journal policy
   if (!this->template append_op_event<
         SnapshotCreateRequest<I>,

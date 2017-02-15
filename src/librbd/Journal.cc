@@ -1034,8 +1034,8 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
   return tid;
 }
 
-// called by AioCompletion::complete, which means the user io requests
-// have completed
+// called by
+// AioCompletion::complete, which means the user io requests have completed
 template <typename I>
 void Journal<I>::commit_io_event(uint64_t tid, int r) {
   CephContext *cct = m_image_ctx.cct;
@@ -1148,7 +1148,8 @@ void Journal<I>::append_op_event(uint64_t op_tid,
                  << "event=" << event_entry.get_event_type() << dendl;
 }
 
-// called by librbd::operation::Request<I>::commit_op_event
+// called by
+// librbd::operation::Request<I>::commit_op_event
 template <typename I>
 void Journal<I>::commit_op_event(uint64_t op_tid, int r, Context *on_safe) {
   CephContext *cct = m_image_ctx.cct;
@@ -1183,7 +1184,7 @@ void Journal<I>::commit_op_event(uint64_t op_tid, int r, Context *on_safe) {
     op_finish_future = m_journaler->append(m_tag_tid, bl);
   }
 
-  // C_OpEventSafe will call journal->handle_op_event_safe
+  // Journal<I>::handle_op_event_safe
   op_finish_future.flush(create_async_context_callback(
     m_image_ctx, new C_OpEventSafe(this, op_tid, op_start_future,
                                    op_finish_future, on_safe)));
@@ -2000,7 +2001,8 @@ void Journal<I>::handle_io_event_safe(int r, uint64_t tid) {
   }
 }
 
-// called by Journal::C_OpEventSafe::finish
+// called by
+// Journal::C_OpEventSafe::finish, which created by Journal<I>::commit_op_event
 template <typename I>
 void Journal<I>::handle_op_event_safe(int r, uint64_t tid,
                                       const Future &op_start_future,

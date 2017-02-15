@@ -211,8 +211,12 @@ int Replay<I>::decode(bufferlist::iterator *it, EventEntry *event_entry) {
 }
 
 // called by
-// Journal<I>::handle_replay_ready
-// ImageReplayer<I>::process_entry
+// Journal<I>::handle_replay_ready, with:
+//      on_ready -> Journal<I>::handle_replay_process_ready
+//      on_safe -> Journal<I>::handle_replay_process_safe, i.e., m_journaler->committed
+// ImageReplayer<I>::process_entry, with:
+//      on_ready -> ImageReplayer<I>::handle_process_entry_ready
+//      on_safe -> ImageReplayer<I>::handle_process_entry_safe, i.e., m_remote_journaler->committed
 template <typename I>
 void Replay<I>::process(const EventEntry &event_entry,
                         Context *on_ready, Context *on_safe) {
@@ -488,6 +492,7 @@ void Replay<I>::handle_event(const journal::AioFlushEvent &event,
   on_ready->complete(0);
 }
 
+// OpFinishEvent was appended by Journal<I>::commit_op_event
 template <typename I>
 void Replay<I>::handle_event(const journal::AioWriteSameEvent &event,
                              Context *on_ready, Context *on_safe) {
@@ -598,9 +603,9 @@ void Replay<I>::handle_event(const journal::OpFinishEvent &event,
     return;
   }
 
-  // for other events we send the request now, i.e., do ExecuteOp, or
-  // for SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, we resume the
-  // paused state machine which stopped after blocked IO
+  // for SnapCreateEvent/ResizeEvent/UpdateFeaturesEvent, the state machine
+  // has been stopped to block IO, now resume it
+  // for other events we start the state machine, i.e., do ExecuteOp
 
   // journal recorded success -- apply the op now
   on_op_finish_event->complete(0);

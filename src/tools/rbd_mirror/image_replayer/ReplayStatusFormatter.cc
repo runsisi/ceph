@@ -131,6 +131,7 @@ bool ReplayStatusFormatter<I>::calculate_behind_master_or_send_update() {
 
     librbd::journal::TagData &tag_data = tag_it->second;
     m_entries_behind_master += master.entry_tid;
+
     master = cls::journal::ObjectPosition(0, tag_data.predecessor.tag_tid,
 					  tag_data.predecessor.entry_tid);
   }
@@ -162,6 +163,9 @@ bool ReplayStatusFormatter<I>::calculate_behind_master_or_send_update() {
   return true;
 }
 
+// called by
+// ReplayStatusFormatter<I>::calculate_behind_master_or_send_update
+// ReplayStatusFormatter<I>::handle_update_tag_cache
 template <typename I>
 void ReplayStatusFormatter<I>::send_update_tag_cache(uint64_t master_tag_tid,
 						     uint64_t mirror_tag_tid) {
