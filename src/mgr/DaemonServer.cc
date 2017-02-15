@@ -139,12 +139,15 @@ bool DaemonServer::ms_dispatch(Message *m)
 
   switch(m->get_type()) {
     case MSG_PGSTATS:
+      // sent by OSD::mgrc.pgstats_cb, which initialized by OSD::init
       cluster_state.ingest_pgstats(static_cast<MPGStats*>(m));
       m->put();
       return true;
     case MSG_MGR_REPORT:
+      // sent by MgrClient::send_report
       return handle_report(static_cast<MMgrReport*>(m));
     case MSG_MGR_OPEN:
+      // sent by MgrClient::reconnect
       return handle_open(static_cast<MMgrOpen*>(m));
     case MSG_COMMAND:
       return handle_command(static_cast<MCommand*>(m));
@@ -172,7 +175,9 @@ bool DaemonServer::handle_open(MMgrOpen *m)
           << m->daemon_name << dendl;
 
   auto configure = new MMgrConfigure();
+  // default 5
   configure->stats_period = g_conf->mgr_stats_period;
+
   m->get_connection()->send_message(configure);
 
   if (daemon_state.exists(key)) {

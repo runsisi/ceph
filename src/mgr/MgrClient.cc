@@ -29,6 +29,11 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "mgrc " << __func__ << " "
 
+// created by
+// as member of:
+// RadosClient
+// MDSDaemon
+// OSD
 MgrClient::MgrClient(CephContext *cct_, Messenger *msgr_)
     : Dispatcher(cct_), cct(cct_), msgr(msgr_),
       lock("mgrc"),
@@ -61,6 +66,10 @@ bool MgrClient::ms_dispatch(Message *m)
 
   switch(m->get_type()) {
   case MSG_MGR_MAP:
+    // sent by MgrMonitor::check_sub, the mgr map was subscribed by:
+    // RadosClient::connect, MDSDaemon::init, MgrStandby::init, OSD::init
+
+    // (re)connect to mgr
     return handle_mgr_map(static_cast<MMgrMap*>(m));
   case MSG_MGR_CONFIGURE:
     // sent by DaemonServer::handle_open
@@ -78,6 +87,9 @@ bool MgrClient::ms_dispatch(Message *m)
   }
 }
 
+// called by
+// MgrClient::handle_mgr_map
+// MgrClient::ms_handle_reset
 void MgrClient::reconnect()
 {
   assert(lock.is_locked_by_me());
@@ -131,6 +143,8 @@ void MgrClient::reconnect()
   }
 }
 
+// called by
+// MgrClient::ms_dispatch, for MSG_MGR_MAP
 bool MgrClient::handle_mgr_map(MMgrMap *m)
 {
   assert(lock.is_locked_by_me());
@@ -233,6 +247,7 @@ void MgrClient::send_report()
     timer.add_event_after(stats_period, report_callback);
   }
 
+  // set by OSD::init
   if (pgstats_cb) {
     MPGStats *m_stats = pgstats_cb();
     session->con->send_message(m_stats);

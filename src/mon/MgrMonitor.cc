@@ -232,6 +232,11 @@ void MgrMonitor::check_subs()
 void MgrMonitor::check_sub(Subscription *sub)
 {
   if (sub->type == "mgrmap") {
+    // subscribed by
+    // librados::RadosClient::connect
+    // MDSDaemon::init
+    // MgrStandby::init
+    // OSD::init
     if (sub->next <= map.get_epoch()) {
       dout(20) << "Sending map to subscriber " << sub->session->con << dendl;
 
