@@ -50,8 +50,10 @@ void PerfCountersCollection::add(class PerfCounters *l)
   i = m_loggers.find(l);
   while (i != m_loggers.end()) {
     ostringstream ss;
+    // e.g., name-123-123
     ss << l->get_name() << "-" << (void*)l;
     l->set_name(ss.str());
+
     i = m_loggers.find(l);
   }
 

@@ -489,6 +489,7 @@ int MonClient::authenticate(double timeout)
 
   if (timeout > 0.0)
     ldout(cct, 10) << "authenticate will time out at " << until << dendl;
+
   while (!active_con && !authenticate_err) {
     if (timeout > 0.0) {
       // will be notified by MonClient::handle_auth
@@ -899,6 +900,7 @@ void MonClient::handle_subscribe_ack(MMonSubscribeAck *m)
 int MonClient::_check_auth_tickets()
 {
   assert(monc_lock.is_locked());
+
   if (active_con && auth) {
     if (auth->need_tickets()) {
       ldout(cct, 10) << __func__ << " getting new tickets!" << dendl;

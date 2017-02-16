@@ -121,6 +121,7 @@ public:
 
 bool MgrMonitor::preprocess_beacon(MonOpRequestRef op)
 {
+  // sent by MgrStandby::send_beacon
   MMgrBeacon *m = static_cast<MMgrBeacon*>(op->get_req());
   dout(4) << "beacon from " << m->get_gid() << dendl;
 
@@ -144,6 +145,7 @@ bool MgrMonitor::preprocess_beacon(MonOpRequestRef op)
 
 bool MgrMonitor::prepare_beacon(MonOpRequestRef op)
 {
+  // sent by MgrStandby::send_beacon
   MMgrBeacon *m = static_cast<MMgrBeacon*>(op->get_req());
   dout(4) << "beacon from " << m->get_gid() << dendl;
 

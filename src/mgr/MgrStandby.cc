@@ -73,6 +73,7 @@ int MgrStandby::init()
   monc->set_want_keys(CEPH_ENTITY_TYPE_MON|CEPH_ENTITY_TYPE_OSD
       |CEPH_ENTITY_TYPE_MDS|CEPH_ENTITY_TYPE_MGR);
   monc->set_messenger(client_messenger);
+
   int r = monc->init();
   if (r < 0) {
     monc->shutdown();
@@ -80,6 +81,7 @@ int MgrStandby::init()
     client_messenger->wait();
     return r;
   }
+
   r = monc->authenticate();
   if (r < 0) {
     derr << "Authentication failed, did you specify a mgr ID with a valid keyring?" << dendl;
@@ -94,16 +96,21 @@ int MgrStandby::init()
 
   objecter->set_client_incarnation(0);
   objecter->init();
+
   client_messenger->add_dispatcher_head(objecter);
+
   objecter->start();
 
   timer.init();
+
   send_beacon();
 
   dout(4) << "Complete." << dendl;
   return 0;
 }
 
+// called by
+// MgrStandby::init
 void MgrStandby::send_beacon()
 {
   assert(lock.is_locked_by_me());
@@ -111,6 +118,7 @@ void MgrStandby::send_beacon()
   dout(10) << "sending beacon as gid " << monc->get_global_id() << dendl;
 
   bool available = active_mgr != nullptr && active_mgr->is_initialized();
+
   auto addr = available ? active_mgr->get_server_addr() : entity_addr_t();
   MMgrBeacon *m = new MMgrBeacon(monc->get_global_id(),
                                  g_conf->name.get_id(),
@@ -118,6 +126,8 @@ void MgrStandby::send_beacon()
                                  available);
                                  
   monc->send_mon_message(m);
+
+  // default 5
   timer.add_event_after(g_conf->mgr_beacon_period, new FunctionContext(
         [this](int r){
           send_beacon();
@@ -154,9 +164,11 @@ void MgrStandby::handle_mgr_map(MMgrMap* mmap)
 {
   auto map = mmap->get_map();
   dout(4) << "received map epoch " << map.get_epoch() << dendl;
+
   const bool active_in_map = map.active_gid == monc->get_global_id();
   dout(4) << "active in map: " << active_in_map
           << " active is " << map.active_gid << dendl;
+
   if (active_in_map) {
     if (!active_mgr) {
       dout(1) << "Activating!" << dendl;
