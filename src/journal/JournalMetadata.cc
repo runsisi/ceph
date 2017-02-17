@@ -1086,6 +1086,9 @@ void JournalMetadata::handle_watch_error(int err) {
   }
 }
 
+// called by
+// JournalPlayer::try_pop_front
+// JournalRecorder::append
 uint64_t JournalMetadata::allocate_commit_tid(uint64_t object_num,
                                               uint64_t tag_tid,
                                               uint64_t entry_tid) {

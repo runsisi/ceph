@@ -171,7 +171,7 @@ bool Request<I>::commit_op_event(int r) {
     // ops will be canceled / completed before closing journal
     assert(image_ctx.journal->is_journal_ready());
 
-    // Request<I>::handle_commit_op_event
+    // append journal::OpFinishEvent
     image_ctx.journal->commit_op_event(m_op_tid, r,
                                        new C_CommitOpEvent(this, r));
 

@@ -1181,7 +1181,7 @@ void Journal<I>::commit_op_event(uint64_t op_tid, int r, Context *on_safe) {
     op_finish_future = m_journaler->append(m_tag_tid, bl);
   }
 
-  // Journal<I>::handle_op_event_safe
+  // Journal<I>::handle_op_event_safe, to commit journaler and flush commit position
   op_finish_future.flush(create_async_context_callback(
     m_image_ctx, new C_OpEventSafe(this, op_tid, op_start_future,
                                    op_finish_future, on_safe)));
@@ -1644,7 +1644,8 @@ void Journal<I>::handle_replay_ready() {
   m_journal_replay->process(event_entry, on_ready, on_commit);
 }
 
-// called by ReplayHandler::handle_complete
+// called by 
+// ReplayHandler::handle_complete
 template <typename I>
 void Journal<I>::handle_replay_complete(int r) {
 

@@ -237,6 +237,7 @@ void Replay<I>::process(const EventEntry &event_entry,
 
 // called by
 // Journal<I>::handle_replay_complete
+// Journal<I>::handle_replay_process_safe, upon failure
 // ImageReplayer<I>::shut_down
 // ImageReplayer<I>::replay_flush
 template <typename I>

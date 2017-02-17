@@ -1137,7 +1137,8 @@ void ImageReplayer<I>::print_status(Formatter *f, stringstream *ss)
   }
 }
 
-// called by ReplayHandler::handle_complete and other failed situations
+// called by 
+// ReplayHandler::handle_complete and other failed situations
 template <typename I>
 void ImageReplayer<I>::handle_replay_complete(int r, const std::string &error_desc)
 {
