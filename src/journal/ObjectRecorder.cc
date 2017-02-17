@@ -82,10 +82,11 @@ bool ObjectRecorder::append_unlock(AppendBuffers &&append_buffers) {
     // the pending buffers are big enough, the later appends will fail
     // with -EOVERFLOW
 
-    // attach flush handler, i.e., ObjectRecoder::m_flush_handler to FutureImpl
+    // attach flush handler, i.e., ObjectRecoder::m_flush_handler to FutureImpl::m_flush_handler
     if (append(*iter, &schedule_append)) { // push back of m_append_buffers then try to write
 
-      // flush has been requested for this FutureImpl
+      // this buffer was claimed from a previous ObjectRecorder, which has
+      // been flushed or sent out
 
       last_flushed_future = iter->first;
     }
@@ -124,6 +125,7 @@ bool ObjectRecorder::append_unlock(AppendBuffers &&append_buffers) {
 
 // called by
 // JournalRecorder::flush
+// NOTE: flush current ObjectRecoder and all previous Futures
 void ObjectRecorder::flush(Context *on_safe) {
   ldout(m_cct, 20) << __func__ << ": " << m_oid << dendl;
 
@@ -148,7 +150,7 @@ void ObjectRecorder::flush(Context *on_safe) {
     }
 
     // attach the flush to the most recent append
-    if (!m_append_buffers.empty()) { // pending buffers
+    if (!m_append_buffers.empty()) {
       future = Future(m_append_buffers.rbegin()->first);
 
       // flush those appended buffers
@@ -169,8 +171,7 @@ void ObjectRecorder::flush(Context *on_safe) {
     future.flush(on_safe);
   } else {
 
-    // no in-flight or pending buffers, we can finish this flush request
-    // immediately
+    // no append and in-flight buffers, finish this flush request immediately
 
     on_safe->complete(0);
   }
@@ -178,7 +179,8 @@ void ObjectRecorder::flush(Context *on_safe) {
 
 // called by
 // ObjectRecorder::append_unlock
-// ObjectRecorder::FlushHandler::flush
+// ObjectRecorder::FlushHandler::flush, which called by FutureImpl::flush, which
+// has future->get_flush_handler().get() == &m_flush_handler
 void ObjectRecorder::flush(const FutureImplPtr &future) {
   ldout(m_cct, 20) << __func__ << ": " << m_oid << " flushing " << *future
                    << dendl;
@@ -186,11 +188,10 @@ void ObjectRecorder::flush(const FutureImplPtr &future) {
   assert(m_lock->is_locked());
 
   if (future->get_flush_handler().get() != &m_flush_handler) {
-
     // if we don't own this future, re-issue the flush so that it hits the
     // correct journal object owner
 
-    // the future belongs to a flush all the way up to all previous futures
+    // this can only be happen for ObjectRecorder::append_unlock
 
     future->flush();
 
@@ -315,9 +316,8 @@ bool ObjectRecorder::append(const AppendBuffer &append_buffer, // std::pair<Futu
 
   if (!m_object_closed && !m_overflowed) {
 
-    // attach flush handler to the future, i.e., set
-    // FutureImpl::m_flush_handler to ObjectRecorder::m_flush_handler
-
+    // set FutureImpl::m_flush_handler to &ObjectRecorder::m_flush_handler, i.e.,
+    // associate FutureImpl with its ObjectRecorder
     flush_requested = append_buffer.first->attach(&m_flush_handler);
   }
 
@@ -366,7 +366,7 @@ bool ObjectRecorder::flush_appends(bool force) {
 
   m_pending_bytes = 0;
 
-  AppendBuffers append_buffers;
+  AppendBuffers append_buffers;"guard_append"
   append_buffers.swap(m_append_buffers);
 
   // send multiple buffers, i.e., entries, in a single rados op, after this the
@@ -396,6 +396,8 @@ void ObjectRecorder::handle_append_flushed(uint64_t tid, int r) {
     InFlightAppends::iterator iter = m_in_flight_appends.find(tid);
 
     if (r == -EOVERFLOW || m_overflowed) {
+      // the -EOVERFLOW is assured by cls "guard_append" method, see
+      // ObjectRecorder::send_appends_aio
 
       // this write op overflowed
 
@@ -410,6 +412,8 @@ void ObjectRecorder::handle_append_flushed(uint64_t tid, int r) {
 
       // notify of overflow once all in-flight ops are complete
       if (m_in_flight_tids.empty() && !m_aio_scheduled) {
+        // no scheduled ObjectRecorder::send_appends_aio call, i.e., no
+        // FunctionContext for ObjectRecorder::send_appends_aio on m_op_work_queue
         append_overflowed();
 
         notify_handler_unlock();
@@ -516,6 +520,7 @@ void ObjectRecorder::send_appends(AppendBuffers *append_buffers) {
     ldout(m_cct, 20) << __func__ << ": flushing " << *it->first
                      << dendl;
 
+    // reset FutureImpl::m_flush_handler, and transit into FLUSH_STATE_IN_PROGRESS
     it->first->set_flush_in_progress();
 
     m_size += it->second.length();
@@ -523,6 +528,7 @@ void ObjectRecorder::send_appends(AppendBuffers *append_buffers) {
 
   m_pending_buffers.splice(m_pending_buffers.end(), *append_buffers,
                            append_buffers->begin(), append_buffers->end());
+
   if (!m_aio_scheduled) {
     m_op_work_queue->queue(new FunctionContext([this] (int r) {
         send_appends_aio();
@@ -563,6 +569,7 @@ void ObjectRecorder::send_appends_aio() {
 
   // the already written size must less then m_soft_max_size
   client::guard_append(&op, m_soft_max_size);
+
   for (AppendBuffers::iterator it = append_buffers->begin();
        it != append_buffers->end(); ++it) {
     ldout(m_cct, 20) << __func__ << ": flushing " << *it->first

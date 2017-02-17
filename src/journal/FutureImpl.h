@@ -55,6 +55,9 @@ public:
     Mutex::Locker locker(m_lock);
     return (m_flush_state == FLUSH_STATE_IN_PROGRESS);
   }
+
+  // called by
+  // ObjectRecorder::send_appends
   inline void set_flush_in_progress() {
     Mutex::Locker locker(m_lock);
     assert(m_flush_handler);
@@ -82,8 +85,8 @@ private:
 
   enum FlushState {
     FLUSH_STATE_NONE,
-    FLUSH_STATE_REQUESTED,
-    FLUSH_STATE_IN_PROGRESS
+    FLUSH_STATE_REQUESTED, // set by FutureImpl::prepare_flush, called by FutureImpl::flush
+    FLUSH_STATE_IN_PROGRESS // set by FutureImpl::set_flush_in_progress, called by ObjectRecorder::send_appends
   };
 
   struct C_ConsistentAck : public Context {

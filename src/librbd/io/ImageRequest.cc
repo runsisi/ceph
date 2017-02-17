@@ -364,7 +364,8 @@ void ImageReadRequest<I>::send_image_cache_request() {
                                   req_comp);
 }
 
-// called by AioImageRequest<I>::send when image cache bypassed or disabled (never enabled)
+// called by
+// AioImageRequest<I>::send, when image cache bypassed or disabled (never enabled)
 template <typename I>
 void AbstractImageWriteRequest<I>::send_request() {
   I &image_ctx = this->m_image_ctx;
@@ -428,6 +429,20 @@ void AbstractImageWriteRequest<I>::send_request() {
   // are not on the object trailing border
   prune_object_extents(object_extents);
 
+  // for AioImageDiscard:
+  //   if object cache disabled:
+  //     send/journal discard event w/ object requests
+  //   if object cache enabled:
+  //     send/journal discard event w/ object requests
+  //     discard object cache
+
+  // for AioImageWrite:
+  //   if object cache disabled:
+  //     send/journal write event w/ object requests
+  //   if object cache enabled:
+  //     journal write event w/o object requests
+  //     write object cache
+
   if (!object_extents.empty()) {
 
     // AioImageWrite or AioImageDiscard, has block data to write or discard
@@ -444,11 +459,6 @@ void AbstractImageWriteRequest<I>::send_request() {
     // std::list<ObjectRequestHandle *>
     ObjectRequests requests;
 
-    // divide AioImageRequest into AioObjectRequest(s) and stash or send them
-    // depends on whether we are journaling the AioImageRequest or not
-
-    // NOTE: for AioImageWrite if the object cacher is enabled, we do nothing,
-    // we will delay the whole process and delegate to object cacher
     send_object_requests(object_extents, snapc,
                          (journaling ? &requests : nullptr));
 
@@ -498,7 +508,11 @@ void AbstractImageWriteRequest<I>::send_request() {
   aio_comp->put();
 }
 
-// called by AbstractAioImageWrite<I>::send_request
+// called by
+// AbstractAioImageWrite<I>::send_request, for AioImageDiscard
+// AioImageWrite<I>::send_object_requests, for object cache disabled, if object cache
+// enabled, we write cache first, then let the cache to create and send the object
+// requests
 template <typename I>
 void AbstractImageWriteRequest<I>::send_object_requests(
     const ObjectExtents &object_extents, const ::SnapContext &snapc,
@@ -606,7 +620,8 @@ void ImageWriteRequest<I>::send_image_cache_request() {
                                    std::move(m_bl), m_op_flags, req_comp);
 }
 
-// called by AbstractAioImageWrite<I>::send_request when object cacher enabled
+// called by
+// AbstractAioImageWrite<I>::send_request
 template <typename I>
 void ImageWriteRequest<I>::send_object_cache_requests(
     const ObjectExtents &object_extents, uint64_t journal_tid) {
@@ -649,7 +664,8 @@ void ImageWriteRequest<I>::send_object_requests(
   }
 }
 
-// called by AbstractAioImageWrite<I>::send_object_requests
+// called by
+// AioImageWrite<I>::send_object_requests
 template <typename I>
 ObjectRequestHandle *ImageWriteRequest<I>::create_object_request(
     const ObjectExtent &object_extent, const ::SnapContext &snapc,
@@ -715,8 +731,8 @@ void ImageDiscardRequest<I>::prune_object_extents(ObjectExtents &object_extents)
   }
 
   // AioImageDiscard will create mutiple AioObjectRemove, AioObjectTruncate or
-  // AioObjectZero, if rbd_skip_partial_discard is enabled, we do not create
-  // AioObjectZero
+  // AioObjectZero, if rbd_skip_partial_discard is true, we only remove/truncate
+  // object
 
   for (auto p = object_extents.begin(); p != object_extents.end(); ) {
     // do not zero the trailing part of the object
@@ -787,7 +803,8 @@ void ImageDiscardRequest<I>::send_object_cache_requests(
   }
 }
 
-// called by AbstractAioImageWrite<I>::send_object_requests
+// called by
+// AbstractAioImageWrite<I>::send_object_requests
 template <typename I>
 ObjectRequestHandle *ImageDiscardRequest<I>::create_object_request(
     const ObjectExtent &object_extent, const ::SnapContext &snapc,

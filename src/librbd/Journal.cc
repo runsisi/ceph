@@ -888,7 +888,8 @@ void Journal<I>::flush_commit_position(Context *on_finish) {
   m_journaler->flush_commit_position(on_finish);
 }
 
-// called by AioImageWrite<I>::append_journal_event
+// called by
+// AioImageWrite<I>::append_journal_event
 // for AioImageDiscard and AioImageFlush it calls image_ctx.journal->append_io_event directly
 template <typename I>
 uint64_t Journal<I>::append_write_event(uint64_t offset, size_t length,
@@ -957,10 +958,9 @@ uint64_t Journal<I>::append_io_event(journal::EventEntry &&event_entry,
 
 // IO event types: AioWriteEvent, AioDiscardEvent, AioFlushEvent
 
-// interface between librbd and Journaler, called by
-// AioImageWrite<I>::append_journal_event
-// AioImageDiscard<I>::append_journal_event
-// AioImageFlush<I>::send_request
+// called by
+// Journal<I>::append_write_event
+// Journal<I>::append_io_event
 template <typename I>
 uint64_t Journal<I>::append_io_events(journal::EventType event_type,
                                       const Bufferlists &bufferlists,
@@ -1016,10 +1016,7 @@ uint64_t Journal<I>::append_io_events(journal::EventType event_type,
     m_image_ctx, new C_IOEventSafe(this, tid));
 
   // the on_safe will be called by ObjectRecorder::handle_append_flushed
-  if (flush_entry) {
-
-    // always be false, see AbstractAioImageWrite<I>::send_request
-
+  if (flush_entry) { // never be true
     futures.back().flush(on_safe);
   } else {
     // will call m_future_impl->wait(on_safe) eventually, i.e.,

@@ -41,7 +41,7 @@ void FutureImpl::init(const FutureImplPtr &prev_future) {
 // called by
 // Future::flush
 // ObjectRecorder::flush
-void FutureImpl::flush(Context *on_safe) {
+void FutureImpl::flush(Context *on_safe) { // on_safe is a default parameter
 
   bool complete;
 
@@ -80,7 +80,8 @@ void FutureImpl::flush(Context *on_safe) {
     // this one.  possible to become detached while lock is released, so flush
     // will be re-requested by the object if it doesn't own the future
     for (auto &pair : flush_handlers) {
-      // ObjectRecorder::FlushHandler::flush, i.e., object_recorder->flush(future)
+      // ObjectRecorder::FlushHandler::flush, i.e., object_recorder->flush(future),
+      // a FlushHandler represents an ObjectRecorder
       pair.first->flush(pair.second);
     }
   }
@@ -101,7 +102,10 @@ FutureImplPtr FutureImpl::prepare_flush(FlushHandlers *flush_handlers,
     m_flush_state = FLUSH_STATE_REQUESTED;
 
     // m_flush_handler was set by FutureImpl::attach, which called by ObjectRecorder::append
+    // it is a pointer point to ObjectRecorder::m_flush_handler
     if (m_flush_handler && flush_handlers->count(m_flush_handler) == 0) {
+      // so ObjectRecorder::flush(const FutureImplPtr has:
+      // future->get_flush_handler().get() == &m_flush_handler
       flush_handlers->insert({m_flush_handler, this});
     }
   }
@@ -110,8 +114,8 @@ FutureImplPtr FutureImpl::prepare_flush(FlushHandlers *flush_handlers,
 }
 
 // called by
+// Future::wait
 // FutureImpl::init
-// Journal<I>::append_io_events
 void FutureImpl::wait(Context *on_safe) {
   assert(on_safe != NULL);
 
