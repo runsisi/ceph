@@ -516,6 +516,7 @@ int librados::IoCtxImpl::selfmanaged_snap_remove(uint64_t snapid)
 void librados::IoCtxImpl::aio_selfmanaged_snap_remove(uint64_t snapid,
                                                       AioCompletionImpl *c)
 {
+  // client->finisher.queue(new librados::C_AioComplete(c))
   Context *onfinish = new C_aio_selfmanaged_snap_op_Complete(client, c);
   objecter->delete_selfmanaged_snap(poolid, snapid, onfinish);
 }

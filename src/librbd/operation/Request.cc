@@ -50,12 +50,7 @@ Context *Request<I>::create_context_finisher(int r) {
   // automatically commit the event if required (delete after commit)
   if (m_appended_op_event && !m_committed_op_event &&
       commit_op_event(r)) {
-
-    // appending not replaying
-
-    // commit op event initiated, Request<I>::handle_commit_op_event will
-    // be called after the op event committed
-
+    // appending or replaying, "this" will be deleted by C_CommitOpEvent
     return nullptr;
   }
 
@@ -66,11 +61,13 @@ Context *Request<I>::create_context_finisher(int r) {
   CephContext *cct = image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
+  // "this" will be deleted by the context
   return util::create_context_callback<Request<I>, &Request<I>::finish>(this);
 }
 
 // called by
 // librbd::AsyncRequest::complete
+// NOTE: for Ops -EXCEPT- SnapshotCreate/Resize/EnableFeatures/DisableFeatures/SnapshotRollback
 template <typename I>
 void Request<I>::finish_and_destroy(int r) {
   I &image_ctx = this->m_image_ctx;
@@ -84,10 +81,7 @@ void Request<I>::finish_and_destroy(int r) {
   // automatically commit the event if required (delete after commit)
   if (m_appended_op_event && !m_committed_op_event &&
       commit_op_event(r)) {
-
-    // commit op event initiated, Request<I>::handle_commit_op_event will
-    // be called after the op event committed
-
+    // "this" will be deleted by C_CommitOpEvent
     return;
   }
 
@@ -173,7 +167,7 @@ bool Request<I>::commit_op_event(int r) {
 
     // append journal::OpFinishEvent
     image_ctx.journal->commit_op_event(m_op_tid, r,
-                                       new C_CommitOpEvent(this, r));
+                                       new C_CommitOpEvent(this, r)); // Request<I>::handle_commit_op_event
 
     return true;
   }
@@ -199,11 +193,13 @@ void Request<I>::handle_commit_op_event(int r, int original_ret_val) {
     r = original_ret_val;
   }
 
-  finish(r);
+  finish(r); // "this" will be deleted by Request<I>::C_CommitOpEvent::finish shortly
 }
 
 // called by
-// librbd::operation::Request<I>::append_op_event(T *request)
+// librbd::operation::Request<I>::append_op_event(T *request), when we are
+// in replaying, either local replay or external replay
+// NOTE: called only for SnapshotCreateRequest/ResizeRequest/EnableFeaturesRequest/DisableFeaturesRequest
 template <typename I>
 void Request<I>::replay_op_ready(Context *on_safe) {
   I &image_ctx = this->m_image_ctx;
@@ -216,14 +212,16 @@ void Request<I>::replay_op_ready(Context *on_safe) {
 
   m_appended_op_event = true;
 
-  // call Journal<I>::replay_op_ready, which calls
-  // librbd::journal::Replay<I>::replay_op_ready eventually
+  // call librbd::journal::Replay<I>::replay_op_ready to notify that
+  // we have blocked the IO, so pop the next journal entry and wait for
+  // the OpFinishEvent to resume the state machine, i.e., call on_safe
+  // NOTE: on_safe is XxxRequst::handle_append_op_event
   image_ctx.journal->replay_op_ready(
     m_op_tid, util::create_async_context_callback(image_ctx, on_safe));
 }
 
 // called by
-// Request<I>::append_op_event()
+// Request<I>::append_op_event(), which called by Ops -EXCEPT- SnapCreate/Resize/EnableFeatures/DisableFeatures
 // Request<I>::append_op_event(T *request)
 template <typename I>
 void Request<I>::append_op_event(Context *on_safe) {
@@ -246,8 +244,8 @@ void Request<I>::append_op_event(Context *on_safe) {
     new C_AppendOpEvent(this, on_safe));
 }
 
-// for requests except ResizeRequest, SnapshotCreateRequest,
-// EnableFeaturesRequest, DisableFeaturesRequest
+// called by
+// callback of Request<I>::append_op_event()
 template <typename I>
 void Request<I>::handle_op_event_safe(int r) {
   I &image_ctx = this->m_image_ctx;

@@ -366,7 +366,7 @@ bool ObjectRecorder::flush_appends(bool force) {
 
   m_pending_bytes = 0;
 
-  AppendBuffers append_buffers;"guard_append"
+  AppendBuffers append_buffers;
   append_buffers.swap(m_append_buffers);
 
   // send multiple buffers, i.e., entries, in a single rados op, after this the
@@ -406,7 +406,6 @@ void ObjectRecorder::handle_append_flushed(uint64_t tid, int r) {
         m_overflowed = true;
       } else {
         // must have seen an overflow on a previous append op
-
         assert(r == -EOVERFLOW && m_overflowed);
       }
 
@@ -542,6 +541,7 @@ void ObjectRecorder::send_appends(AppendBuffers *append_buffers) {
 // ObjectRecorder::send_appends
 // ObjectRecorder::send_appends_aio, recursive
 void ObjectRecorder::send_appends_aio() {
+  // std::list<AppendBuffer>
   AppendBuffers *append_buffers;
   uint64_t append_tid;
 

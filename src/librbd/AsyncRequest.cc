@@ -42,8 +42,6 @@ Context *AsyncRequest<T>::create_callback_context() {
 // only called by TrimRequest<I>::send_clean_boundary
 template <typename T>
 Context *AsyncRequest<T>::create_async_callback_context() {
-  // TODO: can use create_async_context_callback instead ???
-  // i.e. return util::create_async_context_callback(m_image_ctx, create_callback_context())
   return util::create_context_callback<AsyncRequest<T>,
                                        &AsyncRequest<T>::async_complete>(this);
 }

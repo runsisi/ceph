@@ -67,6 +67,8 @@ protected:
     return r;
   }
 
+  // called by
+  // AsyncRequest::complete
   // NOTE: temporary until converted to new state machine format
   virtual void finish_and_destroy(int r) {
     finish(r);

@@ -112,9 +112,7 @@ void SnapshotCreateRequest<I>::send_append_op_event() {
         SnapshotCreateRequest<I>,
         &SnapshotCreateRequest<I>::handle_append_op_event>(this)) {
 
-    // image_ctx.journal is nullptr, or journal is not in replay
-    // state && appending has not been disabled by journal policy,
-    // we need to continue the state machine manually
+    // journaing disabled, or appending disabled(for local mirror image)
 
     send_allocate_snap_id();
     return;
@@ -123,8 +121,8 @@ void SnapshotCreateRequest<I>::send_append_op_event() {
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << this << " " << __func__ << dendl;
 
-  // append_op_event called above succeeded, handle_append_op_event will
-  // continue the state machine, i.e., handle_append_op_event
+  // replaying or appending, the journaling part will continue the state
+  // machine
 }
 
 template <typename I>
@@ -288,11 +286,15 @@ Context *SnapshotCreateRequest<I>::handle_create_object_map(int *result) {
   assert(*result == 0);
 
   image_ctx.io_work_queue->unblock_writes();
+
+  // librbd::operation::Request<I>::create_context_finisher, to commit op
+  // event, i.e., append OpFinishEvent, or Request<I>::finish if we are
+  // replaying or journaling disabled
   return this->create_context_finisher(0);
 }
 
 // called by
-// SnapshotCreateRequest<I>::handle_create_snap, which means create snap failed
+// SnapshotCreateRequest<I>::handle_create_snap, upon failure
 template <typename I>
 void SnapshotCreateRequest<I>::send_release_snap_id() {
   I &image_ctx = this->m_image_ctx;
@@ -321,6 +323,10 @@ Context *SnapshotCreateRequest<I>::handle_release_snap_id(int *result) {
   *result = m_ret_val;
 
   image_ctx.io_work_queue->unblock_writes();
+
+  // librbd::operation::Request<I>::create_context_finisher, to commit op
+  // event, i.e., append OpFinishEvent, or Request<I>::finish if we are
+  // replaying or journaling disabled
   return this->create_context_finisher(m_ret_val);
 }
 

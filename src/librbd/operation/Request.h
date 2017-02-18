@@ -116,8 +116,17 @@ protected:
 
   bool append_op_event();
 
+  // NOTE: append OpFinishEvent, the same behavior as finish_and_destroy,
+  // -EXCEPT- for SnapshotCreate/Resize/EnableFeatures/DisableFeatures/SnapshotRollback,
+  // those Op do not rely on AsyncRequest::complete and AsyncRequest::should_complete,
+  // instead they have their own state machines
   // NOTE: temporary until converted to new state machine format
   Context *create_context_finisher(int r);
+  // called by
+  // librbd::AsyncRequest::complete
+  // NOTE: append OpFinishEvent, the same behavior as create_context_finisher,
+  // -EXCEPT- for other Ops, those Ops rely AsyncRequest::complete and AsyncRequest::should_complete
+  // as their state machines
   void finish_and_destroy(int r) override;
 
 private:
@@ -138,7 +147,8 @@ private:
     }
   };
 
-  // used by Request<I>::commit_op_event
+  // created by
+  // Request<I>::commit_op_event
   struct C_CommitOpEvent : public Context {
     Request *request;
     int ret_val;
