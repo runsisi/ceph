@@ -561,6 +561,7 @@ void ObjectRecorder::send_appends_aio() {
   ldout(m_cct, 10) << __func__ << ": " << m_oid << " flushing journal tid="
                    << append_tid << dendl;
 
+  // ObjectRecorder::handle_append_flushed
   C_AppendFlush *append_flush = new C_AppendFlush(this, append_tid);
 
   C_Gather *gather_ctx = new C_Gather(m_cct, append_flush);
