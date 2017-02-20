@@ -520,6 +520,10 @@ bool JournalPlayer::is_object_set_ready() const {
   return true;
 }
 
+// called by
+// JournalPlayer::try_pop_front
+// JournalPlayer::process_prefetch
+// JournalPlayer::process_playback
 bool JournalPlayer::verify_playback_ready() {
   assert(m_lock.is_locked());
 
@@ -654,6 +658,9 @@ bool JournalPlayer::verify_playback_ready() {
   return false;
 }
 
+// called by
+// JournalPlayer::verify_playback_ready
+// JournalPlayer::prune_active_tag
 void JournalPlayer::prune_tag(uint64_t tag_tid) {
   assert(m_lock.is_locked());
 
@@ -755,6 +762,12 @@ void JournalPlayer::advance_splay_object() {
                    << static_cast<uint32_t>(m_splay_offset) << dendl;
 }
 
+// called by
+// JournalPlayer::try_pop_front
+// JournalPlayer::process_prefetch
+// JournalPlayer::prune_tag
+// JournalPlayer::handle_fetched
+// JournalPlayer::handle_watch
 bool JournalPlayer::remove_empty_object_player(const ObjectPlayerPtr &player) {
   assert(m_lock.is_locked());
   assert(!m_watch_scheduled);
