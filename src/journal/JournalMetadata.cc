@@ -436,7 +436,7 @@ struct C_AssertActiveTag : public Context {
 // C_GetClient, C_AllocateTag, C_GetTag, C_GetTags,
 // C_FlushCommitPosition, C_AssertActiveTag
 
-// createed by
+// created by
 // Journaler::set_up, which called by Journaler::Journaler
 JournalMetadata::JournalMetadata(ContextWQ *work_queue, SafeTimer *timer,
                                  Mutex *timer_lock, librados::IoCtx &ioctx,
@@ -489,6 +489,7 @@ void JournalMetadata::init(Context *on_finish) {
         return;
       }
 
+      // default journal order == 24, i.e., 16MB
       get_immutable_metadata(&m_order, &m_splay_width, &m_pool_id, on_finish);
     });
 
@@ -957,6 +958,8 @@ void JournalMetadata::cancel_commit_task() {
   m_commit_position_task_ctx = NULL;
 }
 
+// called by
+// JournalMetadata::committed
 void JournalMetadata::schedule_commit_task() {
   ldout(m_cct, 20) << __func__ << dendl;
 
@@ -978,7 +981,7 @@ void JournalMetadata::schedule_commit_task() {
 // called by
 // JournalMetadata::flush_commit_position()
 // JournalMetadata::flush_commit_position(Context *on_safe)
-// JournalMetadata::C_CommitPositionTask::finish
+// JournalMetadata::C_CommitPositionTask::finish, which created by JournalMetadata::schedule_commit_task
 void JournalMetadata::handle_commit_position_task() {
   assert(m_timer_lock->is_locked());
   assert(m_lock.is_locked());

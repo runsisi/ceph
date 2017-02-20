@@ -318,6 +318,8 @@ bool ObjectRecorder::append(const AppendBuffer &append_buffer, // std::pair<Futu
 
     // set FutureImpl::m_flush_handler to &ObjectRecorder::m_flush_handler, i.e.,
     // associate FutureImpl with its ObjectRecorder
+    // will be detached by ObjectRecorder::append_overflowed if the append
+    // overflowed
     flush_requested = append_buffer.first->attach(&m_flush_handler);
   }
 
@@ -325,10 +327,9 @@ bool ObjectRecorder::append(const AppendBuffer &append_buffer, // std::pair<Futu
 
   m_pending_bytes += append_buffer.second.length();
 
-  if (!flush_appends(false)) { // try to write the appended buffers, i.e., m_append_buffers
+  if (!flush_appends(false)) { // check if a send is needed
 
-    // object is not closed or overflow, and not enough buffer to consume
-    // a rados write op, so delay and schedule it later
+    // has not reached the threshold, schedule a timer to send
 
     *schedule_append = true;
   }
@@ -362,15 +363,12 @@ bool ObjectRecorder::flush_appends(bool force) {
     return false;
   }
 
-  // send all pending buffers in a single rados op
-
+  // m_pending_bytes -> m_size by send_appends
   m_pending_bytes = 0;
 
   AppendBuffers append_buffers;
-  append_buffers.swap(m_append_buffers);
+  append_buffers.swap(m_append_buffers); // move m_append_buffers to m_pending_buffers
 
-  // send multiple buffers, i.e., entries, in a single rados op, after this the
-  // buffers will be in state of FLUSH_STATE_IN_PROGRESS
   send_appends(&append_buffers);
 
   return true;
@@ -411,9 +409,7 @@ void ObjectRecorder::handle_append_flushed(uint64_t tid, int r) {
 
       // notify of overflow once all in-flight ops are complete
       if (m_in_flight_tids.empty() && !m_aio_scheduled) {
-        // no scheduled ObjectRecorder::send_appends_aio call, i.e., no
-        // scheduled ObjectRecorder::send_appends_aio on m_op_work_queue, which
-        // is out of our control
+        // m_pending_buffers empty
         append_overflowed();
 
         notify_handler_unlock();
@@ -511,7 +507,7 @@ void ObjectRecorder::append_overflowed() {
 // called by
 // ObjectRecorder::flush
 // ObjectRecorder::flush_appends
-void ObjectRecorder::send_appends(AppendBuffers *append_buffers) {
+void ObjectRecorder::send_appends(AppendBuffers *append_buffers) { // part or whole m_append_buffers
   assert(m_lock->is_locked());
   assert(!append_buffers->empty());
 
@@ -520,7 +516,7 @@ void ObjectRecorder::send_appends(AppendBuffers *append_buffers) {
     ldout(m_cct, 20) << __func__ << ": flushing " << *it->first
                      << dendl;
 
-    // reset FutureImpl::m_flush_handler, and transit into FLUSH_STATE_IN_PROGRESS
+    // reset FutureImpl::m_flush_handler, and FutureImpl transit into FLUSH_STATE_IN_PROGRESS
     it->first->set_flush_in_progress();
 
     m_size += it->second.length();
@@ -529,8 +525,10 @@ void ObjectRecorder::send_appends(AppendBuffers *append_buffers) {
   m_pending_buffers.splice(m_pending_buffers.end(), *append_buffers,
                            append_buffers->begin(), append_buffers->end());
 
+  // do not write pending buffers in parallel
   if (!m_aio_scheduled) {
     m_op_work_queue->queue(new FunctionContext([this] (int r) {
+        // move m_pending_buffers to m_in_flight_appends[tid]
         send_appends_aio();
     }));
 
@@ -569,7 +567,7 @@ void ObjectRecorder::send_appends_aio() {
 
   librados::ObjectWriteOperation op;
 
-  // the already written size must less then m_soft_max_size
+  // the -ALREADY- written size must less then m_soft_max_size, default is 16MB
   client::guard_append(&op, m_soft_max_size);
 
   for (AppendBuffers::iterator it = append_buffers->begin();
@@ -591,10 +589,6 @@ void ObjectRecorder::send_appends_aio() {
     m_lock->Lock();
 
     if (m_pending_buffers.empty()) {
-
-      // ObjectRecorder::send_appends was not called again during our
-      // release of m_lock
-
       m_aio_scheduled = false;
 
       if (m_in_flight_appends.empty() && m_object_closed) {

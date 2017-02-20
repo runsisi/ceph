@@ -12,6 +12,8 @@
 
 namespace journal {
 
+// created by
+// JournalPlayer::fetch
 ObjectPlayer::ObjectPlayer(librados::IoCtx &ioctx,
                            const std::string &object_oid_prefix,
                            uint64_t object_num, SafeTimer &timer,
@@ -37,6 +39,10 @@ ObjectPlayer::~ObjectPlayer() {
   }
 }
 
+// called by
+// JournalPlayer::fetch
+// ObjectPlayer::handle_watch_task
+// ObjectPlayer::C_Fetch::finish, if need to refetch
 void ObjectPlayer::fetch(Context *on_finish) {
   ldout(m_cct, 10) << __func__ << ": " << m_oid << dendl;
 
@@ -110,6 +116,8 @@ void ObjectPlayer::pop_front() {
   m_entries.pop_front();
 }
 
+// called by
+// ObjectPlayer::C_Fetch::finish, which created by ObjectPlayer::fetch
 int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
                                         bool *refetch) {
   ldout(m_cct, 10) << __func__ << ": " << m_oid << ", r=" << r << ", len="
@@ -150,7 +158,6 @@ int ObjectPlayer::handle_fetch_complete(int r, const bufferlist &bl,
     uint32_t bytes_needed;
     uint32_t bl_off = iter.get_off();
 
-    // parse the entry header, to see if 
     if (!Entry::is_readable(iter, &bytes_needed)) {
 
       // either partial entry or corruptted entry

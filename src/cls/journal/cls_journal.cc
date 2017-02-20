@@ -1135,6 +1135,7 @@ int journal_object_guard_append(cls_method_context_t hctx, bufferlist *in,
   uint64_t soft_max_size;
   try {
     bufferlist::iterator iter = in->begin();
+    // default 16MB
     ::decode(soft_max_size, iter);
   } catch (const buffer::error &err) {
     CLS_ERR("failed to decode input parameters: %s", err.what());

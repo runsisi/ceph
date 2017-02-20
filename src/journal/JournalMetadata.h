@@ -347,6 +347,7 @@ private:
   mutable Mutex m_lock;
 
   uint64_t m_commit_tid;
+  // std::map<uint64_t, CommitEntry>
   CommitTids m_pending_commit_tids;
 
   Listeners m_listeners;

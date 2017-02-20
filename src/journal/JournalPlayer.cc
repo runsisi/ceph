@@ -46,6 +46,9 @@ struct C_HandleEntriesAvailable : public Context {
 
 } // anonymous namespace
 
+// created by
+// Journaler::start_replay
+// Journaler::start_live_replay
 JournalPlayer::JournalPlayer(librados::IoCtx &ioctx,
                              const std::string &object_oid_prefix,
                              const JournalMetadataPtr& journal_metadata,
@@ -205,10 +208,8 @@ void JournalPlayer::shut_down(Context *on_finish) {
   m_async_op_tracker.wait_for_ops(on_finish);
 }
 
-// called by Journaler::try_pop_front
-// Journal<I>::handle_replay_ready will be notified by
-// JournalPlayer::notify_entries_available and try to pop an entry to
-// process
+// called by
+// Journaler::try_pop_front
 bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
   ldout(m_cct, 20) << __func__ << dendl;
 
@@ -264,6 +265,7 @@ bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
   // player and fetch its entries if possible
   remove_empty_object_player(object_player);
 
+  // update m_allocated_entry_tids[tag_tid]
   m_journal_metadata->reserve_entry_tid(entry->get_tag_tid(),
                                         entry->get_entry_tid());
 
@@ -356,6 +358,8 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
     // skip past known committed records
     if (m_commit_positions.count(splay_offset) != 0 &&
         !object_player->empty()) {
+      // each object has a committed position, we need to skip committed entires
+      // for all objects
       ObjectPosition &position = m_commit_positions[splay_offset];
 
       ldout(m_cct, 15) << "seeking known commit position " << position << " in "
@@ -364,10 +368,7 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
       bool found_commit = false;
       Entry entry;
       
-      while (!object_player->empty()) {
-
-        // pop journal entries that before the last commit position
-        
+      while (!object_player->empty()) { // pop the already committed journal entries
         object_player->front(&entry);
 
         if (entry.get_tag_tid() == position.tag_tid &&
@@ -437,7 +438,7 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
     return 0;
   }
 
-  // all in-progress objects prefetch has finished
+  // prefetch has finished
 
   ldout(m_cct, 10) << "switching to playback mode" << dendl;
   
@@ -446,9 +447,9 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   // if we have a valid commit position, our read should start with
   // the next consistent journal entry in the sequence
   if (m_commit_position_valid) {
+    // set by JournalPlayer::JournalPlayer if commit_position.object_positions
+    // is not empty
 
-    // the latest commit position of the journal is valid
-        
     splay_offset = m_commit_position.object_number % splay_width;
     object_player = m_object_players[splay_offset];
 
@@ -469,10 +470,6 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   }
 
   if (verify_playback_ready()) {
-
-    // let rbd replay handler which registered in Journal<I>::handle_get_tags,
-    // i.e., Journal::handle_replay_ready, to process entries
-
     notify_entries_available();
   } else if (is_object_set_ready()) {
 
@@ -828,12 +825,14 @@ void JournalPlayer::fetch(const ObjectPlayerPtr &object_player) {
 
   ldout(m_cct, 10) << __func__ << ": " << oid << dendl;
 
-  // JournalPlayer::handle_fetched
+  // JournalPlayer::handle_fetched, will be called by ObjectPlayer::C_Fetch::finish
   C_Fetch *fetch_ctx = new C_Fetch(this, object_num);
 
   object_player->fetch(fetch_ctx);
 }
 
+// called by
+// JournalPlayer::C_Fetch::finish, which called by ObjectPlayer::C_Fetch::finish
 void JournalPlayer::handle_fetched(uint64_t object_num, int r) {
   ldout(m_cct, 10) << __func__ << ": "
                    << utils::get_object_name(m_object_oid_prefix, object_num)
@@ -1082,6 +1081,10 @@ void JournalPlayer::notify_entries_available() {
     m_replay_handler), 0);
 }
 
+// called by
+// JournalPlayer::try_pop_front, upon failure
+// JournalPlayer::process_state, upon failure
+// JournalPlayer::refetch
 void JournalPlayer::notify_complete(int r) {
   assert(m_lock.is_locked());
 

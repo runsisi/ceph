@@ -24,6 +24,7 @@ namespace journal {
 // created by
 // EnableFeaturesRequest<I>::send_create_journal
 // Journal<I>::create, which never be used
+// librbd::image::CreateRequest<I>::journal_create
 template<typename I>
 CreateRequest<I>::CreateRequest(IoCtx &ioctx, const std::string &imageid,
                                               uint8_t order, uint8_t splay_width,

@@ -159,22 +159,27 @@ CreateRequest<I>::CreateRequest(IoCtx &ioctx, const std::string &image_name,
 
   if (image_options.get(RBD_IMAGE_OPTION_STRIPE_UNIT, &m_stripe_unit) != 0 ||
       m_stripe_unit == 0) {
+    // default 0
     m_stripe_unit = m_cct->_conf->rbd_default_stripe_unit;
   }
   if (image_options.get(RBD_IMAGE_OPTION_STRIPE_COUNT, &m_stripe_count) != 0 ||
       m_stripe_count == 0) {
+    // default 0
     m_stripe_count = m_cct->_conf->rbd_default_stripe_count;
   }
   if (get_image_option(image_options, RBD_IMAGE_OPTION_ORDER, &m_order) != 0 ||
       m_order == 0) {
+    // default 22
     m_order = m_cct->_conf->rbd_default_order;
   }
   if (get_image_option(image_options, RBD_IMAGE_OPTION_JOURNAL_ORDER,
       &m_journal_order) != 0) {
+    // default 24
     m_journal_order = m_cct->_conf->rbd_journal_order;
   }
   if (get_image_option(image_options, RBD_IMAGE_OPTION_JOURNAL_SPLAY_WIDTH,
                        &m_journal_splay_width) != 0) {
+    // default 4
     m_journal_splay_width = m_cct->_conf->rbd_journal_splay_width;
   }
   if (image_options.get(RBD_IMAGE_OPTION_JOURNAL_POOL, &m_journal_pool) != 0) {
