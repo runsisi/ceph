@@ -412,7 +412,8 @@ void ObjectRecorder::handle_append_flushed(uint64_t tid, int r) {
       // notify of overflow once all in-flight ops are complete
       if (m_in_flight_tids.empty() && !m_aio_scheduled) {
         // no scheduled ObjectRecorder::send_appends_aio call, i.e., no
-        // FunctionContext for ObjectRecorder::send_appends_aio on m_op_work_queue
+        // scheduled ObjectRecorder::send_appends_aio on m_op_work_queue, which
+        // is out of our control
         append_overflowed();
 
         notify_handler_unlock();
@@ -539,7 +540,7 @@ void ObjectRecorder::send_appends(AppendBuffers *append_buffers) {
 
 // called by
 // ObjectRecorder::send_appends
-// ObjectRecorder::send_appends_aio, recursive
+// ObjectRecorder::send_appends_aio, kind of recursive
 void ObjectRecorder::send_appends_aio() {
   // std::list<AppendBuffer>
   AppendBuffers *append_buffers;
@@ -615,7 +616,8 @@ void ObjectRecorder::send_appends_aio() {
     }
   }
 
-  // allow append op to complete
+  // allow append op to complete, C_AppendFlush will be called once the
+  // subcontext, i.e., gather_ctx->new_sub(), finished
   gather_ctx->activate();
 }
 
