@@ -80,12 +80,14 @@ JournalPlayer::JournalPlayer(librados::IoCtx &ioctx,
     m_active_tag_tid = active_position.tag_tid;
     m_commit_position_valid = true;
     m_commit_position = active_position;
+
     m_splay_offset = active_position.object_number % splay_width;
 
     // std::list<object_number, tag_tid, entry_tid>
     for (auto &position : commit_position.object_positions) {
       uint8_t splay_offset = position.object_number % splay_width;
 
+      // commit position for each object
       m_commit_positions[splay_offset] = position;
     }
   }
@@ -113,6 +115,7 @@ void JournalPlayer::prefetch() {
   // used for external replay, for local replay the m_journal_metadata->get_active_set
   // should not be changed during the replay
   m_active_set = m_journal_metadata->get_active_set();
+
   uint8_t splay_width = m_journal_metadata->get_splay_width();
 
   for (uint8_t splay_offset = 0; splay_offset < splay_width; ++splay_offset) {
@@ -157,7 +160,7 @@ void JournalPlayer::prefetch() {
 
   for (auto object_number : prefetch_object_numbers) {
 
-    // create a each ObjectPlayer to fetch the object
+    // create ObjectPlayer to get the journaled entries
     fetch(object_number);
   }
 }
@@ -230,6 +233,7 @@ bool JournalPlayer::try_pop_front(Entry *entry, uint64_t *commit_tid) {
 
       m_handler_notified = false;
     } else {
+      // no watch scheduled or has object fetch in progress
       refetch(true);
     }
 
@@ -434,11 +438,13 @@ int JournalPlayer::process_prefetch(uint64_t object_number) {
   }
 
   m_prefetch_splay_offsets.erase(it);
+
   if (!m_prefetch_splay_offsets.empty()) {
     return 0;
   }
 
-  // prefetch has finished
+  // prefetch finished, i.e., got a splay set of object that has located
+  // their next uncommitted entries
 
   ldout(m_cct, 10) << "switching to playback mode" << dendl;
   
@@ -529,7 +535,11 @@ bool JournalPlayer::verify_playback_ready() {
 
   while (true) {
 
-    // prune_tag may create new object player, so need to test if every iteration
+    // 1) the first iteration or 2) subsequent iteration that the previous
+    // iteration has pruned tag
+
+    // prune_tag may remove empty ObjectPlayer and create new one to continue
+    // fetch, so need to test for each iteration
     if (!is_object_set_ready()) {
         
       // still scheduled or in progress object player fetch
@@ -540,7 +550,7 @@ bool JournalPlayer::verify_playback_ready() {
 
     // no fetch scheduled or in-progress
 
-    // get object player at position m_splay_offset
+    // get object player at m_splay_offset
     ObjectPlayerPtr object_player = get_object_player();
     assert(object_player);
 
@@ -579,8 +589,8 @@ bool JournalPlayer::verify_playback_ready() {
                          << "object_num=" << object_num << ", "
                          << "entry=" << entry << dendl;
 
-        // prune entries with the specified tag id
-        prune_tag(entry.get_tag_tid()); // will update or initialize m_prune_tag_tid
+        // prune entries with the specified tag id for current object set
+        prune_tag(entry.get_tag_tid());
 
         continue;
       } else if (entry.get_tag_tid() > *m_active_tag_tid) {
@@ -595,12 +605,14 @@ bool JournalPlayer::verify_playback_ready() {
         if (entry.get_entry_tid() == 0) { // every tag has its own entry id set
           // first entry in new tag -- can promote to active
 
-          // prune entries with old m_active_tag_tid and update m_active_tag_tid to new tag id
+          // reset m_splay_offset to 0, and update m_active_tag_tid
+          // prune old entries for current object set
           prune_active_tag(entry.get_tag_tid());
 
           return true;
         } else {
-          // prune entries with current m_active_tag_tid and wait for initial entry for new tag
+          // reset m_splay_offset to 0
+          // prune old entries for current object set
           prune_active_tag(boost::none);
 
           continue;
@@ -806,6 +818,7 @@ bool JournalPlayer::remove_empty_object_player(const ObjectPlayerPtr &player) {
 
   uint64_t next_object_num = player->get_object_number() + splay_width;
   
+  // create new ObjectPlayer to replace the older ObjectPlayer in m_object_players[] then fetch
   fetch(next_object_num);
   
   return true;

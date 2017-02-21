@@ -1211,7 +1211,7 @@ void JournalMetadata::committed(uint64_t commit_tid,
     std::set<uint8_t> in_use_splay_offsets;
 
     // iterate from the newest commit position and try to prune old
-    // commit position(s) at the same splay offset
+    // object commit positions for the same object
     ObjectPositions::iterator ob_it = commit_position.object_positions.begin();
 
     while (ob_it != commit_position.object_positions.end()) {
@@ -1237,6 +1237,7 @@ void JournalMetadata::committed(uint64_t commit_tid,
     // inc/dec aync ops, see JournalTrimmer::m_async_op_tracker
     m_commit_position_ctx = create_context();
 
+    // the latest object set commit position
     m_commit_position = commit_position;
     m_commit_position_tid = commit_tid;
 
