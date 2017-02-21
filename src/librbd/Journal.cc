@@ -2028,7 +2028,8 @@ void Journal<I>::handle_op_event_safe(int r, uint64_t tid,
   m_journaler->flush_commit_position(on_safe);
 }
 
-// called by Journal<I>::close
+// called by
+// Journal<I>::close
 template <typename I>
 void Journal<I>::stop_recording() {
   assert(m_lock.is_locked());

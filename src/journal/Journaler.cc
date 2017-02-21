@@ -554,7 +554,7 @@ void Journaler::start_append(int flush_interval, uint64_t flush_bytes,
 
 // called by
 // Journal<I>::start_external_replay
-// Journal<I>::stop_recording
+// Journal<I>::stop_recording, which called by Journal<I>::close
 // rbd::action::journal::JournalImporter::exec
 void Journaler::stop_append(Context *on_safe) {
   JournalRecorder *recorder = nullptr;
