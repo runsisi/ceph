@@ -128,9 +128,7 @@ Future JournalRecorder::append(uint64_t tag_tid,
   // Journal<I>::append_io_events
   FutureImplPtr future(new FutureImpl(tag_tid, entry_tid, commit_tid));
 
-  // for the very first append, m_prev_future is NULL, so the first future
-  // should always be consistent, i.e., its FutreImpl::m_consistent should
-  // always be true
+  // set FutureImpl::m_prev_future, so we can chain all the futures
   future->init(m_prev_future); // chain the FutureImpl::m_consistent_ack callback
 
   m_prev_future = future;
@@ -149,17 +147,16 @@ Future JournalRecorder::append(uint64_t tag_tid,
 
   bool object_full = object_ptr->append_unlock({{future, entry_bl}});
   if (object_full) {
-
-    // most of the time, we start a new set of objects manually, i.e., if
-    // we find any of the object is full here, but the buffers stashed
-    // when the objects are closing and then be re-appended may start a
-    // new set of objects driven by the -EOVERFLOW of the later appends
-
+    // the written size to the object since the creation of this ObjectRecorder instance
+    // has been reach the limit
     ldout(m_cct, 10) << "object " << object_ptr->get_oid() << " now full"
                      << dendl;
 
     Mutex::Locker l(m_lock);
 
+    // can also be called by JournalRecorder::handle_overflow, which means we has not
+    // written too much since the creation of the ObjectRecorder instance, but this
+    // object has been written much during the last journal recording period
     close_and_advance_object_set(object_ptr->get_object_number() / splay_width);
   }
 
@@ -208,6 +205,9 @@ void JournalRecorder::close_and_advance_object_set(uint64_t object_set) {
 
   // entry overflow from open object
   if (m_current_set != object_set) {
+    // m_current_set has been increased, i.e., JournalRecorder::close_and_advance_object_set
+    // has been called previously, which mean the previous call was issued coz JournalRecorder::append
+    // returned full, and the current call is issued by the overflow
     ldout(m_cct, 20) << __func__ << ": close already in-progress" << dendl;
 
     return;

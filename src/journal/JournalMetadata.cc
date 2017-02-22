@@ -740,7 +740,7 @@ int JournalMetadata::set_active_set(uint64_t object_set) {
 }
 
 // called by
-// JournalMetadata::set_active_set, which never be called
+// JournalMetadata::set_active_set(object_set), i.e., above, which never be called
 // JournalRecorder::advance_object_set
 void JournalMetadata::set_active_set(uint64_t object_set, Context *on_finish) {
   Mutex::Locker locker(m_lock);

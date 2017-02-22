@@ -83,10 +83,13 @@ bool ObjectRecorder::append_unlock(AppendBuffers &&append_buffers) {
     // with -EOVERFLOW
 
     // attach flush handler, i.e., ObjectRecoder::m_flush_handler to FutureImpl::m_flush_handler
-    if (append(*iter, &schedule_append)) { // push back of m_append_buffers then try to write
-
-      // this buffer was claimed from a previous ObjectRecorder, which has
-      // been flushed or sent out
+    if (append(*iter, &schedule_append)) { // push back of m_append_buffers and check if need to send immediately
+      // this is a claimed buffer, two cases:
+      // 1) the future's flush state is FLUSH_STATE_REQUESTED, i.e., FutureImpl::flush has
+      // been issued, ObjectRecorder::flush(const FutureImplPtr) is to be called (not yet,
+      // otherwise the flush state should be FLUSH_STATE_INPROGRESS)
+      // 2) the future's flush state is FLUSH_STATE_INPROGRESS, i.e., the buffer has been
+      // sent out at least once
 
       last_flushed_future = iter->first;
     }
@@ -178,7 +181,7 @@ void ObjectRecorder::flush(Context *on_safe) {
 }
 
 // called by
-// ObjectRecorder::append_unlock
+// ObjectRecorder::append_unlock, which to flush the claimed entries from the previous object
 // ObjectRecorder::FlushHandler::flush, which called by FutureImpl::flush, which
 // has future->get_flush_handler().get() == &m_flush_handler
 void ObjectRecorder::flush(const FutureImplPtr &future) {
@@ -191,7 +194,9 @@ void ObjectRecorder::flush(const FutureImplPtr &future) {
     // if we don't own this future, re-issue the flush so that it hits the
     // correct journal object owner
 
-    // this can only be happen for ObjectRecorder::append_unlock
+    // old ObjectRecorder to flush buffer claimed from an overflowed object, this flush call
+    // was issued by FutureImpl::flush, but the buffer has been re-attached to &m_flush_handler
+    // of the new ObjectRecorder by ObjectRecorder::append
 
     future->flush();
 
@@ -254,7 +259,8 @@ bool ObjectRecorder::close() {
 
   cancel_append_task();
 
-  // flush all pending buffers
+  // send m_append_buffers, if the close was caused by the overflow of this object,
+  // then do nothing
   flush_appends(true);
 
   assert(!m_object_closed);

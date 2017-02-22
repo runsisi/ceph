@@ -40,7 +40,7 @@ void FutureImpl::init(const FutureImplPtr &prev_future) {
 
 // called by
 // Future::flush
-// ObjectRecorder::flush
+// ObjectRecorder::flush(const FutureImplPtr), when future->m_flush_handler != object->m_flush_handler
 void FutureImpl::flush(Context *on_safe) { // on_safe is a default parameter
 
   bool complete;
