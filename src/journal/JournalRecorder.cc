@@ -380,15 +380,11 @@ void JournalRecorder::create_next_object_recorder_unlock(
 
   AppendBuffers append_buffers;
 
-  // stash all appends into append_buffers
+  // stash ObjectRecorder::m_append_buffers into append_buffers
   object_recorder->claim_append_buffers(&append_buffers);
 
   // update the commit record to point to the correct object number
   for (auto &append_buffer : append_buffers) {
-
-    // this Entry need to write to the next splay object, object number
-    // in CommitEntry need to be changed
-
     m_journal_metadata->overflow_commit_tid(
       append_buffer.first->get_commit_tid(),
       new_object_recorder->get_object_number());

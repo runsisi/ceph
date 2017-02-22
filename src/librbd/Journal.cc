@@ -649,6 +649,12 @@ bool Journal<I>::is_journal_replaying(const Mutex &) const {
           m_state == STATE_RESTARTING_REPLAY);
 }
 
+// called by
+// AbstractImageWriteRequest<I>::send_request
+// ImageFlushRequest<I>::send_request
+// librbd::operation::Request<I>::append_op_event()
+// librbd::operation::Request<I>::commit_op_event
+// librbd::operation::Request<I>::append_op_event(T *)
 template <typename I>
 bool Journal<I>::is_journal_appending() const {
   assert(m_image_ctx.snap_lock.is_locked());
@@ -659,6 +665,7 @@ bool Journal<I>::is_journal_appending() const {
           !m_image_ctx.get_journal_policy()->append_disabled());
 }
 
+// never used
 template <typename I>
 void Journal<I>::wait_for_journal_ready(Context *on_ready) {
   on_ready = create_async_context_callback(m_image_ctx, on_ready);
@@ -748,7 +755,7 @@ void Journal<I>::close(Context *on_finish) {
     stop_recording();
   }
 
-  // will wait until replay finished, see Journal<I>::handle_flushing_replay,
+  // for state in replaying, see Journal<I>::handle_flushing_replay,
   // Journal<I>::handle_flushing_restart, Journal<I>::stop_external_replay
   m_close_pending = true;
 
@@ -1205,6 +1212,10 @@ void Journal<I>::replay_op_ready(uint64_t op_tid, Context *on_resume) {
   }
 }
 
+// called by
+// ImageFlushRequest<I>::send_request
+// LibrbdWriteback::write
+// LibrbdWriteback::overwrite_extent
 // wait the Event to be safe with an initiated flushing
 template <typename I>
 void Journal<I>::flush_event(uint64_t tid, Context *on_safe) {
@@ -1227,7 +1238,8 @@ void Journal<I>::flush_event(uint64_t tid, Context *on_safe) {
   }
 }
 
-// called by AioImageDiscard<I>::send_object_cache_requests
+// called by
+// ImageDiscardRequest<I>::send_object_cache_requests
 // wait the Event to be safe without an initiated flushing
 template <typename I>
 void Journal<I>::wait_event(uint64_t tid, Context *on_safe) {
@@ -1242,8 +1254,9 @@ void Journal<I>::wait_event(uint64_t tid, Context *on_safe) {
   wait_event(m_lock, tid, on_safe);
 }
 
-// push a callback back of Event::on_safe_contexts, so when the journal::Event
-// is safe the callback will be called
+// called by
+// Journal<I>::flush_event
+// Journal<I>::wait_event(tid, on_safe)
 template <typename I>
 typename Journal<I>::Future Journal<I>::wait_event(Mutex &lock, uint64_t tid,
                                                    Context *on_safe) {
@@ -1425,6 +1438,12 @@ void Journal<I>::create_journaler() {
   open_req->send();
 }
 
+// called by
+// Journal<I>::stop_external_replay, upon m_close_pending is true, which set by Journal<I>::close
+// Journal<I>::handle_open, upon failure
+// Journal<I>::handle_flushing_restart, upon m_close_pending is true, which set by Journal<I>::close
+// Journal<I>::handle_flushing_replay, upon m_close_pending is true, which set by Journal<I>::close
+// Journal<I>::handle_recording_stopped
 template <typename I>
 void Journal<I>::destroy_journaler(int r) {
   CephContext *cct = m_image_ctx.cct;
@@ -1452,7 +1471,8 @@ void Journal<I>::destroy_journaler(int r) {
   m_async_journal_op_tracker.wait(m_image_ctx, ctx);
 }
 
-// called by Journal<I>::handle_flushing_restart
+// called by
+// Journal<I>::handle_flushing_restart
 template <typename I>
 void Journal<I>::recreate_journaler(int r) {
   CephContext *cct = m_image_ctx.cct;
@@ -1812,7 +1832,9 @@ void Journal<I>::handle_replay_process_safe(ReplayEntry replay_entry, int r) {
   m_lock.Unlock();
 }
 
-// called by　Journal<I>::handle_replay_complete and Journal<I>::handle_replay_process_safe
+// called by
+// Journal<I>::handle_replay_complete
+// Journal<I>::handle_replay_process_safe
 template <typename I>
 void Journal<I>::handle_flushing_restart(int r) {
   Mutex::Locker locker(m_lock);
@@ -1877,7 +1899,8 @@ void Journal<I>::handle_flushing_replay() {
   start_append();
 }
 
-// callback of Journal<I>::stop_recording
+// called by
+// as callback of Journal<I>::stop_recording, which called by Journal<I>::close
 template <typename I>
 void Journal<I>::handle_recording_stopped(int r) {
   CephContext *cct = m_image_ctx.cct;
@@ -1891,6 +1914,8 @@ void Journal<I>::handle_recording_stopped(int r) {
   destroy_journaler(r);
 }
 
+// called by
+// as callback of Journal<I>::destroy_journaler
 template <typename I>
 void Journal<I>::handle_journal_destroyed(int r) {
   CephContext *cct = m_image_ctx.cct;
@@ -2029,7 +2054,7 @@ void Journal<I>::handle_op_event_safe(int r, uint64_t tid,
 }
 
 // called by
-// Journal<I>::close
+// Journal<I>::close, when state is STATE_READY
 template <typename I>
 void Journal<I>::stop_recording() {
   assert(m_lock.is_locked());
@@ -2087,6 +2112,10 @@ bool Journal<I>::is_steady_state() const {
   return false;
 }
 
+// called by
+// Journal<I>::wait_for_journal_ready
+// Journal<I>::open
+// Journal<I>::close
 template <typename I>
 void Journal<I>::wait_for_steady_state(Context *on_state) {
   assert(m_lock.is_locked());
@@ -2097,6 +2126,7 @@ void Journal<I>::wait_for_steady_state(Context *on_state) {
   ldout(cct, 20) << this << " " << __func__ << ": on_state=" << on_state
                  << dendl;
 
+  // will be completed by Journal<I>::transition_state
   m_wait_for_state_contexts.push_back(on_state);
 }
 

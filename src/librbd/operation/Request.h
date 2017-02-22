@@ -54,7 +54,7 @@ protected:
   // ResizeRequest<I>::send_append_op_event
   // SnapshotCreateRequest<I>::send_append_op_event
   template <typename T, Context*(T::*MF)(int*)>
-  bool append_op_event(T *request) {
+  bool append_op_event(T *request) { // "this"
     ImageCtxT &image_ctx = this->m_image_ctx;
 
     // only ResizeRequest, SnapshotCreateRequest EnableFeaturesRequest, DisableFeaturesRequest

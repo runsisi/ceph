@@ -190,7 +190,8 @@ int Journaler::init_complete() {
   return 0;
 }
 
-// called by rbd::action::journal::Journaler::shut_down
+// called by
+// rbd::action::journal::Journaler::shut_down
 void Journaler::shut_down() {
   C_SaferCond ctx;
   shut_down(&ctx);

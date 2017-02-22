@@ -124,7 +124,7 @@ bool ObjectRecorder::append_unlock(AppendBuffers &&append_buffers) {
 }
 
 // called by
-// JournalRecorder::flush
+// JournalRecorder::flush, which called by Journaler::stop_append
 // NOTE: flush current ObjectRecoder and all previous Futures
 void ObjectRecorder::flush(Context *on_safe) {
   ldout(m_cct, 20) << __func__ << ": " << m_oid << dendl;
