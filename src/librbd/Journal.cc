@@ -511,6 +511,7 @@ void Journal<I>::is_tag_owner(I *image_ctx, bool *owner,
                            image_ctx->op_work_queue, on_finish);
 }
 
+// static
 template <typename I>
 void Journal<I>::is_tag_owner(librados::IoCtx& io_ctx, std::string& image_id,
                               bool *is_tag_owner, ContextWQ *op_work_queue,
@@ -526,6 +527,7 @@ void Journal<I>::is_tag_owner(librados::IoCtx& io_ctx, std::string& image_id,
 	   &is_tag_owner_ctx->tag_data, is_tag_owner_ctx);
 }
 
+// static
 template <typename I>
 int Journal<I>::get_tag_owner(I *image_ctx, std::string *mirror_uuid) {
   C_SaferCond get_tags_ctx;
