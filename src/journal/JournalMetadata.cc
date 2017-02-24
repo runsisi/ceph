@@ -885,7 +885,7 @@ void JournalMetadata::refresh(Context *on_complete) {
 }
 
 // called by
-// JournalMetadata::C_Refresh::finish
+// JournalMetadata::C_Refresh::finish, which created by JournalMetadata::refresh
 void JournalMetadata::handle_refresh_complete(C_Refresh *refresh, int r) {
   ldout(m_cct, 10) << "refreshed mutable metadata: r=" << r << dendl;
 

@@ -89,6 +89,8 @@ struct MirrorJournalPolicy : public librbd::journal::Policy {
 
 } // anonymous namespace
 
+// created by
+// BootstrapRequest<I>::open_local_image
 template <typename I>
 OpenLocalImageRequest<I>::OpenLocalImageRequest(librados::IoCtx &local_io_ctx,
                                                 I **local_image_ctx,

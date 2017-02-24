@@ -44,6 +44,7 @@ void OpenRequest<I>::send_init() {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 20) << dendl;
 
+  // JournalMetadata::init
   m_journaler->init(create_async_context_callback(
     *m_image_ctx, create_context_callback<
       OpenRequest<I>, &OpenRequest<I>::handle_init>(this)));

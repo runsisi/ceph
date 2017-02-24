@@ -27,6 +27,8 @@ namespace rbd {
 namespace mirror {
 namespace image_replayer {
 
+// created by
+// BootstrapRequest<I>::create_local_image
 template <typename I>
 CreateImageRequest<I>::CreateImageRequest(librados::IoCtx &local_io_ctx,
                                           ContextWQ *work_queue,
