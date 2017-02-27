@@ -272,7 +272,7 @@ ImageState<I>::~ImageState() {
   delete m_update_watchers;
 }
 
-// only called by librbd::remove with skip_open_parent set to true
+// only librbd::remove with skip_open_parent set to true
 template <typename I>
 int ImageState<I>::open(bool skip_open_parent) {
   C_SaferCond ctx;
@@ -357,6 +357,8 @@ bool ImageState<I>::is_refresh_required() const {
   return (m_last_refresh != m_refresh_seq || find_pending_refresh() != nullptr);
 }
 
+// called by
+// librbd::clone
 template <typename I>
 int ImageState<I>::refresh() {
   C_SaferCond refresh_ctx;
@@ -364,6 +366,12 @@ int ImageState<I>::refresh() {
   return refresh_ctx.wait();
 }
 
+// called by
+// ImageRequestWQ::_void_dequeue
+// librbd/journal/Replay.cc/C_RefreshIfRequired::finish
+// ImageState<I>::refresh()
+// ImageWatcher<I>::handle_notify
+// librbd/Operations.cc/C_InvokeAsyncRequest::send_refresh_image
 template <typename I>
 void ImageState<I>::refresh(Context *on_finish) {
   CephContext *cct = m_image_ctx->cct;
@@ -464,7 +472,9 @@ void ImageState<I>::prepare_lock(Context *on_ready) {
   // see: ImageState<I>::send_prepare_lock_unlock
   action.on_ready = on_ready;
 
-  // to append std::pair<Action, Contexts> with Context is nullptr
+  // to append std::pair<Action, Contexts> with Context is nullptr, will
+  // be popped by ImageState<I>::handle_prepare_lock_complete, during this
+  // period, the image will not accept another OPEN/CLOSE/REFRESH/SNAP_SET/LOCK
   execute_action_unlock(action, nullptr);
 }
 
@@ -845,7 +855,8 @@ void ImageState<I>::send_prepare_lock_unlock() {
     return;
   }
 
-  // wake up the lock handler now that its safe to proceed
+  // wake up the lock handler now that its safe to proceed, no other actions
+  // can be executed until ImageState<I>::handle_prepare_lock_complete called
   on_ready->complete(0);
 }
 

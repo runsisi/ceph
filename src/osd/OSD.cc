@@ -4934,7 +4934,7 @@ bool OSD::heartbeat_reset(Connection *con)
 // =========================================
 
 // called by
-// OSD::C_Tick::finish, tick interval is 1.0
+// OSD::C_Tick::finish, which created by OSD::init, tick interval is 1.0
 void OSD::tick()
 {
   assert(osd_lock.is_locked());

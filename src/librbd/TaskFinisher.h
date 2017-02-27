@@ -14,6 +14,8 @@ class CephContext;
 
 namespace librbd {
 
+// created by
+// TaskFinisher::TaskFinisher
 struct TaskFinisherSingleton {
   Mutex m_lock;
   SafeTimer *m_safe_timer;
@@ -41,7 +43,8 @@ struct TaskFinisherSingleton {
   }
 };
 
-// this class only used in class ImageWatcher
+// created by
+// ImageWatcher<I>::ImageWatcher
 template <typename Task>
 class TaskFinisher {
 public:
@@ -105,11 +108,16 @@ public:
     return true;
   }
 
-  // called by ImageWatcher::schedule_async_complete
+  // called by
+  // ImageWatcher::schedule_async_complete
   void queue(Context *ctx) {
     m_finisher->queue(ctx);
   }
 
+  // called by
+  // ImageWatcher<I>::schedule_async_progress
+  // ImageWatcher<I>::schedule_cancel_async_requests
+  // ImageWatcher<I>::schedule_request_lock
   bool queue(const Task& task, Context *ctx) {
     Mutex::Locker l(*m_lock);
 
@@ -140,6 +148,9 @@ public:
   }
 
 private:
+  // created by
+  // librbd::TaskFinisher::add_event_after
+  // librbd::TaskFinisher::queue
   class C_Task : public Context {
   public:
     C_Task(TaskFinisher *task_finisher, const Task& task)

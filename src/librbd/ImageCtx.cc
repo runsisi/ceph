@@ -339,7 +339,8 @@ struct C_InvalidateCache : public Context {
     readahead.set_max_readahead_size(readahead_max_bytes);
   }
 
-  // called by librbd::image::CloseRequest<I>::finish
+  // called by
+  // librbd::image::CloseRequest<I>::finish
   void ImageCtx::shutdown() {
     delete image_watcher;
     image_watcher = nullptr;
@@ -384,6 +385,8 @@ struct C_InvalidateCache : public Context {
 		   << dendl;
   }
 
+  // called by
+  // ImageCtx::init
   void ImageCtx::perf_start(string name) {
     PerfCountersBuilder plb(cct, name, l_librbd_first, l_librbd_last);
 
@@ -413,9 +416,12 @@ struct C_InvalidateCache : public Context {
     plb.add_u64_counter(l_librbd_invalidate_cache, "invalidate_cache", "Cache invalidates");
 
     perfcounter = plb.create_perf_counters();
+
     cct->get_perfcounters_collection()->add(perfcounter);
   }
 
+  // called by
+  // ImageCtx::~ImageCtx
   void ImageCtx::perf_stop() {
     assert(perfcounter);
     cct->get_perfcounters_collection()->remove(perfcounter);

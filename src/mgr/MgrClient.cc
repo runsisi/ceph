@@ -232,7 +232,7 @@ void MgrClient::send_report()
     ldout(cct, 20) << by_path.size() << " counters, of which "
              << report->declare_types.size() << " new" << dendl;
 
-    // NOTE: we only encode report->packed here, for a complete encodeing
+    // NOTE: we only encode report->packed here, for a complete encoding
     // see MMgrReport::encode_payload
     ENCODE_START(1, 1, report->packed);
     for (const auto &path : session->declared) {

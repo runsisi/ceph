@@ -86,6 +86,10 @@ bool ReplayStatusFormatter<I>::get_or_send_update(std::string *description,
   }
 
   if (!calculate_behind_master_or_send_update()) {
+    // needs to update tag cache first, m_on_finised, i.e.,
+    // ImageReplayer<I>::send_mirror_status_update will be called after
+    // tag cache updated
+
     dout(20) << "need to update tag cache" << dendl;
     return false;
   }
@@ -100,6 +104,8 @@ bool ReplayStatusFormatter<I>::get_or_send_update(std::string *description,
     m_on_finish = nullptr;
   }
 
+  // no need to update tag cache, finish m_on_finish, i.e., ImageReplayer<I>::send_mirror_status_update
+  // now
   on_finish->complete(-EEXIST);
   return true;
 }
@@ -165,7 +171,7 @@ bool ReplayStatusFormatter<I>::calculate_behind_master_or_send_update() {
 
 // called by
 // ReplayStatusFormatter<I>::calculate_behind_master_or_send_update
-// ReplayStatusFormatter<I>::handle_update_tag_cache
+// ReplayStatusFormatter<I>::handle_update_tag_cache, with updated tag cache
 template <typename I>
 void ReplayStatusFormatter<I>::send_update_tag_cache(uint64_t master_tag_tid,
 						     uint64_t mirror_tag_tid) {
@@ -186,6 +192,8 @@ void ReplayStatusFormatter<I>::send_update_tag_cache(uint64_t master_tag_tid,
     return;
   }
 
+  // will call send_update_tag_cache again, with the updated
+  // tag cache
   FunctionContext *ctx = new FunctionContext(
     [this, master_tag_tid, mirror_tag_tid](int r) {
       handle_update_tag_cache(master_tag_tid, mirror_tag_tid, r);
@@ -225,6 +233,8 @@ void ReplayStatusFormatter<I>::handle_update_tag_cache(uint64_t master_tag_tid,
 
   m_tag_cache.insert(std::make_pair(master_tag_tid, tag_data));
 
+  // to call send_update_tag_cache again, with the updated
+  // tag cache
   send_update_tag_cache(tag_data.predecessor.tag_tid, mirror_tag_tid);
 }
 

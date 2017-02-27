@@ -65,6 +65,8 @@ void ImageWatcher<I>::unregister_watch(Context *on_finish) {
   Watcher::unregister_watch(ctx);
 }
 
+// called by
+// ImageWatcher<I>::RemoteProgressContext::update_progress, which created by ImageWatcher<I>::prepare_async_request
 template <typename I>
 void ImageWatcher<I>::schedule_async_progress(const AsyncRequestId &request,
 					      uint64_t offset, uint64_t total) {

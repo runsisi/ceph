@@ -1579,6 +1579,8 @@ void ImageReplayer<I>::queue_mirror_image_status_update(const OptionalState &sta
   m_threads->work_queue->queue(ctx, 0);
 }
 
+// called by
+// ImageReplayer<I>::queue_mirror_image_status_update
 template <typename I>
 void ImageReplayer<I>::send_mirror_status_update(const OptionalState &opt_state) {
   State state;
@@ -1628,6 +1630,7 @@ void ImageReplayer<I>::send_mirror_status_update(const OptionalState &opt_state)
           dout(20) << "replay status ready: r=" << r << dendl;
 
           if (r >= 0) {
+            // to send it again
             send_mirror_status_update(boost::none);
           } else if (r == -EAGAIN) {
             // there is already an in progress request which is wait for tag cache update
@@ -1637,7 +1640,8 @@ void ImageReplayer<I>::send_mirror_status_update(const OptionalState &opt_state)
           }
         });
 
-      // m_replay_status_formatter was created by ImageReplayer<I>::handle_start_replay
+      // if need to update tag cache, then on_req_finish will be called
+      // after tag cache updated
       std::string desc;
       if (!m_replay_status_formatter->get_or_send_update(&desc,
                                                          on_req_finish)) {

@@ -1609,6 +1609,7 @@ namespace librbd {
       return 0;
     }
 
+    // never called
     int mirror_image_status_set(librados::IoCtx *ioctx,
 				const std::string &global_image_id,
 				const cls::rbd::MirrorImageStatus &status) {
@@ -1617,6 +1618,9 @@ namespace librbd {
       return ioctx->operate(RBD_MIRRORING, &op);
     }
 
+    // called by
+    // ImageReplayer<I>::send_mirror_status_update
+    // mirror_image_status_set(librados::IoCtx, ...), i.e., above
     void mirror_image_status_set(librados::ObjectWriteOperation *op,
 				 const std::string &global_image_id,
 				 const cls::rbd::MirrorImageStatus &status) {
