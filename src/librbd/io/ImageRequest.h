@@ -46,8 +46,6 @@ public:
 
   // called by
   // ImageRequestWQ::_void_dequeue
-  // ImageRequest<I>::aio_read, aio_write, aio_discard, ImageFlushRequest<I>::send_request
-  // if we are doing the aio request directly
   void start_op();
 
   // create aio completion and call pure virtual method send_request

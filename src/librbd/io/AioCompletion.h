@@ -89,6 +89,17 @@ struct AioCompletion {
     return comp;
   }
 
+  // called by
+  // ImageWriteback<I>::aio_read
+  // ImageWriteback<I>::aio_write
+  // ImageWriteback<I>::aio_discard
+  // ImageWriteback<I>::aio_flush
+  // CopyupRequest::send
+  // ObjectReadRequest<I>::read_from_parent
+  // Replay<I>::create_aio_modify_completion
+  // Replay<I>::create_aio_flush_completion
+  // librbd::copy
+  // librbd::read_iterate
   template <typename T, void (T::*MF)(int) = &T::complete>
   static AioCompletion *create_and_start(T *obj, ImageCtx *image_ctx,
                                          aio_type_t type) {

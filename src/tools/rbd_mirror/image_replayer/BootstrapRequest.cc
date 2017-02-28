@@ -38,7 +38,8 @@ using librbd::util::create_context_callback;
 using librbd::util::create_rados_callback;
 using librbd::util::unique_lock_name;
 
-// the BootstrapRequest is used by ImageReplayer<I>::bootstrap
+// created by
+// ImageReplayer<I>::bootstrap
 template <typename I>
 BootstrapRequest<I>::BootstrapRequest(
         librados::IoCtx &local_io_ctx,

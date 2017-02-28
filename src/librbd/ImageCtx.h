@@ -211,6 +211,9 @@ namespace librbd {
                             const char *snap, IoCtx& p, bool read_only) {
       return new ImageCtx(image_name, image_id, snap, p, read_only);
     }
+
+    // called by
+    // librbd::image::RemoveRequest<I>::handle_switch_thread_context
     void destroy() {
       delete this;
     }

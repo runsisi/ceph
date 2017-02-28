@@ -128,17 +128,18 @@ void AioCompletion::init_time(ImageCtx *i, aio_type_t t) {
 }
 
 // called by
-// librbd::AioCompletion::create_and_start
-// librbd::AioImageFlush<I>::send_request
-// librbd::AioImageRequest<I>::start_op
-// librbd::AioImageRequestWQ::aio_read
-// librbd::AioImageRequestWQ::aio_write
-// librbd::AioImageRequestWQ::aio_discard
+// AioCompletion::create_and_start
+// ImageRequest<I>::start_op, which called by ImageRequestWQ::_void_dequeue
+// ImageFlushRequest<I>::send_request
+// ImageRequestWQ::aio_read
+// ImageRequestWQ::aio_write
+// ImageRequestWQ::aio_discard
 void AioCompletion::start_op(bool ignore_type) {
   Mutex::Locker locker(lock);
 
   assert(ictx != nullptr);
   assert(!async_op.started());
+
   if (state == AIO_STATE_PENDING &&
       (ignore_type || aio_type != AIO_TYPE_FLUSH)) {
     // push front of m_image_ctx->async_ops

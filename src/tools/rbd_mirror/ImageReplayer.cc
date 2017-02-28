@@ -269,7 +269,8 @@ void ImageReplayer<I>::RemoteJournalerListener::handle_update(
   replayer->m_threads->work_queue->queue(ctx, 0);
 }
 
-// instances will be created by Replayer::set_sources
+// created by
+// Replayer::set_sources
 template <typename I>
 ImageReplayer<I>::ImageReplayer(Threads *threads,
                              shared_ptr<ImageDeleter> image_deleter,

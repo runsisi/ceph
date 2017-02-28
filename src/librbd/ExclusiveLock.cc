@@ -105,6 +105,11 @@ void ExclusiveLock<I>::init(uint64_t features, Context *on_init) {
                                                              on_init));
 }
 
+// called by
+// librbd::image::CloseRequest<I>::send_shut_down_exclusive_lock
+// librbd::image::RefreshRequest<I>::send_v2_shut_down_exclusive_lock
+// librbd::image::RemoveRequest<I>::acquire_exclusive_lock
+// librbd::image::SetSnapRequest<I>::send_shut_down_exclusive_lock
 template <typename I>
 void ExclusiveLock<I>::shut_down(Context *on_shut_down) {
   ldout(m_image_ctx.cct, 10) << dendl;
@@ -278,6 +283,7 @@ void ExclusiveLock<I>::pre_release_lock_handler(bool shutting_down,
 
   PreReleaseRequest<I> *req = PreReleaseRequest<I>::create(
     m_image_ctx, shutting_down, on_finish);
+
   m_image_ctx.op_work_queue->queue(new FunctionContext([req](int r) {
     req->send();
   }));
@@ -296,6 +302,7 @@ void ExclusiveLock<I>::post_release_lock_handler(bool shutting_down, int r,
 
     if (r >= 0) {
       m_image_ctx.image_watcher->notify_released_lock();
+
       if (m_image_ctx.io_work_queue->is_lock_request_needed()) {
         // if we have blocked IO -- re-request the lock
         RWLock::RLocker owner_locker(m_image_ctx.owner_lock);

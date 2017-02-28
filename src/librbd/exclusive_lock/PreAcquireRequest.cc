@@ -27,6 +27,8 @@ PreAcquireRequest<I>* PreAcquireRequest<I>::create(I &image_ctx,
   return new PreAcquireRequest(image_ctx, on_finish);
 }
 
+// created by
+// ExclusiveLock<I>::pre_acquire_lock_handler
 template <typename I>
 PreAcquireRequest<I>::PreAcquireRequest(I &image_ctx, Context *on_finish)
   : m_image_ctx(image_ctx),

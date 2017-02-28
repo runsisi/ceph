@@ -182,7 +182,7 @@ void ImageRequest<I>::send() {
   }
 
   if (m_bypass_image_cache || m_image_ctx.image_cache == nullptr) {
-    // overrided by AioImageRead, AbstractAioImageWrite, AioImageFlush
+    // overrided by ImageReadRequest, AbstractImageWriteRequest, ImageFlushRequest
     send_request();
   } else {
     send_image_cache_request();
@@ -198,7 +198,7 @@ int ImageRequest<I>::clip_request() {
   for (auto &image_extent : m_image_extents) {
     size_t clip_len = image_extent.second;
 
-    // do not operate beyond the image size, especially check if the snapshost
+    // do not operate beyond the image size, especially check if the snapshot
     // we previously operated has been removed
     int r = clip_io(get_image_ctx(&m_image_ctx), image_extent.first, &clip_len);
     if (r < 0) {
@@ -211,6 +211,8 @@ int ImageRequest<I>::clip_request() {
   return 0;
 }
 
+// called by
+// ImageRequestWQ::_void_dequeue
 template <typename I>
 void ImageRequest<I>::start_op() {
   m_aio_comp->start_op();
@@ -831,7 +833,7 @@ ObjectRequestHandle *ImageDiscardRequest<I>::create_object_request(
 }
 
 // called by
-// AbstractAioImageWrite<I>::send_request
+// AbstractImageWriteRequest<I>::send_request
 template <typename I>
 void ImageDiscardRequest<I>::update_stats(size_t length) {
   I &image_ctx = this->m_image_ctx;
@@ -894,6 +896,7 @@ void ImageFlushRequest<I>::send_request() {
     // m_completion->complete_request(r)
     C_AioRequest *req_comp = new C_AioRequest(aio_comp);
 
+    // push front of ImageCtx::async_ops
     image_ctx.flush(req_comp);
 
     aio_comp->start_op(true);

@@ -233,6 +233,9 @@ struct C_InvalidateCache : public Context {
     journal_policy = new journal::StandardPolicy<ImageCtx>(this);
   }
 
+  // called by
+  // ImageCtx::destroy, which called by librbd::image::RemoveRequest<I>::handle_switch_thread_context
+  // ImageState<I>::close()
   ImageCtx::~ImageCtx() {
     assert(image_watcher == NULL);
     assert(exclusive_lock == NULL);

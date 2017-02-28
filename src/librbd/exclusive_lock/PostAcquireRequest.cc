@@ -37,6 +37,8 @@ PostAcquireRequest<I>* PostAcquireRequest<I>::create(I &image_ctx,
   return new PostAcquireRequest(image_ctx, on_acquire, on_finish);
 }
 
+// created by
+// ExclusiveLock<I>::post_acquire_lock_handler
 template <typename I>
 PostAcquireRequest<I>::PostAcquireRequest(I &image_ctx, Context *on_acquire,
                                           Context *on_finish)

@@ -14,6 +14,7 @@ class ThreadPool;
 namespace rbd {
 namespace mirror {
 
+// NOTE: almost the same as Journaler::Threads
 struct Threads {
   ThreadPool *thread_pool = nullptr;
   ContextWQ *work_queue = nullptr;

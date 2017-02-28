@@ -78,7 +78,9 @@ private:
 
 } // anonymous namespace
 
-
+// created by
+// ObjectReadRequest<I>::send_copyup
+// AbstractObjectWriteRequest::send_copyup
 CopyupRequest::CopyupRequest(ImageCtx *ictx, const std::string &oid,
                              uint64_t objectno, Extents &&image_extents)
   : m_ictx(ictx), m_oid(oid), m_object_no(objectno),
@@ -115,6 +117,9 @@ void CopyupRequest::complete_requests(int r) {
   }
 }
 
+// called by
+// CopyupRequest::should_complete
+// CopyupRequest::send_object_map
 bool CopyupRequest::send_copyup() {
 
   // has read data from the parent object, need to send the copyup request
@@ -219,6 +224,9 @@ bool CopyupRequest::is_copyup_required() {
   return (m_copyup_data.is_zero() && noop);
 }
 
+// called by
+// ObjectReadRequest<I>::send_copyup
+// AbstractObjectWriteRequest::send_copyup
 void CopyupRequest::send()
 {
   m_state = STATE_READ_FROM_PARENT;

@@ -33,6 +33,8 @@ using librbd::watcher::C_NotifyAck;
 
 static const double	RETRY_DELAY_SECONDS = 1.0;
 
+// created by
+// ImageCtx::register_watch
 template <typename I>
 ImageWatcher<I>::ImageWatcher(I &image_ctx)
   : Watcher(image_ctx.md_ctx, image_ctx.op_work_queue, image_ctx.header_oid),
@@ -76,6 +78,8 @@ void ImageWatcher<I>::schedule_async_progress(const AsyncRequestId &request,
   m_task_finisher->queue(Task(TASK_CODE_ASYNC_PROGRESS, request), ctx);
 }
 
+// called by
+// as callback of ImageWatcher<I>::schedule_async_progress
 template <typename I>
 int ImageWatcher<I>::notify_async_progress(const AsyncRequestId &request,
 				           uint64_t offset, uint64_t total) {
@@ -89,7 +93,7 @@ int ImageWatcher<I>::notify_async_progress(const AsyncRequestId &request,
 
 // called by
 // ImageWatcher<I>::RemoteContext::finish
-// ImageWatcher<I>::handle_async_complete, i.e., timeout, reschedule
+// ImageWatcher<I>::handle_async_complete, upon timeout to reschedule
 template <typename I>
 void ImageWatcher<I>::schedule_async_complete(const AsyncRequestId &request,
                                               int r) {
@@ -100,7 +104,7 @@ void ImageWatcher<I>::schedule_async_complete(const AsyncRequestId &request,
 }
 
 // called by
-// callback of ImageWatcher<I>::schedule_async_complete
+// as callback of ImageWatcher<I>::schedule_async_complete
 template <typename I>
 void ImageWatcher<I>::notify_async_complete(const AsyncRequestId &request,
                                             int r) {
@@ -112,6 +116,8 @@ void ImageWatcher<I>::notify_async_complete(const AsyncRequestId &request,
                         this, request, r, _1)));
 }
 
+// called by
+// as callback of ImageWatcher<I>::notify_async_complete
 template <typename I>
 void ImageWatcher<I>::handle_async_complete(const AsyncRequestId &request,
                                             int r, int ret_val) {
@@ -291,7 +297,7 @@ void ImageWatcher<I>::schedule_cancel_async_requests() {
 
 // called by
 // ImageWatcher<I>::unregister_watch
-// ImageWatcher<I>::schedule_cancel_async_requests
+// as callback of ImageWatcher<I>::schedule_cancel_async_requests
 template <typename I>
 void ImageWatcher<I>::cancel_async_requests() {
   RWLock::WLocker l(m_async_request_lock);
@@ -327,7 +333,8 @@ ClientId ImageWatcher<I>::get_client_id() {
   return ClientId(m_image_ctx.md_ctx.get_instance_id(), this->m_watch_handle);
 }
 
-// called by ExclusiveLock<I>::handle_acquire_lock
+// called by
+// ExclusiveLock<I>::handle_post_acquired_lock
 template <typename I>
 void ImageWatcher<I>::notify_acquired_lock() {
   ldout(m_image_ctx.cct, 10) << this << " notify acquired lock" << dendl;
@@ -343,6 +350,8 @@ void ImageWatcher<I>::notify_acquired_lock() {
   send_notify(AcquiredLockPayload(client_id));
 }
 
+// called by
+// ExclusiveLock<I>::post_release_lock_handler
 template <typename I>
 void ImageWatcher<I>::notify_released_lock() {
   ldout(m_image_ctx.cct, 10) << this << " notify released lock" << dendl;
@@ -355,6 +364,8 @@ void ImageWatcher<I>::notify_released_lock() {
   send_notify(ReleasedLockPayload(get_client_id()));
 }
 
+// called by
+// ImageWatcher<I>::handle_request_lock
 template <typename I>
 void ImageWatcher<I>::schedule_request_lock(bool use_timer, int timer_delay) {
   assert(m_image_ctx.owner_lock.is_locked());
@@ -385,6 +396,9 @@ void ImageWatcher<I>::schedule_request_lock(bool use_timer, int timer_delay) {
   }
 }
 
+// called by
+// ExclusiveLock<I>::post_acquire_lock_handler
+// as callback of ImageWatcher<I>::schedule_request_lock
 template <typename I>
 void ImageWatcher<I>::notify_request_lock() {
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
@@ -482,6 +496,9 @@ Context *ImageWatcher<I>::remove_async_request(const AsyncRequestId &id) {
   return nullptr;
 }
 
+// called by
+// ImageWatcher<I>::notify_async_request(const AsyncRequestId)
+// ImageWatcher<I>::handle_payload(const AsyncProgressPayload)
 template <typename I>
 void ImageWatcher<I>::schedule_async_request_timed_out(const AsyncRequestId &id) {
   ldout(m_image_ctx.cct, 20) << "scheduling async request time out: " << id
@@ -1097,10 +1114,11 @@ void ImageWatcher<I>::handle_notify(uint64_t notify_id, uint64_t handle,
     // SnapRemovePayload, SnapProtectPayload, SnapUnprotectPayload,
     // RebuildObjectMapPayload, RenamePayload, UpdateFeaturesPayload
 
-    // image_watcher->process_payload
+    // refresh image first, then call ImageWatcher<I>::process_payload
     m_image_ctx.state->refresh(new C_ProcessPayload(this, notify_id, handle,
                                                     notify_message.payload));
   } else {
+    // no need to refresh image, call ImageWatcher<I>::process_payload directly
     process_payload(notify_id, handle, notify_message.payload, 0);
   }
 }
@@ -1146,8 +1164,8 @@ void ImageWatcher<I>::send_notify(const Payload &payload, Context *ctx) {
   Watcher::send_notify(bl, nullptr, ctx);
 }
 
-// called by
-// librbd.cc:Operations.cc:C_NotifyUpdate::finish
+// created by
+// ImageWatcher<I>::prepare_async_request
 template <typename I>
 void ImageWatcher<I>::RemoteContext::finish(int r) {
   m_image_watcher.schedule_async_complete(m_async_request_id, r);

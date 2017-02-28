@@ -43,6 +43,8 @@ std::string Journaler::object_oid_prefix(int pool_id,
   return JOURNAL_OBJECT_PREFIX + stringify(pool_id) + "." + journal_id + ".";
 }
 
+// created by
+// Journaler::Journaler
 Journaler::Threads::Threads(CephContext *cct)
     : timer_lock("Journaler::timer_lock") {
   thread_pool = new ThreadPool(cct, "Journaler::thread_pool", "tp_journal", 1);

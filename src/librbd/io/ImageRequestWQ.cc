@@ -19,7 +19,8 @@
 namespace librbd {
 namespace io {
 
-// instance created by ImageCtx::ImageCtx
+// created by
+// ImageCtx::ImageCtx
 // inherited from ThreadPool::PointerWQ<AioImageRequest<ImageCtx> >
 ImageRequestWQ::ImageRequestWQ(ImageCtx *image_ctx, const string &name,
                                time_t ti, ThreadPool *tp)
@@ -240,6 +241,7 @@ void ImageRequestWQ::aio_flush(AioCompletion *c, bool native_async) {
   if (m_image_ctx.non_blocking_aio || writes_blocked() || !writes_empty()) {
     queue(new ImageFlushRequest<>(m_image_ctx, c));
   } else {
+    // for flush, the
     ImageRequest<>::aio_flush(&m_image_ctx, c);
     finish_in_flight_op();
   }
@@ -532,6 +534,11 @@ void ImageRequestWQ::finish_in_progress_write() {
   }
 }
 
+// called by
+// ImageRequestWQ::aio_read
+// ImageRequestWQ::aio_write
+// ImageRequestWQ::aio_discard
+// ImageRequestWQ::aio_flush
 int ImageRequestWQ::start_in_flight_op(AioCompletion *c) {
   RWLock::RLocker locker(m_lock);
 
@@ -547,6 +554,14 @@ int ImageRequestWQ::start_in_flight_op(AioCompletion *c) {
   return true;
 }
 
+// called by
+// ImageRequestWQ::aio_read
+// ImageRequestWQ::aio_write
+// ImageRequestWQ::aio_discard
+// ImageRequestWQ::aio_flush
+// ImageRequestWQ::process, for queued IO
+// ImageRequestWQ::queue, requires lock but lock disabled
+// ImageRequestWQ::handle_refreshed, upon failure
 void ImageRequestWQ::finish_in_flight_op() {
   Context *on_shutdown;
   {

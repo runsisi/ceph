@@ -24,6 +24,9 @@ using librbd::util::create_async_context_callback;
 using librbd::util::create_context_callback;
 using util::C_DecodeTags;
 
+// created by
+// Journal<I>::request_resync
+// Journal<I>::create_journaler
 template <typename I>
 OpenRequest<I>::OpenRequest(I *image_ctx, Journaler *journaler, Mutex *lock,
                             journal::ImageClientMeta *client_meta,

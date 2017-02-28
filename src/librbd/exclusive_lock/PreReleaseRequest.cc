@@ -23,6 +23,7 @@ namespace exclusive_lock {
 using util::create_async_context_callback;
 using util::create_context_callback;
 
+
 template <typename I>
 PreReleaseRequest<I>* PreReleaseRequest<I>::create(I &image_ctx,
                                                    bool shutting_down,
@@ -30,6 +31,8 @@ PreReleaseRequest<I>* PreReleaseRequest<I>::create(I &image_ctx,
   return new PreReleaseRequest(image_ctx, shutting_down, on_finish);
 }
 
+// created by
+// ExclusiveLock<I>::pre_release_lock_handler
 template <typename I>
 PreReleaseRequest<I>::PreReleaseRequest(I &image_ctx, bool shutting_down,
                                         Context *on_finish)

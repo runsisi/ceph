@@ -302,6 +302,8 @@ void ImageState<I>::open(bool skip_open_parent, Context *on_finish) {
   execute_action_unlock(action, on_finish);
 }
 
+// called by
+// Image::close()
 template <typename I>
 int ImageState<I>::close() {
   C_SaferCond ctx;

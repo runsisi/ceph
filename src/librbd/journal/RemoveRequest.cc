@@ -22,7 +22,7 @@ namespace journal {
 
 // created by
 // DisableFeaturesRequest<I>::send_remove_journal
-// Journal<I>::remove, which called by librbd::remove
+// librbd::image::RemoveRequest<I>::send_journal_remove
 // librbd::image::CreateRequest<I>::journal_remove, upon failure
 // librbd::journal::CreateRequest<I>::remove_journal, upon failure
 template<typename I>

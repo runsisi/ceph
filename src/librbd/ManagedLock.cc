@@ -452,6 +452,7 @@ void ManagedLock<I>::handle_pre_acquire_lock(int r) {
     m_blacklist_on_break_lock, m_blacklist_expire_seconds,
     create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_acquire_lock>(this));
+
   m_work_queue->queue(new C_SendLockRequest<AcquireRequest<I>>(req), 0);
 }
 

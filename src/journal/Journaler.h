@@ -32,6 +32,7 @@ class Settings;
 
 class Journaler {
 public:
+  // NOTE: almost the same as rbd::mirror::Threads
   struct Threads {
     Threads(CephContext *cct);
     ~Threads();
