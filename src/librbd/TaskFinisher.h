@@ -72,6 +72,8 @@ public:
     }
   }
 
+  // called by
+  // ImageWatcher<I>::unregister_watch
   void cancel_all(Context *comp) {
     {
       Mutex::Locker l(*m_lock);

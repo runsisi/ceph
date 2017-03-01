@@ -207,6 +207,7 @@ Mirror::Mirror(CephContext *cct, const std::vector<const char*> &args) :
   m_local(new librados::Rados()),
   m_asok_hook(new MirrorAdminSocketHook(cct, this))
 {
+  // create <ThreadPool, ContextWQ, SafeTimer, Mutex>
   cct->lookup_or_create_singleton_object<Threads>(m_threads,
                                                   "rbd_mirror::threads");
 }
