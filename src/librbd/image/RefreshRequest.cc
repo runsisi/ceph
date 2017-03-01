@@ -660,6 +660,7 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   // TODO need safe shut down
+  // new ExclusiveLock<ImageCtx>
   m_exclusive_lock = m_image_ctx.create_exclusive_lock();
 
   using klass = RefreshRequest<I>;
@@ -668,8 +669,7 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
 
-  // block io, will unblock until the exclusive lock acquired, see
-  // ExclusiveLock<I>::handle_acquire_lock
+  // block io, will unblock until the exclusive lock acquired
   m_exclusive_lock->init(m_features, ctx);
 }
 

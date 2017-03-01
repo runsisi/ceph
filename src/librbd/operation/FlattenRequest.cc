@@ -18,6 +18,8 @@
 namespace librbd {
 namespace operation {
 
+// created by
+// FlattenRequest<I>::send_op
 template <typename I>
 class C_FlattenObject : public C_AsyncObjectThrottle<I> {
 public:
