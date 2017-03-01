@@ -242,6 +242,7 @@ public:
           PerfCounters::perf_counter_data_any_d *> CounterMap;
 
   void with_counters(std::function<void(const CounterMap &)>) const;
+  void with_counters(std::function<void(const perf_counters_set_t &)>) const;
 
 private:
   void dump_formatted_generic(ceph::Formatter *f, bool schema, bool histograms,

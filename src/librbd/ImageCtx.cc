@@ -224,6 +224,7 @@ struct C_InvalidateCache : public Context {
 
     if (perfcounter) {
       perf_stop();
+      perf_report_stop();
     }
     if (object_cacher) {
       delete object_cacher;
@@ -266,6 +267,7 @@ struct C_InvalidateCache : public Context {
     }
 
     perf_start(pname);
+    perf_report_start(pname);
 
     if (cache) {
       Mutex::Locker l(cache_lock);
@@ -390,6 +392,61 @@ struct C_InvalidateCache : public Context {
     assert(perfcounter);
     cct->get_perfcounters_collection()->remove(perfcounter);
     delete perfcounter;
+  }
+
+  void ImageCtx::perf_report_start(std::string name) {
+    bufferlist bl;
+    auto pcc = cct->get_perfcounters_collection();
+
+    pcc->with_counters([this, report](
+        const perf_counters_set_t &) {
+      bool const declared_all = (session->declared.size() == by_path.size());
+
+      if (!declared_all) {
+        for (const auto &i : by_path) {
+          auto path = i.first;
+          auto data = *(i.second);
+
+          if (session->declared.count(path) == 0) {
+            PerfCounterType type;
+
+            type.path = path;
+            if (data.description) {
+              type.description = data.description;
+            }
+            if (data.nick) {
+              type.nick = data.nick;
+            }
+            type.type = data.type;
+
+            report->declare_types.push_back(std::move(type));
+
+            session->declared.insert(path);
+          }
+        }
+      }
+
+      ldout(cct, 20) << by_path.size() << " counters, of which "
+               << report->declare_types.size() << " new" << dendl;
+
+      ENCODE_START(1, 1, report->packed);
+      for (const auto &path : session->declared) {
+        auto data = by_path.at(path);
+        ::encode(static_cast<uint64_t>(data->u64.read()),
+            report->packed);
+        if (data->type & PERFCOUNTER_LONGRUNAVG) {
+          ::encode(static_cast<uint64_t>(data->avgcount.read()),
+              report->packed);
+          ::encode(static_cast<uint64_t>(data->avgcount2.read()),
+              report->packed);
+        }
+      }
+      ENCODE_FINISH(report->packed);
+    });
+  }
+
+  void ImageCtx::perf_report_stop() {
+
   }
 
   void ImageCtx::set_read_flag(unsigned flag) {

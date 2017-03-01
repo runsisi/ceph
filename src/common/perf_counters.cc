@@ -167,6 +167,14 @@ void PerfCountersCollection::with_counters(std::function<void(
   fn(by_path);
 }
 
+void PerfCountersCollection::with_counters(std::function<void(
+    const perf_counters_set_t &)> fn) const
+{
+  Mutex::Locker lck(m_lock);
+
+  fn(m_loggers);
+}
+
 // ---------------------------
 
 PerfCounters::~PerfCounters()
