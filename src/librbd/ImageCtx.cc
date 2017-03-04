@@ -100,6 +100,8 @@ struct C_FlushCache : public Context {
   }
 };
 
+// created by
+// ImageCtx::shut_down_cache
 struct C_ShutDownCache : public Context {
   ImageCtx *image_ctx;
   Context *on_finish;
@@ -113,6 +115,9 @@ struct C_ShutDownCache : public Context {
   }
 };
 
+// created by
+// ImageCtx::shut_down_cache
+// ImageCtx::invalidate_cache
 struct C_InvalidateCache : public Context {
   ImageCtx *image_ctx;
   bool purge_on_error;
@@ -298,6 +303,7 @@ struct C_InvalidateCache : public Context {
 
       writeback_handler = new LibrbdWriteback(this, cache_lock);
 
+      // will be reset by ImageCtx::user_flushed
       uint64_t init_max_dirty = cache_max_dirty;
 
       if (cache_writethrough_until_flush)
@@ -811,7 +817,7 @@ struct C_InvalidateCache : public Context {
   }
 
   // called by
-  // librbd::AioImageRead<I>::send_request
+  // ImageReadRequest<I>::send_request
   // librbd::readahead
   void ImageCtx::aio_read_from_cache(object_t o, uint64_t object_no,
 				     bufferlist *bl, size_t len,
@@ -834,7 +840,9 @@ struct C_InvalidateCache : public Context {
       onfinish->complete(r);
   }
 
-  // called by AioImageWrite<I>::send_object_cache_requests
+  // called by
+  // ImageWriteRequest<I>::send_object_cache_requests
+  // ImageWriteSameRequest<I>::send_object_cache_requests
   void ImageCtx::write_to_cache(object_t o, const bufferlist& bl, size_t len,
 				uint64_t off, Context *onfinish,
 				int fadvise_flags, uint64_t journal_tid) {
@@ -891,6 +899,8 @@ struct C_InvalidateCache : public Context {
     cache_lock.Unlock();
   }
 
+  // called by
+  // librbd::image::CloseRequest<I>::send_shut_down_cache
   void ImageCtx::shut_down_cache(Context *on_finish) {
     if (object_cacher == NULL) {
       on_finish->complete(0);
@@ -951,6 +961,8 @@ struct C_InvalidateCache : public Context {
     object_cacher->clear_nonexistence(object_set);
   }
 
+  // called by
+  // PreReleaseRequest<I>::handle_invalidate_cache
   bool ImageCtx::is_cache_empty() {
     Mutex::Locker locker(cache_lock);
     return object_cacher->set_is_empty(object_set);

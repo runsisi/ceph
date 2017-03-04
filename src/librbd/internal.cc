@@ -2218,7 +2218,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
   };
 
   // called by
-  // librbd::AioImageRead<I>::send_request
+  // ImageReadRequest<I>::send_request
   void readahead(ImageCtx *ictx,
                  const vector<pair<uint64_t,uint64_t> >& image_extents)
   {

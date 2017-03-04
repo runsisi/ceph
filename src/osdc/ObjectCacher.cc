@@ -268,6 +268,8 @@ bool ObjectCacher::Object::include_all_cached_data(loff_t off, loff_t len)
  * map a range of bytes into buffer_heads.
  * - create missing buffer_heads as necessary.
  */
+// called by
+// ObjectCacher::_readx
 int ObjectCacher::Object::map_read(ObjectExtent &ex,
                                    map<loff_t, BufferHead*>& hits,
                                    map<loff_t, BufferHead*>& missing,
@@ -356,6 +358,7 @@ int ObjectCacher::Object::map_read(ObjectExtent &ex,
   return 0;
 }
 
+// never used
 void ObjectCacher::Object::audit_buffers()
 {
   loff_t offset = 0;
@@ -396,6 +399,8 @@ void ObjectCacher::Object::audit_buffers()
  * //no! - return a bh that includes the write.  may also include
  * other dirty data to left and/or right.
  */
+// called by
+// ObjectCacher::writex
 ObjectCacher::BufferHead *ObjectCacher::Object::map_write(ObjectExtent &ex,
     ceph_tid_t tid)
 {
@@ -549,6 +554,7 @@ ObjectCacher::BufferHead *ObjectCacher::Object::map_write(ObjectExtent &ex,
 // called by
 // ObjectCacher::Object::map_write
 // ObjectCacher::Object::truncate
+// ObjectCacher::Object::discard
 void ObjectCacher::Object::replace_journal_tid(BufferHead *bh,
 					       ceph_tid_t tid) {
   // get the original journal::Event id
@@ -674,6 +680,8 @@ ObjectCacher::ObjectCacher(CephContext *cct_, string name,
 {
   perf_start();
   finisher.start();
+
+  // true for client/ObjecterWriteback, false for LibrbdWriteback
   scattered_write = writeback_handler.can_scattered_write();
 }
 
@@ -744,6 +752,10 @@ ObjectCacher::Object *ObjectCacher::get_object(sobject_t oid,
 {
   // XXX: Add handling of nspace in object_locator_t in cache
   assert(lock.is_locked());
+
+  // for librbd, ObjectCacher is created for each image, so ObjectCacher::objects[] has
+  // only one pool
+
   // have it?
   if ((uint32_t)l.pool < objects.size()) {
     if (objects[l.pool].count(oid)) {
@@ -761,6 +773,7 @@ ObjectCacher::Object *ObjectCacher::get_object(sobject_t oid,
   Object *o = new Object(this, oid, object_no, oset, l, truncate_size,
 			 truncate_seq);
   objects[l.pool][oid] = o;
+
   ob_lru.lru_insert_top(o);
   return o;
 }
@@ -1049,6 +1062,13 @@ public:
     oc->bh_write_commit(poolid, oid, ranges, tid, r);
   }
 };
+
+// called by
+// ObjectCacher::bh_write_adjacencies
+// ObjectCacher::_readx
+// ObjectCacher::flush
+// ObjectCacher::flush_set
+// ObjectCacher::flush_all
 void ObjectCacher::bh_write_scattered(list<BufferHead*>& blist)
 {
   assert(lock.is_locked());
@@ -1247,6 +1267,8 @@ void ObjectCacher::bh_write_commit(int64_t poolid, sobject_t oid,
     finish_contexts(cct, ls, r);
 }
 
+// called by
+// ObjectCacher::flusher_entry
 void ObjectCacher::flush(loff_t amount)
 {
   assert(lock.is_locked());
@@ -1276,7 +1298,9 @@ void ObjectCacher::flush(loff_t amount)
   }    
 }
 
-
+// called by
+// ObjectCacher::_readx
+// ObjectCacher::writex
 void ObjectCacher::trim()
 {
   assert(lock.is_locked());
@@ -1320,6 +1344,8 @@ void ObjectCacher::trim()
 
 /* public */
 
+// called by
+// ObjectCacher::file_is_cached, which never used
 bool ObjectCacher::is_cached(ObjectSet *oset, vector<ObjectExtent>& extents,
 			     snapid_t snapid)
 {
@@ -1437,6 +1463,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 	  break;
 	}
       }
+
       if (allzero) {
 	ldout(cct, 10) << "readx  ob has all zero|rx, returning ENOENT"
 		       << dendl;
@@ -1839,6 +1866,8 @@ void ObjectCacher::maybe_wait_for_writeback(uint64_t len)
 }
 
 // blocking wait for write.
+// called by
+// ObjectCacher::writex
 int ObjectCacher::_wait_for_write(OSDWrite *wr, uint64_t len, ObjectSet *oset,
 				  Context *onfreespace)
 {
@@ -1846,7 +1875,7 @@ int ObjectCacher::_wait_for_write(OSDWrite *wr, uint64_t len, ObjectSet *oset,
 
   int ret = 0;
 
-  if (max_dirty > 0) {
+  if (max_dirty > 0) { // write-back
     if (block_writes_upfront) {
       maybe_wait_for_writeback(len);
 
@@ -1982,7 +2011,9 @@ void ObjectCacher::flusher_entry()
 
 
 // -------------------------------------------------
-
+// called by
+// Client::get_caps_used
+// ImageCtx::is_cache_empty
 bool ObjectCacher::set_is_empty(ObjectSet *oset)
 {
   assert(lock.is_locked());
@@ -1996,6 +2027,7 @@ bool ObjectCacher::set_is_empty(ObjectSet *oset)
   return true;
 }
 
+// never used
 bool ObjectCacher::set_is_cached(ObjectSet *oset)
 {
   assert(lock.is_locked());
@@ -2017,6 +2049,7 @@ bool ObjectCacher::set_is_cached(ObjectSet *oset)
   return false;
 }
 
+// never used
 bool ObjectCacher::set_is_dirty_or_committing(ObjectSet *oset)
 {
   assert(lock.is_locked());
@@ -2039,7 +2072,8 @@ bool ObjectCacher::set_is_dirty_or_committing(ObjectSet *oset)
   return false;
 }
 
-
+// called by
+// ObjectCacher::purge_set
 // purge.  non-blocking.  violently removes dirty buffers from cache.
 void ObjectCacher::purge(Object *ob)
 {
@@ -2049,7 +2083,8 @@ void ObjectCacher::purge(Object *ob)
   ob->truncate(0);
 }
 
-
+// called by
+// ObjectCacher::flush_set(ObjectSet *oset, vector<ObjectExtent>, ...)
 // flush.  non-blocking.  no callback.
 // true if clean, already flushed.
 // false if we wrote something.
@@ -2097,6 +2132,10 @@ bool ObjectCacher::flush(Object *ob, loff_t offset, loff_t length)
   return clean;
 }
 
+// called by
+// ObjectCacher::flush_set
+// ObjectCacher::flush_set(ObjectSet *oset, vector<ObjectExtent>& exv, ...)
+// ObjectCacher::flush_all, which called by Client::_sync_fs
 bool ObjectCacher::_flush_set_finish(C_GatherBuilder *gather,
 				     Context *onfinish)
 {
@@ -2116,6 +2155,9 @@ bool ObjectCacher::_flush_set_finish(C_GatherBuilder *gather,
   return true;
 }
 
+// called by
+// Client::_flush
+// ImageCtx::flush_cache
 // flush.  non-blocking, takes callback.
 // returns true if already flushed
 bool ObjectCacher::flush_set(ObjectSet *oset, Context *onfinish)
@@ -2229,6 +2271,8 @@ bool ObjectCacher::flush_set(ObjectSet *oset, Context *onfinish)
   return _flush_set_finish(&gather, onfinish);
 }
 
+// called by
+// ObjectCacher::_wait_for_write, which called by ObjectCacher::writex
 // flush.  non-blocking, takes callback.
 // returns true if already flushed
 bool ObjectCacher::flush_set(ObjectSet *oset, vector<ObjectExtent>& exv,
@@ -2278,6 +2322,8 @@ bool ObjectCacher::flush_set(ObjectSet *oset, vector<ObjectExtent>& exv,
   return _flush_set_finish(&gather, onfinish);
 }
 
+// called by
+// Client::_sync_fs
 // flush all dirty data.  non-blocking, takes callback.
 // returns true if already flushed
 bool ObjectCacher::flush_all(Context *onfinish)
@@ -2335,6 +2381,10 @@ bool ObjectCacher::flush_all(Context *onfinish)
   return _flush_set_finish(&gather, onfinish);
 }
 
+// called by
+// Client::_handle_full_flag
+// Client::_flush
+// ImageCtx.cc/C_InvalidateCache::finish
 void ObjectCacher::purge_set(ObjectSet *oset)
 {
   assert(lock.is_locked());
@@ -2360,7 +2410,9 @@ void ObjectCacher::purge_set(ObjectSet *oset)
   }
 }
 
-
+// called by
+// ObjectCacher::release_set
+// ObjectCacher::release_all, which called by Client::drop_caches
 loff_t ObjectCacher::release(Object *ob)
 {
   assert(lock.is_locked());
@@ -2403,6 +2455,12 @@ loff_t ObjectCacher::release(Object *ob)
   return o_unclean;
 }
 
+// called by
+// Client::put_inode
+// Client::_invalidate_inode_cache
+// ImageCtx.cc/C_InvalidateCache
+// ImageCtx::shut_down_cache
+// ImageCtx::invalidate_cache
 loff_t ObjectCacher::release_set(ObjectSet *oset)
 {
   assert(lock.is_locked());
@@ -2441,7 +2499,8 @@ loff_t ObjectCacher::release_set(ObjectSet *oset)
   return unclean;
 }
 
-
+// called by
+// Client::drop_caches
 uint64_t ObjectCacher::release_all()
 {
   assert(lock.is_locked());
@@ -2672,6 +2731,9 @@ void ObjectCacher::bh_stat_sub(BufferHead *bh)
   }
 }
 
+// called by
+// ObjectCacher::copy_bh_state
+// ObjectCacher::mark_xxx
 void ObjectCacher::bh_set_state(BufferHead *bh, int s)
 {
   assert(lock.is_locked());
@@ -2711,6 +2773,10 @@ void ObjectCacher::bh_set_state(BufferHead *bh, int s)
   bh_stat_add(bh);
 }
 
+// called by
+// ObjectCacher::Object::split
+// ObjectCacher::Object::map_read
+// ObjectCacher::Object::map_write
 void ObjectCacher::bh_add(Object *ob, BufferHead *bh)
 {
   assert(lock.is_locked());

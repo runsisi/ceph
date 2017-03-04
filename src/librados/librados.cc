@@ -1410,7 +1410,14 @@ int librados::IoCtx::omap_rm_keys(const std::string& oid,
 }
 
 
-
+// called by
+// librados::IoCtx::aio_operate(..., ObjectWriteOperation, ...)
+// librados::IoCtx::aio_operate(..., ObjectReadOperation, ...)
+// rados_write_op_operate
+// rados_write_op_operate2
+// rados_aio_write_op_operate
+// rados_read_op_operate
+// rados_aio_read_op_operate
 static int translate_flags(int flags)
 {
   int op_flags = 0;
