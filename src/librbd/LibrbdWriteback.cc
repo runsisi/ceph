@@ -293,7 +293,8 @@ namespace librbd {
     return ++m_tid;
   }
 
-  // called by ObjectCacher::Object::replace_journal_tid
+  // called by
+  // ObjectCacher::Object::replace_journal_tid
   void LibrbdWriteback::overwrite_extent(const object_t& oid, uint64_t off,
 					 uint64_t len,
 					 ceph_tid_t original_journal_tid,

@@ -334,7 +334,7 @@ struct C_InvalidateCache : public Context {
       object_set = new ObjectCacher::ObjectSet(NULL, data_ctx.get_id(), 0);
       object_set->return_enoent = true;
 
-      // start flusher_thread
+      // ObjectCacher::flusher_thread
       object_cacher->start();
     }
 

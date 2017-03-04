@@ -650,7 +650,9 @@ void ObjectCacher::Object::discard(loff_t off, loff_t len)
 #undef dout_prefix
 #define dout_prefix *_dout << "objectcacher "
 
-// called by ImageCtx::init, Client::Client
+// called by
+// ImageCtx::init
+// Client::Client
 ObjectCacher::ObjectCacher(CephContext *cct_, string name,
 			   WritebackHandler& wb, Mutex& l,
 			   flush_set_callback_t flush_callback,
@@ -1674,8 +1676,10 @@ void ObjectCacher::retry_waiting_reads()
   waitfor_read.splice(waitfor_read.end(), ls);
 }
 
-// called by ImageCtx::write_to_cache, ObjectCacher::file_write
-// oset is ImageCtx::object_set or Inode::oset
+// called by
+// ImageCtx::write_to_cache
+// ObjectCacher::file_write
+// NOTE: oset is ImageCtx::object_set or Inode::oset
 int ObjectCacher::writex(OSDWrite *wr, ObjectSet *oset, Context *onfreespace)
 {
   assert(lock.is_locked());
@@ -1890,7 +1894,7 @@ int ObjectCacher::_wait_for_write(OSDWrite *wr, uint64_t len, ObjectSet *oset,
   return ret;
 }
 
-// ObjectCacher::flusher_thread
+// thread entry for ObjectCacher::flusher_thread
 void ObjectCacher::flusher_entry()
 {
   ldout(cct, 10) << "flusher start" << dendl;
