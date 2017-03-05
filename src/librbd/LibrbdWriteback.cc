@@ -228,6 +228,9 @@ namespace librbd {
     assert(r >= 0);
   }
 
+  // called by
+  // ObjectCacher::bh_write_commit
+  // ObjectCacher::_readx
   bool LibrbdWriteback::may_copy_on_write(const object_t& oid, uint64_t read_off, uint64_t read_len, snapid_t snapid)
   {
     m_ictx->snap_lock.get_read();
@@ -334,7 +337,8 @@ namespace librbd {
                                                      it->first, it->second));
       } else {
 
-        // new_journal_tid == 0, so our call originates from ObjectCacher::Object::truncate
+        // new_journal_tid == 0, so our call originates from
+        // ObjectCacher::Object::truncate or ObjectCacher::Object::discard
 
         m_ictx->journal->commit_io_event_extent(original_journal_tid, it->first,
 					        it->second, 0);

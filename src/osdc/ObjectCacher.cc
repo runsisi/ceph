@@ -293,6 +293,7 @@ int ObjectCacher::Object::map_read(ObjectExtent &ex,
       n->set_start(cur);
       n->set_length(left);
       oc->bh_add(this, n);
+
       if (complete) {
         oc->mark_zero(n);
         hits[cur] = n;
@@ -301,6 +302,7 @@ int ObjectCacher::Object::map_read(ObjectExtent &ex,
         missing[cur] = n;
         ldout(oc->cct, 20) << "map_read miss " << left << " left, " << *n << dendl;
       }
+
       cur += left;
       assert(cur == (loff_t)ex.offset + (loff_t)ex.length);
       break;  // no more.
@@ -340,6 +342,7 @@ int ObjectCacher::Object::map_read(ObjectExtent &ex,
       n->set_start(cur);
       n->set_length(len);
       oc->bh_add(this,n);
+
       if (complete) {
         oc->mark_zero(n);
         hits[cur] = n;
@@ -348,6 +351,7 @@ int ObjectCacher::Object::map_read(ObjectExtent &ex,
         missing[cur] = n;
         ldout(oc->cct, 20) << "map_read gap " << *n << dendl;
       }
+
       cur += MIN(left, n->length());
       left -= MIN(left, n->length());
       continue;    // more?
@@ -798,6 +802,8 @@ void ObjectCacher::close_object(Object *ob)
   delete ob;
 }
 
+// called by
+// ObjectCacher::_readx
 void ObjectCacher::bh_read(BufferHead *bh, int op_flags)
 {
   assert(lock.is_locked());
@@ -820,6 +826,8 @@ void ObjectCacher::bh_read(BufferHead *bh, int op_flags)
   ++reads_outstanding;
 }
 
+// called by
+// ObjectCacher::C_ReadFinish::finish, which created by ObjectCacher::bh_read
 void ObjectCacher::bh_read_finish(int64_t poolid, sobject_t oid,
 				  ceph_tid_t tid, loff_t start,
 				  uint64_t length, bufferlist &bl, int r,
@@ -1001,6 +1009,10 @@ void ObjectCacher::bh_read_finish(int64_t poolid, sobject_t oid,
   read_cond.Signal();
 }
 
+// called by
+// ObjectCacher::flush
+// ObjectCacher::flusher_entry
+// NOTE: for scattered_write only, i.e., not for librbd
 void ObjectCacher::bh_write_adjacencies(BufferHead *bh, ceph::real_time cutoff,
 					int64_t *max_amount, int *max_count)
 {
@@ -1048,6 +1060,9 @@ void ObjectCacher::bh_write_adjacencies(BufferHead *bh, ceph::real_time cutoff,
   bh_write_scattered(blist);
 }
 
+// created by
+// ObjectCacher::bh_write_scattered
+// ObjectCacher::bh_write
 class ObjectCacher::C_WriteCommit : public Context {
   ObjectCacher *oc;
   int64_t poolid;
@@ -1073,7 +1088,7 @@ public:
 // called by
 // ObjectCacher::bh_write_adjacencies
 // ObjectCacher::_readx
-// ObjectCacher::flush
+// ObjectCacher::flush(Object *ob, ...)
 // ObjectCacher::flush_set
 // ObjectCacher::flush_all
 void ObjectCacher::bh_write_scattered(list<BufferHead*>& blist)
@@ -1129,6 +1144,13 @@ void ObjectCacher::bh_write_scattered(list<BufferHead*>& blist)
     perfcounter->inc(l_objectcacher_data_flushed, total_len);
 }
 
+// called by
+// ObjectCacher::flush(loff_t amount)
+// ObjectCacher::_readx
+// ObjectCacher::flusher_entry
+// ObjectCacher::flush(Object *ob, ...)
+// ObjectCacher::flush_set
+// ObjectCacher::flush_all
 void ObjectCacher::bh_write(BufferHead *bh)
 {
   assert(lock.is_locked());
@@ -1152,7 +1174,7 @@ void ObjectCacher::bh_write(BufferHead *bh)
   ldout(cct, 20) << " tid " << tid << " on " << bh->ob->get_oid() << dendl;
 
   // set bh last_write_tid
-  oncommit->tid = tid;
+  oncommit->tid = tid; // i.e., LibrbdWriteback::m_tid
 
   bh->ob->last_write_tid = tid;
   bh->last_write_tid = tid;
@@ -1164,6 +1186,8 @@ void ObjectCacher::bh_write(BufferHead *bh)
   mark_tx(bh);
 }
 
+// called by
+// ObjectCacher::C_WriteCommit::finish
 void ObjectCacher::bh_write_commit(int64_t poolid, sobject_t oid,
 				   vector<pair<loff_t, uint64_t> >& ranges,
 				   ceph_tid_t tid, int r)
@@ -1185,6 +1209,7 @@ void ObjectCacher::bh_write_commit(int64_t poolid, sobject_t oid,
        ++p) {
     loff_t start = p->first;
     uint64_t length = p->second;
+
     if (!ob->exists) {
       ldout(cct, 10) << "bh_write_commit marking exists on " << *ob << dendl;
       ob->exists = true;
