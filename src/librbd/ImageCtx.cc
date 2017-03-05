@@ -318,7 +318,7 @@ struct C_InvalidateCache : public Context {
 		     << cache_max_dirty_age << dendl;
 
       object_cacher = new ObjectCacher(cct, pname, *writeback_handler, cache_lock,
-				       NULL, NULL,
+				       NULL, NULL, // flush_callback, flush_callback_arg
 				       cache_size,
 				       10,  /* reset this in init */
 				       init_max_dirty,
@@ -916,7 +916,7 @@ struct C_InvalidateCache : public Context {
   }
 
   // called by
-  // librbd::invalidate_cache
+  // librbd::invalidate_cache, with purge_on_error = false
   int ImageCtx::invalidate_cache(bool purge_on_error) {
     flush_async_operations();
     if (object_cacher == NULL) {

@@ -25,6 +25,8 @@ using util::get_image_ctx;
 
 namespace {
 
+// created by
+// ImageDiscardRequest<I>::send_object_cache_requests
 template <typename ImageCtxT = ImageCtx>
 struct C_DiscardJournalCommit : public Context {
   typedef std::vector<ObjectExtent> ObjectExtents;

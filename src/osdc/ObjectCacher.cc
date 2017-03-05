@@ -414,6 +414,7 @@ ObjectCacher::BufferHead *ObjectCacher::Object::map_write(ObjectExtent &ex,
   loff_t cur = ex.offset;
   loff_t left = ex.length;
 
+  // iterator in ObjectCacher::Object::data
   map<loff_t, BufferHead*>::const_iterator p = data_lower_bound(ex.offset);
 
   while (left > 0) {
@@ -553,8 +554,8 @@ ObjectCacher::BufferHead *ObjectCacher::Object::map_write(ObjectExtent &ex,
 
 // called by
 // ObjectCacher::Object::map_write
-// ObjectCacher::Object::truncate
-// ObjectCacher::Object::discard
+// ObjectCacher::Object::truncate, with tid = 0
+// ObjectCacher::Object::discard, with tid = 0
 void ObjectCacher::Object::replace_journal_tid(BufferHead *bh,
 					       ceph_tid_t tid) {
   // get the original journal::Event id
@@ -576,6 +577,8 @@ void ObjectCacher::Object::replace_journal_tid(BufferHead *bh,
   bh->set_journal_tid(tid);
 }
 
+// called by
+// ObjectCacher::purge, which called by ObjectCacher::purge_set
 void ObjectCacher::Object::truncate(loff_t s)
 {
   assert(oc->lock.is_locked());
@@ -607,6 +610,8 @@ void ObjectCacher::Object::truncate(loff_t s)
   }
 }
 
+// called by
+// ObjectCacher::discard_set
 void ObjectCacher::Object::discard(loff_t off, loff_t len)
 {
   assert(oc->lock.is_locked());
@@ -643,7 +648,9 @@ void ObjectCacher::Object::discard(loff_t off, loff_t len)
     ++p;
     ldout(oc->cct, 10) << "discard " << *this << " bh " << *bh << dendl;
     assert(bh->waitfor_read.empty());
+
     replace_journal_tid(bh, 0);
+
     oc->bh_remove(this, bh);
     delete bh;
   }
@@ -1401,6 +1408,8 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
    */
   assert(!oset->return_enoent || rd->extents.size() == 1);
 
+  // for librbd, OSDWrite::extents or OSDRead::extents always contains
+  // only one extent, see ImageCtx::aio_read_from_cache, ImageCtx::write_to_cache
   for (vector<ObjectExtent>::iterator ex_it = rd->extents.begin();
        ex_it != rd->extents.end();
        ++ex_it) {
@@ -1440,8 +1449,10 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 	    }
 	  }
 	}
+
 	if (scattered_write && !blist.empty())
 	  bh_write_scattered(blist);
+
 	if (wait) {
 	  ldout(cct, 10) << "readx  waiting on tid " << o->last_write_tid
 			 << " on " << *o << dendl;
@@ -1477,6 +1488,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
     // map extent into bufferheads
     map<loff_t, BufferHead*> hits, missing, rx, errors;
     o->map_read(*ex_it, hits, missing, rx, errors);
+
     if (external_call) {
       // retry reading error buffers
       missing.insert(errors.begin(), errors.end());
@@ -1564,6 +1576,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 	  bh_lru_rest.lru_bottouch(bh);
 	else
 	  touch_bh(bh);
+
 	//must be after touch_bh because touch_bh set dontneed false
 	if (dontneed &&
 	    ((loff_t)ex_it->offset <= bh->start() &&
@@ -1648,6 +1661,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
     }
     return 0;  // wait!
   }
+
   if (perfcounter && external_call) {
     perfcounter->inc(l_objectcacher_data_read, total_bytes_read);
     perfcounter->inc(l_objectcacher_cache_bytes_hit, bytes_in_cache);
@@ -1717,6 +1731,8 @@ int ObjectCacher::writex(OSDWrite *wr, ObjectSet *oset, Context *onfreespace)
   bool dontneed = wr->fadvise_flags & LIBRADOS_OP_FLAG_FADVISE_DONTNEED;
   bool nocache = wr->fadvise_flags & LIBRADOS_OP_FLAG_FADVISE_NOCACHE;
 
+  // for librbd, OSDWrite::extents or OSDRead::extents always contains
+  // only one extent, see ImageCtx::aio_read_from_cache, ImageCtx::write_to_cache
   for (vector<ObjectExtent>::iterator ex_it = wr->extents.begin();
        ex_it != wr->extents.end();
        ++ex_it) {
@@ -1803,6 +1819,8 @@ int ObjectCacher::writex(OSDWrite *wr, ObjectSet *oset, Context *onfreespace)
   return r;
 }
 
+// created by
+// ObjectCacher::_wait_for_write, which callled by ObjectCacher::writex
 class ObjectCacher::C_WaitForWrite : public Context {
 public:
   C_WaitForWrite(ObjectCacher *oc, uint64_t len, Context *onfinish) :
@@ -2399,7 +2417,7 @@ void ObjectCacher::purge_set(ObjectSet *oset)
   for (xlist<Object*>::iterator i = oset->objects.begin();
        !i.end(); ++i) {
     Object *ob = *i;
-	purge(ob);
+	purge(ob); // i.e., ob->truncate(0)
   }
 
   // Although we have purged rather than flushed, caller should still
@@ -2537,6 +2555,8 @@ uint64_t ObjectCacher::release_all()
   return unclean;
 }
 
+// called by
+// ImageCtx::clear_nonexistence_cache
 void ObjectCacher::clear_nonexistence(ObjectSet *oset)
 {
   assert(lock.is_locked());
@@ -2563,6 +2583,10 @@ void ObjectCacher::clear_nonexistence(ObjectSet *oset)
   }
 }
 
+// called by
+// Client::_invalidate_inode_cache
+// ImageRequest.cc/C_DiscardJournalCommit::finish, which created by ImageDiscardRequest<I>::send_object_cache_requests
+// ImageDiscardRequest<I>::send_object_cache_requests
 /**
  * discard object extents from an ObjectSet by removing the objects in
  * exls from the in-memory oset.
@@ -2587,6 +2611,7 @@ void ObjectCacher::discard_set(ObjectSet *oset, const vector<ObjectExtent>& exls
     sobject_t soid(ex.oid, CEPH_NOSNAP);
     if (objects[oset->poolid].count(soid) == 0)
       continue;
+
     Object *ob = objects[oset->poolid][soid];
 
     ob->discard(ex.offset, ex.length);
@@ -2598,6 +2623,7 @@ void ObjectCacher::discard_set(ObjectSet *oset, const vector<ObjectExtent>& exls
     flush_set_callback(flush_set_callback_arg, oset);
 }
 
+// never used
 void ObjectCacher::verify_stats() const
 {
   assert(lock.is_locked());
