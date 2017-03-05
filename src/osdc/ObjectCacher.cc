@@ -26,7 +26,8 @@ using std::chrono::seconds;
 #define dout_prefix *_dout << "objectcacher.object(" << oid << ") "
 
 
-
+// created by
+// ObjectCacher::bh_read
 class ObjectCacher::C_ReadFinish : public Context {
   ObjectCacher *oc;
   int64_t poolid;
@@ -60,6 +61,8 @@ public:
   }
 };
 
+// created by
+// ObjectCacher::_readx
 class ObjectCacher::C_RetryRead : public Context {
   ObjectCacher *oc;
   OSDRead *rd;
@@ -82,6 +85,10 @@ public:
   }
 };
 
+// called by
+// ObjectCacher::Object::map_write
+// ObjectCacher::Object::truncate
+// ObjectCacher::Object::discard
 ObjectCacher::BufferHead *ObjectCacher::Object::split(BufferHead *left,
 						      loff_t off)
 {
@@ -144,7 +151,9 @@ ObjectCacher::BufferHead *ObjectCacher::Object::split(BufferHead *left,
   return right;
 }
 
-
+// called by
+// ObjectCacher::Object::try_merge_bh
+// ObjectCacher::Object::map_write
 void ObjectCacher::Object::merge_left(BufferHead *left, BufferHead *right)
 {
   assert(oc->lock.is_locked());
@@ -187,6 +196,10 @@ void ObjectCacher::Object::merge_left(BufferHead *left, BufferHead *right)
   ldout(oc->cct, 10) << "merge_left result " << *left << dendl;
 }
 
+// called by
+// ObjectCacher::bh_read_finish
+// ObjectCacher::bh_write_commit
+// ObjectCacher::writex
 void ObjectCacher::Object::try_merge_bh(BufferHead *bh)
 {
   assert(oc->lock.is_locked());
@@ -220,6 +233,8 @@ void ObjectCacher::Object::try_merge_bh(BufferHead *bh)
     merge_left(bh, p->second);
 }
 
+// called by
+// ObjectCacher::is_cached, which never used
 /*
  * count bytes we have cached in given range
  */
@@ -248,6 +263,8 @@ bool ObjectCacher::Object::is_cached(loff_t cur, loff_t left) const
   return true;
 }
 
+// called by
+// ObjectCacher::_readx
 /*
  * all cached data in this range[off, off+len]
  */
@@ -1729,6 +1746,8 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
   return ret;
 }
 
+// called by
+// ObjectCacher::bh_read_finish, callback of C_ReadFinish, which created by ObjectCacher::bh_read
 void ObjectCacher::retry_waiting_reads()
 {
   list<Context *> ls;
@@ -1865,6 +1884,9 @@ void ObjectCacher::C_WaitForWrite::finish(int r)
   m_onfinish->complete(r);
 }
 
+// called by
+// ObjectCacher::C_WaitForWrite::finish, which created by ObjectCacher::_wait_for_write
+// ObjectCacher::_wait_for_write
 void ObjectCacher::maybe_wait_for_writeback(uint64_t len)
 {
   assert(lock.is_locked());
@@ -1927,6 +1949,7 @@ int ObjectCacher::_wait_for_write(OSDWrite *wr, uint64_t len, ObjectSet *oset,
     } else {
       assert(onfreespace);
 
+      // ObjectCacher::maybe_wait_for_writeback
       finisher.queue(new C_WaitForWrite(this, len, onfreespace));
     }
   } else {
@@ -2056,7 +2079,7 @@ void ObjectCacher::flusher_entry()
 // -------------------------------------------------
 // called by
 // Client::get_caps_used
-// ImageCtx::is_cache_empty
+// ImageCtx::is_cache_empty, which called by PreReleaseRequest<I>::handle_invalidate_cache
 bool ObjectCacher::set_is_empty(ObjectSet *oset)
 {
   assert(lock.is_locked());
