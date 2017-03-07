@@ -195,10 +195,14 @@ void DisableRequest<I>::send_promote_image() {
     return;
   }
 
+  // force to disable mirroring
+
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
   // Not primary -- shouldn't have the journal open
+  // librbd::journal::StandardPolicy<I>::allocate_tag_on_lock will forbid the
+  // open of the journal, which results the error of acquiring the exclusive lock
   assert(m_image_ctx->journal == nullptr);
 
   using klass = DisableRequest<I>;
