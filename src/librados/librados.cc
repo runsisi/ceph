@@ -1121,6 +1121,7 @@ std::string librados::IoCtx::get_pool_name() const
 
 uint64_t librados::IoCtx::get_instance_id() const
 {
+  // i.e., monclient.get_global_id
   return io_ctx_impl->client->get_instance_id();
 }
 

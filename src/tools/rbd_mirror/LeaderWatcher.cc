@@ -249,6 +249,8 @@ void LeaderWatcher<I>::release_leader() {
   release_leader_lock();
 }
 
+// called by
+// Replayer::print_status
 template <typename I>
 void LeaderWatcher<I>::list_instances(std::vector<std::string> *instance_ids) {
   dout(20) << dendl;
@@ -573,6 +575,8 @@ void LeaderWatcher<I>::handle_release_leader_lock(int r) {
   schedule_timer_task("get locker", 1, false, &LeaderWatcher<I>::get_locker);
 }
 
+// called by
+// LeaderWatcher<I>::handle_post_acquire_leader_lock
 template <typename I>
 void LeaderWatcher<I>::init_status_watcher() {
   dout(20) << dendl;
@@ -656,6 +660,8 @@ void LeaderWatcher<I>::handle_shut_down_status_watcher(int r) {
   on_finish->complete(r);
 }
 
+// called by
+// LeaderWatcher<I>::handle_init_status_watcher
 template <typename I>
 void LeaderWatcher<I>::init_instances() {
   dout(20) << dendl;
