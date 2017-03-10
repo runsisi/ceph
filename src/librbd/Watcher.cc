@@ -116,6 +116,7 @@ void Watcher::register_watch(Context *on_finish) {
 
   librados::AioCompletion *aio_comp = create_rados_callback(
                                          new C_RegisterWatch(this, on_finish));
+  // pointer to the linger op, see IoCtxImpl::aio_watch
   int r = m_ioctx.aio_watch(m_oid, aio_comp, &m_watch_handle, &m_watch_ctx);
   assert(r == 0);
   aio_comp->release();

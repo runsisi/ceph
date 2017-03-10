@@ -555,18 +555,31 @@ public:
     list<std::function<void()>> on_committed;
     list<std::function<void()>> on_finish;
     list<std::function<void()>> on_success;
+
+    // called by
+    // PrimaryLogPG::execute_ctx
+    // PrimaryLogPG::try_flush_mark_clean
+    // PrimaryLogPG::agent_maybe_evict
     template <typename F>
     void register_on_finish(F &&f) {
       on_finish.emplace_back(std::forward<F>(f));
     }
+    // called by
+    // PrimaryLogPG::execute_ctx
+    // PrimaryLogPG::handle_watch_timeout
+    // PrimaryLogPG::scrub_snapshot_metadata
+    // PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
     template <typename F>
     void register_on_success(F &&f) {
       on_success.emplace_back(std::forward<F>(f));
     }
+    // never used
     template <typename F>
     void register_on_applied(F &&f) {
       on_applied.emplace_back(std::forward<F>(f));
     }
+    // called by
+    // PrimaryLogPG::execute_ctx
     template <typename F>
     void register_on_commit(F &&f) {
       on_committed.emplace_back(std::forward<F>(f));
@@ -670,6 +683,10 @@ public:
   /*
    * State on the PG primary associated with the replicated mutation
    */
+  // created by
+  // PrimaryLogPG::execute_ctx
+  // PrimaryLogPG::simple_opc_submit
+  // PrimaryLogPG::submit_log_entries
   class RepGather {
   public:
     hobject_t hoid;
@@ -699,10 +716,12 @@ public:
     list<std::function<void()>> on_success;
     list<std::function<void()>> on_finish;
     
+    // PrimaryLogPG::execute_ctx
+    // PrimaryLogPG::simple_opc_submit
     RepGather(
       OpContext *c, ceph_tid_t rt,
       eversion_t lc,
-      bool applies_with_commit) :
+      bool applies_with_commit) : // false
       hoid(c->obc->obs.oi.soid),
       op(c->op),
       queue_item(this),
@@ -713,18 +732,19 @@ public:
       applies_with_commit(applies_with_commit),
       pg_local_last_complete(lc),
       lock_manager(std::move(c->lock_manager)),
-      on_applied(std::move(c->on_applied)),
+      on_applied(std::move(c->on_applied)), // never registered
       on_committed(std::move(c->on_committed)),
       on_success(std::move(c->on_success)),
       on_finish(std::move(c->on_finish)) {}
 
+    // PrimaryLogPG::submit_log_entries
     RepGather(
       ObcLockManager &&manager,
       OpRequestRef &&o,
       boost::optional<std::function<void(void)> > &&on_complete,
       ceph_tid_t rt,
       eversion_t lc,
-      bool applies_with_commit,
+      bool applies_with_commit, // true
       int r) :
       op(o),
       queue_item(this),

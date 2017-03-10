@@ -460,6 +460,7 @@ void ManagedLock<I>::send_acquire_lock() {
 
   m_state = STATE_ACQUIRING;
 
+  // pointer to the linger op, see IoCtxImpl::aio_watch
   uint64_t watch_handle = m_watcher->get_watch_handle();
   if (watch_handle == 0) {
     lderr(m_cct) << "watcher not registered - delaying request" << dendl;
