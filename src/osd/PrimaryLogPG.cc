@@ -3597,7 +3597,7 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
   }
 
   // register callbacks:
-  // ctx->on_applied, ctx->on_committed, ctx->on_success, ctx->on_finish
+  // ctx->on_committed, ctx->on_success, ctx->on_finish
 
   // no need to capture PG ref, repop cancel will handle that
   // Can capture the ctx by pointer, it's owned by the repop
@@ -9580,7 +9580,7 @@ boost::intrusive_ptr<PrimaryLogPG::RepGather> PrimaryLogPG::new_repop(
   RepGather *repop = new RepGather(
     std::move(manager),
     std::move(op),
-    std::move(on_complete),
+    std::move(on_complete), // push back of RepGather::on_success
     osd->get_tid(),
     info.last_complete,
     true,

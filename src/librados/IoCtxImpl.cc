@@ -1713,7 +1713,7 @@ int librados::IoCtxImpl::aio_watch(const object_t& oid,
 
   ::ObjectOperation wr;
 
-  // (uint64_t)this
+  // (uint64_t)this, i.e., linger_op
   *handle = linger_op->get_cookie();
 
   linger_op->watch_context = new WatchInfo(this, oid, ctx, ctx2, internal);
