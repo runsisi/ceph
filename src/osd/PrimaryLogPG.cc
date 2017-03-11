@@ -9930,7 +9930,8 @@ PrimaryLogPG::RepGather *PrimaryLogPG::new_repop(
 }
 
 // called by
-// PrimaryLogPG::submit_log_entries
+// PrimaryLogPG::submit_log_entries, which called by PrimaryLogPG::record_write_error
+// and PrimaryLogPG::mark_all_unfound_lost
 boost::intrusive_ptr<PrimaryLogPG::RepGather> PrimaryLogPG::new_repop(
   eversion_t version,
   int r,
@@ -9938,6 +9939,7 @@ boost::intrusive_ptr<PrimaryLogPG::RepGather> PrimaryLogPG::new_repop(
   OpRequestRef &&op,
   boost::optional<std::function<void(void)> > &&on_complete)
 {
+  // except on_success, no other callbacks
   RepGather *repop = new RepGather(
     std::move(manager),
     std::move(op),
