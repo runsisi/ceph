@@ -133,7 +133,7 @@ struct C_InvokeAsyncRequest : public Context {
   boost::function<void(Context*)> local;
   boost::function<void(Context*)> remote;
   std::set<int> filter_error_codes;
-  Context *on_finish;
+  Context *on_finish; // C_SaferCond, for all types of op
   bool request_lock = false;
 
   C_InvokeAsyncRequest(I &image_ctx, const std::string& request_type,

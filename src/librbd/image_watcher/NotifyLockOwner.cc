@@ -21,6 +21,8 @@ namespace image_watcher {
 using namespace watch_notify;
 using util::create_context_callback;
 
+// created by
+// ImageWatcher<I>::notify_lock_owner
 NotifyLockOwner::NotifyLockOwner(ImageCtx &image_ctx,
                                  watcher::Notifier &notifier,
                                  bufferlist &&bl, Context *on_finish)
