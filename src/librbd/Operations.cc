@@ -1675,8 +1675,7 @@ void Operations<I>::execute_metadata_remove(const std::string &key,
 }
 
 // called by
-// librbd::remove
-// librbd::Operations<I>::snap_rollback
+// Operations<I>::snap_rollback
 template <typename I>
 int Operations<I>::prepare_image_update() {
   assert(m_image_ctx.owner_lock.is_locked() &&
@@ -1714,7 +1713,7 @@ int Operations<I>::prepare_image_update() {
 }
 
 // snap_create and snap_remove create C_InvokeAsyncRequest instance directly
-// instead of call this interface
+// because their filter_error_codes are not empty
 template <typename I>
 int Operations<I>::invoke_async_request(const std::string& request_type,
                                         bool permit_snapshot,
