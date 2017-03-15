@@ -47,7 +47,7 @@ struct AioCompletion {
   ssize_t rval;
   callback_t complete_cb;
   void *complete_arg;
-  rbd_completion_t rbd_comp;
+  rbd_completion_t rbd_comp; // librbd::RBD::AioCompletion
   uint32_t pending_count;   ///< number of requests
   uint32_t blockers;
   int ref;
@@ -75,8 +75,10 @@ struct AioCompletion {
 
   static AioCompletion *create(void *cb_arg, callback_t cb_complete,
                                rbd_completion_t rbd_comp) {
+    // librbd::io::AioCompletion
     AioCompletion *comp = new AioCompletion();
     comp->set_complete_cb(cb_arg, cb_complete);
+    // librbd::RBD::AioCompletion
     comp->rbd_comp = (rbd_comp != nullptr ? rbd_comp : comp);
     return comp;
   }

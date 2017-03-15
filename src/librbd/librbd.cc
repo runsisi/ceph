@@ -3583,6 +3583,7 @@ extern "C" int rbd_aio_create_completion(void *cb_arg,
 					 rbd_callback_t complete_cb,
 					 rbd_completion_t *c)
 {
+  // librbd::RBD::AioCompletion::pc = librbd::io::AioCompletion::create(cb_arg, complete_cb, this)
   librbd::RBD::AioCompletion *rbd_comp =
     new librbd::RBD::AioCompletion(cb_arg, complete_cb);
   *c = (rbd_completion_t) rbd_comp;

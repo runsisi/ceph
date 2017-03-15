@@ -114,6 +114,8 @@ public:
   // Do not use delete.
   struct AioCompletion {
     void *pc;
+
+    // pc = librbd::io::AioCompletion::create(cb_arg, complete_cb, this)
     AioCompletion(void *cb_arg, callback_t complete_cb);
     bool is_complete();
     int wait_for_complete();
