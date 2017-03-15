@@ -52,7 +52,8 @@ MgrStandby::~MgrStandby()
   delete client_messenger;
 }
 
-
+// called by
+// ceph_mgr.cc/main
 int MgrStandby::init()
 {
   Mutex::Locker l(lock);
@@ -241,6 +242,8 @@ static void handle_mgr_signal(int signum)
   }
 }
 
+// called by
+// ceph_mgr.cc/main
 int MgrStandby::main(vector<const char *> args)
 {
   // Enable signal handlers

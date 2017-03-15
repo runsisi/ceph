@@ -331,6 +331,7 @@ int MgrClient::start_command(const vector<string>& cmd, const bufferlist& inbl,
 
   assert(map.epoch > 0);
 
+  // insert a new command pair, i.e., <tid, MgrCommand>
   auto &op = command_table.start_command();
   op.cmd = cmd;
   op.inbl = inbl;
