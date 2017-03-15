@@ -327,6 +327,7 @@ int MgrClient::start_command(const vector<string>& cmd, const bufferlist& inbl,
     return -EACCES;
   }
 
+  // insert a new command pair, i.e., <tid, MgrCommand>
   auto &op = command_table.start_command();
   op.cmd = cmd;
   op.inbl = inbl;

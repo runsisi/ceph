@@ -279,6 +279,7 @@ void MgrMonitor::check_sub(Subscription *sub)
       }
     }
   } else {
+    // subscribed by Mgr::init
     assert(sub->type == "mgrdigest");
     if (digest_callback == nullptr) {
       send_digests();

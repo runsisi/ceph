@@ -38,7 +38,8 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "mgr " << __func__ << " "
 
-
+// created by
+// MgrStandby::handle_mgr_map
 Mgr::Mgr(MonClient *monc_, Messenger *clientm_, Objecter *objecter_,
 	 Client* client_, LogChannelRef clog_, LogChannelRef audit_clog_) :
   monc(monc_),
