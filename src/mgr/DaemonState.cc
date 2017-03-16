@@ -52,6 +52,7 @@ DaemonStateCollection DaemonStateIndex::get_by_type(uint8_t type) const
 {
   Mutex::Locker l(lock);
 
+  // std::map<DaemonKey, DaemonStatePtr>
   DaemonStateCollection result;
 
   for (const auto &i : all) {
@@ -88,6 +89,8 @@ DaemonStatePtr DaemonStateIndex::get(const DaemonKey &key)
   return all.at(key);
 }
 
+// called by
+// Mgr::handle_osd_map
 void DaemonStateIndex::cull(entity_type_t daemon_type,
                                std::set<std::string> names_exist)
 {

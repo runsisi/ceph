@@ -124,8 +124,8 @@ typedef std::shared_ptr<DaemonState> DaemonStatePtr;
 typedef std::map<DaemonKey, DaemonStatePtr> DaemonStateCollection;
 
 
-
-
+// created by
+// as member of Mgr
 /**
  * Fuse the collection of per-daemon metadata from Ceph into
  * a view that can be queried by service type, ID or also
@@ -139,6 +139,7 @@ class DaemonStateIndex
   // std::map<DaemonKey, DaemonStatePtr>
   DaemonStateCollection all;
 
+  // std::pair<entity_type_t, std::string>
   std::set<DaemonKey> updating;
 
   mutable Mutex lock;
