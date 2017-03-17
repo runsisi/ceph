@@ -41,6 +41,7 @@ MgrStandby::MgrStandby() :
   active_mgr(nullptr)
 {
   client_messenger = Messenger::create_client_messenger(g_ceph_context, "mgr");
+  client_messenger->set_default_policy(Messenger::Policy::lossy_client(0));
   objecter = new Objecter(g_ceph_context, client_messenger, monc, NULL, 0, 0);
 }
 

@@ -51,6 +51,8 @@ int DaemonServer::init(uint64_t gid, entity_addr_t client_addr)
   std::string public_msgr_type = g_conf->ms_public_type.empty() ? g_conf->ms_type : g_conf->ms_public_type;
   msgr = Messenger::create(g_ceph_context, public_msgr_type,
 			   entity_name_t::MGR(gid), "server", getpid(), 0);
+  msgr->set_default_policy(Messenger::Policy::stateless_server(0));
+
   int r = msgr->bind(g_conf->public_addr);
   if (r < 0) {
     derr << "unable to bind mgr to " << g_conf->public_addr << dendl;
@@ -122,6 +124,12 @@ bool DaemonServer::ms_get_authorizer(int dest_type,
   *authorizer = monc->build_authorizer(dest_type);
   dout(20) << "got authorizer " << *authorizer << dendl;
   return *authorizer != NULL;
+}
+
+bool DaemonServer::ms_handle_reset(Connection *con)
+{
+  dout(0) << __func__ << " " << con << dendl;
+  return false;
 }
 
 bool DaemonServer::ms_handle_refused(Connection *con)
