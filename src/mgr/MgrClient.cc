@@ -118,11 +118,15 @@ void MgrClient::reconnect()
 
     // Don't send an open if we're just a client (i.e. doing
     // command-sending, not stats etc)
-    //if (g_conf && !g_conf->name.is_client()) {
+    if (g_conf && !g_conf->name.is_client()) {
       auto open = new MMgrOpen();
       open->daemon_name = g_conf->name.get_id();
       session->con->send_message(open);
-    //}
+    } else if (cct->_conf->name.is_client()) {
+      auto open = new MMgrOpen();
+      open->daemon_name = cct->_conf->name.get_id();
+      session->con->send_message(open);
+    }
 
     signal_cond_list(waiting_for_session);
   } else {

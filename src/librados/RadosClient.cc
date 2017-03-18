@@ -302,6 +302,7 @@ int librados::RadosClient::connect()
     goto out;
   }
   messenger->set_myname(entity_name_t::CLIENT(monclient.get_global_id()));
+  cct->_conf->name.set_name(entity_name_t::CLIENT(monclient.get_global_id()));
 
   // MgrClient needs this (it doesn't have MonClient reference itself)
   monclient.sub_want("mgrmap", 0, 0);

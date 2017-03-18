@@ -18,6 +18,7 @@
 #include <string>
 #include <memory>
 #include <set>
+#include <map>
 #include <boost/circular_buffer.hpp>
 
 #include "common/Mutex.h"
@@ -30,6 +31,19 @@
 
 // Unique reference to a daemon within a cluster
 typedef std::pair<entity_type_t, std::string> DaemonKey;
+
+using ClientKey = std::pair<entity_type_t, std::string>;
+using ImageKey = std::pair<std::string, str::string>;
+
+struct ImageState
+{
+
+};
+
+struct ClientState
+{
+  std::map<ImageKey, ImageState> image_states_;
+};
 
 // An instance of a performance counter type, within
 // a particular daemon.
@@ -62,13 +76,13 @@ class PerfCounterInstance
 typedef std::map<std::string, PerfCounterType> PerfCounterTypes;
 
 // Performance counters for one daemon
-class DaemonPerfCounters
+class ClientPerfCounters
 {
   public:
   // The record of perf stat types, shared between daemons
   PerfCounterTypes &types;
 
-  DaemonPerfCounters(PerfCounterTypes &types_)
+  ClientPerfCounters(PerfCounterTypes &types_)
     : types(types_)
   {}
 
@@ -122,7 +136,7 @@ typedef std::map<DaemonKey, DaemonStatePtr> DaemonStateCollection;
  * a view that can be queried by service type, ID or also
  * by server (aka fqdn).
  */
-class DaemonStateIndex
+class ClientStateIndex
 {
   private:
   std::map<std::string, DaemonStateCollection> by_server;
