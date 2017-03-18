@@ -18,7 +18,7 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "mgr::ClientState: " << __func__ << " "
 
-void DaemonStateIndex::insert(DaemonStatePtr dm)
+void ClientStateIndex::insert(ClientStatePtr dm)
 {
   Mutex::Locker l(lock);
 
@@ -30,7 +30,7 @@ void DaemonStateIndex::insert(DaemonStatePtr dm)
   all[dm->key] = dm;
 }
 
-void DaemonStateIndex::_erase(DaemonKey dmk)
+void ClientStateIndex::_erase(ClientKey dmk)
 {
   assert(lock.is_locked_by_me());
 
@@ -44,11 +44,11 @@ void DaemonStateIndex::_erase(DaemonKey dmk)
   all.erase(dmk);
 }
 
-DaemonStateCollection DaemonStateIndex::get_by_type(uint8_t type) const
+ClientStateCollection ClientStateIndex::get_by_type(uint8_t type) const
 {
   Mutex::Locker l(lock);
 
-  DaemonStateCollection result;
+  ClientStateCollection result;
 
   for (const auto &i : all) {
     if (i.first.first == type) {
@@ -59,7 +59,7 @@ DaemonStateCollection DaemonStateIndex::get_by_type(uint8_t type) const
   return result;
 }
 
-DaemonStateCollection DaemonStateIndex::get_by_server(const std::string &hostname) const
+ClientStateCollection ClientStateIndex::get_by_server(const std::string &hostname) const
 {
   Mutex::Locker l(lock);
 
@@ -70,26 +70,26 @@ DaemonStateCollection DaemonStateIndex::get_by_server(const std::string &hostnam
   }
 }
 
-bool DaemonStateIndex::exists(const DaemonKey &key) const
+bool ClientStateIndex::exists(const ClientKey &key) const
 {
   Mutex::Locker l(lock);
 
   return all.count(key) > 0;
 }
 
-DaemonStatePtr DaemonStateIndex::get(const DaemonKey &key)
+ClientStatePtr ClientStateIndex::get(const ClientKey &key)
 {
   Mutex::Locker l(lock);
 
   return all.at(key);
 }
 
-void DaemonStateIndex::cull(entity_type_t daemon_type,
+void ClientStateIndex::cull(entity_type_t daemon_type,
                                std::set<std::string> names_exist)
 {
   Mutex::Locker l(lock);
 
-  std::set<DaemonKey> victims;
+  std::set<ClientKey> victims;
 
   for (const auto &i : all) {
     if (i.first.first != daemon_type) {
@@ -107,7 +107,7 @@ void DaemonStateIndex::cull(entity_type_t daemon_type,
   }
 }
 
-void DaemonPerfCounters::update(MMgrReport *report)
+void ClientPerfCounters::update(MMgrReport *report)
 {
   dout(20) << "loading " << report->declare_types.size() << " new types, "
            << report->packed.length() << " bytes of data" << dendl;

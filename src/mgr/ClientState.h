@@ -29,20 +29,12 @@
 #include "messages/MMgrReport.h"
 
 
-// Unique reference to a daemon within a cluster
-typedef std::pair<entity_type_t, std::string> DaemonKey;
-
-using ClientKey = std::pair<entity_type_t, std::string>;
-using ImageKey = std::pair<std::string, str::string>;
+typedef std::pair<entity_type_t, std::string> ClientKey;
+typedef std::pair<std::string, str::string> ImageKey;
 
 struct ImageState
 {
 
-};
-
-struct ClientState
-{
-  std::map<ImageKey, ImageState> image_states_;
 };
 
 // An instance of a performance counter type, within
@@ -78,7 +70,7 @@ typedef std::map<std::string, PerfCounterType> PerfCounterTypes;
 // Performance counters for one daemon
 class ClientPerfCounters
 {
-  public:
+public:
   // The record of perf stat types, shared between daemons
   PerfCounterTypes &types;
 
@@ -104,10 +96,10 @@ class ClientPerfCounters
 };
 
 // The state that we store about one daemon
-class DaemonState
+class ClientState
 {
-  public:
-  DaemonKey key;
+public:
+  ClientKey key;
 
   // The hostname where daemon was last seen running (extracted
   // from the metadata)
@@ -117,16 +109,17 @@ class DaemonState
   std::map<std::string, std::string> metadata;
 
   // The perf counters received in MMgrReport messages
-  DaemonPerfCounters perf_counters;
+  ClientPerfCounters perf_counters;
+  std::map<ImageKey, ImageState> image_states_;
 
-  DaemonState(PerfCounterTypes &types_)
+  ClientState(PerfCounterTypes &types_)
     : perf_counters(types_)
   {
   }
 };
 
-typedef std::shared_ptr<DaemonState> DaemonStatePtr;
-typedef std::map<DaemonKey, DaemonStatePtr> DaemonStateCollection;
+typedef std::shared_ptr<ClientState> ClientStatePtr;
+typedef std::map<ClientKey, ClientStatePtr> ClientStateCollection;
 
 
 
@@ -139,38 +132,38 @@ typedef std::map<DaemonKey, DaemonStatePtr> DaemonStateCollection;
 class ClientStateIndex
 {
   private:
-  std::map<std::string, DaemonStateCollection> by_server;
-  DaemonStateCollection all;
+  std::map<std::string, ClientStateCollection> by_server;
+  ClientStateCollection all;
 
-  std::set<DaemonKey> updating;
+  std::set<ClientKey> updating;
 
   mutable Mutex lock;
 
   public:
 
-  DaemonStateIndex() : lock("DaemonState") {}
+  ClientStateIndex() : lock("ClientState") {}
 
-  // FIXME: shouldn't really be public, maybe construct DaemonState
+  // FIXME: shouldn't really be public, maybe construct ClientState
   // objects internally to avoid this.
   PerfCounterTypes types;
 
-  void insert(DaemonStatePtr dm);
-  void _erase(DaemonKey dmk);
+  void insert(ClientStatePtr dm);
+  void _erase(ClientKey dmk);
 
-  bool exists(const DaemonKey &key) const;
-  DaemonStatePtr get(const DaemonKey &key);
-  DaemonStateCollection get_by_server(const std::string &hostname) const;
-  DaemonStateCollection get_by_type(uint8_t type) const;
+  bool exists(const ClientKey &key) const;
+  ClientStatePtr get(const ClientKey &key);
+  ClientStateCollection get_by_server(const std::string &hostname) const;
+  ClientStateCollection get_by_type(uint8_t type) const;
 
-  const DaemonStateCollection &get_all() const {return all;}
-  const std::map<std::string, DaemonStateCollection> &get_all_servers() const
+  const ClientStateCollection &get_all() const {return all;}
+  const std::map<std::string, ClientStateCollection> &get_all_servers() const
   {
     return by_server;
   }
 
-  void notify_updating(const DaemonKey &k) { updating.insert(k); }
-  void clear_updating(const DaemonKey &k) { updating.erase(k); }
-  bool is_updating(const DaemonKey &k) { return updating.count(k) > 0; }
+  void notify_updating(const ClientKey &k) { updating.insert(k); }
+  void clear_updating(const ClientKey &k) { updating.erase(k); }
+  bool is_updating(const ClientKey &k) { return updating.count(k) > 0; }
 
   /**
    * Remove state for all daemons of this type whose names are
