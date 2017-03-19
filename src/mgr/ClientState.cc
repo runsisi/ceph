@@ -1,15 +1,5 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
-/*
- * Ceph - scalable distributed file system
- *
- * Copyright (C) 2016 John Spray <john.spray@redhat.com>
- *
- * This is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License version 2.1, as published by the Free Software
- * Foundation.  See file COPYING.
- */
 
 #include "ClientState.h"
 
@@ -18,104 +8,45 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "mgr::ClientState: " << __func__ << " "
 
-void ClientStateIndex::insert(ClientStatePtr dm)
+void ClientStateIndex::handle_report(const MMgrReport *report)
 {
-  Mutex::Locker l(lock);
+  Mutex::Locker l(lock_);
 
-  if (all.count(dm->key)) {
-    _erase(dm->key);
-  }
+  ClientKey key(report->get_connection()->get_peer_type(),
+                report->daemon_name);
 
-  by_server[dm->hostname][dm->key] = dm;
-  all[dm->key] = dm;
+  auto r = perf_counters_.emplace({key, types});
+  perf_counters_[key].update(report);
+
+  update();
 }
 
-void ClientStateIndex::_erase(ClientKey dmk)
+
+void ClientStateIndex::erase(const ClientKey &key)
 {
-  assert(lock.is_locked_by_me());
+  Mutex::Locker l(lock_);
 
-  const auto dm = all.at(dmk);
-  auto &server_collection = by_server[dm->hostname];
-  server_collection.erase(dm->key);
-  if (server_collection.empty()) {
-    by_server.erase(dm->hostname);
-  }
+  perf_counters_.erase(key);
 
-  all.erase(dmk);
+  update();
 }
 
-ClientStateCollection ClientStateIndex::get_by_type(uint8_t type) const
+void ClientStateIndex::update()
 {
-  Mutex::Locker l(lock);
+  assert(lock_.is_locked_by_me());
 
-  ClientStateCollection result;
-
-  for (const auto &i : all) {
-    if (i.first.first == type) {
-      result[i.first] = i.second;
-    }
-  }
-
-  return result;
+  perf_counters_.erase(key);
 }
 
-ClientStateCollection ClientStateIndex::get_by_server(const std::string &hostname) const
-{
-  Mutex::Locker l(lock);
-
-  if (by_server.count(hostname)) {
-    return by_server.at(hostname);
-  } else {
-    return {};
-  }
-}
-
-bool ClientStateIndex::exists(const ClientKey &key) const
-{
-  Mutex::Locker l(lock);
-
-  return all.count(key) > 0;
-}
-
-ClientStatePtr ClientStateIndex::get(const ClientKey &key)
-{
-  Mutex::Locker l(lock);
-
-  return all.at(key);
-}
-
-void ClientStateIndex::cull(entity_type_t daemon_type,
-                               std::set<std::string> names_exist)
-{
-  Mutex::Locker l(lock);
-
-  std::set<ClientKey> victims;
-
-  for (const auto &i : all) {
-    if (i.first.first != daemon_type) {
-      continue;
-    }
-
-    if (names_exist.count(i.first.second) == 0) {
-      victims.insert(i.first);
-    }
-  }
-
-  for (const auto &i : victims) {
-    dout(4) << "Removing data for " << i << dendl;
-    _erase(i);
-  }
-}
-
-void ClientPerfCounters::update(MMgrReport *report)
+void ClientPerfCounters::update(const MMgrReport *report)
 {
   dout(20) << "loading " << report->declare_types.size() << " new types, "
            << report->packed.length() << " bytes of data" << dendl;
 
   // Load any newly declared types
   for (const auto &t : report->declare_types) {
-    types.insert(std::make_pair(t.path, t));
     declared_types.insert(t.path);
+    types.insert(std::make_pair(t.path, t));
   }
 
   const auto now = ceph_clock_now();
@@ -123,8 +54,9 @@ void ClientPerfCounters::update(MMgrReport *report)
   // Parse packed data according to declared set of types
   bufferlist::iterator p = report->packed.begin();
   DECODE_START(1, p);
-  for (const auto &t_path : declared_types) {
-    const auto &t = types.at(t_path);
+  for (const auto &path : declared_types) {
+    const auto &t = types.at(path);
+
     uint64_t val = 0;
     uint64_t avgcount = 0;
     uint64_t avgcount2 = 0;
@@ -134,18 +66,14 @@ void ClientPerfCounters::update(MMgrReport *report)
       ::decode(avgcount, p);
       ::decode(avgcount2, p);
     }
+
     // TODO: interface for insertion of avgs
-    instances[t_path].push(now, val);
+    instances[path].push(now, val);
   }
   DECODE_FINISH(p);
 }
 
-uint64_t PerfCounterInstance::get_current() const
-{
-  return buffer.front().v;
-}
-
-void PerfCounterInstance::push(utime_t t, uint64_t const &v)
+void PerfCounterInstance::push(utime_t t, const uint64_t &v)
 {
   buffer.push_back({t, v});
 }
