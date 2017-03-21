@@ -481,6 +481,7 @@ void generate_transaction(
     }
   }
 
+  // iterate through PGTransaction::op_map<hobject_t, PGTransaction::ObjectOperation>
   pgt->safe_create_traverse(
     [&](pair<const hobject_t, PGTransaction::ObjectOperation> &obj_op) {
       const hobject_t &oid = obj_op.first;
@@ -600,7 +601,7 @@ void generate_transaction(
 	      extent.get_off());
 	  });
       }
-    });
+    }); // end of lambda
 }
 
 // called by
