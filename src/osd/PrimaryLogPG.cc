@@ -10131,7 +10131,7 @@ ObjectContextRef PrimaryLogPG::get_object_context(
 	  return ObjectContextRef();   // -ENOENT!
 	}
 
-	// no OI_ATTR, create a empty obc
+	// no OI_ATTR, create an empty obc
 
 	dout(10) << __func__ << ": no obc for soid "
 		 << soid << " but can_create"
@@ -10183,7 +10183,7 @@ ObjectContextRef PrimaryLogPG::get_object_context(
     obc->obs.oi = oi;
     obc->obs.exists = true;
 
-    // object exists, so the forth parameter is set to true
+    // attach ssc for obc
     obc->ssc = get_snapset_context(
       soid, true,
       soid.has_snapset() ? attrs : 0);
@@ -10267,6 +10267,8 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
   // handle differently by snapid:
   // 1) HEAD, 2) SNAPDIR, 3) snapshot object
 
+  // --- HEAD -----------------------------------------------------------------
+
   // want the head?
   if (oid.snap == CEPH_NOSNAP) {
 
@@ -10291,7 +10293,7 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
     return 0;
   }
 
-  // non-HEAD object, SNAPDIR or snapshot object
+  // --- SNAPDIR -----------------------------------------------------------------
 
   hobject_t head = oid.get_head();
 
@@ -10336,6 +10338,8 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
 
     return 0;
   }
+
+  // --- SNAP -----------------------------------------------------------------
 
   // osd.snap != CEPH_NOSNAP && oid.snap != CEPH_SNAPDIR,
   // i.e., oid.snap point to a snapshot object
