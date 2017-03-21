@@ -4587,7 +4587,7 @@ struct SnapSetContext {
   SnapSet snapset;
   int ref;
   bool registered : 1;
-  bool exists : 1;
+  bool exists : 1; // whether snapset is valid
 
   explicit SnapSetContext(const hobject_t& o) :
     oid(o), ref(0), registered(false), exists(true) { }

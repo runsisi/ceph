@@ -7845,10 +7845,9 @@ int PrimaryLogPG::prepare_transaction(OpContext *ctx)
 // PrimaryLogPG::prepare_transaction
 // PrimaryLogPG::finish_promote
 // PrimaryLogPG::try_flush_mark_clean
-// PrimaryLogPG::agent_maybe_evict
+// PrimaryLogPG::agent_maybe_evict, which called with false
 // PrimaryLogPG::scrub_snapshot_metadata
-// NOTE: the third parameter default to true
-void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc)
+void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc) // default true
 {
   const hobject_t& soid = ctx->obs->oi.soid;
 
@@ -8426,6 +8425,9 @@ void PrimaryLogPG::_copy_some(ObjectContextRef obc, CopyOpRef cop)
     flags |= CEPH_OSD_FLAG_IGNORE_CACHE;
   if (cop->flags & CEPH_OSD_COPY_FROM_FLAG_IGNORE_OVERLAY)
     flags |= CEPH_OSD_FLAG_IGNORE_OVERLAY;
+  // was set by
+  // PrimaryLogPG::promote_object
+  // PrimaryLogPG::start_flush
   if (cop->flags & CEPH_OSD_COPY_FROM_FLAG_MAP_SNAP_CLONE)
     flags |= CEPH_OSD_FLAG_MAP_SNAP_CLONE;
   if (cop->flags & CEPH_OSD_COPY_FROM_FLAG_RWORDERED)
@@ -10438,7 +10440,9 @@ ObjectContextRef PrimaryLogPG::create_object_context(const object_info_t& oi,
 ObjectContextRef PrimaryLogPG::get_object_context(
   const hobject_t& soid,
   bool can_create,
-  const map<string, bufferlist> *attrs)
+  const map<string, bufferlist> *attrs) // not nullptr only for PrimaryLogPG::get_obc, which called by
+                                        // ECBackend::handle_recovery_read_complete
+                                        // ReplicatedBackend::handle_pull_response
 {
   assert(
     attrs || !pg_log.get_missing().is_missing(soid) ||
@@ -10459,7 +10463,7 @@ ObjectContextRef PrimaryLogPG::get_object_context(
 
     dout(10) << __func__ << ": found obc in cache: " << obc
 	     << dendl;
-  } else {
+  } else { // not in cache, try to create it
 
     // try to get OI_ATTR from backend, or create a new one if can_create
     // are set to true
@@ -10474,8 +10478,7 @@ ObjectContextRef PrimaryLogPG::get_object_context(
 
       bv = attrs->find(OI_ATTR)->second;
     } else {
-
-      // object attrs must get from backend
+      // try to load obc from backend
 
       int r = pgbackend->objects_get_attr(soid, OI_ATTR, &bv);
       if (r < 0) {
@@ -10490,7 +10493,7 @@ ObjectContextRef PrimaryLogPG::get_object_context(
 	  return ObjectContextRef();   // -ENOENT!
 	}
 
-	// create a new object
+	// no OI_ATTR, create a empty obc
 
 	dout(10) << __func__ << ": no obc for soid "
 		 << soid << " but can_create"
@@ -10499,11 +10502,10 @@ ObjectContextRef PrimaryLogPG::get_object_context(
 	// new object.
 	object_info_t oi(soid);
 
-	// new object, so we can create the ssc, so the second parameter
-	// is set to true
-	// object does not exist, so the forth parameter is set to false to
-	// exclude the conditions that 1) the object is HEAD and does not exist
-	// or 2) the object is SNAPDIR and does not exist
+	// new object, so we can create the ssc, the second parameter
+	// is set to true, so the returned ssc could never be nullptr
+	// object does not exist, the forth parameter is set to false, so we
+	// can optimize the search
 	SnapSetContext *ssc = get_snapset_context(
 	  soid, true, 0, false);
 
@@ -10511,6 +10513,7 @@ ObjectContextRef PrimaryLogPG::get_object_context(
 	// get_snapset_context called above set to true, so even if we
 	// can not get the SS_ATTR from the backend, we always create
 	// a new one
+	// obc->obs.exists = false;
 	obc = create_object_context(oi, ssc);
 
 	dout(10) << __func__ << ": " << obc << " " << soid
@@ -10521,9 +10524,9 @@ ObjectContextRef PrimaryLogPG::get_object_context(
 
 	return obc;
       }
-    }
+    } // !attrs
 
-    // object exists, create ObjectContext from OI_ATTR
+    // load OI_ATTR succeeded, create obc
 
     // OI_ATTR -> ObjectContext::obs.oi
     object_info_t oi;
@@ -10569,7 +10572,7 @@ ObjectContextRef PrimaryLogPG::get_object_context(
 
     dout(10) << __func__ << ": creating obc from disk: " << obc
 	     << dendl;
-  }
+  } // !obc, i.e., not in cache, create it
 
   assert(obc->ssc);
 
@@ -10602,8 +10605,8 @@ void PrimaryLogPG::context_registry_on_change()
 }
 
 // called by
-// PrimaryLogPG::do_op
-// PrimaryLogPG::_rollback_to
+// PrimaryLogPG::do_op, (can_create, m->has_flag(CEPH_OSD_FLAG_MAP_SNAP_CLONE))
+// PrimaryLogPG::_rollback_to, (false, false)
 /*
  * If we return an error, and set *pmissing, then promoting that
  * object may help.
@@ -10617,7 +10620,7 @@ void PrimaryLogPG::context_registry_on_change()
 int PrimaryLogPG::find_object_context(const hobject_t& oid,
 				      ObjectContextRef *pobc,
 				      bool can_create,
-				      bool map_snapid_to_clone,
+				      bool map_snapid_to_clone, // only for cache tier
 				      hobject_t *pmissing)
 {
   FUNCTRACE();
@@ -10680,7 +10683,7 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
       return -ENOENT;
     }
 
-    // obc && obc->obs.exists, either get from HEAD or SNAPDIR
+    // obc && obc->obs.exists, obc either got from HEAD or SNAPDIR
 
     dout(10) << "find_object_context " << oid
 	     << " @" << oid.snap
@@ -10695,6 +10698,9 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
 
     return 0;
   }
+
+  // osd.snap != CEPH_NOSNAP && oid.snap != CEPH_SNAPDIR,
+  // i.e., oid.snap point to a snapshot object
 
   // we want a snap
   if (!map_snapid_to_clone && pool.info.is_removed_snap(oid.snap)) {
@@ -10727,7 +10733,7 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
   // clone object, we create a clone object when do COW, see
   // make_writeable
 
-  if (map_snapid_to_clone) {
+  if (map_snapid_to_clone) { // only for cache tier
     dout(10) << "find_object_context " << oid << " @" << oid.snap
 	     << " snapset " << ssc->snapset
 	     << " map_snapid_to_clone=true" << dendl;
@@ -10839,6 +10845,8 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
       return 0;
     }
 
+    // !ssc->snapset.head_exists
+
     dout(10) << "find_object_context  " << head
 	     << " want " << oid.snap << " > snapset seq " << ssc->snapset.seq
 	     << " but head dne -- DNE"
@@ -10848,6 +10856,8 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
 
     return -ENOENT;
   }
+
+  // oid.snap <= ssc->snapset.seq
 
   // which clone would it be?
   unsigned k = 0;
@@ -11015,14 +11025,16 @@ void PrimaryLogPG::kick_object_context_blocked(ObjectContextRef obc)
   }
 }
 
-// oid_existed default to true, and only set to false explicitly when
-// called by get_object_context when create ObjectContext for a non-existed
-// object
+// called by
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_LIST_SNAPS
+// PrimaryLogPG::get_object_context
+// PrimaryLogPG::find_object_context
+// PrimaryLogPG::add_object_context_to_pg_stat
 SnapSetContext *PrimaryLogPG::get_snapset_context(
   const hobject_t& oid,
   bool can_create,
-  const map<string, bufferlist> *attrs,
-  bool oid_existed)
+  const map<string, bufferlist> *attrs, // maybe not nullptr called by PrimaryLogPG::get_object_context
+  bool oid_existed) // default true, false only called by PrimaryLogPG::get_object_context for a newly created object
 {
   Mutex::Locker l(snapset_contexts_lock);
 
@@ -11031,21 +11043,22 @@ SnapSetContext *PrimaryLogPG::get_snapset_context(
     oid.get_snapdir());
 
   if (p != snapset_contexts.end()) {
-    if (can_create || p->second->exists) {
+    if (can_create || p->second->exists) { // write op or ssc is not a newly created empty one
       ssc = p->second;
     } else {
+      // can not create && ssc is a newly created empty one
       return NULL;
     }
   } else {
-
-    // not in cache, try to get it from the backend
+    // try to load SS_ATTR from either HEAD or snapdir object, we only
+    // need to try to read from this two objects
 
     bufferlist bv;
 
     if (!attrs) {
       int r = -ENOENT;
 
-      // if HEAD and does not exist, then no need to try to get the SS_ATTR
+      // if HEAD and does not exist, then no need to try to load the SS_ATTR
       // from HEAD
       if (!(oid.is_head() && !oid_existed))
 	r = pgbackend->objects_get_attr(oid.get_head(), SS_ATTR, &bv);
@@ -11053,25 +11066,31 @@ SnapSetContext *PrimaryLogPG::get_snapset_context(
       if (r < 0) {
 	// try _snapset
 
-        // if SNAPDIR and does not exist, then no need to try to get the
+        // if SNAPDIR and does not exist, then no need to try to load the
         // SS_ATTR from SNAPDIR
-      if (!(oid.is_snapdir() && !oid_existed))
-	r = pgbackend->objects_get_attr(oid.get_snapdir(), SS_ATTR, &bv);
+        if (!(oid.is_snapdir() && !oid_existed))
+          r = pgbackend->objects_get_attr(oid.get_snapdir(), SS_ATTR, &bv);
 
-      if (r < 0 && !can_create)
-	return NULL;
+        if (r < 0 && !can_create)
+          return NULL;
       }
     } else {
+      // attrs is not nullptr, which means PrimaryLogPG::get_object_context
+      // was called by
+      // ECBackend::handle_recovery_read_complete
+      // ReplicatedBackend::handle_pull_response
+
       assert(attrs->count(SS_ATTR));
 
       bv = attrs->find(SS_ATTR)->second;
     }
 
-    // create SnapSetContext from SS_ATTR
+    // create SnapSetContext from SS_ATTR, if no SS_ATTR then create an empty one
 
     ssc = new SnapSetContext(oid.get_snapdir());
 
-    // register ssc into PrimaryLogPG::snapset_contexts
+    // register ssc into PrimaryLogPG::snapset_contexts, i.e.,
+    // PrimaryLogPG::snapset_contexts[ssc->oid] = ssc;
     _register_snapset_context(ssc);
 
     if (bv.length()) {
@@ -11082,9 +11101,10 @@ SnapSetContext *PrimaryLogPG::get_snapset_context(
 
       ssc->exists = true;
     } else {
+      // no SS_ATTR, ssc is a newly created empty one
       ssc->exists = false;
     }
-  }
+  } // p == snapset_contexts.end()
 
   assert(ssc);
 

@@ -352,6 +352,9 @@ public:
     return pool.info;
   }
 
+  // called by
+  // ECBackend::handle_recovery_read_complete
+  // ReplicatedBackend::handle_pull_response
   ObjectContextRef get_obc(
     const hobject_t &hoid,
     const map<string, bufferlist> &attrs) override {
