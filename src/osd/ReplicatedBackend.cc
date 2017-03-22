@@ -535,6 +535,7 @@ void generate_transaction(
 
       for (auto &&extent: op.buffer_updates) {
 	using BufferUpdate = PGTransaction::ObjectOperation::BufferUpdate;
+	// https://github.com/exclipy/inline_variant_visitor
 	match(
 	  extent.get_val(),
 	  [&](const BufferUpdate::Write &op) {

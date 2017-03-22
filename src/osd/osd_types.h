@@ -1442,6 +1442,7 @@ public:
   void set_snap_seq(snapid_t s) { snap_seq = s; }
   void set_snap_epoch(epoch_t e) { snap_epoch = e; }
 
+  // never called
   void set_stripe_width(uint32_t s) { stripe_width = s; }
   uint32_t get_stripe_width() const { return stripe_width; }
 
@@ -1462,6 +1463,8 @@ public:
     return is_erasure() && !has_flag(FLAG_EC_OVERWRITES);
   }
 
+  // set by
+  // OSDMonitor::prepare_pool_stripe_width
   uint64_t required_alignment() const { return stripe_width; }
 
   bool allows_ecoverwrites() const {

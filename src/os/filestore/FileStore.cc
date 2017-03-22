@@ -2332,6 +2332,9 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
   }
 }
 
+// called by
+// FileStore::_do_op
+// FileStore::do_transactions
 int FileStore::_do_transactions(
   vector<Transaction> &tls,
   uint64_t op_seq,
@@ -2621,6 +2624,8 @@ int FileStore::_check_replay_guard(int fd, const SequencerPosition& spos)
   }
 }
 
+// called by
+// FileStore::_do_transactions
 void FileStore::_do_transaction(
   Transaction& t, uint64_t op_seq, int trans_num,
   ThreadPool::TPHandle *handle)
@@ -3508,7 +3513,9 @@ int FileStore::_touch(const coll_t& cid, const ghobject_t& oid)
   return r;
 }
 
-// called by FileStore::_do_transaction and FileStore::_zero
+// called by
+// FileStore::_do_transaction
+// FileStore::_zero
 int FileStore::_write(const coll_t& cid, const ghobject_t& oid,
                      uint64_t offset, size_t len,
                      const bufferlist& bl, uint32_t fadvise_flags)

@@ -36,7 +36,8 @@ void JournalingObjectStore::journal_write_close()
   apply_manager.reset();
 }
 
-// called by FileStore::mount
+// called by
+// FileStore::mount
 int JournalingObjectStore::journal_replay(uint64_t fs_op_seq)
 {
   dout(10) << "journal_replay fs op_seq " << fs_op_seq << dendl;

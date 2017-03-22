@@ -511,6 +511,9 @@ public:
   int _do_transactions(
     vector<Transaction> &tls, uint64_t op_seq,
     ThreadPool::TPHandle *handle);
+  // called by
+  // FileStore::queue_transactions, for trailing log mode
+  // JournalingObjectStore::journal_replay
   int do_transactions(vector<Transaction> &tls, uint64_t op_seq) override {
     return _do_transactions(tls, op_seq, 0);
   }

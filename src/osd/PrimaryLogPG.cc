@@ -1911,8 +1911,11 @@ void PrimaryLogPG::do_request(
   // only handle CEPH_OSD_OP_PULL and CEPH_OSD_OP_PUSH so we still need
   // to handle other sub ops later, i.e., CEPH_OSD_OP_DELETE, CEPH_OSD_OP_SCRUB_XXX
   if (pgbackend->handle_message(op))
+    // for recovery:
     // MSG_OSD_PG_PUSH, MSG_OSD_PG_PULL, MSG_OSD_PG_PUSH_REPLY
+    // for repop:
     // MSG_OSD_REPOP, MSG_OSD_REPOPREPLY
+    // deprecated:
     // MSG_OSD_SUBOP: CEPH_OSD_OP_PULL, CEPH_OSD_OP_PUSH
     // MSG_OSD_SUBOPREPLY: CEPH_OSD_OP_PUSH
     return;
@@ -1966,6 +1969,7 @@ void PrimaryLogPG::do_request(
     break;
 
   case MSG_OSD_PG_BACKFILL:
+    // sent by PrimaryLogPG::recover_backfill
     do_backfill(op);
     break;
 
@@ -3819,6 +3823,11 @@ void PrimaryLogPG::log_op_stats(OpContext *ctx)
 // PrimaryLogPG::do_request, for MSG_OSD_SUBOP
 void PrimaryLogPG::do_sub_op(OpRequestRef op)
 {
+  // sent by
+  // PG::scrub_reserve_replicas
+  // PG::scrub_unreserve_replicas
+  // PG::replica_scrub
+  // PrimaryLogPG::send_remove_op
   const MOSDSubOp *m = static_cast<const MOSDSubOp*>(op->get_req());
   assert(have_same_or_newer_map(m->map_epoch));
   assert(m->get_type() == MSG_OSD_SUBOP);
@@ -3885,6 +3894,7 @@ void PrimaryLogPG::do_scan(
   OpRequestRef op,
   ThreadPool::TPHandle &handle)
 {
+  // sent by PrimaryLogPG::recover_backfill
   const MOSDPGScan *m = static_cast<const MOSDPGScan*>(op->get_req());
   assert(m->get_type() == MSG_OSD_PG_SCAN);
   dout(10) << "do_scan " << *m << dendl;
@@ -3959,6 +3969,7 @@ void PrimaryLogPG::do_scan(
 // PrimaryLogPG::do_request, for MSG_OSD_PG_BACKFILL
 void PrimaryLogPG::do_backfill(OpRequestRef op)
 {
+  // sent by PrimaryLogPG::recover_backfill
   const MOSDPGBackfill *m = static_cast<const MOSDPGBackfill*>(op->get_req());
   assert(m->get_type() == MSG_OSD_PG_BACKFILL);
   dout(10) << "do_backfill " << *m << dendl;
@@ -4849,6 +4860,7 @@ void PrimaryLogPG::maybe_create_new_object(
     ctx->delta_stats.num_objects++;
 
     obs.exists = true;
+    // reset digent for data and omap
     obs.oi.new_object();
 
     if (!ignore_transaction)
@@ -4857,6 +4869,7 @@ void PrimaryLogPG::maybe_create_new_object(
     dout(10) << __func__ << " clearing whiteout on " << obs.oi.soid << dendl;
 
     ctx->new_obs.oi.clear_flag(object_info_t::FLAG_WHITEOUT);
+
     --ctx->delta_stats.num_whiteouts;
   }
 }
@@ -5209,6 +5222,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  // a read operation of 0 bytes does *not* do nothing, this is why
 	  // the trimmed_read boolean is needed
 	} else if (pool.info.require_rollback()) {
+	  // ec pool
 	  async = true;
 	  boost::optional<uint32_t> maybe_crc;
 	  // If there is a data digest and it is possible we are reading
@@ -5226,6 +5240,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 				soid, op.flags))));
 	  dout(10) << " async_read noted for " << soid << dendl;
 	} else {
+	  // replicated pool, NOTE: ec pool use async read
 	  int r = pgbackend->objects_read_sync(
 	    soid, op.extent.offset, op.extent.length, op.flags, &osd_op.outdata);
 	  if (r >= 0)
@@ -5383,7 +5398,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
           dout(10) << "sparse-read " << miter->first << "@" << miter->second << dendl;
 	  data_bl.claim_append(tmpbl);
 	  last = miter->first + r;
-        }
+        } // iterate extents to read
         
         if (r < 0) {
           result = r;
@@ -5430,7 +5445,8 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
         ::encode_destructively(data_bl, osd_op.outdata);
 
 	dout(10) << " sparse_read got " << total_read << " bytes from object " << soid << dendl;
-      }
+      } // replicated pool
+
       ctx->delta_stats.num_rd_kb += SHIFT_ROUND_UP(op.extent.length, 10);
       ctx->delta_stats.num_rd++;
       break;
@@ -6044,23 +6060,30 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	if (pool.info.has_flag(pg_pool_t::FLAG_WRITE_FADVISE_DONTNEED))
 	  op.flags = op.flags | CEPH_OSD_OP_FLAG_FADVISE_DONTNEED;
 
+	// --- check EC pool requirements -------------------------------------
+
 	// ec pool without FLAG_EC_OVERWRITES requires aligned append
 	if (pool.info.requires_aligned_append() &&
-	    (op.extent.offset % pool.info.required_alignment() != 0)) {
+	    (op.extent.offset % pool.info.required_alignment() != 0)) { // set by OSDMonitor::prepare_pool_stripe_width
+	  // offset not aligned
 	  result = -EOPNOTSUPP;
 	  break;
 	}
 
 	if (!obs.exists) {
+	  // not to create a new object and write at the offset 0
 	  if (pool.info.requires_aligned_append() && op.extent.offset) {
 	    result = -EOPNOTSUPP;
 	    break;
 	  }
 	} else if (op.extent.offset != oi.size &&
 		   pool.info.requires_aligned_append()) {
+	  // not to append
 	  result = -EOPNOTSUPP;
 	  break;
 	}
+
+	// --- check for truncate ---------------------------------------------
 
         if (seq && (seq > op.extent.truncate_seq) &&
             (op.extent.offset + op.extent.length > oi.size)) {
@@ -6099,13 +6122,16 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  }
 	}
 
+	// default 100 * 1024 * 1024 * 1024, i.e., 100G
 	result = check_offset_and_length(op.extent.offset, op.extent.length, cct->_conf->osd_max_object_size);
 	if (result < 0)
 	  break;
 
+	// ctx->new_obs.exists = true;
 	maybe_create_new_object(ctx);
 
 	if (op.extent.length == 0) {
+	  // truncate
 	  if (op.extent.offset > oi.size) {
 	    t->truncate(
 	      soid, op.extent.offset);
@@ -6113,6 +6139,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	    t->nop(soid);
 	  }
 	} else {
+	  // write
 	  t->write(
 	    soid, op.extent.offset, op.extent.length, osd_op.indata, op.flags);
 	}
@@ -6124,6 +6151,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	else
 	  obs.oi.clear_data_digest();
 
+	// update oi.size and other stats
 	write_update_size_and_usage(ctx->delta_stats, oi, ctx->modified_ranges,
 				    op.extent.offset, op.extent.length, true);
 
@@ -6151,6 +6179,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 
         // update ctx->new_obs.exists
 	maybe_create_new_object(ctx);
+
 	if (pool.info.require_rollback()) {
 	  t->truncate(soid, 0);
 	} else if (obs.exists && op.extent.length < oi.size) {
@@ -12915,6 +12944,7 @@ uint64_t PrimaryLogPG::recover_backfill(
 
 	epoch_t e = get_osdmap()->get_epoch();
 
+	// will be handled by PrimaryLogPG::do_scan
 	MOSDPGScan *m = new MOSDPGScan(
 	  MOSDPGScan::OP_SCAN_GET_DIGEST, pg_whoami, e, last_peering_reset,
 	  spg_t(info.pgid.pgid, bt.shard),
@@ -13249,6 +13279,7 @@ uint64_t PrimaryLogPG::recover_backfill(
       pinfo.set_last_backfill(new_last_backfill);
       epoch_t e = get_osdmap()->get_epoch();
 
+      // will be handled by PrimaryLogPG::do_backfill
       MOSDPGBackfill *m = NULL;
 
       if (pinfo.last_backfill.is_max()) {
