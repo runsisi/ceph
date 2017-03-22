@@ -5267,6 +5267,7 @@ int OSDMonitor::prepare_pool_stripe_width(const unsigned pool_type,
     {
       ErasureCodeInterfaceRef erasure_code;
       err = get_erasure_code(erasure_code_profile, &erasure_code, ss);
+      // default 4096
       uint32_t desired_stripe_width = g_conf->osd_pool_erasure_code_stripe_width;
       if (err == 0)
 	*stripe_width = erasure_code->get_data_chunk_count() *
