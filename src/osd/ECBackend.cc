@@ -688,9 +688,9 @@ void ECBackend::continue_recovery_op(
 
 // called by
 // PrimaryLogPG::maybe_kick_recovery
-// PrimaryLogPG::recover_primary
-// PrimaryLogPG::recover_replicas
-// PrimaryLogPG::recover_backfill
+// PrimaryLogPG::recover_primary, which called by PrimaryLogPG::start_recovery_ops
+// PrimaryLogPG::recover_replicas, which called by PrimaryLogPG::start_recovery_ops
+// PrimaryLogPG::recover_backfill, which called by PrimaryLogPG::start_recovery_ops
 void ECBackend::run_recovery_op(
   RecoveryHandle *_h,
   int priority)

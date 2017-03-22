@@ -608,6 +608,9 @@ public:
     OpContext(const OpContext& other);
     const OpContext& operator=(const OpContext& other);
 
+    // called by
+    // PrimaryLogPG::do_op
+    // PrimaryLogPG::simple_opc_create
     OpContext(OpRequestRef _op, osd_reqid_t _reqid, vector<OSDOp>& _ops,
 	      ObjectContextRef& obc,
 	      PrimaryLogPG *_pg) :
@@ -634,6 +637,9 @@ public:
       }
     }
 
+    // called by
+    // PrimaryLogPG::finish_proxy_read
+    // PrimaryLogPG::do_proxy_write
     OpContext(OpRequestRef _op, osd_reqid_t _reqid,
               vector<OSDOp>& _ops, PrimaryLogPG *_pg) :
       op(_op), reqid(_reqid), ops(_ops), obs(NULL), snapset(0),
@@ -649,6 +655,8 @@ public:
       inflightreads(0),
       lock_type(ObjectContext::RWState::RWNONE) {}
 
+    // called by
+    // PrimaryLogPG::execute_ctx
     void reset_obs(ObjectContextRef obc) {
       new_obs = ObjectState(obc->obs.oi, obc->obs.exists);
 

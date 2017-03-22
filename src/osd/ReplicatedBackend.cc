@@ -135,9 +135,9 @@ ReplicatedBackend::ReplicatedBackend(
 
 // called by
 // PrimaryLogPG::maybe_kick_recovery
-// PrimaryLogPG::recover_primary
-// PrimaryLogPG::recover_replicas
-// PrimaryLogPG::recover_backfill
+// PrimaryLogPG::recover_primary, which called by PrimaryLogPG::start_recovery_ops
+// PrimaryLogPG::recover_replicas, which called by PrimaryLogPG::start_recovery_ops
+// PrimaryLogPG::recover_backfill, which called by PrimaryLogPG::start_recovery_ops
 // C_ReplicatedBackend_OnPullComplete::finish
 // ReplicatedBackend::sub_op_push
 void ReplicatedBackend::run_recovery_op(
@@ -146,7 +146,10 @@ void ReplicatedBackend::run_recovery_op(
 {
   RPGHandle *h = static_cast<RPGHandle *>(_h);
 
+  // send MOSDPGPush
   send_pushes(priority, h->pushes);
+
+  // send MOSDPGPull
   send_pulls(priority, h->pulls);
 
   delete h;
@@ -735,6 +738,9 @@ void ReplicatedBackend::op_commit(
 // message from replicas
 void ReplicatedBackend::do_repop_reply(OpRequestRef op)
 {
+  // sent by
+  // ReplicatedBackend::sub_op_modify_applied
+  // ReplicatedBackend::sub_op_modify_commit
   static_cast<MOSDRepOpReply*>(op->get_nonconst_req())->finish_decode();
   const MOSDRepOpReply *r = static_cast<const MOSDRepOpReply *>(op->get_req());
   assert(r->get_header().type == MSG_OSD_REPOPREPLY);
@@ -929,10 +935,8 @@ void ReplicatedBackend::be_deep_scrub(
 	   << std::hex << o.omap_digest << std::dec << dendl;
 }
 
+// PushOp to from primary PG to replica PG
 /*
-  called by
-  ReplicatedBackend::handle_message, for MSG_OSD_PG_PUSH and
-  we are replica
   void do_push(OpRequestRef op) {
     if (is_primary()) {
       _do_pull_response(op);
@@ -941,9 +945,11 @@ void ReplicatedBackend::be_deep_scrub(
     }
   }
  */
-// PushOp to replica PG
+// called by
+// ReplicatedBackend::handle_message, for MSG_OSD_PG_PUSH and we are replica
 void ReplicatedBackend::_do_push(OpRequestRef op)
 {
+  // sent by ReplicatedBackend::send_pushes
   const MOSDPGPush *m = static_cast<const MOSDPGPush *>(op->get_req());
   assert(m->get_type() == MSG_OSD_PG_PUSH);
   pg_shard_t from = m->from;
@@ -961,9 +967,11 @@ void ReplicatedBackend::_do_push(OpRequestRef op)
        i != m->pushes.end();
        ++i) {
     replies.push_back(PushReplyOp());
+
     handle_push(from, *i, &(replies.back()), &t);
   }
 
+  // will be handled by ReplicatedBackend::do_push_reply
   MOSDPGPushReply *reply = new MOSDPGPushReply;
   reply->from = get_parent()->whoami_shard();
   reply->set_priority(m->get_priority());
@@ -1008,8 +1016,8 @@ struct C_ReplicatedBackend_OnPullComplete : GenContext<ThreadPool::TPHandle&> {
   }
 };
 
-// called by
-// ReplicatedBackend::do_push when we are primary PG
+// PushOp from replica PG to primary PG, i.e., a response of a previous
+// pull request from primary PG
 /*
   void do_push(OpRequestRef op) {
     if (is_primary()) {
@@ -1019,10 +1027,11 @@ struct C_ReplicatedBackend_OnPullComplete : GenContext<ThreadPool::TPHandle&> {
     }
   }
  */
-// this is a PushOp from replica PG to primary PG, i.e., a response of
-// a previous pull request
+// called by
+// ReplicatedBackend::do_push, if we are the primary PG
 void ReplicatedBackend::_do_pull_response(OpRequestRef op)
 {
+  // sent by ReplicatedBackend::send_pushes
   const MOSDPGPush *m = static_cast<const MOSDPGPush *>(op->get_req());
   assert(m->get_type() == MSG_OSD_PG_PUSH);
   pg_shard_t from = m->from;
@@ -1076,6 +1085,7 @@ void ReplicatedBackend::_do_pull_response(OpRequestRef op)
 
     // those objects that their pulling has not finished
 
+    // will be handled by ReplicatedBackend::do_pull
     MOSDPGPull *reply = new MOSDPGPull;
 
     reply->from = parent->whoami_shard();
@@ -1100,6 +1110,9 @@ void ReplicatedBackend::_do_pull_response(OpRequestRef op)
 // ReplicatedBackend::handle_message, for MSG_OSD_PG_PULL
 void ReplicatedBackend::do_pull(OpRequestRef op)
 {
+  // sent by
+  // ReplicatedBackend::_do_pull_response
+  // ReplicatedBackend::send_pulls
   MOSDPGPull *m = static_cast<MOSDPGPull *>(op->get_nonconst_req());
   assert(m->get_type() == MSG_OSD_PG_PULL);
   pg_shard_t from = m->from;
@@ -1109,9 +1122,12 @@ void ReplicatedBackend::do_pull(OpRequestRef op)
   m->take_pulls(&pulls);
   for (auto& i : pulls) {
     replies[from].push_back(PushOp());
+
+    // call build_push_op to build a PushOp for push
     handle_pull(from, i, &(replies[from].back()));
   }
 
+  // send MOSDPGPush
   send_pushes(m->get_priority(), replies);
 }
 
@@ -1119,6 +1135,7 @@ void ReplicatedBackend::do_pull(OpRequestRef op)
 // ReplicatedBackend::handle_message, for MSG_OSD_PG_PUSH_REPLY
 void ReplicatedBackend::do_push_reply(OpRequestRef op)
 {
+  // sent by ReplicatedBackend::_do_push
   const MOSDPGPushReply *m = static_cast<const MOSDPGPushReply *>(op->get_req());
   assert(m->get_type() == MSG_OSD_PG_PUSH_REPLY);
   pg_shard_t from = m->from;
@@ -1135,6 +1152,8 @@ void ReplicatedBackend::do_push_reply(OpRequestRef op)
 
   map<pg_shard_t, vector<PushOp> > _replies;
   _replies[from].swap(replies);
+
+  // send MOSDPGPush
   send_pushes(m->get_priority(), _replies);
 }
 
@@ -1506,6 +1525,7 @@ void ReplicatedBackend::calc_clone_subsets(
     return;
   }
 
+  // default true
   if (!cct->_conf->osd_recover_clone_overlap) {
     dout(10) << "calc_clone_subsets " << soid << " -- osd_recover_clone_overlap disabled" << dendl;
     return;
@@ -1559,6 +1579,7 @@ void ReplicatedBackend::calc_clone_subsets(
 	     << " overlap " << next << dendl;
   }
 
+  // default 10
   if (cloning.num_intervals() > cct->_conf->osd_recover_clone_overlap_limit) {
     dout(10) << "skipping clone, too many holes" << dendl;
     get_parent()->release_locks(manager);
@@ -1600,6 +1621,8 @@ void ReplicatedBackend::prepare_pull(
   random_shuffle(shuffle.begin(), shuffle.end());
   vector<pg_shard_t>::iterator p = shuffle.begin();
   assert(get_osdmap()->is_up(p->osd));
+
+  // pull from this random shard
   pg_shard_t fromshard = *p;
 
   dout(7) << "pull " << soid
@@ -1632,6 +1655,9 @@ void ReplicatedBackend::prepare_pull(
   ObcLockManager lock_manager;
 
   if (soid.is_snap()) {
+
+    // pulling a snap object
+
     assert(!get_parent()->get_local_missing().is_missing(
 	     soid.get_head()) ||
 	   !get_parent()->get_local_missing().is_missing(
@@ -1661,7 +1687,9 @@ void ReplicatedBackend::prepare_pull(
     recovery_info.size = ((uint64_t)-1);
   }
 
+  // will be handled by ReplicatedBackend::sub_op_pull
   h->pulls[fromshard].push_back(PullOp());
+
   PullOp &op = h->pulls[fromshard].back();
   op.soid = soid;
 
@@ -1678,6 +1706,7 @@ void ReplicatedBackend::prepare_pull(
 
   // register a pulling request
   PullInfo &pi = pulling[soid];
+
   pi.from = fromshard;
   pi.soid = soid;
   pi.head_ctx = headctx;
@@ -1710,6 +1739,9 @@ void ReplicatedBackend::prep_push_to_replica(
   ObcLockManager lock_manager;
   // are we doing a clone on the replica?
   if (soid.snap && soid.snap < CEPH_NOSNAP) {
+
+    // --- SNAP -----------------------------------------------------------------
+
     hobject_t head = soid;
     head.snap = CEPH_NOSNAP;
 
@@ -1747,6 +1779,9 @@ void ReplicatedBackend::prep_push_to_replica(
       data_subset, clone_subsets,
       lock_manager);
   } else if (soid.snap == CEPH_NOSNAP) {
+
+    // --- HEAD -----------------------------------------------------------------
+
     // pushing head or unversioned object.
     // base this on partially on replica's clones?
     SnapSetContext *ssc = obc->ssc;
@@ -1761,6 +1796,7 @@ void ReplicatedBackend::prep_push_to_replica(
       lock_manager);
   }
 
+  // the push op will be handled by ReplicatedBackend::sub_op_push
   prep_push(
     obc,
     soid,
@@ -1804,9 +1840,10 @@ void ReplicatedBackend::prep_push(
 {
   get_parent()->begin_peer_recover(peer, soid);
 
-  // register a pushing request
+  // register a pushing request on ReplicatedBackend::pushing
   // take note.
   PushInfo &pi = pushing[soid][peer];
+
   pi.obc = obc;
   pi.recovery_info.size = obc->obs.oi.size;
   pi.recovery_info.copy_subset = data_subset;
@@ -2121,6 +2158,9 @@ void ReplicatedBackend::send_pushes(int prio, map<pg_shard_t, vector<PushOp> > &
       uint64_t cost = 0;
       uint64_t pushes = 0;
 
+      // will be handled by
+      // ReplicatedBackend::_do_push
+      // ReplicatedBackend::_do_pull_response
       MOSDPGPush *msg = new MOSDPGPush();
       msg->from = get_parent()->whoami_shard();
       msg->pgid = get_parent()->primary_spg_t();
@@ -2163,6 +2203,7 @@ void ReplicatedBackend::send_pulls(int prio, map<pg_shard_t, vector<PullOp> > &p
     dout(20) << __func__ << ": sending pulls " << i->second
 	     << " to osd." << i->first << dendl;
 
+    // will be handled by ReplicatedBackend::do_pull
     MOSDPGPull *msg = new MOSDPGPull();
     msg->from = parent->whoami_shard();
     msg->set_priority(prio);

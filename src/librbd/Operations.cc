@@ -898,6 +898,8 @@ void Operations<I>::execute_snap_create(const cls::rbd::SnapshotNamespace &snap_
 
   m_image_ctx.snap_lock.put_read();
 
+  // after the snapshot creation, will notify first then to call the
+  // caller's callback
   operation::SnapshotCreateRequest<I> *req =
     new operation::SnapshotCreateRequest<I>(
       m_image_ctx, new C_NotifyUpdate<I>(m_image_ctx, on_finish),

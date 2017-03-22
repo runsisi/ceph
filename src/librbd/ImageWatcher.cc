@@ -1059,7 +1059,8 @@ bool ImageWatcher<I>::handle_payload(const UnknownPayload &payload,
   return true;
 }
 
-// called by ImageWatcher::handle_notify
+// called by
+// ImageWatcher::handle_notify
 template <typename I>
 void ImageWatcher<I>::process_payload(uint64_t notify_id, uint64_t handle,
                                       const Payload &payload, int r) {

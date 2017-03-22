@@ -2143,6 +2143,7 @@ int remove_clone(ObjectStore *store, coll_t coll, ghobject_t &ghobj, snapid_t cl
     cerr << "Clone " << cloneid << " not present";
     return -ENOENT;
   }
+
   if (p != snapset.clones.begin()) {
     // not the oldest... merge overlap into next older clone
     vector<snapid_t>::iterator n = p - 1;
@@ -2153,8 +2154,7 @@ int remove_clone(ObjectStore *store, coll_t coll, ghobject_t &ghobj, snapid_t cl
     //if (adjust_prev_bytes)
     //  ctx->delta_stats.num_bytes -= snapset.get_clone_bytes(*n);
 
-    snapset.clone_overlap[*n].intersection_of(
-	snapset.clone_overlap[*p]);
+    snapset.clone_overlap[*n].intersection_of(snapset.clone_overlap[*p]);
 
     //if (adjust_prev_bytes)
     //  ctx->delta_stats.num_bytes += snapset.get_clone_bytes(*n);

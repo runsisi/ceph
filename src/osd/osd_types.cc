@@ -4780,6 +4780,8 @@ ostream& operator<<(ostream& out, const SnapSet& cs)
 	     << (cs.head_exists ? "+head":"");
 }
 
+// called by
+// PrimaryLogPG::finish_promote
 void SnapSet::from_snap_set(const librados::snap_set_t& ss)
 {
   // NOTE: our reconstruction of snaps (and the snapc) is not strictly
@@ -4823,6 +4825,11 @@ void SnapSet::from_snap_set(const librados::snap_set_t& ss)
     snaps.push_back(*p);
 }
 
+// called by
+// PrimaryLogPG::trim_object
+// PrimaryLogPG::_delete_oid
+// PrimaryLogPG::finish_promote
+// PrimaryLogPG::scrub_snapshot_metadata
 uint64_t SnapSet::get_clone_bytes(snapid_t clone) const
 {
   assert(clone_size.count(clone));

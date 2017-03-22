@@ -223,7 +223,7 @@ struct OnReadComplete : public Context {
 
 // created by
 // PrimaryLogPG::on_local_recover
-// PrimaryLogPG::recover_primary
+// PrimaryLogPG::recover_primary, which called by PrimaryLogPG::start_recovery_ops
 class PrimaryLogPG::C_OSD_AppliedRecoveredObject : public Context {
   PrimaryLogPGRef pg;
   ObjectContextRef obc;
@@ -238,7 +238,7 @@ class PrimaryLogPG::C_OSD_AppliedRecoveredObject : public Context {
 
 // created by
 // PrimaryLogPG::on_local_recover
-// PrimaryLogPG::recover_primary
+// PrimaryLogPG::recover_primary, which called by PrimaryLogPG::start_recovery_ops
 class PrimaryLogPG::C_OSD_CommittedPushedObject : public Context {
   PrimaryLogPGRef pg;
   epoch_t epoch;
@@ -294,6 +294,8 @@ void PrimaryLogPG::OpContext::finish_read(PrimaryLogPG *pg)
   }
 }
 
+// created by
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_COPY_FROM
 class CopyFromCallback: public PrimaryLogPG::CopyCallback {
 public:
   PrimaryLogPG::CopyResults *results;
@@ -2029,7 +2031,7 @@ hobject_t PrimaryLogPG::earliest_backfill() const
 }
 
 // called by
-// PrimaryLogPG::do_request, for CEPH_MSG_OSD_OP
+// PrimaryLogPG::do_request, for CEPH_MSG_OSD_OP, i.e., client sent op
 /** do_op - do an op
  * pg lock will be held (if multithreaded)
  * osd_lock NOT held.
@@ -3452,7 +3454,9 @@ void PrimaryLogPG::promote_object(ObjectContextRef obc,
   info.stats.stats.sum.num_promote++;
 }
 
-// called by PrimaryLogPG::do_op
+// called by
+// PrimaryLogPG::do_op
+// CopyFromCallback::finish, which created by PrimaryLogPG::do_osd_ops for CEPH_OSD_OP_COPY_FROM
 // 1) setup a copy of ctx->obs and ctx->snapset to stash the updated obs and snapset
 // 2) setup ctx->snapc for COW
 // 3) prepare_transaction: do_osd_ops and setup ctx->op_t if it's modification op
@@ -7343,7 +7347,7 @@ int PrimaryLogPG::_rollback_to(OpContext *ctx, ceph_osd_op& op)
 void PrimaryLogPG::_make_clone(
   OpContext *ctx,
   PGTransaction* t,
-  ObjectContextRef obc,
+  ObjectContextRef obc, // i.e., clone_obc
   const hobject_t& head, const hobject_t& coid,
   object_info_t *poi)
 {
@@ -7356,7 +7360,7 @@ void PrimaryLogPG::_make_clone(
 }
 
 // called by
-// PrimaryLogPG::prepare_transaction
+// PrimaryLogPG::prepare_transaction, which called by PrimaryLogPG::execute_ctx
 void PrimaryLogPG::make_writeable(OpContext *ctx)
 {
   const hobject_t& soid = ctx->obs->oi.soid;
@@ -7495,6 +7499,7 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
     snap_oi->snaps = snaps;
 
     // t->clone(head, coid), set OI_ATTR and remove SS_ATTR for coid
+    // NOTE: SS_ATTR stores on HEAD/SNAPDIR object
     _make_clone(ctx, ctx->op_t.get(), ctx->clone_obc, soid, coid, snap_oi);
     
     ctx->delta_stats.num_objects++;
@@ -7508,7 +7513,7 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
       ctx->delta_stats.num_objects_pinned++;
     ctx->delta_stats.num_object_clones++;
 
-    // all clone objects that the oid has
+    // all clone objects that exists on the backend
     ctx->new_snapset.clones.push_back(coid.snap);
     ctx->new_snapset.clone_size[coid.snap] = ctx->obs->oi.size;
 
@@ -7532,7 +7537,7 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
     ::encode(snaps, ctx->log.back().snaps);
 
     ctx->at_version.version++;
-  }
+  } // create a clone, i.e., snap object
 
   // update most recent clone_overlap and usage stats
   if (ctx->new_snapset.clones.size() > 0) {
@@ -10629,6 +10634,8 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
   // handle differently by snapid:
   // 1) HEAD, 2) SNAPDIR, 3) snapshot object
 
+  // --- HEAD -----------------------------------------------------------------
+
   // want the head?
   if (oid.snap == CEPH_NOSNAP) {
 
@@ -10653,7 +10660,7 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
     return 0;
   }
 
-  // non-HEAD object, SNAPDIR or snapshot object
+  // --- SNAPDIR -----------------------------------------------------------------
 
   hobject_t head = oid.get_head();
 
@@ -10699,8 +10706,7 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
     return 0;
   }
 
-  // osd.snap != CEPH_NOSNAP && oid.snap != CEPH_SNAPDIR,
-  // i.e., oid.snap point to a snapshot object
+  // --- SNAP -----------------------------------------------------------------
 
   // we want a snap
   if (!map_snapid_to_clone && pool.info.is_removed_snap(oid.snap)) {
@@ -10861,6 +10867,7 @@ int PrimaryLogPG::find_object_context(const hobject_t& oid,
 
   // which clone would it be?
   unsigned k = 0;
+  // ascending
   while (k < ssc->snapset.clones.size() &&
 	 ssc->snapset.clones[k] < oid.snap)
     k++;
@@ -10947,7 +10954,7 @@ void PrimaryLogPG::object_context_destructor_callback(ObjectContext *obc)
 }
 
 // called by
-// PrimaryLogPG::recover_backfill
+// PrimaryLogPG::recover_backfill, which called by PrimaryLogPG::start_recovery_ops
 void PrimaryLogPG::add_object_context_to_pg_stat(ObjectContextRef obc, pg_stat_t *pgstat)
 {
   object_info_t& oi = obc->obs.oi;
@@ -11142,8 +11149,7 @@ enum { PULL_NONE, PULL_OTHER, PULL_YES };
 
 // called by
 // PrimaryLogPG::maybe_kick_recovery
-// PrimaryLogPG::recover_missing
-// PrimaryLogPG::recover_primary
+// PrimaryLogPG::recover_primary, which called by PrimaryLogPG::start_recovery_ops
 int PrimaryLogPG::recover_missing(
   const hobject_t &soid, eversion_t v,
   int priority,
@@ -11209,14 +11215,16 @@ int PrimaryLogPG::recover_missing(
 	0);
 
     assert(head_obc);
-  }
+  } // soid.snap && soid.snap < CEPH_NOSNAP
 
+  // only inc counters
   start_recovery_op(soid);
 
   assert(!recovering.count(soid));
 
   recovering.insert(make_pair(soid, obc));
 
+  // either prepare pull or prepare push
   pgbackend->recover_object(
     soid,
     v,
@@ -11228,7 +11236,7 @@ int PrimaryLogPG::recover_missing(
 }
 
 // called by
-// PrimaryLogPG::recover_backfill
+// PrimaryLogPG::recover_backfill, which called by PrimaryLogPG::start_recovery_ops
 void PrimaryLogPG::send_remove_op(
   const hobject_t& oid, eversion_t v, pg_shard_t peer)
 {
@@ -11362,7 +11370,7 @@ void PrimaryLogPG::_applied_recovered_object_replica()
 
 // called by
 // PrimaryLogPG::on_local_recover
-// PrimaryLogPG::recover_primary
+// PrimaryLogPG::recover_primary, which called by PrimaryLogPG::start_recovery_ops
 void PrimaryLogPG::recover_got(hobject_t oid, eversion_t v)
 {
   dout(10) << "got missing " << oid << " v " << v << dendl;
@@ -12262,6 +12270,7 @@ bool PrimaryLogPG::start_recovery_ops(
   if (num_missing == num_unfound) {
     // All of the missing objects we have are unfound.
     // Recover the replicas.
+    // iterate peer missing set to push objects to replicas
     started = recover_replicas(max, handle);
   }
 
@@ -12417,6 +12426,7 @@ uint64_t PrimaryLogPG::recover_primary(uint64_t max, ThreadPool::TPHandle &handl
   int skipped = 0;
 
   PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op();
+
   map<version_t, hobject_t>::const_iterator p =
     missing.get_rmissing().lower_bound(pg_log.get_log().last_requested);
   while (p != missing.get_rmissing().end()) {
@@ -12522,12 +12532,13 @@ uint64_t PrimaryLogPG::recover_primary(uint64_t max, ThreadPool::TPHandle &handl
 	}
 	break;
       }
-    }
+    } // latest
    
     if (!recovering.count(soid)) {
       if (recovering.count(head)) {
 	++skipped;
       } else {
+        // call pgbackend->recover_object to either prepare send or pull
 	int r = recover_missing(
 	  soid, need, get_recovery_op_priority(), h);
 	switch (r) {
@@ -12550,14 +12561,15 @@ uint64_t PrimaryLogPG::recover_primary(uint64_t max, ThreadPool::TPHandle &handl
     // only advance last_requested if we haven't skipped anything
     if (!skipped)
       pg_log.set_last_requested(v);
-  }
+  } // p != missing.get_rmissing().end()
  
+  // either push or pull
   pgbackend->run_recovery_op(h, get_recovery_op_priority());
   return started;
 }
 
 // called by
-// PrimaryLogPG::maybe_kick_recovery and
+// PrimaryLogPG::maybe_kick_recovery
 // PrimaryLogPG::recover_replicas, which called by PrimaryLogPG::start_recovery_ops
 int PrimaryLogPG::prep_object_replica_pushes(
   const hobject_t& soid, eversion_t v,
@@ -12602,7 +12614,7 @@ int PrimaryLogPG::prep_object_replica_pushes(
       osd->clog->error() << info.pgid << " missing primary copy of " << soid
 			 << ", will try copies on " << missing_loc.get_locations(soid);
     return 0;
-  }
+  } // !obc
 
   if (!obc->get_recovery_read()) {
     dout(20) << "recovery delayed on " << soid
@@ -12613,6 +12625,7 @@ int PrimaryLogPG::prep_object_replica_pushes(
 	     << dendl;
   }
 
+  // inc counters only
   start_recovery_op(soid);
 
   assert(!recovering.count(soid));
@@ -12625,6 +12638,7 @@ int PrimaryLogPG::prep_object_replica_pushes(
    */
   obc->ondisk_read_lock();
 
+  // either prepare send or prepare pull
   pgbackend->recover_object(
     soid,
     v,
@@ -12669,6 +12683,7 @@ uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
     // oldest first!
     const pg_missing_t &m(pm->second);
 
+    // iterate peer missing
     for (map<version_t, hobject_t>::const_iterator p = m.get_rmissing().begin();
 	 p != m.get_rmissing().end() && started < max;
 	   ++p) {
@@ -12686,6 +12701,13 @@ uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
 	continue;
       }
 
+      // inserted by
+      // PrimaryLogPG::prep_backfill_object_push
+      // PrimaryLogPG::prep_object_replica_pushes
+      // PrimaryLogPG::recover_missing
+      // erased by
+      // PrimaryLogPG::failed_push
+      // PrimaryLogPG::cancel_pull
       if (recovering.count(soid)) {
 	dout(10) << __func__ << ": already recovering " << soid << dendl;
 	continue;
@@ -12714,19 +12736,22 @@ uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
       }
 
       dout(10) << __func__ << ": recover_object_replicas(" << soid << ")" << dendl;
+
       map<hobject_t,pg_missing_item>::const_iterator r = m.get_items().find(soid);
+      // call pgbackend->recover_object to prepare push
       started += prep_object_replica_pushes(soid, r->second.need,
 					    h);
-    }
-  }
+    } // iterate peer missing
+  } // iterate actingbackfill
 
+  // either send or pull
   pgbackend->run_recovery_op(h, get_recovery_op_priority());
 
   return started;
 }
 
 // called by
-// PrimaryLogPG::recover_backfill
+// PrimaryLogPG::recover_backfill, which called by PrimaryLogPG::start_recovery_ops
 hobject_t PrimaryLogPG::earliest_peer_backfill() const
 {
   hobject_t e = hobject_t::get_max();
@@ -12746,7 +12771,7 @@ hobject_t PrimaryLogPG::earliest_peer_backfill() const
 }
 
 // called by
-// PrimaryLogPG::recover_backfill
+// PrimaryLogPG::recover_backfill, which called by PrimaryLogPG::start_recovery_ops
 bool PrimaryLogPG::all_peer_done() const
 {
   // Primary hasn't got any more objects
@@ -13267,7 +13292,7 @@ uint64_t PrimaryLogPG::recover_backfill(
 }
 
 // called by
-// PrimaryLogPG::recover_backfill
+// PrimaryLogPG::recover_backfill, which called by PrimaryLogPG::start_recovery_ops
 void PrimaryLogPG::prep_backfill_object_push(
   hobject_t oid, eversion_t v,
   ObjectContextRef obc,
@@ -13286,22 +13311,27 @@ void PrimaryLogPG::prep_backfill_object_push(
 
   assert(!recovering.count(oid));
 
+  // inc counters only
   start_recovery_op(oid);
+
   recovering.insert(make_pair(oid, obc));
 
   // We need to take the read_lock here in order to flush in-progress writes
   obc->ondisk_read_lock();
+
+  // prepare either push or pull
   pgbackend->recover_object(
     oid,
     v,
     ObjectContextRef(),
     obc,
     h);
+
   obc->ondisk_read_unlock();
 }
 
 // called by
-// PrimaryLogPG::recover_backfill
+// PrimaryLogPG::recover_backfill, which called by PrimaryLogPG::start_recovery_ops
 void PrimaryLogPG::update_range(
   BackfillInterval *bi,
   ThreadPool::TPHandle &handle)
