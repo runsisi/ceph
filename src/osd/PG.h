@@ -1632,7 +1632,7 @@ public:
     struct Initial;
 
     // created by
-    // RecoveryState::RecoveryState, which called by PG::PG
+    // RecoveryState::RecoveryState, which created by PG::PG
     class RecoveryMachine : public boost::statechart::state_machine< RecoveryMachine, Initial > {
       RecoveryState *state;
     public:
@@ -1698,7 +1698,7 @@ public:
 	assert(state->rctx->notify_list);
 	(*state->rctx->notify_list)[to.osd].push_back(make_pair(info, pi));
       }
-    };
+    }; // class RecoveryMachine
 
     friend class RecoveryMachine;
 
@@ -1805,11 +1805,15 @@ public:
     struct NeedActingChange : boost::statechart::event< NeedActingChange > {
       NeedActingChange() : boost::statechart::event< NeedActingChange >() {}
     };
+
     struct Incomplete;
+    // GetLog -> Incomplete
     struct IsIncomplete : boost::statechart::event< IsIncomplete > {
       IsIncomplete() : boost::statechart::event< IsIncomplete >() {}
     };
+
     struct Down;
+    // GetInfo -> Down
     struct IsDown : boost::statechart::event< IsDown > {
       IsDown() : boost::statechart::event< IsDown >() {}
     };

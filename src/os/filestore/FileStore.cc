@@ -661,6 +661,12 @@ FileStore::~FileStore()
   }
 }
 
+// called by
+// FileStore::_fsetattrs
+// FileStore::getattr
+// FileStore::_setattrs
+// FileStore::_rmattr
+// FileStore::_rmattrs
 static void get_attrname(const char *name, char *buf, int len)
 {
   snprintf(buf, len, "user.ceph.%s", name);
@@ -1833,6 +1839,8 @@ done:
   return ret;
 }
 
+// called by
+// FileStore::mount
 void FileStore::init_temp_collections()
 {
   dout(10) << __func__ << dendl;
@@ -4344,6 +4352,9 @@ int FileStore::snapshot(const string& name)
 // -------------------------------
 // attributes
 
+// called by
+// FileStore::_fgetattrs
+// FileStore::getattr
 int FileStore::_fgetattr(int fd, const char *name, bufferptr& bp)
 {
   char val[CHAIN_XATTR_MAX_BLOCK_LEN];
@@ -4362,6 +4373,11 @@ int FileStore::_fgetattr(int fd, const char *name, bufferptr& bp)
   return l;
 }
 
+// called by
+// FileStore::_clone
+// FileStore::getattrs
+// FileStore::_setattrs
+// FileStore::_rmattrs
 int FileStore::_fgetattrs(int fd, map<string,bufferptr>& aset)
 {
   // get attr list
@@ -4413,6 +4429,9 @@ int FileStore::_fgetattrs(int fd, map<string,bufferptr>& aset)
   return 0;
 }
 
+// called by
+// FileStore::_clone
+// FileStore::_setattrs, if store attrs in fs xattrs
 int FileStore::_fsetattrs(int fd, map<string, bufferptr> &aset)
 {
   for (map<string, bufferptr>::iterator p = aset.begin();
@@ -4597,6 +4616,8 @@ int FileStore::getattrs(const coll_t& _cid, const ghobject_t& oid, map<string,bu
   }
 }
 
+// called by
+// FileStore::_do_transaction, for OP_SETATTR, OP_SETATTRS
 int FileStore::_setattrs(const coll_t& cid, const ghobject_t& oid, map<string,bufferptr>& aset,
 			 const SequencerPosition &spos)
 {
@@ -4659,7 +4680,7 @@ int FileStore::_setattrs(const coll_t& cid, const ghobject_t& oid, map<string,bu
     inline_set.insert(*p);
 
     inline_to_set.insert(*p);
-  }
+  } // iterate attr set
 
   if (spill_out != 1 && !omap_set.empty()) {
     chain_fsetxattr(**fd, XATTR_SPILL_OUT_NAME, XATTR_SPILL_OUT,
@@ -4682,6 +4703,13 @@ int FileStore::_setattrs(const coll_t& cid, const ghobject_t& oid, map<string,bu
   }
 
   if (!omap_set.empty()) {
+    // call DBObjectMap::set_xattrs, will not update object_info_t::flags to
+    // set FLAG_OMAP on, so PrimaryLogPG::do_osd_ops for CEPH_OSD_OP_OMAPGETKEYS,
+    // CEPH_OSD_OP_OMAPGETVALS, CEPH_OSD_OP_OMAPGETHEADER, CEPH_OSD_OP_OMAPGETVALSBYKEYS,
+    // CEPH_OSD_OP_OMAP_CMP, etc. may not list them and the most important is
+    // DBObjectMapIteratorImpl only iterates user_prefix keys, see
+    // DBObjectMap::DBObjectMapIteratorImpl::init, so we can not list the
+    // xattrs even if they are in the omapdb
     r = object_map->set_xattrs(oid, omap_set, &spos);
     if (r < 0) {
       dout(10) << __func__ << " could not set_xattrs r = " << r << dendl;
@@ -4696,7 +4724,8 @@ int FileStore::_setattrs(const coll_t& cid, const ghobject_t& oid, map<string,bu
   return r;
 }
 
-
+// called by
+// FileStore::_do_transaction, for OP_RMATTR
 int FileStore::_rmattr(const coll_t& cid, const ghobject_t& oid, const char *name,
 		       const SequencerPosition &spos)
 {
@@ -4741,6 +4770,8 @@ int FileStore::_rmattr(const coll_t& cid, const ghobject_t& oid, const char *nam
   return r;
 }
 
+// called by
+// FileStore::_do_transaction, for OP_RMATTRS
 int FileStore::_rmattrs(const coll_t& cid, const ghobject_t& oid,
 			const SequencerPosition &spos)
 {
@@ -4813,7 +4844,8 @@ int FileStore::_rmattrs(const coll_t& cid, const ghobject_t& oid,
 
 
 
-
+// called by
+// FileStore::init_temp_collections
 int FileStore::_collection_remove_recursive(const coll_t &cid,
 					    const SequencerPosition &spos)
 {
@@ -5315,7 +5347,10 @@ ObjectMap::ObjectMapIterator FileStore::get_omap_iterator(const coll_t& _c,
 							  const ghobject_t &hoid)
 {
   tracepoint(objectstore, get_omap_iterator, _c.c_str());
+
+  // cid.is_pg() && oid.hobj.pool <= -1
   const coll_t& c = !_need_temp_object_collection(_c, hoid) ? _c : _c.get_temp();
+
   dout(15) << __func__ << " " << c << "/" << hoid << dendl;
   Index index;
   int r = get_index(c, &index);
@@ -5324,6 +5359,7 @@ ObjectMap::ObjectMapIterator FileStore::get_omap_iterator(const coll_t& _c,
 	     << "(get_index failed with " << cpp_strerror(r) << ")" << dendl;
     return ObjectMap::ObjectMapIterator();
   }
+
   {
     assert(NULL != index.index);
     RWLock::RLocker l((index.index)->access_lock);
@@ -5334,6 +5370,7 @@ ObjectMap::ObjectMapIterator FileStore::get_omap_iterator(const coll_t& _c,
       return ObjectMap::ObjectMapIterator();
     }
   }
+
   return object_map->get_iterator(hoid);
 }
 
@@ -5632,6 +5669,8 @@ int FileStore::_omap_clear(const coll_t& cid, const ghobject_t &hoid,
   return 0;
 }
 
+// called by
+// FileStore::_do_transaction, for OP_OMAP_SETKEYS
 int FileStore::_omap_setkeys(const coll_t& cid, const ghobject_t &hoid,
 			     const map<string, bufferlist> &aset,
 			     const SequencerPosition &spos) {

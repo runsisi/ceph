@@ -1649,6 +1649,7 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
   }
 
   // reply
+  // will be handled by Objecter::handle_osd_op_reply
   MOSDOpReply *reply = new MOSDOpReply(m, 0, get_osdmap()->get_epoch(),
 				       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK,
 				       false);
@@ -2557,7 +2558,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
    * populated.
    */
   if (ctx->snapset_obc && !ctx->snapset_obc->obs.exists)
-    // a previous SNAPDIR op may have cached the obc of the SNAPDIR
+    // snapdir object was deleted, see PrimaryLogPG::finish_ctx
     ctx->snapset_obc = ObjectContextRef();
 
   if (m->has_flag(CEPH_OSD_FLAG_SKIPRWLOCKS)) {
@@ -2698,6 +2699,7 @@ void PrimaryLogPG::record_write_error(OpRequestRef op, const hobject_t &soid,
       const MOSDOp *m = static_cast<const MOSDOp*>(op->get_req());
       int flags = m->get_flags() & (CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
 
+      // will be handled by Objecter::handle_osd_op_reply
       MOSDOpReply *reply = orig_reply.detach();
       if (reply == nullptr) {
 	reply = new MOSDOpReply(m, r, pg->get_osdmap()->get_epoch(),
@@ -3001,6 +3003,7 @@ void PrimaryLogPG::do_cache_redirect(OpRequestRef op)
 {
   const MOSDOp *m = static_cast<const MOSDOp*>(op->get_req());
   int flags = m->get_flags() & (CEPH_OSD_FLAG_ACK|CEPH_OSD_FLAG_ONDISK);
+  // will be handled by Objecter::handle_osd_op_reply
   MOSDOpReply *reply = new MOSDOpReply(m, -ENOENT,
 				       get_osdmap()->get_epoch(), flags, false);
   request_redirect_t redir(m->get_object_locator(), pool.info.tier_of);
@@ -3143,6 +3146,7 @@ void PrimaryLogPG::finish_proxy_read(hobject_t oid, ceph_tid_t tid, int r)
 
   osd->logger->inc(l_osd_tier_proxy_read);
 
+  // will be handled by Objecter::handle_osd_op_reply
   const MOSDOp *m = static_cast<const MOSDOp*>(op->get_req());
   OpContext *ctx = new OpContext(op, m->get_reqid(), prdop->ops, this);
   ctx->reply = new MOSDOpReply(m, 0, get_osdmap()->get_epoch(), 0, false);
@@ -3329,6 +3333,7 @@ void PrimaryLogPG::finish_proxy_write(hobject_t oid, ceph_tid_t tid, int r)
   const MOSDOp *m = static_cast<const MOSDOp*>(pwop->op->get_req());
   assert(m != NULL);
 
+  // will be handled by Objecter::handle_osd_op_reply
   if (!pwop->sent_reply) {
     // send commit.
     MOSDOpReply *reply = pwop->ctx->reply;
@@ -3585,6 +3590,7 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
   bool successful_write = !ctx->op_t->empty() && op->may_write() && result >= 0;
 
   // prepare the reply
+  // will be handled by Objecter::handle_osd_op_reply
   ctx->reply = new MOSDOpReply(m, 0, get_osdmap()->get_epoch(), 0,
 			       successful_write);
 
@@ -3704,6 +3710,7 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
 	log_op_stats(
 	  ctx);
 
+      // will be handled by Objecter::handle_osd_op_reply
       if (m && !ctx->sent_reply) {
 	MOSDOpReply *reply = ctx->reply;
 	if (reply)
@@ -5937,7 +5944,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
           ci.size = si->second;
 
           resp.clones.push_back(ci);
-        } // for-each ssc->snapset.clones
+        } // for-each ssc->snapset.clones, i.e., snap objects
 
 	if (result < 0) {
 	  break;
@@ -6129,6 +6136,8 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 
 	// ctx->new_obs.exists = true;
 	maybe_create_new_object(ctx);
+
+	// --- generate transaction ---------------------------------------------
 
 	if (op.extent.length == 0) {
 	  // truncate
@@ -7384,7 +7393,11 @@ void PrimaryLogPG::_make_clone(
   ::encode(*poi, bv, get_osdmap()->get_features(CEPH_ENTITY_TYPE_OSD, nullptr));
 
   t->clone(coid, head);
+
+  // call t->setattr(obc->obs.oi.soid, key, val);
   setattr_maybe_cache(obc, ctx, t, OI_ATTR, bv);
+
+  // call t->rmattr(obc->obs.oi.soid, key);
   rmattr_maybe_cache(obc, ctx, t, SS_ATTR);
 }
 
@@ -7790,7 +7803,7 @@ hobject_t PrimaryLogPG::get_temp_recovery_object(
 // PrimaryLogPG::execute_ctx
 // 1) do_osd_ops, proceed following steps for write op
 // 2) check for full state
-// 3) handle COW
+// 3) handle COW for write after snap creation
 // 4) handle SNAPDIR, update OI_ATTR and SS_ATTR, append pg log entries
 int PrimaryLogPG::prepare_transaction(OpContext *ctx)
 {
@@ -7867,7 +7880,16 @@ int PrimaryLogPG::prepare_transaction(OpContext *ctx)
     // COW if the HEAD does not exist or op with a bigger snap_seq
     make_writeable(ctx);
 
+  // NOTE: ctx->new_obs.exists
+  // set to _false_ by PrimaryLogPG::_delete_oid, which called by PrimaryLogPG::do_osd_ops for
+  // CEPH_OSD_OP_SETALLOCHINT, CEPH_OSD_OP_WRITE, CEPH_OSD_OP_WRITEFULL,
+  // CEPH_OSD_OP_CREATE, CEPH_OSD_OP_TRUNCATE, CEPH_OSD_OP_CLONERANGE,
+  // CEPH_OSD_OP_SETXATTR, CEPH_OSD_OP_OMAPSETVALS, CEPH_OSD_OP_OMAPSETHEADER, PrimaryLogPG::_rollback_to
+  // set to _true_ by PrimaryLogPG::maybe_create_new_object, which called by PrimaryLogPG::do_osd_ops for
+  // CEPH_OSD_OP_CACHE_EVICT, CEPH_OSD_OP_DELETE, PrimaryLogPG::_rollback_to, PrimaryLogPG::agent_maybe_evict
+
   // handle SNAPDIR, store OI_ATTR and SS_ATTR, populate pg log entry
+  // assign ctx->obs by ctx->new_obs
   finish_ctx(ctx,
 	     ctx->new_obs.exists ? pg_log_entry_t::MODIFY :
 	     pg_log_entry_t::DELETE);
@@ -7898,6 +7920,7 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     // if we are to create/delete the HEAD, try to store ssc in
     // proper place, either SNAPDIR or HEAD
 
+    // ctx->new_snapset was updated by PrimaryLogPG::make_writable
     ::encode(ctx->new_snapset, bss);
 
     assert(ctx->new_obs.exists == ctx->new_snapset.head_exists);
@@ -7905,7 +7928,7 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     if (ctx->new_obs.exists) {
       if (!ctx->obs->exists) {
 
-        // HEAD should be created, check if the SNAPDIR exists
+        // --- HEAD object created, try to delete snapdir object --------
 
         // TODO: the second condition can be eliminated ???
 	if (ctx->snapset_obc && ctx->snapset_obc->obs.exists) {
@@ -7930,6 +7953,8 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     } else if (ctx->new_snapset.clones.size() &&
 	       !ctx->cache_evict &&
 	       (!ctx->snapset_obc || !ctx->snapset_obc->obs.exists)) {
+
+      // --- HEAD object deleted, try to create snapdir object -----------
 
       // HEAD should be deleted, while SNAPDIR does not exist,
       // create SNAPDIR and store the snapset in SNAPDIR
@@ -7968,6 +7993,7 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
       assert(got);
 
       dout(20) << " got greedy write on snapset_obc " << *ctx->snapset_obc << dendl;
+
       ctx->snapset_obc->obs.exists = true;
       ctx->snapset_obc->obs.oi.version = ctx->at_version;
       ctx->snapset_obc->obs.oi.last_reqid = ctx->reqid;
@@ -7978,21 +8004,24 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
       bufferlist bv(sizeof(ctx->new_obs.oi));
       ::encode(ctx->snapset_obc->obs.oi, bv,
 	       get_osdmap()->get_features(CEPH_ENTITY_TYPE_OSD, nullptr));
+
       ctx->op_t->create(snapoid);
       attrs[OI_ATTR].claim(bv);
       attrs[SS_ATTR].claim(bss);
 
       // set attrs
       setattrs_maybe_cache(ctx->snapset_obc, ctx, ctx->op_t.get(), attrs);
+
       ctx->at_version.version++;
     }
-  }
+  } // target object is HEAD
 
   // finish and log the op.
 
   if (ctx->user_modify) {
 
-    // CEPH_OSD_OP_MODE_WR and CLS_METHOD_WR are user visible ops
+    // ops with CEPH_OSD_OP_MODE_WR and CLS_METHOD_WR excluding
+    // the cache related ops and CEPH_OSD_OP_WATCH op are user-visible modifications
 
     // update the user_version for any modify ops, except for the watch op
     ctx->user_at_version = MAX(info.last_user_version, ctx->new_obs.oi.user_version) + 1;
@@ -8011,7 +8040,7 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
  
   if (ctx->new_obs.exists) {
 
-    // target object exists, update target object info, i.e., version, mtime, etc.
+    // target object exists or newly created, update target object info, i.e., version, mtime, etc.
 
     // on the head object
     ctx->new_obs.oi.version = ctx->at_version;
@@ -8044,12 +8073,16 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     } else {
       dout(10) << " no snapset (this is a clone)" << dendl;
     }
+
     ctx->op_t->setattrs(soid, attrs);
   } else {
+    // !ctx->new_obs.exists, i.e., the target object is to be deleted
+
     ctx->new_obs.oi = object_info_t(ctx->obc->obs.oi.soid);
   }
 
-  // append to log
+  // append pg log entry for the target object, previously we have
+  // appended a pg log entry for the snapdir object if needed
   ctx->log.push_back(pg_log_entry_t(log_op_type, soid, ctx->at_version,
 				    ctx->obs->oi.version,
 				    ctx->user_at_version, ctx->reqid,
@@ -8083,10 +8116,10 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
   ctx->obc->obs = ctx->new_obs;
 
   if (soid.is_head() && !ctx->obc->obs.exists &&
-      (!maintain_ssc || ctx->cache_evict)) {
+      (!maintain_ssc || ctx->cache_evict)) { // cache related
     ctx->obc->ssc->exists = false;
     ctx->obc->ssc->snapset = SnapSet();
-  } else {
+  } else { // non-cache op
     ctx->obc->ssc->exists = true;
     ctx->obc->ssc->snapset = ctx->new_snapset;
   }
@@ -8398,6 +8431,7 @@ void PrimaryLogPG::fill_in_copy_get_noent(OpRequestRef& op, hobject_t oid,
   dout(20) << __func__ << " got reqids " << reply_obj.reqids << dendl;
   ::encode(reply_obj, osd_op.outdata, features);
   osd_op.rval = -ENOENT;
+  // will be handled by Objecter::handle_osd_op_reply
   MOSDOpReply *reply = new MOSDOpReply(m, 0, get_osdmap()->get_epoch(), 0, false);
   reply->claim_op_out_data(m->ops);
   reply->set_result(-ENOENT);
@@ -9887,15 +9921,22 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
   ctx->obc->ondisk_write_lock();
 
   bool unlock_snapset_obc = false;
+
+  // PGTransaction::obc_map is only used by ec backend
   ctx->op_t->add_obc(ctx->obc);
+
   if (ctx->clone_obc) {
     ctx->clone_obc->ondisk_write_lock();
+    // PGTransaction::obc_map is only used by ec backend
     ctx->op_t->add_obc(ctx->clone_obc);
   }
+
   if (ctx->snapset_obc && ctx->snapset_obc->obs.oi.soid !=
       ctx->obc->obs.oi.soid) {
     ctx->snapset_obc->ondisk_write_lock();
     unlock_snapset_obc = true;
+
+    // PGTransaction::obc_map is only used by ec backend
     ctx->op_t->add_obc(ctx->snapset_obc);
   }
 
@@ -11097,6 +11138,7 @@ SnapSetContext *PrimaryLogPG::get_snapset_context(
       // if HEAD and does not exist, then no need to try to load the SS_ATTR
       // from HEAD
       if (!(oid.is_head() && !oid_existed))
+        // call PGBackend::objects_get_attr, which call FileStore::getattr
 	r = pgbackend->objects_get_attr(oid.get_head(), SS_ATTR, &bv);
 
       if (r < 0) {
@@ -11105,6 +11147,7 @@ SnapSetContext *PrimaryLogPG::get_snapset_context(
         // if SNAPDIR and does not exist, then no need to try to load the
         // SS_ATTR from SNAPDIR
         if (!(oid.is_snapdir() && !oid_existed))
+          // call PGBackend::objects_get_attr, which call FileStore::getattr
           r = pgbackend->objects_get_attr(oid.get_snapdir(), SS_ATTR, &bv);
 
         if (r < 0 && !can_create)
@@ -15427,7 +15470,7 @@ int PrimaryLogPG::getattr_maybe_cache(
 int PrimaryLogPG::getattrs_maybe_cache(
   ObjectContextRef obc,
   map<string, bufferlist> *out,
-  bool user_only)
+  bool user_only) // always be true
 {
   int r = 0;
   if (pool.info.require_rollback()) {

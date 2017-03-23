@@ -1718,6 +1718,7 @@ void OSDService::reply_op_error(OpRequestRef op, int err, eversion_t v,
   int flags;
   flags = m->get_flags() & (CEPH_OSD_FLAG_ACK|CEPH_OSD_FLAG_ONDISK);
 
+  // will be handled by Objecter::handle_osd_op_reply
   MOSDOpReply *reply = new MOSDOpReply(m, err, osdmap->get_epoch(), flags,
 				       true);
   reply->set_reply_versions(v, uv);
