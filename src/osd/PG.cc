@@ -1714,8 +1714,13 @@ struct C_PG_ActivateCommitted : public Context {
 };
 
 // called by
-// PG::RecoveryState::Active::Active
-// PG::RecoveryState::ReplicaActive::react(const Activate)
+// PG::RecoveryState::Active::Active, driven from Peering by Activate evt, can be post by
+//      PG::RecoveryState::GetMissing::GetMissing
+//      PG::RecoveryState::GetMissing::react(const MLogRec)
+//      PG::RecoveryState::WaitUpThru::react(const ActMap)
+// PG::RecoveryState::ReplicaActive::react(const Activate), can be post by
+//      PG::RecoveryState::Stray::react(const MLogRec)
+//      PG::RecoveryState::Stray::react(const MInfoRec)
 void PG::activate(ObjectStore::Transaction& t,
 		  epoch_t activation_epoch,
 		  list<Context*>& tfin,
@@ -1777,7 +1782,7 @@ void PG::activate(ObjectStore::Transaction& t,
     new C_PG_ActivateCommitted(
       this,
       get_osdmap()->get_epoch(),
-      activation_epoch));
+      activation_epoch)); // pg->_activate_committed, for replica will send MOSDPGInfo to primary
   
   // initialize snap_trimq
   if (is_primary()) {
@@ -1838,6 +1843,7 @@ void PG::activate(ObjectStore::Transaction& t,
 
       dout(10) << "activate peer osd." << peer << " " << pi << dendl;
 
+      // will be handled by Stray::react(const MLogRec)
       MOSDPGLog *m = 0;
 
       pg_missing_t& pm = peer_missing[peer];
@@ -1875,6 +1881,7 @@ void PG::activate(ObjectStore::Transaction& t,
 	} else {
 	  dout(10) << "activate peer osd." << peer << " is up to date, but sending pg_log anyway" << dendl;
 
+	  // will be handled by Stray::react(const MLogRec)
 	  m = new MOSDPGLog(
 	    i->shard, pg_whoami.shard,
 	    get_osdmap()->get_epoch(), info);
@@ -1909,6 +1916,7 @@ void PG::activate(ObjectStore::Transaction& t,
 	// initialize peer with our purged_snaps.
 	pi.purged_snaps = info.purged_snaps;
 
+	// will be handled by Stray::react(const MLogRec)
 	m = new MOSDPGLog(
 	  i->shard, pg_whoami.shard,
 	  get_osdmap()->get_epoch(), pi);
@@ -1923,6 +1931,7 @@ void PG::activate(ObjectStore::Transaction& t,
 	// catch up
 	assert(pg_log.get_tail() <= pi.last_update);
 
+	// will be handled by Stray::react(const MLogRec)
 	m = new MOSDPGLog(
 	  i->shard, pg_whoami.shard,
 	  get_osdmap()->get_epoch(), info);
@@ -1964,7 +1973,7 @@ void PG::activate(ObjectStore::Transaction& t,
       } else {
         dout(10) << "activate peer osd." << peer << " " << pi << " missing " << pm << dendl;
       }
-    }
+    } // iterate actingbackfill
 
     // Set up missing_loc
     set<pg_shard_t> complete_shards;
@@ -2100,7 +2109,7 @@ bool PG::op_has_sufficient_caps(OpRequestRef& op)
 }
 
 // called by
-// C_PG_ActivateCommitted::finish
+// C_PG_ActivateCommitted::finish, which created by PG::activate
 void PG::_activate_committed(epoch_t epoch, epoch_t activation_epoch)
 {
   lock();
@@ -2120,6 +2129,7 @@ void PG::_activate_committed(epoch_t epoch, epoch_t activation_epoch)
     assert(!actingbackfill.empty());
 
     if (peer_activated.size() == actingbackfill.size())
+      // queue AllReplicasActivated evt, primary PG state will be set to PG_STATE_ACTIVE/PG_STATE_PEERED
       all_activated_and_committed();
   } else {
 
@@ -2127,6 +2137,8 @@ void PG::_activate_committed(epoch_t epoch, epoch_t activation_epoch)
 
     dout(10) << "_activate_committed " << epoch << " telling primary" << dendl;
 
+    // will be handled by Active::react(const MInfoRec), if all
+    // replicas and the primary all committed, then all_activated_and_committed will be called
     MOSDPGInfo *m = new MOSDPGInfo(epoch);
 
     pg_notify_t i = pg_notify_t(
@@ -2160,7 +2172,7 @@ void PG::_activate_committed(epoch_t epoch, epoch_t activation_epoch)
 
 // called by
 // PG::_activate_committed
-// PG::RecoveryState::Active::react(const MInfoRec)
+// PG::RecoveryState::Active::react(const MInfoRec), sent from replica by PG::_activate_committed
 /*
  * update info.history.last_epoch_started ONLY after we and all
  * replicas have activated AND committed the activate transaction
@@ -2175,8 +2187,9 @@ void PG::all_activated_and_committed()
   assert(!actingbackfill.empty());
   assert(blocked_by.empty());
 
-  // will be handled by PG::RecoveryState::Active::react(const AllReplicasActivated) -> ACTIVE/PEERED
-  // or PG::RecoveryState::Recovered::react(const AllReplicasActivated) -> CLEAN
+  // will be handled by
+  // Active::react(AllReplicasActivated) -> PG_STATE_ACTIVE/PG_STATE_PEERED
+  // Recovered::react(AllReplicasActivated) -> PG_STATE_CLEAN
   queue_peering_event(
     CephPeeringEvtRef(
       std::make_shared<CephPeeringEvt>(
@@ -7987,6 +8000,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const MInfoRec& infoe
   assert(pg->is_primary());
 
   assert(!pg->actingbackfill.empty());
+
   // don't update history (yet) if we are active and primary; the replica
   // may be telling us they have activated (and committed) but we can't
   // share that until _everyone_ does the same.
@@ -7996,6 +8010,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const MInfoRec& infoe
     pg->peer_activated.insert(infoevt.from);
     pg->blocked_by.erase(infoevt.from.shard);
     pg->publish_stats_to_osd();
+
     if (pg->peer_activated.size() == pg->actingbackfill.size()) {
       pg->all_activated_and_committed();
     }
@@ -8100,12 +8115,14 @@ boost::statechart::result PG::RecoveryState::Active::react(const AllReplicasActi
     pg->state_set(PG_STATE_PEERED);
   }
 
-  // info.last_epoch_started is set during activate()
+  // pg->info.last_epoch_started was set during activate()
   pg->info.history.last_epoch_started = pg->info.last_epoch_started;
   pg->info.history.last_interval_started = pg->info.last_interval_started;
   pg->dirty_info = true;
 
+  // sent MOSDPGInfo to actingbackfill
   pg->share_pg_info();
+
   pg->publish_stats_to_osd();
 
   // debug only, default do nothing
@@ -8157,7 +8174,9 @@ PG::RecoveryState::ReplicaActive::ReplicaActive(my_context ctx)
     context< RecoveryMachine >().get_on_safe_context_list());
 }
 
-
+// Activate evt was post by
+// PG::RecoveryState::Stray::react(const MLogRec)
+// PG::RecoveryState::Stray::react(const MInfoRec)
 boost::statechart::result PG::RecoveryState::ReplicaActive::react(
   const Activate& actevt) {
   PG *pg = context< RecoveryMachine >().pg;
@@ -8983,7 +9002,10 @@ boost::statechart::result PG::RecoveryState::GetMissing::react(const MLogRec& lo
   pg->proc_replica_log(logevt.msg->info, logevt.msg->log, logevt.msg->missing, logevt.from);
   
   if (peer_missing_requested.empty()) {
-    if (pg->need_up_thru) {
+    if (pg->need_up_thru) { // was set by PG::build_prior
+      // will cleared by
+      // PG::activate
+      // PG::adjust_need_up_thru, which called by Peering::react(const AdvMap)
       ldout(pg->cct, 10) << " still need up_thru update before going active"
 			 << dendl;
       post_event(NeedUpThru());

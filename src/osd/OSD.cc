@@ -7180,6 +7180,8 @@ void OSD::dispatch_session_waiting(Session *session, OSDMapRef osdmap)
     } else {
       pgid = m->get_spg();
     }
+
+    // enqueue OSD::op_shardedwq
     enqueue_op(pgid, op, m->get_map_epoch());
   }
 
@@ -7223,6 +7225,7 @@ void OSD::ms_fast_dispatch(Message *m)
   if (m->get_connection()->has_features(CEPH_FEATUREMASK_RESEND_ON_SPLIT) ||
       m->get_type() != CEPH_MSG_OSD_OP) {
     // queue it directly
+    // enqueue OSD::op_shardedwq
     enqueue_op(
       static_cast<MOSDFastDispatchOp*>(m)->get_spg(),
       op,
@@ -7386,6 +7389,8 @@ void OSD::do_waiters()
   dout(10) << "do_waiters -- finish" << dendl;
 }
 
+// slow path of message dispatch, those ops are queued on OSDService::peering_wq, i.e.,
+// OSD::peering_wq, instead of OSD::op_shardedwq
 void OSD::dispatch_op(OpRequestRef op)
 {
   switch (op->get_req()->get_type()) {

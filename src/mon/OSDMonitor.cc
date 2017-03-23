@@ -2613,7 +2613,7 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
     pending_inc.new_xinfo[from] = xi;
 
     // wait
-    wait_for_finished_proposal(op, new C_Booted(this, op));
+    wait_for_finished_proposal(op, new C_Booted(this, op)); // OSDMonitor::_booted
   }
 
   return true;

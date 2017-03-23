@@ -557,16 +557,21 @@ public:
 
   const epoch_t& get_up_from(int osd) const {
     assert(exists(osd));
+    // up_from was set by OSDMap::apply_incremental
     return osd_info[osd].up_from;
   }
+
   const epoch_t& get_up_thru(int osd) const {
     assert(exists(osd));
     return osd_info[osd].up_thru;
   }
+
   const epoch_t& get_down_at(int osd) const {
     assert(exists(osd));
+    // down_at was set by OSDMap::apply_incremental
     return osd_info[osd].down_at;
   }
+
   const osd_info_t& get_info(int osd) const {
     assert(osd < max_osd);
     return osd_info[osd];
