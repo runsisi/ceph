@@ -107,6 +107,10 @@ public:
  * snap will sort together, and so that all objects in a pg for a
  * particular snap will group under up to 8 prefixes.
  */
+// created by
+// ceph_objectstore_tool.cc/do_remove_object
+// ceph_objectstore_tool.cc/ObjectStoreTool::get_object
+// as a member of PG
 class SnapMapper {
 public:
   CephContext* cct;

@@ -111,7 +111,7 @@ void *Finisher::finisher_thread_entry()
       finisher_lock.Lock();
 
       finisher_running = false;
-    }
+    } // !finisher_queue.empty()
 
     ldout(cct, 10) << "finisher_thread empty" << dendl;
     if (unlikely(finisher_empty_wait))

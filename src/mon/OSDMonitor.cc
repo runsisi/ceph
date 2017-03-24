@@ -2841,6 +2841,7 @@ bool OSDMonitor::prepare_pg_created(MonOpRequestRef op)
 
 bool OSDMonitor::preprocess_pgtemp(MonOpRequestRef op)
 {
+  // sent by OSDService::send_pg_temp
   MOSDPGTemp *m = static_cast<MOSDPGTemp*>(op->get_req());
   dout(10) << "preprocess_pgtemp " << *m << dendl;
   mempool::osdmap::vector<int> empty;
@@ -2943,6 +2944,7 @@ bool OSDMonitor::prepare_pgtemp(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
 
+  // sent by OSDService::send_pg_temp
   MOSDPGTemp *m = static_cast<MOSDPGTemp*>(op->get_req());
 
   int from = m->get_orig_source().num();

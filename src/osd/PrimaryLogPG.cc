@@ -1864,11 +1864,13 @@ void PrimaryLogPG::do_request(
 	  backoff = true;
 	}
       }
+
       if (backoff) {
 	add_pg_backoff(session);
 	return;
       }
     }
+
     // pg backoff acks at pg-level
     if (op->get_req()->get_type() == CEPH_MSG_OSD_BACKOFF) {
       const MOSDBackoff *ba = static_cast<const MOSDBackoff*>(m);
@@ -1891,9 +1893,10 @@ void PrimaryLogPG::do_request(
     return;
   }
 
+  // PG_STATE_ACTIVE) || PG_STATE_PEERED
   if (!is_peered()) {
     // Delay unless PGBackend says it's ok
-    if (pgbackend->can_handle_while_inactive(op)) {
+    if (pgbackend->can_handle_while_inactive(op)) { // MSG_OSD_PG_PULL only
       bool handled = pgbackend->handle_message(op);
       assert(handled);
 
@@ -1925,18 +1928,23 @@ void PrimaryLogPG::do_request(
   case CEPH_MSG_OSD_OP:
   case CEPH_MSG_OSD_BACKOFF:
     if (!is_active()) {
-
       // PG_STATE_ACTIVE is not set
 
       dout(20) << " peered, not active, waiting for active on " << op << dendl;
 
-      // will be requeued onto osd->op_wq by PG::replay_queued_ops, PG::chunky_scrub,
-      // PG::scrub_clear_state, PrimaryLogPG::agent_choose_mode
+      // will be requeued onto osd->op_wq by PrimaryLogPG::on_change which
+      // called by PG::start_peering_interval, or PrimaryLogPG::agent_choose_mode
+      // if PG_STATE_PEERED && PG_STATE_ACTIVE, it means acting.size() < pool.info.min_size,
+      // so the ops on waiting_for_active can only requeued until the acting
+      // size changed, i.e., by PG::start_peering_interval
       waiting_for_active.push_back(op);
 
       op->mark_delayed("waiting for active");
       return;
     }
+
+    // PG_STATE_ACTIVE
+
     switch (op->get_req()->get_type()) {
     case CEPH_MSG_OSD_OP:
       // verify client features
@@ -1952,6 +1960,7 @@ void PrimaryLogPG::do_request(
       handle_backoff(op);
       break;
     }
+
     break;
 
   case MSG_OSD_SUBOP:
@@ -3932,12 +3941,14 @@ void PrimaryLogPG::do_scan(
 	cct->_conf->osd_backfill_scan_max,
 	&bi,
 	handle);
+
       MOSDPGScan *reply = new MOSDPGScan(
 	MOSDPGScan::OP_SCAN_DIGEST,
 	pg_whoami,
 	get_osdmap()->get_epoch(), m->query_epoch,
 	spg_t(info.pgid.pgid, get_primary().shard), bi.begin, bi.end);
       ::encode(bi.objects, reply->get_data());
+
       osd->send_message_osd_cluster(reply, m->get_connection());
     }
     break;
@@ -11950,6 +11961,7 @@ void PrimaryLogPG::on_activate()
   } else {
     dout(10) << "activate all replicas clean, no recovery" << dendl;
 
+    // -> Recovered -> Clean
     queue_peering_event(
       CephPeeringEvtRef(
 	std::make_shared<CephPeeringEvt>(
@@ -12008,8 +12020,9 @@ void PrimaryLogPG::on_change(ObjectStore::Transaction *t)
 
   // requeue everything in the reverse order they should be
   // reexamined.
-  requeue_ops(waiting_for_peered);
-  requeue_ops(waiting_for_active);
+  // enqueue on OSD::op_shardedwq again
+  requeue_ops(waiting_for_peered); // pushed back by PrimaryLogPG::do_request, for client op and other ops
+  requeue_ops(waiting_for_active); // pushed back by PrimaryLogPG::do_request, for client op
 
   clear_scrub_reserved();
 
@@ -15299,6 +15312,7 @@ boost::statechart::result PrimaryLogPG::WaitReservation::react(const SnapTrimRes
   ldout(pg->cct, 10) << "WaitReservation react SnapTrimReserved" << dendl;
 
   pending = nullptr;
+
   if (!context< SnapTrimmer >().can_trim()) {
     post_event(KickTrim());
     return transit< NotTrimming >();

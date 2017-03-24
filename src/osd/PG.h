@@ -1565,6 +1565,8 @@ public:
       *out << "ActMap";
     }
   };
+
+  // Peering -> Active(initial->Activating)
   struct Activate : boost::statechart::event< Activate > {
     epoch_t activation_epoch;
     explicit Activate(epoch_t q) : boost::statechart::event< Activate >(),
@@ -1633,6 +1635,8 @@ public:
 
     // created by
     // RecoveryState::RecoveryState, which created by PG::PG
+    // RecoveryState::RecoveryState will call machine.initiate() to initialize
+    // the state machine, which creates the initial state object Initial
     class RecoveryMachine : public boost::statechart::state_machine< RecoveryMachine, Initial > {
       RecoveryState *state;
     public:
@@ -1756,6 +1760,11 @@ public:
 
     struct Start;
 
+    // Started:
+    //  Start -> (Primary or Stray immediately)
+    //  Primary
+    //  ReplicaActive
+    //  Stray
     struct Started : boost::statechart::state< Started, RecoveryMachine, Start >, NamedState {
       explicit Started(my_context ctx);
       void exit();
@@ -1818,6 +1827,10 @@ public:
       IsDown() : boost::statechart::event< IsDown >() {}
     };
 
+    // Primary:
+    //  Peering
+    //  WaitActingChange
+    //  Active
     struct Primary : boost::statechart::state< Primary, Started, Peering >, NamedState {
       explicit Primary(my_context ctx);
       void exit();
@@ -1903,7 +1916,7 @@ public:
       boost::statechart::result react(const Backfilled&) {
 	return discard_event();
       }
-      boost::statechart::result react(const AllReplicasActivated&);
+      boost::statechart::result react(const AllReplicasActivated&);KickTrim
     };
 
     struct Clean : boost::statechart::state< Clean, Active >, NamedState {
@@ -1915,6 +1928,7 @@ public:
       void exit();
     };
 
+    // from Activating/Recovering by AllReplicasRecovered evt
     struct Recovered : boost::statechart::state< Recovered, Active >, NamedState {
       typedef boost::mpl::list<
 	boost::statechart::transition< GoClean, Clean >,
@@ -1923,7 +1937,8 @@ public:
 
       explicit Recovered(my_context ctx);
       void exit();
-      boost::statechart::result react(const AllReplicasActivated&) {
+      boost::statechart::result react(const AllReplicasActivated&) {KickTrim
+        // -> Clean
 	post_event(GoClean());
 	return forward_event();
       }
@@ -2072,6 +2087,7 @@ public:
       explicit Recovering(my_context ctx);
       void exit();
       void release_reservations();
+      // -> Recovered
       boost::statechart::result react(const AllReplicasRecovered &evt);
       boost::statechart::result react(const RequestBackfill &evt);
     };
@@ -2264,6 +2280,7 @@ public:
     }
 
     // called by
+    // PG::handle_peering_event
     // PG::handle_advance_map
     // PG::handle_activate_map
     // PG::handle_loaded

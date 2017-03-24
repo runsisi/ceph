@@ -1536,6 +1536,8 @@ public:
   }
 private:
 
+  // --- SnapTrimmer events ---------------------------------------------------
+
   struct DoSnapWork : boost::statechart::event< DoSnapWork > {
     DoSnapWork() : boost::statechart::event < DoSnapWork >() {}
   };
@@ -1561,7 +1563,10 @@ private:
     SnapTrimTimerReady() : boost::statechart::event< SnapTrimTimerReady >() {}
   };
 
+  // --- SnapTrimmer state machine---------------------------------------------
+
   struct NotTrimming;
+  // state machine initiated by PrimaryLogPG::PrimaryLogPG
   struct SnapTrimmer : public boost::statechart::state_machine< SnapTrimmer, NotTrimming > {
     PrimaryLogPG *pg;
     explicit SnapTrimmer(PrimaryLogPG *pg) : pg(pg) {}
@@ -1571,6 +1576,8 @@ private:
       return pg->is_clean() && !pg->scrubber.active && !pg->snap_trimq.empty();
     }
   } snap_trimmer_machine;
+
+  // --- SnapTrimmer states ---------------------------------------------------
 
   struct WaitReservation;
   struct Trimming : boost::statechart::state< Trimming, SnapTrimmer, WaitReservation >, NamedState {
@@ -1793,13 +1800,20 @@ private:
     boost::statechart::result react(const KickTrim&);
   };
 
+  // --- end SnapTrimmer ------------------------------------------------------
+
+  // called by
+  // PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_CACHE_EVICT
+  // PrimaryLogPG::agent_maybe_evict
   int _verify_no_head_clones(const hobject_t& soid,
 			     const SnapSet& ss);
+
   // return true if we're creating a local object, false for a
   // whiteout or no change.
   void maybe_create_new_object(OpContext *ctx, bool ignore_transaction=false);
   int _delete_oid(OpContext *ctx, bool no_whiteout);
   int _rollback_to(OpContext *ctx, ceph_osd_op& op);
+
 public:
   bool is_missing_object(const hobject_t& oid) const;
 

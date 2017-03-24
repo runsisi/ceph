@@ -1137,6 +1137,7 @@ void OSDService::send_pg_temp()
   if (pg_temp_wanted.empty())
     return;
   dout(10) << "send_pg_temp " << pg_temp_wanted << dendl;
+
   MOSDPGTemp *m = new MOSDPGTemp(osdmap->get_epoch());
   m->pg_temp = pg_temp_wanted;
   monc->send_mon_message(m);
@@ -2034,10 +2035,10 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
   trace_endpoint("0.0.0.0", 0, "osd"),
   asok_hook(NULL),
   osd_compat(get_osd_compat_set()),
-  osd_tp(cct, "OSD::osd_tp", "tp_osd", cct->_conf->osd_op_threads, "osd_op_threads"),
+  osd_tp(cct, "OSD::osd_tp", "tp_osd", cct->_conf->osd_op_threads, "osd_op_threads"), // 2
   osd_op_tp(cct, "OSD::osd_op_tp", "tp_osd_tp",
-    cct->_conf->osd_op_num_threads_per_shard * cct->_conf->osd_op_num_shards),
-  disk_tp(cct, "OSD::disk_tp", "tp_osd_disk", cct->_conf->osd_disk_threads, "osd_disk_threads"),
+    cct->_conf->osd_op_num_threads_per_shard * cct->_conf->osd_op_num_shards), // 2 * 5
+  disk_tp(cct, "OSD::disk_tp", "tp_osd_disk", cct->_conf->osd_disk_threads, "osd_disk_threads"), // 1
   command_tp(cct, "OSD::command_tp", "tp_osd_cmd",  1),
   session_waiting_lock("OSD::session_waiting_lock"),
   heartbeat_lock("OSD::heartbeat_lock"),
@@ -4497,6 +4498,8 @@ int OSD::handle_pg_peering_evt(
 	       << pg->info.history.same_interval_since
 	       << " (msg from " << epoch << ")" << dendl;
     } else {
+      // enqueue pg on OSDService::peering_wq, to be processed by
+      // OSD::process_peering_events -> PG::handle_peering_event
       pg->queue_peering_event(evt);
     }
     pg->unlock();
@@ -9199,6 +9202,8 @@ void OSD::do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
     service.share_map_peer(who, con.get(), curmap);
     dout(7) << __func__ << " querying osd." << who
 	    << " on " << pit->second.size() << " PGs" << dendl;
+
+    // will be handled by OSD::handle_pg_query
     MOSDPGQuery *m = new MOSDPGQuery(curmap->get_epoch(), pit->second);
     con->send_message(m);
   }
@@ -9336,6 +9341,7 @@ void OSD::handle_pg_info(OpRequestRef op)
 
   op->mark_started();
 
+  // vector<pair<pg_notify_t,pg_interval_map_t> >
   for (auto p = m->pg_list.begin();
        p != m->pg_list.end();
        ++p) {
@@ -9527,6 +9533,7 @@ void OSD::handle_pg_query(OpRequestRef op)
 {
   assert(osd_lock.is_locked());
 
+  // was sent by OSD::do_queries
   const MOSDPGQuery *m = static_cast<const MOSDPGQuery*>(op->get_req());
   assert(m->get_type() == MSG_OSD_PG_QUERY);
 
@@ -9568,13 +9575,19 @@ void OSD::handle_pg_query(OpRequestRef op)
       if (pg_map.count(pgid)) {
         PG *pg = 0;
         pg = _lookup_lock_pg_with_map_lock_held(pgid);
+        // queue pg on on OSDService::peering_wq with MQuery evt directly
+        // without calling OSD::handle_pg_peering_evt which will create
+        // the PG instance if it's not in OSD::pg_map
         pg->queue_query(
             it->second.epoch_sent, it->second.epoch_sent,
             pg_shard_t(from, it->second.from), it->second);
         pg->unlock();
+
         continue;
       }
     }
+
+    // we do not have the pg to query
 
     if (!osdmap->have_pg_pool(pgid.pool()))
       continue;
@@ -9607,6 +9620,7 @@ void OSD::handle_pg_query(OpRequestRef op)
      * instead of just empty */
     if (service.deleting_pgs.lookup(pgid))
       empty.set_last_backfill(hobject_t());
+
     if (it->second.type == pg_query_t::LOG ||
 	it->second.type == pg_query_t::FULLLOG) {
       ConnectionRef con = service.get_con_osd_cluster(from, osdmap->get_epoch());
@@ -9630,8 +9644,9 @@ void OSD::handle_pg_query(OpRequestRef op)
 	    osdmap->get_pools().at(pgid.pool()).ec_pool(),
 	    *osdmap)));
     }
-  }
+  } // iterate m->pg_list
 
+  // send MOSDPGNotify
   do_notifies(notify_list, osdmap);
 }
 
