@@ -2518,7 +2518,7 @@ void PG::start_recovery_op(const hobject_t& soid)
 // PrimaryLogPG::do_backfill
 // PrimaryLogPG::failed_push
 // PrimaryLogPG::cancel_pull
-void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
+void PG::finish_recovery_op(const hobject_t& soid, bool dequeue) // default false
 {
   dout(10) << "finish_recovery_op " << soid
 #ifdef DEBUG_RECOVERY_OIDS
@@ -2537,11 +2537,7 @@ void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
   // decrease counter
   osd->finish_recovery_op(this, soid, dequeue);
 
-  if (!dequeue) {
-
-    // we are
-    called by PG::clear_recovery_state
-
+  if (!dequeue) { // not PG::clear_recovery_state
     queue_recovery();
   }
 }
@@ -7160,6 +7156,7 @@ void PG::RecoveryState::Peering::exit()
 
 
 /*------Backfilling-------*/
+// from WaitRemoteBackfillReserved by AllBackfillsReserved evt
 PG::RecoveryState::Backfilling::Backfilling(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg, "Started/Primary/Active/Backfilling")
@@ -7325,6 +7322,7 @@ PG::RecoveryState::WaitRemoteBackfillReserved::react(const RemoteReservationReje
 }
 
 /*--WaitLocalBackfillReserved--*/
+// from NotBackfilling/Activating by RequestBackfill evt
 PG::RecoveryState::WaitLocalBackfillReserved::WaitLocalBackfillReserved(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg, "Started/Primary/Active/WaitLocalBackfillReserved")
@@ -7352,6 +7350,8 @@ void PG::RecoveryState::WaitLocalBackfillReserved::exit()
 }
 
 /*----NotBackfilling------*/
+// from Backfilling by Backfilling::react(RemoteReservationRejected)
+// from WaitRemoteBackfillReserved by WaitRemoteBackfillReserved::react(RemoteReservationRejected)
 PG::RecoveryState::NotBackfilling::NotBackfilling(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg, "Started/Primary/Active/NotBackfilling")
@@ -7400,6 +7400,7 @@ void PG::RecoveryState::NotRecovering::exit()
 }
 
 /*---RepNotRecovering----*/
+// from RepRecovering by RecoveryDone evt
 PG::RecoveryState::RepNotRecovering::RepNotRecovering(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg, "Started/ReplicaActive/RepNotRecovering")
@@ -7416,7 +7417,7 @@ void PG::RecoveryState::RepNotRecovering::exit()
 }
 
 /*---RepWaitRecoveryReserved--*/
-// was transit from RepNotRecovering, see OSD::handle_pg_recovery_reserve
+// from RepNotRecovering by RequestRecovery evt, see OSD::handle_pg_recovery_reserve, MRecoveryReserve::REQUEST
 PG::RecoveryState::RepWaitRecoveryReserved::RepWaitRecoveryReserved(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg, "Started/ReplicaActive/RepWaitRecoveryReserved")
@@ -7460,6 +7461,8 @@ void PG::RecoveryState::RepWaitRecoveryReserved::exit()
 }
 
 /*-RepWaitBackfillReserved*/
+// from RepNotRecovering by RequestBackfillPrio evt, which queued by OSD::handle_pg_backfill_reserve
+// for MBackfillReserve::REQUEST
 PG::RecoveryState::RepWaitBackfillReserved::RepWaitBackfillReserved(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg, "Started/ReplicaActive/RepWaitBackfillReserved")
@@ -7467,7 +7470,7 @@ PG::RecoveryState::RepWaitBackfillReserved::RepWaitBackfillReserved(my_context c
   context< RecoveryMachine >().log_enter(state_name);
 }
 
-// RequestBackfillPrio was queued by OSD::handle_pg_backfill_reserve
+// RequestBackfillPrio was queued by OSD::handle_pg_backfill_reserve, for MBackfillReserve::REQUEST
 boost::statechart::result
 PG::RecoveryState::RepNotRecovering::react(const RequestBackfillPrio &evt)
 {
@@ -7504,7 +7507,7 @@ void PG::RecoveryState::RepWaitBackfillReserved::exit()
   pg->osd->recoverystate_perf->tinc(rs_repwaitbackfillreserved_latency, dur);
 }
 
-// RemoteBackfillReserved was queued by RepNotRecovering::react(RequestBackfillPrio)
+// RemoteBackfillReserved evt was queued by RepNotRecovering::react(RequestBackfillPrio)
 boost::statechart::result
 PG::RecoveryState::RepWaitBackfillReserved::react(const RemoteBackfillReserved &evt)
 {
@@ -7544,8 +7547,8 @@ PG::RecoveryState::RepWaitBackfillReserved::react(const RemoteBackfillReserved &
   }
 }
 
-// queued by
-// RepNotRecovering::react(RequestBackfillPrio),
+// RemoteReservationRejected evt was queued by
+// RepNotRecovering::react(RequestBackfillPrio)
 // RepWaitBackfillReserved::react(RemoteBackfillReserved) when osd is full
 boost::statechart::result
 PG::RecoveryState::RepWaitBackfillReserved::react(const RemoteReservationRejected &evt)
@@ -7614,6 +7617,7 @@ void PG::RecoveryState::Activating::exit()
   pg->osd->recoverystate_perf->tinc(rs_activating_latency, dur);
 }
 
+// from Clean/Activating by DoRecovery evt
 PG::RecoveryState::WaitLocalRecoveryReserved::WaitLocalRecoveryReserved(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg, "Started/Primary/Active/WaitLocalRecoveryReserved")
@@ -7639,6 +7643,7 @@ PG::RecoveryState::WaitLocalRecoveryReserved::WaitLocalRecoveryReserved(my_conte
       pg, pg->get_osdmap()->get_epoch(),
       LocalRecoveryReserved()),
     pg->get_recovery_priority());
+
   pg->publish_stats_to_osd();
 }
 
@@ -7659,6 +7664,7 @@ void PG::RecoveryState::WaitLocalRecoveryReserved::exit()
   pg->osd->recoverystate_perf->tinc(rs_waitlocalrecoveryreserved_latency, dur);
 }
 
+// from WaitLocalRecoveryReserved by LocalRecoveryReserved evt
 PG::RecoveryState::WaitRemoteRecoveryReserved::WaitRemoteRecoveryReserved(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg, "Started/Primary/Active/WaitRemoteRecoveryReserved"),
@@ -7707,6 +7713,7 @@ void PG::RecoveryState::WaitRemoteRecoveryReserved::exit()
   pg->osd->recoverystate_perf->tinc(rs_waitremoterecoveryreserved_latency, dur);
 }
 
+// from WaitRemoteRecoveryReserved by AllRemotesReserved evt
 PG::RecoveryState::Recovering::Recovering(my_context ctx)
   : my_base(ctx),
     NamedState(context< RecoveryMachine >().pg, "Started/Primary/Active/Recovering")
@@ -7920,9 +7927,12 @@ boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
 {
   PG *pg = context< RecoveryMachine >().pg;
   ldout(pg->cct, 10) << "Active advmap" << dendl;
+
   if (!pg->pool.newly_removed_snaps.empty()) {
     pg->snap_trimq.union_of(pg->pool.newly_removed_snaps);
+
     ldout(pg->cct, 10) << *pg << " snap_trimq now " << pg->snap_trimq << dendl;
+
     pg->dirty_info = true;
     pg->dirty_big_info = true;
   }

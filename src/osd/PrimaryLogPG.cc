@@ -4334,7 +4334,8 @@ void PrimaryLogPG::snap_trimmer_scrub_complete()
 }
 
 // called by
-// PGQueueable::RunVis::operator()(const PGSnapTrim)
+// PGQueueable::RunVis::operator()(const PGSnapTrim), which queued by OSDService::queue_for_snap_trim,
+// which called by PrimaryLogPG::AwaitAsyncWork::AwaitAsyncWork
 void PrimaryLogPG::snap_trimmer(epoch_t queued)
 {
   if (deleting || pg_has_reset_since(queued)) {
@@ -15265,6 +15266,18 @@ void PrimaryLogPG::SnapTrimmer::log_exit(const char *state_name, utime_t enter_t
   ldout(pg->cct, 20) << "exit " << state_name << dendl;
 }
 
+// --- SnapTrimmer -----------------------------------------------------------
+
+// SnapTrimmer:
+//    Trimming:
+//            WaitReservation
+//            WaitTrimTimer
+//            WaitRWLock
+//            WaitRepops
+//            AwaitAsyncWork
+//    WaitScrub
+//    NotTrimming
+
 /*---SnapTrimmer states---*/
 #undef dout_prefix
 #define dout_prefix (*_dout << context< SnapTrimmer >().pg->gen_prefix() \
@@ -15292,11 +15305,14 @@ boost::statechart::result PrimaryLogPG::NotTrimming::react(const KickTrim&)
     ldout(pg->cct, 10) << "NotTrimming not primary or active" << dendl;
     return discard_event();
   }
+
+  // pg->is_primary() && pg->is_active()
   if (!pg->is_clean() ||
       pg->snap_trimq.empty()) {
     ldout(pg->cct, 10) << "NotTrimming not clean or nothing to trim" << dendl;
     return discard_event();
   }
+
   if (pg->scrubber.active) {
     ldout(pg->cct, 10) << " scrubbing, will requeue snap_trimmer after" << dendl;
     pg->scrubber.queue_snap_trim = true;
@@ -15332,8 +15348,12 @@ PrimaryLogPG::AwaitAsyncWork::AwaitAsyncWork(my_context ctx)
 {
   auto *pg = context< SnapTrimmer >().pg;
   context< SnapTrimmer >().log_enter(state_name);
+
+  // queue pg on OSD::op_shardedwq for PGSnapTrim item, will be handled by PrimaryLogPG::snap_trimmer
+  // to generate DoSnapWork evt
   context< SnapTrimmer >().pg->osd->queue_for_snap_trim(pg);
   pg->state_set(PG_STATE_SNAPTRIM);
+
   pg->publish_stats_to_osd();
 }
 
@@ -15421,6 +15441,8 @@ boost::statechart::result PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork&)
 
   return transit< WaitRepops >();
 }
+
+// --- end SnapTrimmer -----------------------------------------------------------------
 
 // called by
 // PrimaryLogPG::_make_clone

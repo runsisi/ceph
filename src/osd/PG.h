@@ -1758,13 +1758,17 @@ public:
       }
     };
 
-    struct Start;
+    // RecoveryMachine
+    //  Started:
+    //          Start -> (Primary or Stray immediately)
+    //          Primary
+    //                  Peering
+    //                  WaitActingChange
+    //                  Active
+    //          ReplicaActive
+    //          Stray
 
-    // Started:
-    //  Start -> (Primary or Stray immediately)
-    //  Primary
-    //  ReplicaActive
-    //  Stray
+    struct Start;
     struct Started : boost::statechart::state< Started, RecoveryMachine, Start >, NamedState {
       explicit Started(my_context ctx);
       void exit();
@@ -1827,10 +1831,6 @@ public:
       IsDown() : boost::statechart::event< IsDown >() {}
     };
 
-    // Primary:
-    //  Peering
-    //  WaitActingChange
-    //  Active
     struct Primary : boost::statechart::state< Primary, Started, Peering >, NamedState {
       explicit Primary(my_context ctx);
       void exit();
@@ -1916,7 +1916,7 @@ public:
       boost::statechart::result react(const Backfilled&) {
 	return discard_event();
       }
-      boost::statechart::result react(const AllReplicasActivated&);KickTrim
+      boost::statechart::result react(const AllReplicasActivated&);
     };
 
     struct Clean : boost::statechart::state< Clean, Active >, NamedState {
@@ -2028,7 +2028,9 @@ public:
 
     struct RepRecovering : boost::statechart::state< RepRecovering, ReplicaActive >, NamedState {
       typedef boost::mpl::list<
-        // will be queued by OSD::handle_pg_recovery_reserve
+        // queued by
+        // OSD::handle_pg_recovery_reserve, for MRecoveryReserve::RELEASE
+        // PrimaryLogPG::do_backfill, for MOSDPGBackfill::OP_BACKFILL_FINISH
 	boost::statechart::transition< RecoveryDone, RepNotRecovering >,
 	boost::statechart::transition< RemoteReservationRejected, RepNotRecovering >,
 	boost::statechart::custom_reaction< BackfillTooFull >
@@ -2066,11 +2068,13 @@ public:
 
     struct RepNotRecovering : boost::statechart::state< RepNotRecovering, ReplicaActive>, NamedState {
       typedef boost::mpl::list<
-        // will be queued by OSD::handle_pg_backfill_reserve
+        // will be queued by OSD::handle_pg_backfill_reserve, for MBackfillReserve::REQUEST
 	boost::statechart::custom_reaction< RequestBackfillPrio >,
 	// will be queued by OSD::handle_pg_recovery_reserve
         boost::statechart::transition< RequestRecovery, RepWaitRecoveryReserved >,
-        // will be queued by OSD::handle_pg_recovery_reserve
+        /// queued by
+        // OSD::handle_pg_recovery_reserve, for MRecoveryReserve::RELEASE
+        // PrimaryLogPG::do_backfill, for MOSDPGBackfill::OP_BACKFILL_FINISH
 	boost::statechart::transition< RecoveryDone, RepNotRecovering >  // for compat with pre-reservation peers
 	> reactions;
 
@@ -2121,6 +2125,7 @@ public:
     struct Activating : boost::statechart::state< Activating, Active >, NamedState {
       typedef boost::mpl::list <
 	boost::statechart::transition< AllReplicasRecovered, Recovered >,
+	// queued by PG::scrub_finish, PrimaryLogPG::on_activate
 	boost::statechart::transition< DoRecovery, WaitLocalRecoveryReserved >,
 	boost::statechart::transition< RequestBackfill, WaitLocalBackfillReserved >
 	> reactions;
@@ -2146,6 +2151,9 @@ public:
       boost::statechart::result react(const MLogRec& logevt);
       boost::statechart::result react(const MInfoRec& infoevt);
       boost::statechart::result react(const ActMap&);
+      // queued by
+      // OSD::handle_pg_recovery_reserve, for MRecoveryReserve::RELEASE
+      // PrimaryLogPG::do_backfill, for MOSDPGBackfill::OP_BACKFILL_FINISH
       boost::statechart::result react(const RecoveryDone&) {
 	return discard_event();
       }
