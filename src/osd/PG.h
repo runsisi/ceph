@@ -1719,13 +1719,15 @@ public:
       void exit();
 
       typedef boost::mpl::list <
-	boost::statechart::transition< Initialize, Reset >,
-	boost::statechart::custom_reaction< Load >,
+	boost::statechart::transition< Initialize, Reset >, // queued by PG::handle_create
+	boost::statechart::custom_reaction< Load >, // queued by PG::handle_loaded
 	boost::statechart::custom_reaction< NullEvt >,
 	boost::statechart::transition< boost::statechart::event_base, Crashed >
 	> reactions;
 
-      boost::statechart::result react(const Load&);
+      // pg->send_notify = (!pg->is_primary());
+      boost::statechart::result react(const Load&); // -> Reset
+
       boost::statechart::result react(const MNotifyRec&);
       boost::statechart::result react(const MInfoRec&);
       boost::statechart::result react(const MLogRec&);

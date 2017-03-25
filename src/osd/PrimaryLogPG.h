@@ -1580,6 +1580,8 @@ private:
     void log_exit(const char *state_name, utime_t duration);
 
     bool can_trim() {
+      // PG::snap_trimq was set by PG::activate and updated by Active::react(AdvMap)
+      // PG::scrubber.active was set by PG::chunky_scrub and reset by PG::scrub_clear_state
       return pg->is_clean() && !pg->scrubber.active && !pg->snap_trimq.empty();
     }
   } snap_trimmer_machine;

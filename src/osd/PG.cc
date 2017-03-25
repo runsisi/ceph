@@ -5266,8 +5266,8 @@ void PG::chunky_scrub(ThreadPool::TPHandle &handle)
 
       default:
         ceph_abort();
-    }
-  }
+    } // switch (scrubber.state)
+  } // !done
 }
 
 // called by
@@ -6044,13 +6044,14 @@ void PG::start_peering_interval(
       dirty_big_info = true;
 
       info.history.same_interval_since = osdmap->get_epoch();
+
       if (info.pgid.pgid.is_split(lastmap->get_pg_num(info.pgid.pgid.pool()),
 				  osdmap->get_pg_num(info.pgid.pgid.pool()),
 				  nullptr)) {
 	info.history.last_epoch_split = osdmap->get_epoch();
       }
-    }
-  }
+    } // new_interval
+  } // lastmap
 
   if (old_up_primary != up_primary ||
       oldup != up) {
@@ -6470,7 +6471,10 @@ bool PG::can_discard_request(OpRequestRef& op)
 void PG::take_waiters()
 {
   dout(10) << "take_waiters" << dendl;
+
+  // enqueue on OSD::op_shardedwq
   requeue_map_waiters();
+
   // was inserted by PG::handle_peering_event when our epoch is older
   // than the peer
   for (list<CephPeeringEvtRef>::iterator i = peering_waiters.begin();
@@ -6837,6 +6841,8 @@ boost::statechart::result PG::RecoveryState::Started::react(const AdvMap& advmap
 	advmap.osdmap)) {
     ldout(pg->cct, 10) << "should_restart_peering, transitioning to Reset"
 		       << dendl;
+
+    // Reset will call PG::start_peering_interval, see Reset::react(const AdvMap)
     post_event(advmap);
 
     return transit< Reset >();
@@ -6912,6 +6918,7 @@ boost::statechart::result PG::RecoveryState::Reset::react(const AdvMap& advmap)
 	advmap.osdmap)) {
     ldout(pg->cct, 10) << "should restart peering, calling start_peering_interval again"
 		       << dendl;
+
     pg->start_peering_interval(
       advmap.lastmap,
       advmap.newup, advmap.up_primary,
@@ -7038,7 +7045,7 @@ boost::statechart::result PG::RecoveryState::Primary::react(const ActMap&)
   ldout(pg->cct, 7) << "handle ActMap primary" << dendl;
   pg->publish_stats_to_osd();
 
-  // try to requeue ops on PG::waiting_for_map onto OSDService::op_wq,
+  // try to requeue ops on PG::waiting_for_map onto enqueue on OSD::op_shardedwq,
   // and requeue peering evts onto OSDService::peering_wq
   pg->take_waiters();
 
@@ -7985,6 +7992,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const AdvMap& advmap)
   if (need_publish)
     pg->publish_stats_to_osd();
 
+  // let Started to check if we need to start a new peering interval
   return forward_event();
 }
     
@@ -8025,6 +8033,7 @@ boost::statechart::result PG::RecoveryState::Active::react(const ActMap&)
     pg->queue_recovery();
   }
 
+  // let Primary to take waiters, i.e., the waiting ops and peering evts
   return forward_event();
 }
 

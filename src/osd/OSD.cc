@@ -178,18 +178,22 @@ static ostream& _prefix(std::ostream* _dout, int whoami, epoch_t epoch) {
  */
 // called when the PGQueueable op is dequeued from the OSD::ShardedOpWQ
 void PGQueueable::RunVis::operator()(const OpRequestRef &op) {
+  // PrimaryLogPG::do_request(op, handle);
   return osd->dequeue_op(pg, op, handle);
 }
 
 void PGQueueable::RunVis::operator()(const PGSnapTrim &op) {
+  // PrimaryLogPG::snap_trimmer_machine.process_event(DoSnapWork());
   return pg->snap_trimmer(op.epoch_queued);
 }
 
 void PGQueueable::RunVis::operator()(const PGScrub &op) {
+  // PG::chunky_scrub(handle);
   return pg->scrub(op.epoch_queued, handle);
 }
 
 void PGQueueable::RunVis::operator()(const PGRecovery &op) {
+  // PG::start_recovery_ops(reserved_pushes, handle, &started);
   return osd->do_recovery(pg.get(), op.epoch_queued, op.reserved_pushes, handle);
 }
 
@@ -7397,6 +7401,9 @@ void OSD::do_waiters()
 
 // slow path of message dispatch, those ops are queued on OSDService::peering_wq, i.e.,
 // OSD::peering_wq, instead of OSD::op_shardedwq
+// called by
+// OSD::do_waiters, which called by OSD::tick, OSD::ms_dispatch
+// OSD::_dispatch, which called by OSD::ms_dispatch
 void OSD::dispatch_op(OpRequestRef op)
 {
   switch (op->get_req()->get_type()) {
@@ -7510,6 +7517,8 @@ void OSD::_dispatch(Message *m)
     }
   }
 }
+
+// --- scrub ------------------------------------------------------------------
 
 // called by
 // OSD::handle_scrub, which called by OSD::_dispatch(Message *m)
@@ -7749,7 +7758,7 @@ void OSD::sched_scrub()
   dout(20) << "sched_scrub done" << dendl;
 }
 
-
+// --- end scrub --------------------------------------------------------------
 
 // =====================================================
 // MAP
@@ -8555,7 +8564,7 @@ bool OSD::advance_pg(
     lastmap = nextmap;
 
     handle.reset_tp_timeout();
-  } // for loop
+  } // iterate osdmap
 
   service.pg_update_epoch(pg->info.pgid, lastmap->get_epoch());
 
@@ -8667,7 +8676,8 @@ void OSD::consume_map()
 
       pg->lock();
 
-      // queue pg on OSDService::peering_wq
+      // queue pg on OSDService::peering_wq, will be processed by
+      // OSD::process_peering_event
       pg->queue_null(osdmap->get_epoch(), osdmap->get_epoch());
 
       pg->unlock();
@@ -8682,7 +8692,7 @@ void OSD::consume_map()
 }
 
 // called by
-// OSD::_committed_osd_maps
+// OSD::_committed_osd_maps, which created by OSD::handle_osd_map
 void OSD::activate_map()
 {
   assert(osd_lock.is_locked());
@@ -10126,17 +10136,21 @@ void OSD::process_peering_events(
     }
 
     if (!advance_pg(curmap->get_epoch(), pg, handle, &rctx, &split_pgs)) {
+      // handled only part of the osdmaps, pg's osdmap is not up to date with
+      // the osd, so will requeue and continue
       // we need to requeue the PG explicitly since we didn't actually
       // handle an event
       peering_wq.queue(pg);
     } else {
+      // pg up to date with the osd, now handle the evt
+
       assert(!pg->peering_queue.empty());
 
       PG::CephPeeringEvtRef evt = pg->peering_queue.front();
 
       pg->peering_queue.pop_front();
 
-      // handle the peering evt
+      // PG::recovery_state.handle_event(evt, rctx);
       pg->handle_peering_event(evt, &rctx);
     }
 
