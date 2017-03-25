@@ -2245,7 +2245,7 @@ bool PG::requeue_scrub()
 
     scrub_queued = true;
 
-    // queue on OSDService::op_wq
+    // queue on OSD::op_shardedwq
     osd->queue_for_scrub(this);
 
     return true;
@@ -2261,8 +2261,7 @@ bool PG::requeue_scrub()
 // PG::RecoveryState::Active::react(const MLogRec)
 // PrimaryLogPG::mark_all_unfound_lost
 // PrimaryLogPG::release_object_locks
-// NOTE: the parameter front always be false
-void PG::queue_recovery(bool front)
+void PG::queue_recovery(bool front) // default false, no one call it with true
 {
   if (!is_primary() || !is_peered()) {
 
@@ -2283,8 +2282,9 @@ void PG::queue_recovery(bool front)
     // will be reset to false by OSD::do_recovery or PrimaryLogPG::on_change
     recovery_queued = true;
 
-    // push on OSDService::awaiting_throttle and then requeue on OSDService::op_wq
-    // if not throttled
+    // push on OSDService::awaiting_throttle and then requeue on OSD::op_shardedwq
+    // if not throttled, will be handled by OSD::do_recovery and handled by
+    // PrimaryLogPG::start_recovery_ops eventually
     osd->queue_for_recovery(this, front);
   }
 }
@@ -2537,7 +2537,7 @@ void PG::finish_recovery_op(const hobject_t& soid, bool dequeue) // default fals
   // decrease counter
   osd->finish_recovery_op(this, soid, dequeue);
 
-  if (!dequeue) { // not PG::clear_recovery_state
+  if (!dequeue) { // not called by PG::clear_recovery_state
     queue_recovery();
   }
 }
@@ -4859,7 +4859,7 @@ void PG::replica_scrub(
  * scrub will fail if OSDs are too old.
  */
 // called by
-// PGQueueable::RunVis::operator()(const PGScrub &op)
+// PGQueueable::RunVis::operator()(const PGScrub &op), which queued by OSDService::queue_for_scrub
 void PG::scrub(epoch_t queued, ThreadPool::TPHandle &handle)
 {
   // default 0
@@ -7770,7 +7770,9 @@ PG::RecoveryState::Recovering::react(const RequestBackfill &evt)
 {
   PG *pg = context< RecoveryMachine >().pg;
   pg->state_clear(PG_STATE_RECOVERING);
+
   release_reservations();
+
   return transit<WaitRemoteBackfillReserved>();
 }
 

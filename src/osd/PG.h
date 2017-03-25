@@ -2093,6 +2093,7 @@ public:
       void release_reservations();
       // -> Recovered
       boost::statechart::result react(const AllReplicasRecovered &evt);
+      // -> WaitRemoteBackfillReserved
       boost::statechart::result react(const RequestBackfill &evt);
     };
 

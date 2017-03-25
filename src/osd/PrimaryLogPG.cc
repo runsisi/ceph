@@ -4059,6 +4059,8 @@ void PrimaryLogPG::do_backfill_remove(OpRequestRef op)
   assert(r == 0);
 }
 
+// --- SnapTrimmer related ----------------------------------------------------
+
 // called by
 // PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
 PrimaryLogPG::OpContextUPtr PrimaryLogPG::trim_object(bool first, const hobject_t &coid)
@@ -4329,6 +4331,7 @@ void PrimaryLogPG::snap_trimmer_scrub_complete()
   if (is_primary() && is_active() && is_clean()) {
     assert(!snap_trimq.empty());
 
+    // post a KickTrim evt then transit to NotTrimming
     snap_trimmer_machine.process_event(ScrubComplete());
   }
 }
@@ -4352,6 +4355,8 @@ void PrimaryLogPG::snap_trimmer(epoch_t queued)
 
   return;
 }
+
+// --- end SnapTrimmer related ------------------------------------------------
 
 // called by
 // PrimaryLogPG::do_osd_ops, for CEPH_OSD_CMPXATTR_MODE_U64
@@ -7521,6 +7526,7 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
     object_info_t *snap_oi;
 
     if (is_primary()) {
+      // ctx->clone_obc instance is for ec only, will be used by PrimaryLogPG::issue_repop
       ctx->clone_obc = object_contexts.lookup_or_create(static_snap_oi.soid);
       ctx->clone_obc->destructor_callback = new C_PG_ObjectContext(this, ctx->clone_obc.get());
       ctx->clone_obc->obs.oi = static_snap_oi;
@@ -7936,6 +7942,8 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     ::encode(ctx->new_snapset, bss);
 
     assert(ctx->new_obs.exists == ctx->new_snapset.head_exists);
+
+    // ctx->snapset_obc instance is for ec only, will be used by PrimaryLogPG::issue_repop
 
     if (ctx->new_obs.exists) {
       if (!ctx->obs->exists) {
@@ -11611,6 +11619,7 @@ void PrimaryLogPG::do_update_log_missing(OpRequestRef &op)
 // PrimaryLogPG::do_request, for MSG_OSD_PG_UPDATE_LOG_MISSING_REPLY
 void PrimaryLogPG::do_update_log_missing_reply(OpRequestRef &op)
 {
+  // sent by PrimaryLogPG::do_update_log_missing
   const MOSDPGUpdateLogMissingReply *m =
     static_cast<const MOSDPGUpdateLogMissingReply*>(
     op->get_req());
@@ -11752,7 +11761,7 @@ void PrimaryLogPG::mark_all_unfound_lost(
 	requeue_object_waiters(waiting_for_unreadable_object);
 
 	// push this pg on OSDService::awaiting_throttle and then requeue onto
-	// OSDService::op_wq if not throttled
+	// OSD::op_sharedwq if not throttled
 	queue_recovery();
 
 	stringstream ss;
@@ -15322,6 +15331,8 @@ boost::statechart::result PrimaryLogPG::NotTrimming::react(const KickTrim&)
   }
 }
 
+// SnapTrimReserved evt was queued by WaitReservation::ReservationCB::finish
+// so now we are running in the context of Finisher
 boost::statechart::result PrimaryLogPG::WaitReservation::react(const SnapTrimReserved&)
 {
   PrimaryLogPG *pg = context< SnapTrimmer >().pg;
@@ -15334,10 +15345,14 @@ boost::statechart::result PrimaryLogPG::WaitReservation::react(const SnapTrimRes
     return transit< NotTrimming >();
   }
 
+  // will be used by PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
   context<Trimming>().snap_to_trim = pg->snap_trimq.range_start();
+
   ldout(pg->cct, 10) << "NotTrimming: trimming "
 		     << pg->snap_trimq.range_start()
 		     << dendl;
+
+  // will change our running env into OSD::op_shardedwq
   return transit< AwaitAsyncWork >();
 }
 
@@ -15349,22 +15364,29 @@ PrimaryLogPG::AwaitAsyncWork::AwaitAsyncWork(my_context ctx)
   auto *pg = context< SnapTrimmer >().pg;
   context< SnapTrimmer >().log_enter(state_name);
 
-  // queue pg on OSD::op_shardedwq for PGSnapTrim item, will be handled by PrimaryLogPG::snap_trimmer
-  // to generate DoSnapWork evt
+  // queue pg on OSD::op_shardedwq for PGQueueable(PGSnapTrim) item, will be
+  // handled by PrimaryLogPG::snap_trimmer to generate DoSnapWork evt
   context< SnapTrimmer >().pg->osd->queue_for_snap_trim(pg);
+
   pg->state_set(PG_STATE_SNAPTRIM);
 
   pg->publish_stats_to_osd();
 }
 
+// called by
+// PrimaryLogPG::snap_trimmer, which called by PGQueueable::RunVis::operator()(PGSnapTrim)
 boost::statechart::result PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork&)
 {
   PrimaryLogPGRef pg = context< SnapTrimmer >().pg;
+
+  // was set by PrimaryLogPG::WaitReservation::react(SnapTrimReserved)
   snapid_t snap_to_trim = context<Trimming>().snap_to_trim;
+
   auto &in_flight = context<Trimming>().in_flight;
   assert(in_flight.empty());
 
   assert(pg->is_primary() && pg->is_active());
+
   if (!context< SnapTrimmer >().can_trim()) {
     ldout(pg->cct, 10) << "something changed, reverting to NotTrimming" << dendl;
     post_event(KickTrim());
@@ -15373,8 +15395,10 @@ boost::statechart::result PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork&)
 
   ldout(pg->cct, 10) << "AwaitAsyncWork: trimming snap " << snap_to_trim << dendl;
 
+  // --- get objects to trim --------------------------------------------------
+
   vector<hobject_t> to_trim;
-  unsigned max = pg->cct->_conf->osd_pg_max_concurrent_snap_trims;
+  unsigned max = pg->cct->_conf->osd_pg_max_concurrent_snap_trims; // 2
   to_trim.reserve(max);
   int r = pg->snap_mapper.get_next_objects_to_trim(
     snap_to_trim,
@@ -15391,8 +15415,10 @@ boost::statechart::result PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork&)
     ldout(pg->cct, 10) << "adding snap " << snap_to_trim
 		       << " to purged_snaps"
 		       << dendl;
+
     pg->info.purged_snaps.insert(snap_to_trim);
     pg->snap_trimq.erase(snap_to_trim);
+
     ldout(pg->cct, 10) << "purged_snaps now "
 		       << pg->info.purged_snaps << ", snap_trimq now "
 		       << pg->snap_trimq << dendl;
@@ -15404,18 +15430,22 @@ boost::statechart::result PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork&)
     assert(tr == 0);
 
     pg->share_pg_info();
+
     post_event(KickTrim());
     return transit< NotTrimming >();
   }
+
   assert(!to_trim.empty());
 
   for (auto &&object: to_trim) {
     // Get next
     ldout(pg->cct, 10) << "AwaitAsyncWork react trimming " << object << dendl;
+
     OpContextUPtr ctx = pg->trim_object(in_flight.empty(), object);
     if (!ctx) {
       ldout(pg->cct, 10) << "could not get write lock on obj "
 			 << object << dendl;
+
       if (in_flight.empty()) {
 	ldout(pg->cct, 10) << "waiting for it to clear"
 			   << dendl;
@@ -15428,6 +15458,9 @@ boost::statechart::result PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork&)
     }
 
     in_flight.insert(object);
+
+    // if success callback get called, we either transit to WaitTrimTimer or
+    // post a KickTrim evt and transit to NotTrimming, depends on SnapTrimmer::can_trim
     ctx->register_on_success(
       [pg, object, &in_flight]() {
 	assert(in_flight.find(object) != in_flight.end());
@@ -15439,6 +15472,7 @@ boost::statechart::result PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork&)
     pg->simple_opc_submit(std::move(ctx));
   }
 
+  // RepopsComplete evt will driven us to either NotTrimming or WaitTrimTimer
   return transit< WaitRepops >();
 }
 

@@ -333,6 +333,9 @@ public:
 };
 typedef ceph::shared_ptr<DeletingState> DeletingStateRef;
 
+
+// --- PGQueueable ------------------------------------------------------------
+
 class OSD;
 
 struct PGScrub {
@@ -442,16 +445,23 @@ public:
     const PGRecovery *op = boost::get<PGRecovery>(&qvariant);
     return op ? op->reserved_pushes : 0;
   }
+
+  // called by
+  // OSD::ShardedOpWQ::_process
   void run(OSD *osd, PGRef &pg, ThreadPool::TPHandle &handle) {
     RunVis v(osd, pg, handle);
     boost::apply_visitor(v, qvariant);
   }
+
   unsigned get_priority() const { return priority; }
   int get_cost() const { return cost; }
   utime_t get_start_time() const { return start_time; }
   entity_inst_t get_owner() const { return owner; }
   epoch_t get_map_epoch() const { return map_epoch; }
-};
+}; // class PGQueueable
+
+// --- end PGQueueable --------------------------------------------------------
+
 
 class OSDService {
 public:
@@ -971,7 +981,10 @@ public:
   AsyncReserver<spg_t> snap_reserver;
   void queue_for_snap_trim(PG *pg);
 
+  // called by
+  // PG::requeue_scrub
   void queue_for_scrub(PG *pg) {
+    // enqueue on OSD::op_shardedwq
     enqueue_back(
       pg->info.pgid,
       PGQueueable(
@@ -1003,6 +1016,8 @@ private:
   void _queue_for_recovery(
     pair<epoch_t, PGRef> p, uint64_t reserved_pushes) {
     assert(recovery_lock.is_locked_by_me());
+
+    // enqueue on OSD::op_shardedwq
     enqueue_back(
       p.second->info.pgid,
       PGQueueable(
@@ -1013,6 +1028,7 @@ private:
 	entity_inst_t(),
 	p.first));
   }
+
 public:
   void start_recovery_op(PG *pg, const hobject_t& soid);
   void finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue);
@@ -1027,6 +1043,7 @@ public:
     assert(recovery_ops_reserved >= pushes);
     recovery_ops_reserved -= pushes;
 
+    // try to queue OSDService::awaiting_throttle on OSD::op_shardedwq
     _maybe_queue_recovery();
   }
 
@@ -1059,7 +1076,7 @@ public:
 
     recovery_paused = false;
 
-    // try to queue OSDService::awaiting_throttle onto OSDService::op_wq
+    // try to queue OSDService::awaiting_throttle on OSD::op_shardedwq
     _maybe_queue_recovery();
   }
 
@@ -1069,6 +1086,7 @@ public:
   void kick_recovery_queue() {
     Mutex::Locker l(recovery_lock);
 
+    // try to queue OSDService::awaiting_throttle on OSD::op_shardedwq
     _maybe_queue_recovery();
   }
   // called by
@@ -1091,7 +1109,7 @@ public:
   // called by
   // PG::queue_recovery
   // delayed pg activation
-  void queue_for_recovery(PG *pg, bool front = false) {
+  void queue_for_recovery(PG *pg, bool front = false) { // front always be false
     Mutex::Locker l(recovery_lock);
 
     // will be popped by OSDService::_maybe_queue_recovery, or erased
@@ -1102,6 +1120,7 @@ public:
       awaiting_throttle.push_back(make_pair(pg->get_osdmap()->get_epoch(), pg));
     }
 
+    // try to queue OSDService::awaiting_throttle on OSD::op_shardedwq
     _maybe_queue_recovery();
   }
 

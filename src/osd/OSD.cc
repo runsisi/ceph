@@ -5347,13 +5347,15 @@ void OSD::tick_without_osd_lock()
     bool reset = false;
     bool report = false;
     utime_t now = ceph_clock_now();
+
     pg_stat_queue_lock.Lock();
-    double backoff = stats_ack_timeout / cct->_conf->osd_mon_ack_timeout;
-    double adjusted_min = cct->_conf->osd_mon_report_interval_min * backoff;
+
+    double backoff = stats_ack_timeout / cct->_conf->osd_mon_ack_timeout; // 30.0
+    double adjusted_min = cct->_conf->osd_mon_report_interval_min * backoff; // 5
     // note: we shouldn't adjust max because it must remain < the
     // mon's mon_osd_report_timeout (which defaults to 1.5x our
     // value).
-    double max = cct->_conf->osd_mon_report_interval_max;
+    double max = cct->_conf->osd_mon_report_interval_max; // 600
 
     if (!outstanding_pg_stats.empty() &&
 	(now - stats_ack_timeout) > last_pg_stats_ack) {
@@ -5367,6 +5369,7 @@ void OSD::tick_without_osd_lock()
       stats_ack_timeout =
 	MAX(cct->_conf->osd_mon_ack_timeout,
 	    stats_ack_timeout * cct->_conf->osd_stats_ack_timeout_factor);
+
       outstanding_pg_stats.clear();
     }
 
@@ -5404,7 +5407,7 @@ void OSD::tick_without_osd_lock()
     }
 
     map_lock.put_read();
-  }
+  } // is_active() || is_waiting_for_healthy()
 
   if (is_active()) {
     if (!scrub_random_backoff()) {
@@ -7468,6 +7471,9 @@ void OSD::_dispatch(Message *m)
     break;
 
   case MSG_OSD_SCRUB:
+    // sent by
+    // OSDMonitor::preprocess_command, for "osd scrub", "osd deep-scrub", "osd repair"
+    // PGMonitor::preprocess_command, for "pg scrub", "pg repair", "pg deep-scrub"
     handle_scrub(static_cast<MOSDScrub*>(m));
     break;
 
@@ -7709,6 +7715,7 @@ void OSD::sched_scrub()
 	break;
       }
 
+      // default false
       if (!cct->_conf->osd_scrub_during_recovery && service.is_recovery_active()) {
         dout(10) << __func__ << "not scheduling scrub of " << scrub.pgid << " due to active recovery ops" << dendl;
         break;
@@ -7728,14 +7735,17 @@ void OSD::sched_scrub()
 		 << (pg->scrubber.must_scrub ? ", explicitly requested" :
 		     (load_is_low ? ", load_is_low" : " deadline < now"))
 		 << dendl;
+
 	if (pg->sched_scrub()) {
 	  pg->unlock();
 	  break;
 	}
       }
+
       pg->unlock();
     } while (service.next_scrub_stamp(scrub, &scrub));
-  }
+  } // service.first_scrub_stamp(&scrub)
+
   dout(20) << "sched_scrub done" << dendl;
 }
 
@@ -7828,7 +7838,6 @@ struct C_OnMapApply : public Context {
 // OSD::handle_osd_ping
 // OSD::heartbeat
 // OSD::_preboot
-// OSD::dispatch_op_fast
 // OSD::wait_for_new_map
 // OSD::handle_osd_map
 // OSD::_committed_osd_maps
@@ -9776,17 +9785,14 @@ void OSDService::_maybe_queue_recovery() {
 
   uint64_t available_pushes;
 
-  // list<pair<epoch_t, PGRef> >, were inserted by OSDService::queue_for_recovery
+  // list<pair<epoch_t, PGRef> >, inserted by OSDService::queue_for_recovery
   while (!awaiting_throttle.empty() &&
-	 _recover_now(&available_pushes)) {
-    // we can recover right now
-
-    // default 1
+	 _recover_now(&available_pushes)) { // allowed to start recovery op
     uint64_t to_start = MIN(
       available_pushes,
-      cct->_conf->osd_recovery_max_single_start);
+      cct->_conf->osd_recovery_max_single_start); // default 1
 
-    // enqueue on OSDService::op_wq
+    // enqueue on OSD::op_shardedwq
     _queue_for_recovery(awaiting_throttle.front(), to_start);
 
     awaiting_throttle.pop_front();
@@ -9831,11 +9837,11 @@ bool OSDService::_recover_now(uint64_t *available_pushes)
 // called by
 // PGQueueable::RunVis::operator()(PGRecovery &op)
 void OSD::do_recovery(
-  PG *pg, epoch_t queued, uint64_t reserved_pushes,
+  PG *pg, epoch_t queued, uint64_t reserved_pushes, // was set by OSDService::_maybe_queue_recovery
   ThreadPool::TPHandle &handle)
 {
   uint64_t started = 0;
-  if (cct->_conf->osd_recovery_sleep > 0) {
+  if (cct->_conf->osd_recovery_sleep > 0) { // default 0
     handle.suspend_tp_timeout();
 
     pg->unlock();
@@ -9869,8 +9875,7 @@ void OSD::do_recovery(
     dout(20) << "  active was " << service.recovery_oids[pg->info.pgid] << dendl;
 #endif
 
-    // for PG_STATE_RECOVERING or PG_STATE_BACKFILL, try to recover_primary,
-    // recover_replicas or recover_backfill
+    // to call recover_primary/recover_replicas/recover_backfill
     bool more = pg->start_recovery_ops(reserved_pushes, handle, &started);
 
     dout(10) << "do_recovery started " << started << "/" << reserved_pushes 
@@ -9961,6 +9966,8 @@ void OSDService::finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue)
   recovery_oids[pg->info.pgid].erase(soid);
 #endif
 
+  // queue recovery pg(s) awaiting on OSDService::awaiting_throttle onto
+  // OSD::op_shardedwq to recovery
   _maybe_queue_recovery();
 }
 
