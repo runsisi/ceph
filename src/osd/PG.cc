@@ -296,7 +296,7 @@ PG::PG(OSDService *o, OSDMapRef curmap,
        const PGPool &_pool, spg_t p) :
   osd(o),
   cct(o->cct),
-  osdriver(osd->store, coll_t(), OSD::make_snapmapper_oid()),
+  osdriver(osd->store, coll_t(), OSD::make_snapmapper_oid()), // "snapmapper"
   snap_mapper(
     cct,
     &osdriver,
@@ -540,7 +540,7 @@ void PG::remove_snap_mapped_object(
 // called by
 // PG::remove_snap_mapped_object
 // PrimaryLogPG::on_local_recover
-// PrimaryLogPG::pgb_clear_object_snap_mapping
+// PrimaryLogPG::pgb_clear_object_snap_mapping, which called by PGBackend::remove
 void PG::clear_object_snap_mapping(
   ObjectStore::Transaction *t, const hobject_t &soid)
 {
@@ -558,7 +558,8 @@ void PG::clear_object_snap_mapping(
 }
 
 // called by
-// PrimaryLogPG::pgb_set_object_snap_mapping
+// PrimaryLogPG::pgb_set_object_snap_mapping,
+// which called by PGBackend::rollback::RollbackVisitor::update_snaps
 void PG::update_object_snap_mapping(
   ObjectStore::Transaction *t, const hobject_t &soid, const set<snapid_t> &snaps)
 {
@@ -2316,7 +2317,7 @@ bool PG::queue_scrub()
     scrubber.must_repair = false;
   }
 
-  // queue on OSDService::op_wq
+  // queue on OSD::op_shardedwq
   requeue_scrub();
 
   return true;
@@ -3858,6 +3859,7 @@ void PG::update_snap_map(
        i != log_entries.end();
        ++i) {
     OSDriver::OSTransaction _t(osdriver.get_transaction(&t));
+
     if (i->soid.snap < CEPH_MAXSNAP) {
       if (i->is_delete()) {
 	int r = snap_mapper.remove_oid(
@@ -3866,6 +3868,7 @@ void PG::update_snap_map(
 	assert(r == 0);
       } else if (i->is_update()) {
 	assert(i->snaps.length() > 0);
+
 	vector<snapid_t> snaps;
 	bufferlist snapbl = i->snaps;
 	bufferlist::iterator p = snapbl.begin();
@@ -4187,7 +4190,7 @@ bool PG::sched_scrub()
 	}
       }
 
-      // queue on OSDService::op_wq
+      // queue on OSD::op_shardedwq
       queue_scrub();
     } else {
       // none declined, since scrubber.reserved is set
@@ -4226,8 +4229,11 @@ void PG::reg_next_scrub()
   pool.info.opts.get(pool_opts_t::SCRUB_MIN_INTERVAL, &scrub_min_interval);
   pool.info.opts.get(pool_opts_t::SCRUB_MAX_INTERVAL, &scrub_max_interval);
 
+  // was reset by PG::unreg_next_scrub
   assert(scrubber.scrub_reg_stamp == utime_t());
 
+  // insert a new ScrubJob, will be scheduled by OSD::sched_scrub,
+  // which called by OSD::tick_without_osd_lock
   scrubber.scrub_reg_stamp = osd->reg_pg_scrub(info.pgid,
 					       reg_stamp,
 					       scrub_min_interval,

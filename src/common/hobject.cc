@@ -23,6 +23,8 @@ static void append_escaped(const string &in, string *out)
   }
 }
 
+// called by
+// SnapMapper::update_bits
 set<string> hobject_t::get_prefixes(
   uint32_t bits,
   uint32_t mask,
@@ -48,6 +50,7 @@ set<string> hobject_t::get_prefixes(
       to.insert(*j | (1U << i));
       to.insert(*j);
     }
+
     to.swap(from);
     to.clear();
   }
@@ -63,7 +66,9 @@ set<string> hobject_t::get_prefixes(
        i != from.end();
        ++i) {
     uint32_t revhash(hobject_t::_reverse_nibbles(*i));
+
     snprintf(buf, sizeof(buf), "%.*X", (int)(sizeof(revhash))*2, revhash);
+
     ret.insert(poolstr + string(buf, len/4));
   }
   return ret;

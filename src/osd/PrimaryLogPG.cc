@@ -15346,6 +15346,7 @@ boost::statechart::result PrimaryLogPG::WaitReservation::react(const SnapTrimRes
   }
 
   // will be used by PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
+  // PG::snap_trimq was set by PG::activate and updated by Active::react(AdvMap)
   context<Trimming>().snap_to_trim = pg->snap_trimq.range_start();
 
   ldout(pg->cct, 10) << "NotTrimming: trimming "
@@ -15416,6 +15417,7 @@ boost::statechart::result PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork&)
 		       << " to purged_snaps"
 		       << dendl;
 
+    // PG::snap_trimq was set by PG::activate and updated by Active::react(AdvMap)
     pg->info.purged_snaps.insert(snap_to_trim);
     pg->snap_trimq.erase(snap_to_trim);
 

@@ -545,7 +545,7 @@ flushjournal_out:
   if (r < 0)
     exit(1);
 
-  if (g_conf->osd_heartbeat_use_min_delay_socket) {
+  if (g_conf->osd_heartbeat_use_min_delay_socket) { // default false
     ms_hb_front_client->set_socket_priority(SOCKET_PRIORITY_MIN_DELAY);
     ms_hb_back_client->set_socket_priority(SOCKET_PRIORITY_MIN_DELAY);
     ms_hb_back_server->set_socket_priority(SOCKET_PRIORITY_MIN_DELAY);

@@ -102,7 +102,7 @@ void PGBackend::rollback(
       temp.append(t);
       temp.swap(t);
     }
-  };
+  }; // struct RollbackVisitor : public ObjectModDesc::Visitor
 
   assert(entry.mod_desc.can_rollback());
 

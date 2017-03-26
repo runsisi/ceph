@@ -257,6 +257,7 @@ class PG : public DoutPrefixProvider {
 protected:
   OSDService *osd;
   CephContext *cct;
+
   OSDriver osdriver;
   SnapMapper snap_mapper;
 
@@ -267,9 +268,13 @@ public:
   unsigned get_subsys() const override { return ceph_subsys_osd; }
 
   /*** PG ****/
+  // called by
+  // OSD::split_pgs
+  // PG::split_into
   void update_snap_mapper_bits(uint32_t bits) {
     snap_mapper.update_bits(bits);
   }
+
   /// get_is_recoverable_predicate: caller owns returned pointer and must delete when done
   IsPGRecoverablePredicate *get_is_recoverable_predicate() {
     return get_pgbackend()->get_is_recoverable_predicate();

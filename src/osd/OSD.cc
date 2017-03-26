@@ -1041,6 +1041,7 @@ void OSDService::send_message_osd_cluster(int peer, Message *m, epoch_t from_epo
     release_map(next_map);
     return;
   }
+
   const entity_inst_t& peer_inst = next_map->get_cluster_inst(peer);
   ConnectionRef peer_con = osd->cluster_messenger->get_connection(peer_inst);
   share_map_peer(peer, peer_con.get(), next_map);
@@ -5663,7 +5664,7 @@ void TestOpsSocketHook::test_ops(OSDService *service, ObjectStore *store,
 // =========================================
 
 // called by
-// OSD::RemoveWQ::_process
+// OSD::RemoveWQ::_process, disk_tp
 bool remove_dir(
   CephContext *cct,
   ObjectStore *store, SnapMapper *mapper,
@@ -5750,6 +5751,7 @@ bool remove_dir(
   return cont;
 }
 
+// disk_tp
 void OSD::RemoveWQ::_process(
   pair<PGRef, DeletingStateRef> item,
   ThreadPool::TPHandle &handle)
@@ -5811,10 +5813,11 @@ void OSD::RemoveWQ::_process(
 void OSD::ms_handle_connect(Connection *con)
 {
   dout(10) << __func__ << " con " << con << dendl;
-  if (con->get_peer_type() == CEPH_ENTITY_TYPE_MON) {
+  if (con->get_peer_type() == CEPH_ENTITY_TYPE_MON) { // connected to a mon
     Mutex::Locker l(osd_lock);
     if (is_stopping())
       return;
+
     dout(10) << __func__ << " on mon" << dendl;
 
     if (is_preboot()) {
@@ -5855,7 +5858,7 @@ void OSD::ms_handle_connect(Connection *con)
 void OSD::ms_handle_fast_connect(Connection *con)
 {
   if (con->get_peer_type() != CEPH_ENTITY_TYPE_MON &&
-      con->get_peer_type() != CEPH_ENTITY_TYPE_MGR) {
+      con->get_peer_type() != CEPH_ENTITY_TYPE_MGR) { // connected to a osd peer
     Session *s = static_cast<Session*>(con->get_priv());
     if (!s) {
       s = new Session(cct);
@@ -5863,6 +5866,7 @@ void OSD::ms_handle_fast_connect(Connection *con)
       s->con = con;
       dout(10) << " new session (outgoing) " << s << " con=" << s->con
           << " addr=" << s->con->get_peer_addr() << dendl;
+
       // we don't connect to clients
       assert(con->get_peer_type() == CEPH_ENTITY_TYPE_OSD);
       s->entity_name.set_type(CEPH_ENTITY_TYPE_OSD);
@@ -6639,7 +6643,7 @@ COMMAND("reset_pg_recovery_stats", "reset pg recovery statistics",
 };
 
 // called by
-// OSD::CommandWQ::_process
+// OSD::CommandWQ::_process, command_tp
 void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, bufferlist& data)
 {
   int r = 0;
@@ -7399,8 +7403,11 @@ void OSD::do_waiters()
   dout(10) << "do_waiters -- finish" << dendl;
 }
 
-// slow path of message dispatch, those ops are queued on OSDService::peering_wq, i.e.,
-// OSD::peering_wq, instead of OSD::op_shardedwq
+// except MSG_OSD_PG_REMOVE/MSG_OSD_PG_TRIM handling, try to queue peering evts
+// on OSDService::peering_wq, i.e., OSD::peering_wq, instead of OSD::op_shardedwq,
+// those requires update to date osdmap compared to the peer, so OSD::require_same_or_newer_map
+// may push these op on OSD::waiting_for_osdmap, will wait to be processed by OSD::do_waiters,
+// which will be called by OSD::activate_map, i.e., after the osd get a new osdmap
 // called by
 // OSD::do_waiters, which called by OSD::tick, OSD::ms_dispatch
 // OSD::_dispatch, which called by OSD::ms_dispatch
@@ -7745,6 +7752,7 @@ void OSD::sched_scrub()
 		     (load_is_low ? ", load_is_low" : " deadline < now"))
 		 << dendl;
 
+	// queue on OSD::op_shardedwq
 	if (pg->sched_scrub()) {
 	  pg->unlock();
 	  break;
@@ -8855,7 +8863,8 @@ bool OSD::require_same_or_newer_map(OpRequestRef& op, epoch_t epoch,
 	    << " > my " << osdmap->get_epoch() << " with " << m << dendl;
 
     // push back of OSD::waiting_for_osdmap, will be processed by
-    // OSD::do_waiters
+    // OSD::do_waiters which called by OSD::activate_map, i.e., the osd
+    // get a new map
     wait_for_new_map(op);
 
     return false;
@@ -9116,10 +9125,10 @@ void OSD::dispatch_context_transaction(PG::RecoveryCtx &ctx, PG *pg,
 }
 
 // called by
-// OSD::handle_pg_peering_evt
-// OSD::do_recovery
+// OSD::handle_pg_peering_evt, run in the context of dispatcher
+// OSD::do_recovery, run in the context of OSD::op_shardedwq
 // C_CompleteSplits::finish, with the second parameter set to 0
-// OSD::process_peering_events
+// OSD::process_peering_events, run in the context of OSD::peering_wq
 void OSD::dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap,
                            ThreadPool::TPHandle *handle)
 {
@@ -9167,7 +9176,9 @@ void OSD::dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap,
  * Send an MOSDPGNotify to a primary, with a list of PGs that I have
  * content for, and they are primary for.
  */
-
+// called by
+// OSD::dispatch_context
+// OSD::handle_pg_query
 void OSD::do_notifies(
   map<int,vector<pair<pg_notify_t,PastIntervals> > >& notify_list,
   OSDMapRef curmap)
@@ -9201,6 +9212,8 @@ void OSD::do_notifies(
 /** do_queries
  * send out pending queries for info | summaries
  */
+// called by
+// OSD::dispatch_context
 void OSD::do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
 		     OSDMapRef curmap)
 {
@@ -9228,7 +9241,8 @@ void OSD::do_queries(map<int, map<spg_t,pg_query_t> >& query_map,
   }
 }
 
-
+// called by
+// OSD::dispatch_context
 void OSD::do_infos(map<int,
 		       vector<pair<pg_notify_t, PastIntervals> > >& info_map,
 		   OSDMapRef curmap)
@@ -10004,8 +10018,8 @@ bool OSD::op_is_discardable(const MOSDOp *op)
 }
 
 // called by
-// OSD::handle_op
-// OSD::handle_replica_op
+// OSD::ms_fast_dispatch
+// OSD::dispatch_session_waiting
 void OSD::enqueue_op(spg_t pg, OpRequestRef& op, epoch_t epoch)
 {
   utime_t latency = ceph_clock_now() - op->get_req()->get_recv_stamp();
@@ -10026,6 +10040,9 @@ void OSD::enqueue_op(spg_t pg, OpRequestRef& op, epoch_t epoch)
 /*
  * NOTE: dequeue called in worker thread, with pg lock
  */
+// called by
+// PGQueueable::RunVis::operator()(const OpRequestRef &op), for
+// boost::variant<OpRequestRef, PGSnapTrim, PGScrub, PGRecovery>
 void OSD::dequeue_op(
   PGRef pg, OpRequestRef op,
   ThreadPool::TPHandle &handle)
@@ -10062,7 +10079,8 @@ void OSD::dequeue_op(
   OID_EVENT_TRACE_WITH_MSG(op->get_req(), "DEQUEUE_OP_END", false);
 }
 
-
+// created by
+// OSD::process_peering_events
 struct C_CompleteSplits : public Context {
   OSD *osd;
   set<boost::intrusive_ptr<PG> > pgs;
@@ -10104,7 +10122,7 @@ struct C_CompleteSplits : public Context {
 };
 
 // called by
-// OSD::PeeringWQ::_process
+// OSD::PeeringWQ::_process, peering_wq, osd_tp
 void OSD::process_peering_events(
   const list<PG*> &pgs,
   ThreadPool::TPHandle &handle

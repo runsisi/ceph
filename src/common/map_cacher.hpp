@@ -131,6 +131,7 @@ public:
 	return 0;
       }
     }
+
     ceph_abort(); // not reachable
     return -EINVAL;
   } ///< @return error value, 0 on success, -ENOENT if no more entries
@@ -148,8 +149,9 @@ public:
       *ip = i->second;
       vptrs.insert(ip);
     }
+
     t->set_keys(keys);
-    t->add_callback(new TransHolder(vptrs));
+    t->add_callback(new TransHolder(vptrs)); // t->register_on_applied
   }
 
   /// Adds operation removing keys to Transaction
@@ -166,8 +168,9 @@ public:
       *ip = empty;
       vptrs.insert(ip);
     }
+
     t->remove_keys(keys);
-    t->add_callback(new TransHolder(vptrs));
+    t->add_callback(new TransHolder(vptrs)); // t->register_on_applied
   }
 
   /// Gets keys, uses cached values for unstable keys
@@ -189,9 +192,11 @@ public:
 	to_get.insert(*i);
       }
     }
+
     int r = driver->get_keys(to_get, &_got);
     if (r < 0)
       return r;
+
     for (typename map<K, V>::iterator i = _got.begin();
 	 i != _got.end();
 	 ++i) {

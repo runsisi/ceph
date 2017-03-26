@@ -817,6 +817,8 @@ int get_data(ObjectStore *store, coll_t coll, ghobject_t hoid,
   return 0;
 }
 
+// called by
+// ObjectStoreTool::get_object
 int get_attrs(ObjectStore *store, coll_t coll, ghobject_t hoid,
     ObjectStore::Transaction *t, bufferlist &bl,
     OSDriver &driver, SnapMapper &snap_mapper)
@@ -827,6 +829,7 @@ int get_attrs(ObjectStore *store, coll_t coll, ghobject_t hoid,
 
   if (debug)
     cerr << "\tattrs: len " << as.data.size() << std::endl;
+
   t->setattrs(coll, hoid, as.data);
 
   // This could have been handled in the caller if we didn't need to
@@ -971,6 +974,7 @@ int ObjectStoreTool::get_object(ObjectStore *store, coll_t coll,
       return -EFAULT;
     }
   }
+
   if (!dry_run)
     store->apply_transaction(&osr, std::move(*t));
   return 0;

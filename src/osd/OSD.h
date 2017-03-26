@@ -715,6 +715,8 @@ public:
   };
   set<ScrubJob> sched_scrub_pg;
 
+  // called by
+  // PG::reg_next_scrub
   /// @returns the scrub_reg_stamp used for unregister the scrub job
   utime_t reg_pg_scrub(spg_t pgid, utime_t t, double pool_scrub_min_interval,
 		       double pool_scrub_max_interval, bool must) {
@@ -724,11 +726,15 @@ public:
     sched_scrub_pg.insert(scrub);
     return scrub.sched_time;
   }
+
   void unreg_pg_scrub(spg_t pgid, utime_t t) {
     Mutex::Locker l(sched_scrub_lock);
     size_t removed = sched_scrub_pg.erase(ScrubJob(cct, pgid, t));
     assert(removed);
   }
+
+  // called by
+  // OSD::sched_scrub, which called by OSD::tick_without_osd_lock
   bool first_scrub_stamp(ScrubJob *out) {
     Mutex::Locker l(sched_scrub_lock);
     if (sched_scrub_pg.empty())
@@ -737,6 +743,7 @@ public:
     *out = *iter;
     return true;
   }
+
   bool next_scrub_stamp(const ScrubJob& next,
 			ScrubJob *out) {
     Mutex::Locker l(sched_scrub_lock);

@@ -376,6 +376,8 @@ public:
     release_object_locks(manager);
   }
 
+  // called by
+  // PGBackend::rollback::RollbackVisitor::update_snaps
   void pgb_set_object_snap_mapping(
     const hobject_t &soid,
     const set<snapid_t> &snaps,
@@ -383,6 +385,8 @@ public:
     return update_object_snap_mapping(t, soid, snaps);
   }
 
+  // called by
+  // PGBackend::remove
   void pgb_clear_object_snap_mapping(
     const hobject_t &soid,
     ObjectStore::Transaction *t) override {

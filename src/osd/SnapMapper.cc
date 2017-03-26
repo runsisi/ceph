@@ -41,6 +41,7 @@ int OSDriver::get_next(
     ceph_abort();
     return -EINVAL;
   }
+
   iter->upper_bound(key);
   if (iter->valid()) {
     if (next)
@@ -54,6 +55,7 @@ int OSDriver::get_next(
 struct Mapping {
   snapid_t snap;
   hobject_t hoid;
+
   explicit Mapping(const pair<snapid_t, hobject_t> &in)
     : snap(in.first), hoid(in.second) {}
   Mapping() : snap(0) {}
@@ -108,6 +110,8 @@ pair<snapid_t, hobject_t> SnapMapper::from_raw(
   return make_pair(map.snap, map.hoid);
 }
 
+// called by
+// SnapMapper::get_next_objects_to_trim, for assertion only
 bool SnapMapper::is_mapping(const string &to_test)
 {
   return to_test.substr(0, MAPPING_PREFIX.size()) == MAPPING_PREFIX;
@@ -134,6 +138,11 @@ void SnapMapper::object_snaps::decode(bufferlist::iterator &bl)
   DECODE_FINISH(bl);
 }
 
+// called by
+// SnapMapper::update_snaps
+// SnapMapper::add_oid
+// SnapMapper::_remove_oid
+// SnapMapper::get_snaps(const hobject_t &oid, std::set<snapid_t> *snaps)
 int SnapMapper::get_snaps(
   const hobject_t &oid,
   object_snaps *out)
@@ -147,6 +156,7 @@ int SnapMapper::get_snaps(
     return r;
   if (got.empty())
     return -ENOENT;
+
   if (out) {
     bufferlist::iterator bp = got.begin()->second.begin();
     ::decode(*out, bp);
@@ -158,6 +168,8 @@ int SnapMapper::get_snaps(
   return 0;
 }
 
+// called by
+// SnapMapper::_remove_oid
 void SnapMapper::clear_snaps(
   const hobject_t &oid,
   MapCacher::Transaction<std::string, bufferlist> *t)
@@ -168,19 +180,27 @@ void SnapMapper::clear_snaps(
   backend.remove_keys(to_remove, t);
 }
 
+// called by
+// SnapMapper::update_snaps
+// SnapMapper::add_oid
 void SnapMapper::set_snaps(
   const hobject_t &oid,
   const object_snaps &in,
   MapCacher::Transaction<std::string, bufferlist> *t)
 {
   assert(check(oid));
+
   map<string, bufferlist> to_set;
   bufferlist bl;
   ::encode(in, bl);
+
   to_set[to_object_key(oid)] = bl;
+
   backend.set_keys(to_set, t);
 }
 
+// called by
+// PG::update_snap_map
 int SnapMapper::update_snaps(
   const hobject_t &oid,
   const set<snapid_t> &new_snaps,
@@ -191,6 +211,7 @@ int SnapMapper::update_snaps(
 	   << " was " << (old_snaps_check ? *old_snaps_check : set<snapid_t>())
 	   << dendl;
   assert(check(oid));
+
   if (new_snaps.empty())
     return remove_oid(oid, t);
 
@@ -198,6 +219,7 @@ int SnapMapper::update_snaps(
   int r = get_snaps(oid, &out);
   if (r < 0)
     return r;
+
   if (old_snaps_check)
     assert(out.snaps == *old_snaps_check);
 
@@ -216,6 +238,12 @@ int SnapMapper::update_snaps(
   return 0;
 }
 
+// called by
+// PG::update_object_snap_mapping
+// PG::update_snap_map
+// PG::_scan_snaps
+// PrimaryLogPG::on_local_recover
+// ceph_objectstore_tool.cc/get_attrs
 void SnapMapper::add_oid(
   const hobject_t &oid,
   const set<snapid_t>& snaps,
@@ -238,9 +266,13 @@ void SnapMapper::add_oid(
        ++i) {
     to_add.insert(to_raw(make_pair(*i, oid)));
   }
+
   backend.set_keys(to_add, t);
 }
 
+// called by
+// PG::proc_primary_info
+// PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
 int SnapMapper::get_next_objects_to_trim(
   snapid_t snap,
   unsigned max,
@@ -248,21 +280,24 @@ int SnapMapper::get_next_objects_to_trim(
 {
   assert(out);
   assert(out->empty());
+
   int r = 0;
+  // prefixes were inserted by SnapMapper::update_bits
   for (set<string>::iterator i = prefixes.begin();
        i != prefixes.end() && out->size() < max && r == 0;
        ++i) {
     string prefix(get_prefix(snap) + *i);
     string pos = prefix;
+
     while (out->size() < max) {
       pair<string, bufferlist> next;
+
       r = backend.get_next(pos, &next);
       if (r != 0) {
 	break; // Done
       }
 
-      if (next.first.substr(0, prefix.size()) !=
-	  prefix) {
+      if (next.first.substr(0, prefix.size()) != prefix) {
 	break; // Done with this prefix
       }
 
@@ -273,9 +308,11 @@ int SnapMapper::get_next_objects_to_trim(
       assert(check(next_decoded.second));
 
       out->push_back(next_decoded.second);
+
       pos = next.first;
     }
   }
+
   if (out->size() == 0) {
     return -ENOENT;
   } else {
@@ -283,7 +320,15 @@ int SnapMapper::get_next_objects_to_trim(
   }
 }
 
-
+// called by
+// OSD::recursive_remove_collection
+// OSD.cc/remove_dir
+// PG::clear_object_snap_mapping
+// PG::update_object_snap_mapping
+// PG::update_snap_map
+// PG::_scan_snaps
+// SnapMapper::update_snaps
+// ceph_objectstore_tool.cc/remove_object
 int SnapMapper::remove_oid(
   const hobject_t &oid,
   MapCacher::Transaction<std::string, bufferlist> *t)
@@ -293,6 +338,8 @@ int SnapMapper::remove_oid(
   return _remove_oid(oid, t);
 }
 
+// called by
+// SnapMapper::remove_oid
 int SnapMapper::_remove_oid(
   const hobject_t &oid,
   MapCacher::Transaction<std::string, bufferlist> *t)
@@ -314,15 +361,19 @@ int SnapMapper::_remove_oid(
   return 0;
 }
 
+// called by
+// PG::_scan_snaps, which called by PG::build_scrub_map_chunk
 int SnapMapper::get_snaps(
   const hobject_t &oid,
   std::set<snapid_t> *snaps)
 {
   assert(check(oid));
+
   object_snaps out;
   int r = get_snaps(oid, &out);
   if (r < 0)
     return r;
+
   if (snaps)
     snaps->swap(out.snaps);
   return 0;

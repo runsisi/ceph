@@ -46,9 +46,11 @@ class OSDriver : public MapCacher::StoreDriver<std::string, bufferlist> {
 public:
   class OSTransaction : public MapCacher::Transaction<std::string, bufferlist> {
     friend class OSDriver;
+
     coll_t cid;
     ghobject_t hoid;
     ObjectStore::Transaction *t;
+
     OSTransaction(
       coll_t cid,
       const ghobject_t &hoid,
@@ -74,6 +76,7 @@ public:
     return OSTransaction(cid, hoid, t);
   }
 
+  // PG::osdriver(osd->store, coll_t(), OSD::make_snapmapper_oid()), see PG::PG
   OSDriver(ObjectStore *os, coll_t cid, const ghobject_t &hoid) :
     os(os), cid(cid), hoid(hoid) {}
 
@@ -83,7 +86,7 @@ public:
   int get_next(
     const std::string &key,
     pair<std::string, bufferlist> *next) override;
-};
+}; // class OSDriver
 
 /**
  * SnapMapper
@@ -114,12 +117,15 @@ public:
 class SnapMapper {
 public:
   CephContext* cct;
+
   struct object_snaps {
     hobject_t oid;
     std::set<snapid_t> snaps;
+
     object_snaps(hobject_t oid, const std::set<snapid_t> &snaps)
       : oid(oid), snaps(snaps) {}
     object_snaps() {}
+
     void encode(bufferlist &bl) const;
     void decode(bufferlist::iterator &bp);
   };
@@ -156,6 +162,7 @@ private:
     const hobject_t &oid,
     MapCacher::Transaction<std::string, bufferlist> *t);
 
+  // for assertion only
   // True if hoid belongs in this mapping based on mask_bits and match
   bool check(const hobject_t &hoid) const {
     return hoid.match(mask_bits, match);
@@ -175,6 +182,7 @@ public:
     assert(r < (int)sizeof(buf));
     return string(buf, r) + '_';
   }
+
   uint32_t mask_bits;
   const uint32_t match;
   string last_key_checked;
@@ -184,8 +192,8 @@ public:
 
   SnapMapper(
     CephContext* cct,
-    MapCacher::StoreDriver<std::string, bufferlist> *driver,
-    uint32_t match,  ///< [in] pgid
+    MapCacher::StoreDriver<std::string, bufferlist> *driver, // PG::osdriver
+    uint32_t match,  ///< [in] pgid, i.e., pgid.m_seed
     uint32_t bits,   ///< [in] current split bits
     int64_t pool,    ///< [in] pool
     shard_id_t shard ///< [in] shard
@@ -195,17 +203,25 @@ public:
     update_bits(mask_bits);
   }
 
+  // used by
+  // SnapMapper::get_next_objects_to_trim
   set<string> prefixes;
+
+  // called by
+  // SnapMapper::SnapMapper
+  // PG::update_snap_mapper_bits, which called by OSD::split_pgs, PG::split_into
   /// Update bits in case of pg split
   void update_bits(
     uint32_t new_bits  ///< [in] new split bits
     ) {
     assert(new_bits >= mask_bits);
     mask_bits = new_bits;
+
     set<string> _prefixes = hobject_t::get_prefixes(
       mask_bits,
       match,
       pool);
+
     prefixes.clear();
     for (set<string>::iterator i = _prefixes.begin();
 	 i != _prefixes.end();
