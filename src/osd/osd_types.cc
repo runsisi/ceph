@@ -3717,6 +3717,12 @@ void pg_query_t::generate_test_instances(list<pg_query_t*>& o)
 }
 
 // -- ObjectModDesc --
+
+// called by
+// ObjectModDesc::dump
+// PGBackend::rollback
+// PGBackend::rollforward
+// PGBackend::trim
 void ObjectModDesc::visit(Visitor *visitor) const
 {
   bufferlist::iterator bp = bl.begin();
@@ -3816,6 +3822,9 @@ struct DumpVisitor : public ObjectModDesc::Visitor {
     f->dump_string("code", "CREATE");
     f->close_section();
   }
+
+  // called by
+  // ObjectModDesc::visit
   void update_snaps(const set<snapid_t> &snaps) override {
     f->open_object_section("op");
     f->dump_string("code", "UPDATE_SNAPS");

@@ -320,6 +320,8 @@ public:
     }
   }
 
+  // called by
+  // PrimaryLogPG::trim_object, which called by PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
   void update_snaps(
     const hobject_t &hoid,         ///< [in] object for snaps
     const set<snapid_t> &old_snaps,///< [in] old snaps value
@@ -327,9 +329,11 @@ public:
     ) {
     // PGTransaction::op_map[hoid]
     auto &op = get_object_op(hoid);
+
     assert(!op.updated_snaps);
     assert(op.buffer_updates.empty());
     assert(!op.truncate);
+
     op.updated_snaps = make_pair(
       old_snaps,
       new_snaps);

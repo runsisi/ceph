@@ -418,7 +418,7 @@ public:
 };
 
 // called by
-// ReplicatedBackend::submit_transaction
+// ReplicatedBackend::submit_transaction, which called by PrimaryLogPG::issue_repop
 void generate_transaction(
   PGTransactionUPtr &pgt,
   const coll_t &coll,
@@ -434,11 +434,17 @@ void generate_transaction(
 
   for (auto &&le: log_entries) {
     le.mark_unrollbackable();
+
     auto oiter = pgt->op_map.find(le.soid);
+
+    // updated by PGTransaction::update_snaps, which called by PrimaryLogPG::trim_object,
+    // which called by PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
     if (oiter != pgt->op_map.end() && oiter->second.updated_snaps) {
       vector<snapid_t> snaps(
 	oiter->second.updated_snaps->second.begin(),
 	oiter->second.updated_snaps->second.end());
+
+      // log_entry_t::snaps was set by PrimaryLogPG::make_writeable/PrimaryLogPG::finish_ctx
       ::encode(snaps, le.snaps);
     }
   }
@@ -1348,6 +1354,7 @@ void ReplicatedBackend::do_repop(OpRequestRef op)
   
   parent->update_stats(m->pg_stats);
   
+  // call PrimaryLogPG::log_operation, which calls PG::append_log
   parent->log_operation(
     log,
     m->updated_hit_set_history,

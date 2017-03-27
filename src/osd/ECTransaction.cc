@@ -166,9 +166,13 @@ void ECTransaction::generate_transactions(
       if (entry &&
 	  entry->is_modify() &&
 	  op.updated_snaps) {
+        // updated by PGTransaction::update_snaps, which called by PrimaryLogPG::trim_object,
+        // which called by PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
 	vector<snapid_t> snaps(
 	  op.updated_snaps->second.begin(),
 	  op.updated_snaps->second.end());
+
+	// log_entry_t::snaps was set by PrimaryLogPG::make_writeable/PrimaryLogPG::finish_ctx
 	::encode(snaps, entry->snaps);
       }
 
@@ -186,7 +190,7 @@ void ECTransaction::generate_transactions(
 			   << dendl;
       }
 
-      if (entry && op.updated_snaps) {
+      if (entry && op.updated_snaps) { // updated by PGTransaction::update_snaps
 	entry->mod_desc.update_snaps(op.updated_snaps->first);
       }
 

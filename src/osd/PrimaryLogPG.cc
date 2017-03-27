@@ -2719,7 +2719,7 @@ void PrimaryLogPG::record_write_error(OpRequestRef op, const hobject_t &soid,
 
       pg->osd->send_message_osd_client(reply, m->get_connection());
     }
-  };
+  }; // struct OnComplete
 
   ObcLockManager lock_manager;
 
@@ -4216,7 +4216,7 @@ PrimaryLogPG::OpContextUPtr PrimaryLogPG::trim_object(bool first, const hobject_
       new_snaps);
 
     ctx->at_version.version++;
-  } else {
+  } else { // !new_snaps.empty()
     // save adjusted snaps for this object
     dout(10) << coid << " snaps " << old_snaps
 	     << " -> " << new_snaps << dendl;
@@ -9973,6 +9973,8 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
     assert(ctx->at_version >= projected_last_update);
     projected_last_update = ctx->at_version;
   }
+
+  // will be used by PrimaryLogPG::update_range
   for (auto &&entry: ctx->log) {
     projected_log.add(entry);
   }
@@ -9987,7 +9989,7 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
     std::move(ctx->op_t),
     pg_trim_to,
     min_last_complete_ondisk,
-    ctx->log,
+    ctx->log, // vector<pg_log_entry_t>
     ctx->updated_hset_history,
     onapplied_sync,
     on_all_applied,
@@ -11653,7 +11655,7 @@ void PrimaryLogPG::do_update_log_missing_reply(OpRequestRef &op)
 /* Mark all unfound objects as lost.
  */
 // called by
-// PrimaryLogPG::do_command, for "mark_unfound_lost"
+// PrimaryLogPG::do_command, for "mark_unfound_lost" "revert"/"delete"
 void PrimaryLogPG::mark_all_unfound_lost(
   int what,
   ConnectionRef con,
@@ -11751,7 +11753,7 @@ void PrimaryLogPG::mark_all_unfound_lost(
     std::move(manager),
     boost::optional<std::function<void(void)> >(
       [=]() {
-        // queue front of osd->op_wq
+        // queue front of OSD::op_sharedwq
 	requeue_ops(waiting_for_all_missing);
 	waiting_for_all_missing.clear();
 	for (auto& p : waiting_for_unreadable_object) {

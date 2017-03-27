@@ -3078,6 +3078,7 @@ class ObjectModDesc {
 
   // version required to decode, reflected in encode/decode version
   __u8 max_required_version = 1;
+
 public:
   class Visitor {
   public:
@@ -3099,8 +3100,10 @@ public:
       version_t gen,
       const vector<pair<uint64_t, uint64_t> > &extents) {}
     virtual ~Visitor() {}
-  };
+  }; // class Visitor
+
   void visit(Visitor *visitor) const;
+
   mutable bufferlist bl;
   enum ModID {
     APPEND = 1,
@@ -3111,7 +3114,9 @@ public:
     TRY_DELETE = 6,
     ROLLBACK_EXTENTS = 7
   };
+
   ObjectModDesc() : can_local_rollback(true), rollback_info_completed(false) {}
+
   void claim(ObjectModDesc &other) {
     bl.clear();
     bl.claim(other.bl);
@@ -3183,6 +3188,9 @@ public:
     append_id(CREATE);
     ENCODE_FINISH(bl);
   }
+
+  // called by
+  // ECTransaction::generate_transactions
   void update_snaps(const set<snapid_t> &old_snaps) {
     if (!can_local_rollback || rollback_info_completed)
       return;
@@ -3246,14 +3254,24 @@ struct pg_log_entry_t {
     MODIFY = 1,   // some unspecified modification (but not *all* modifications)
     CLONE = 2,    // cloned object from head
     DELETE = 3,   // deleted object
+
     BACKLOG = 4,  // event invented by generate_backlog [deprecated]
+    // PrimaryLogPG::do_command, for "mark_unfound_lost" "revert"
+    // PrimaryLogPG::mark_all_unfound_lost, which called by PrimaryLogPG::do_command
     LOST_REVERT = 5, // lost new version, revert to an older version.
+    // PrimaryLogPG::do_command, for "mark_unfound_lost" "delete"
+    // PrimaryLogPG::mark_all_unfound_lost, which called by PrimaryLogPG::do_command
     LOST_DELETE = 6, // lost new version, revert to no object (deleted).
+    // has not been implemented, will assert, see PrimaryLogPG::mark_all_unfound_lost
     LOST_MARK = 7,   // lost new version, now EIO
+    // for cache tier only, see PrimaryLogPG::finish_promote
     PROMOTE = 8,     // promoted object from another tier
+    // for cache tier only, see PrimaryLogPG::try_flush_mark_clean
     CLEAN = 9,       // mark an object clean
+    // see pg_log_entry_t::reqid_is_indexed, PrimaryLogPG::record_write_error
     ERROR = 10,      // write that returned an error
   };
+
   static const char *get_op_name(int op) {
     switch (op) {
     case MODIFY:

@@ -3621,7 +3621,10 @@ void PG::add_log_entry(const pg_log_entry_t& e, bool applied)
 }
 
 // called by
-// PrimaryLogPG::log_operation
+// PrimaryLogPG::log_operation, which called by
+//      ECBackend::handle_sub_write
+//      ReplicatedBackend::submit_transaction, with transaction_applied set to true
+//      ReplicatedBackend::sub_op_modify
 void PG::append_log(
   const vector<pg_log_entry_t>& logv,
   eversion_t trim_to,
@@ -3670,6 +3673,7 @@ void PG::append_log(
 
   auto last = logv.rbegin();
   if (is_primary() && last != logv.rend()) {
+    // was updated by PrimaryLogPG::issue_repop
     projected_log.skip_can_rollback_to_to_head();
     projected_log.trim(cct, last->version, nullptr);
   }

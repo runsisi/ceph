@@ -87,6 +87,8 @@ void PGBackend::rollback(
       temp.swap(t);
     }
 
+    // called by
+    // ObjectModDesc::visit
     void update_snaps(const set<snapid_t> &snaps) override {
       ObjectStore::Transaction temp;
       pg->get_parent()->pgb_set_object_snap_mapping(hoid, snaps, &temp);
@@ -147,6 +149,7 @@ void PGBackend::rollforward(
   ldpp_dout(dpp, 20) << __func__ << ": entry=" << entry << dendl;
   if (!entry.can_rollback())
     return;
+
   Trimmer trimmer(entry.soid, this, t);
   entry.mod_desc.visit(&trimmer);
 }
@@ -159,6 +162,7 @@ void PGBackend::trim(
 {
   if (!entry.can_rollback())
     return;
+
   Trimmer trimmer(entry.soid, this, t);
   entry.mod_desc.visit(&trimmer);
 }

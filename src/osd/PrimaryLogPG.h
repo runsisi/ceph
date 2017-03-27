@@ -395,7 +395,7 @@ public:
 
   // called by
   // ECBackend::handle_sub_write
-  // ReplicatedBackend::submit_transaction
+  // ReplicatedBackend::submit_transaction, with transaction_applied set to true
   // ReplicatedBackend::sub_op_modify
   void log_operation(
     const vector<pg_log_entry_t> &logv,
@@ -408,6 +408,7 @@ public:
       info.hit_set = *hset_history;
     }
 
+    // call PG::append_log
     append_log(logv, trim_to, roll_forward_to, t, transaction_applied);
   }
 
@@ -963,6 +964,9 @@ protected:
    *
    * Also used to store error log entries for dup detection.
    */
+  // called by
+  // PrimaryLogPG::record_write_error
+  // PrimaryLogPG::mark_all_unfound_lost
   void submit_log_entries(
     const mempool::osd::list<pg_log_entry_t> &entries,
     ObcLockManager &&manager,
