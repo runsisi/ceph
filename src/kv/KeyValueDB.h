@@ -158,13 +158,16 @@ public:
     const std::set<std::string> &key,      ///< [in] Key to retrieve
     std::map<std::string, bufferlist> *out ///< [out] Key value retrieved
     ) = 0;
+
   virtual int get(const std::string &prefix, ///< [in] prefix
 		  const std::string &key,    ///< [in] key
 		  bufferlist *value) {  ///< [out] value
     std::set<std::string> ks;
     ks.insert(key);
+
     std::map<std::string,bufferlist> om;
     int r = get(prefix, ks, &om);
+
     if (om.find(key) != om.end()) {
       *value = om[key];
     } else {
@@ -173,6 +176,7 @@ public:
     }
     return r;
   }
+
   virtual int get(const string &prefix,
 		  const char *key, size_t keylen,
 		  bufferlist *value) {

@@ -193,7 +193,7 @@ public:
   SnapMapper(
     CephContext* cct,
     MapCacher::StoreDriver<std::string, bufferlist> *driver, // PG::osdriver
-    uint32_t match,  ///< [in] pgid, i.e., pgid.m_seed
+    uint32_t match,  ///< [in] pgid, i.e., spg_t::m_seed, i.e., non raw seed
     uint32_t bits,   ///< [in] current split bits
     int64_t pool,    ///< [in] pool
     shard_id_t shard ///< [in] shard

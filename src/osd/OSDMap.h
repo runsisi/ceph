@@ -779,6 +779,7 @@ public:
       *out = spg_t(pgid);
       return true;
     }
+
     int primary;
     vector<int> acting;
     pg_to_acting_osds(pgid, &acting, &primary);

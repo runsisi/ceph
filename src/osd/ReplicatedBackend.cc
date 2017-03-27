@@ -593,6 +593,8 @@ void ReplicatedBackend::submit_transaction(
   ObjectStore::Transaction op_t;
   PGTransactionUPtr t(std::move(_t));
   set<hobject_t> added, removed;
+
+  // from logged modification to ObjectStore tx
   generate_transaction(
     t,
     coll,

@@ -1447,6 +1447,7 @@ public:
   }
 
   static ghobject_t make_snapmapper_oid() {
+    // hobject_t::hash = std::hash<sobject_t>()(sobject_t("snapmapper", 0));
     return ghobject_t(hobject_t(
       sobject_t(
 	object_t("snapmapper"),

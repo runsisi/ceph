@@ -23,6 +23,7 @@ static void append_escaped(const string &in, string *out)
   }
 }
 
+// static
 // called by
 // SnapMapper::update_bits
 set<string> hobject_t::get_prefixes(
@@ -76,6 +77,7 @@ set<string> hobject_t::get_prefixes(
 
 string hobject_t::to_str() const
 {
+  // e.g., "0000000000000000.00B7CF30.2a.rbd%udata%e12072ae8944a%e00000000000000fd.."
   string out;
 
   char snap_with_hash[1000];

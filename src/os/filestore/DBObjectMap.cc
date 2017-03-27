@@ -170,6 +170,7 @@ string DBObjectMap::ghobject_key(const ghobject_t &oid)
     t += snprintf(t, end - t, ".none");
   else
     t += snprintf(t, end - t, ".%llx", (long long unsigned)oid.hobj.pool);
+
   t += snprintf(t, end - t, ".%.*X", (int)(sizeof(uint32_t)*2), oid.hobj.get_hash());
 
   if (oid.generation != ghobject_t::NO_GEN ||
@@ -247,6 +248,7 @@ string DBObjectMap::complete_prefix(Header header)
 
 string DBObjectMap::user_prefix(Header header)
 {
+  // e.g., "_USER_0000000000000083_USER_"
   return USER_PREFIX + header_key(header->seq) + USER_PREFIX; // "_USER_"
 }
 
@@ -272,6 +274,7 @@ int DBObjectMap::DBObjectMapIteratorImpl::init()
   if (ready) {
     return 0;
   }
+
   assert(!parent_iter);
   if (header->parent) {
     Header parent = map->lookup_parent(header);
@@ -279,14 +282,19 @@ int DBObjectMap::DBObjectMapIteratorImpl::init()
       ceph_abort();
       return -EINVAL;
     }
+
     parent_iter = std::make_shared<DBObjectMapIteratorImpl>(map, parent);
   }
+
   key_iter = map->db->get_iterator(map->user_prefix(header));
   assert(key_iter);
+
   complete_iter = map->db->get_iterator(map->complete_prefix(header));
   assert(complete_iter);
+
   cur_iter = key_iter;
   assert(cur_iter);
+
   ready = true;
   return 0;
 }
@@ -519,6 +527,7 @@ int DBObjectMap::set_keys(const ghobject_t &oid,
   Header header = lookup_create_map_header(hl, oid, t);
   if (!header)
     return -EINVAL;
+
   if (check_spos(oid, header, spos))
     return 0;
 
@@ -747,6 +756,7 @@ int DBObjectMap::get_keys(const ghobject_t &oid,
   Header header = lookup_map_header(hl, oid);
   if (!header)
     return -ENOENT;
+
   ObjectMapIterator iter = _get_iterator(header);
   for (iter->seek_to_first(); iter->valid(); iter->next()) {
     if (iter->status())
@@ -1133,7 +1143,9 @@ int DBObjectMap::write_state(KeyValueDB::Transaction _t) {
   return _t ? 0 : db->submit_transaction(t);
 }
 
-
+// called by
+// DBObjectMap::lookup_create_map_header
+// DBObjectMap::lookup_map_header
 DBObjectMap::Header DBObjectMap::_lookup_map_header(
   const MapHeaderLock &l,
   const ghobject_t &oid)
@@ -1151,6 +1163,7 @@ DBObjectMap::Header DBObjectMap::_lookup_map_header(
   }
 
   bufferlist out;
+  // e.g., "_HOBJTOSEQ_\x00snapmapper...0.none.A468EC03"
   int r = db->get(HOBJECT_TO_SEQ, map_header_key(oid), &out);
   if (r < 0 || out.length()==0) {
     delete header;
@@ -1161,6 +1174,7 @@ DBObjectMap::Header DBObjectMap::_lookup_map_header(
   bufferlist::iterator iter = out.begin();
 
   ret->decode(iter);
+
   {
     Mutex::Locker l(cache_lock);
     caches.add(oid, *ret);

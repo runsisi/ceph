@@ -2812,12 +2812,22 @@ int64_t Objecter::get_object_pg_hash_position(int64_t pool, const string& key,
   return p->raw_hash_to_pg(p->hash_key(key, ns));
 }
 
-int Objecter::_calc_target(op_target_t *t, Connection *con, bool any_change)
+// called by
+// Objecter::_linger_submit
+// Objecter::_scan_requests, with conn may set to not nullptr
+// Objecter::handle_osd_map
+// Objecter::_op_submit
+// Objecter::_map_session
+// Objecter::_recalc_linger_op_target, with any_change set to true
+// Objecter::_calc_command_target, with any_change set to true
+int Objecter::_calc_target(op_target_t *t, Connection *con, bool any_change) // default false
 {
   // rwlock is locked
   bool is_read = t->flags & CEPH_OSD_FLAG_READ;
   bool is_write = t->flags & CEPH_OSD_FLAG_WRITE;
+
   t->epoch = osdmap->get_epoch();
+
   ldout(cct,20) << __func__ << " epoch " << t->epoch
 		<< " base " << t->base_oid << " " << t->base_oloc
 		<< " precalc_pgid " << (int)t->precalc_pgid
@@ -2831,6 +2841,7 @@ int Objecter::_calc_target(op_target_t *t, Connection *con, bool any_change)
     t->osd = -1;
     return RECALC_OP_TARGET_POOL_DNE;
   }
+
   ldout(cct,30) << __func__ << "  base pi " << pi
 		<< " pg_num " << pi->get_pg_num() << dendl;
 
@@ -2847,11 +2858,13 @@ int Objecter::_calc_target(op_target_t *t, Connection *con, bool any_change)
   // apply tiering
   t->target_oid = t->base_oid;
   t->target_oloc = t->base_oloc;
+
   if ((t->flags & CEPH_OSD_FLAG_IGNORE_OVERLAY) == 0) {
     if (is_read && pi->has_read_tier())
       t->target_oloc.pool = pi->read_tier;
     if (is_write && pi->has_write_tier())
       t->target_oloc.pool = pi->write_tier;
+
     pi = osdmap->get_pg_pool(t->target_oloc.pool);
     if (!pi) {
       t->osd = -1;
@@ -2869,13 +2882,14 @@ int Objecter::_calc_target(op_target_t *t, Connection *con, bool any_change)
     pgid = t->base_pgid;
   } else {
     int ret = osdmap->object_locator_to_pg(t->target_oid, t->target_oloc,
-					   pgid);
+					   pgid); // with pgid.m_seed set to raw hash
     if (ret == -ENOENT) {
       t->osd = -1;
 
       return RECALC_OP_TARGET_POOL_DNE;
     }
   }
+
   ldout(cct,20) << __func__ << " target " << t->target_oid << " "
 		<< t->target_oloc << " -> pgid " << pgid << dendl;
   ldout(cct,30) << __func__ << "  target pi " << pi
@@ -2927,13 +2941,14 @@ int Objecter::_calc_target(op_target_t *t, Connection *con, bool any_change)
       is_pg_changed(
 	t->acting_primary, t->acting, acting_primary, acting,
 	t->used_replica || any_change);
+
   bool split = false;
   if (t->pg_num) {
     split = prev_pgid.is_split(t->pg_num, pg_num, nullptr);
   }
 
   if (legacy_change || split || force_resend) {
-    t->pgid = pgid;
+    t->pgid = pgid; // pg_t with raw hash
     t->acting = acting;
     t->acting_primary = acting_primary;
     t->up_primary = up_primary;
@@ -2943,13 +2958,15 @@ int Objecter::_calc_target(op_target_t *t, Connection *con, bool any_change)
     t->pg_num = pg_num;
     t->pg_num_mask = pi->get_pg_num_mask();
     osdmap->get_primary_shard(
-      pg_t(ceph_stable_mod(pgid.ps(), t->pg_num, t->pg_num_mask), pgid.pool()),
-      &t->actual_pgid);
+      pg_t(ceph_stable_mod(pgid.ps(), t->pg_num, t->pg_num_mask), pgid.pool()), // raw hash -> moduloed hash
+      &t->actual_pgid); // spg_t with moduloed hash and shard
     t->sort_bitwise = sort_bitwise;
+
     ldout(cct, 10) << __func__ << " "
 		   << " raw pgid " << pgid << " -> actual " << t->actual_pgid
 		   << " acting " << acting
 		   << " primary " << acting_primary << dendl;
+
     t->used_replica = false;
     if (acting_primary == -1) {
       t->osd = -1;
@@ -2990,9 +3007,11 @@ int Objecter::_calc_target(op_target_t *t, Connection *con, bool any_change)
       } else {
 	osd = acting_primary;
       }
+
       t->osd = osd;
     }
-  }
+  } // legacy_change || split || force_resend
+
   if (legacy_change || unpaused || force_resend) {
     return RECALC_OP_TARGET_NEED_RESEND;
   }
@@ -3211,9 +3230,10 @@ MOSDOp *Objecter::_prepare_osd_op(Op *op)
   op->target.paused = false;
   op->stamp = ceph::mono_clock::now();
 
-  hobject_t hobj = op->target.get_hobj();
+  hobject_t hobj = op->target.get_hobj(); // with raw hash
+
   MOSDOp *m = new MOSDOp(client_inc.read(), op->tid,
-			 hobj, op->target.actual_pgid,
+			 hobj, op->target.actual_pgid, // spg_t with moduloed hash and shard
 			 osdmap->get_epoch(),
 			 flags, op->features);
 

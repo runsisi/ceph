@@ -393,6 +393,10 @@ public:
     return clear_object_snap_mapping(t, soid);
   }
 
+  // called by
+  // ECBackend::handle_sub_write
+  // ReplicatedBackend::submit_transaction
+  // ReplicatedBackend::sub_op_modify
   void log_operation(
     const vector<pg_log_entry_t> &logv,
     const boost::optional<pg_hit_set_history_t> &hset_history,
@@ -403,6 +407,7 @@ public:
     if (hset_history) {
       info.hit_set = *hset_history;
     }
+
     append_log(logv, trim_to, roll_forward_to, t, transaction_applied);
   }
 

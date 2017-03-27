@@ -428,7 +428,7 @@ namespace buffer CEPH_BUFFER_API {
 			     const iterator_impl& rhs) {
 	return &lhs.get_bl() != &rhs.get_bl() || lhs.get_off() != rhs.get_off();
       }
-    };
+    }; // class CEPH_BUFFER_API iterator_impl
 
   public:
     typedef iterator_impl<true> const_iterator;
@@ -466,7 +466,7 @@ namespace buffer CEPH_BUFFER_API {
       bool operator!=(const iterator& rhs) const {
 	return bl != rhs.bl || off != rhs.off;
       }
-    };
+    }; // class CEPH_BUFFER_API iterator
 
     class contiguous_appender {
       bufferlist *pbl;
@@ -583,7 +583,7 @@ namespace buffer CEPH_BUFFER_API {
 	  return out_of_band_offset + (pos - pbl->append_buffer.end_c_str());
 	}
       }
-    };
+    }; // class contiguous_appender
 
     contiguous_appender get_contiguous_appender(size_t len, bool deep=false) {
       return contiguous_appender(this, len, deep);
@@ -646,7 +646,7 @@ namespace buffer CEPH_BUFFER_API {
 	  }
 	}
       }
-    };
+    }; // class page_aligned_appender
 
     page_aligned_appender get_page_aligned_appender(unsigned min_pages=1) {
       return page_aligned_appender(this, min_pages);

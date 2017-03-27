@@ -296,6 +296,9 @@ PG::PG(OSDService *o, OSDMapRef curmap,
        const PGPool &_pool, spg_t p) :
   osd(o),
   cct(o->cct),
+  // ghobject_t(hobject_t(sobject_t(object_t("snapmapper"), 0)));, i.e.,
+  // hobject_t::hash = std::hash<sobject_t>()(sobject_t("snapmapper", 0));
+  // e.g., current/meta/DIR_3/snapmapper__0_A468EC03__none
   osdriver(osd->store, coll_t(), OSD::make_snapmapper_oid()), // "snapmapper"
   snap_mapper(
     cct,
@@ -3664,6 +3667,7 @@ void PG::append_log(
       pg_log.roll_forward(&handler);
     }
   }
+
   auto last = logv.rbegin();
   if (is_primary() && last != logv.rend()) {
     projected_log.skip_can_rollback_to_to_head();
@@ -3850,7 +3854,7 @@ void PG::log_weirdness()
 }
 
 // called by
-// PG::append_log
+// PG::append_log, which called by PrimaryLogPG::log_operation
 void PG::update_snap_map(
   const vector<pg_log_entry_t> &log_entries,
   ObjectStore::Transaction &t)

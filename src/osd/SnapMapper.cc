@@ -59,6 +59,7 @@ struct Mapping {
   explicit Mapping(const pair<snapid_t, hobject_t> &in)
     : snap(in.first), hoid(in.second) {}
   Mapping() : snap(0) {}
+
   void encode(bufferlist &bl) const {
     ENCODE_START(1, 1, bl);
     ::encode(snap, bl);
@@ -74,6 +75,9 @@ struct Mapping {
 };
 WRITE_CLASS_ENCODER(Mapping)
 
+// called by
+// SnapMapper::to_raw_key
+// SnapMapper::get_next_objects_to_trim
 string SnapMapper::get_prefix(snapid_t snap)
 {
   char buf[100];
@@ -81,29 +85,40 @@ string SnapMapper::get_prefix(snapid_t snap)
     buf, sizeof(buf),
     "%.*X_", (int)(sizeof(snap)*2),
     static_cast<unsigned>(snap));
+
+  // e.g., "MAP_000000000000002A_"
   return MAPPING_PREFIX + string(buf, len);
 }
 
+// called by
+// SnapMapper::to_raw
+// SnapMapper::update_snaps
+// SnapMapper::_remove_oid
 string SnapMapper::to_raw_key(
   const pair<snapid_t, hobject_t> &in)
 {
+  // for replicated pg, shard_prefix is empty string, e.g.,
+  // "MAP_000000000000002A_" + "" + "0000000000000000.00B7CF30.2a.rbd%udata%e12072ae8944a%e00000000000000fd.."
   return get_prefix(in.first) + shard_prefix + in.second.to_str();
 }
 
+// called by
+// SnapMapper::add_oid
 pair<string, bufferlist> SnapMapper::to_raw(
   const pair<snapid_t, hobject_t> &in)
 {
   bufferlist bl;
   ::encode(Mapping(in), bl);
-  return make_pair(
-    to_raw_key(in),
-    bl);
+  return make_pair(to_raw_key(in), bl);
 }
 
+// called by
+// SnapMapper::get_next_objects_to_trim
 pair<snapid_t, hobject_t> SnapMapper::from_raw(
   const pair<std::string, bufferlist> &image)
 {
   Mapping map;
+
   bufferlist bl(image.second);
   bufferlist::iterator bp(bl.begin());
   ::decode(map, bp);
@@ -114,11 +129,13 @@ pair<snapid_t, hobject_t> SnapMapper::from_raw(
 // SnapMapper::get_next_objects_to_trim, for assertion only
 bool SnapMapper::is_mapping(const string &to_test)
 {
+  // "MAP_"
   return to_test.substr(0, MAPPING_PREFIX.size()) == MAPPING_PREFIX;
 }
 
 string SnapMapper::to_object_key(const hobject_t &hoid)
 {
+  // e.g., "OBJ_" + "" + "0000000000000000.00B7CF30.2a.rbd%udata%e12072ae8944a%e00000000000000fd.."
   return OBJECT_PREFIX + shard_prefix + hoid.to_str();
 }
 
@@ -148,8 +165,11 @@ int SnapMapper::get_snaps(
   object_snaps *out)
 {
   assert(check(oid));
+
   set<string> keys;
   map<string, bufferlist> got;
+
+  // e.g., "OBJ_0000000000000000.00B7CF30.2a.rbd%udata%e12072ae8944a%e00000000000000fd.."
   keys.insert(to_object_key(oid));
   int r = backend.get_keys(keys, &got);
   if (r < 0)
@@ -157,6 +177,14 @@ int SnapMapper::get_snaps(
   if (got.empty())
     return -ENOENT;
 
+  // e.g.,
+  //  00000000  01 01 59 00 00 00 04 03  47 00 00 00 00 00 00 00  |..Y.....G.......|
+  //  00000010  26 00 00 00 72 62 64 5f  64 61 74 61 2e 31 32 30  |&...rbd_data.120|
+  //  00000020  37 32 61 65 38 39 34 34  61 2e 30 30 30 30 30 30  |72ae8944a.000000|
+  //  00000030  30 30 30 30 30 30 30 30  66 64 2a 00 00 00 00 00  |00000000fd*.....|
+  //  00000040  00 00 00 7b fc 03 00 00  00 00 00 00 00 00 00 00  |...{............|
+  //  00000050  00 00 00 01 00 00 00 2a  00 00 00 00 00 00 00     |.......*.......|
+  //  0000005f
   if (out) {
     bufferlist::iterator bp = got.begin()->second.begin();
     ::decode(*out, bp);
@@ -200,7 +228,7 @@ void SnapMapper::set_snaps(
 }
 
 // called by
-// PG::update_snap_map
+// PG::update_snap_map, which called by PG::append_log, which called by PrimaryLogPG::log_operation
 int SnapMapper::update_snaps(
   const hobject_t &oid,
   const set<snapid_t> &new_snaps,
@@ -357,6 +385,7 @@ int SnapMapper::_remove_oid(
        ++i) {
     to_remove.insert(to_raw_key(make_pair(*i, oid)));
   }
+
   backend.remove_keys(to_remove, t);
   return 0;
 }
