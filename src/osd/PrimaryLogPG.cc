@@ -11759,7 +11759,8 @@ void PrimaryLogPG::mark_all_unfound_lost(
 	for (auto& p : waiting_for_unreadable_object) {
 	  release_backoffs(p.first);
 	}
-	// queue front of osd->op_wq
+
+	// queue front of OSD::op_shardedwq
 	requeue_object_waiters(waiting_for_unreadable_object);
 
 	// push this pg on OSDService::awaiting_throttle and then requeue onto

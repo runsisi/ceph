@@ -548,6 +548,8 @@ struct spg_t {
     DECODE_FINISH(bl);
   }
 
+  // called by
+  // ScrubStore.cc/make_scrub_object
   ghobject_t make_temp_ghobject(const string& name) const {
     return ghobject_t(
       hobject_t(object_t(name), "", CEPH_NOSNAP,
@@ -587,6 +589,7 @@ class coll_t {
     TYPE_PG = 2,
     TYPE_PG_TEMP = 3,
   };
+
   type_t type;
   spg_t pgid;
   uint64_t removal_seq;  // note: deprecated, not encoded
@@ -3105,6 +3108,7 @@ public:
   void visit(Visitor *visitor) const;
 
   mutable bufferlist bl;
+
   enum ModID {
     APPEND = 1,
     SETATTRS = 2,
@@ -3140,6 +3144,7 @@ public:
     ::swap(other.rollback_info_completed, rollback_info_completed);
     ::swap(other.max_required_version, max_required_version);
   }
+
   void append_id(ModID id) {
     uint8_t _id(id);
     ::encode(_id, bl);
@@ -3304,6 +3309,7 @@ struct pg_log_entry_t {
 
   // describes state for a locally-rollbackable entry
   ObjectModDesc mod_desc;
+
   bufferlist snaps;   // only for clone entries
   hobject_t  soid;
   osd_reqid_t reqid;  // caller+tid to uniquely identify request
@@ -3353,6 +3359,9 @@ struct pg_log_entry_t {
     return mod_desc.can_rollback();
   }
 
+  // called by
+  // PrimaryLogPG::mark_all_unfound_lost
+  // ReplicatedBackend.cc/generate_transaction
   void mark_unrollbackable() {
     mod_desc.mark_unrollbackable();
   }

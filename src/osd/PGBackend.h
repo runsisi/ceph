@@ -383,6 +383,7 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
    virtual void dump_recovery_info(Formatter *f) const = 0;
 
  private:
+   // used by PGBackend::on_change_cleanup to cleanup temp objects
    set<hobject_t> temp_contents;
  public:
    // Track contents of temp collection, clear on reset

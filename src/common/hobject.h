@@ -84,10 +84,11 @@ public:
   }
 
   bool is_temp() const {
-    return pool <= POOL_TEMP_START && pool != INT64_MIN;
+    return pool <= POOL_TEMP_START && pool != INT64_MIN; // -2
   }
+
   bool is_meta() const {
-    return pool == POOL_META;
+    return pool == POOL_META; // -1
   }
 
   hobject_t() : snap(0), hash(0), max(false), pool(INT64_MIN) {

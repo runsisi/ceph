@@ -207,6 +207,7 @@ void PGBackend::on_change_cleanup(ObjectStore::Transaction *t)
       coll,
       ghobject_t(*i, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
   }
+
   temp_contents.clear();
 }
 

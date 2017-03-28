@@ -312,6 +312,7 @@ public:
   const set<pg_shard_t> &get_actingbackfill_shards() const override {
     return actingbackfill;
   }
+
   const set<pg_shard_t> &get_acting_shards() const override {
     return actingset;
   }
@@ -416,18 +417,25 @@ public:
   void op_applied(
     const eversion_t &applied_version) override;
 
+  // called by
+  // ECBackend::try_reads_to_commit
+  // ReplicatedBackend::generate_subop
   bool should_send_op(
     pg_shard_t peer,
     const hobject_t &hoid) override {
     if (peer == get_primary())
       return true;
+
     assert(peer_info.count(peer));
+
     bool should_send =
       hoid.pool != (int64_t)info.pgid.pool() ||
       hoid <= last_backfill_started ||
       hoid <= peer_info[peer].last_backfill;
+
     if (!should_send)
       assert(is_backfill_targets(peer));
+
     return should_send;
   }
   

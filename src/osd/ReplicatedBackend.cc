@@ -457,7 +457,10 @@ void generate_transaction(
 	ghobject_t(oid, ghobject_t::NO_GEN, shard_id_t::NO_SHARD);
       const PGTransaction::ObjectOperation &op = obj_op.second;
 
-      if (oid.is_temp()) {
+      // temp object was created by
+      // spg_t::make_temp_hobject
+      // spg_t::make_temp_ghobject
+      if (oid.is_temp()) { // pool <= POOL_TEMP_START && pool != INT64_MIN;
 	if (op.is_fresh_object()) {
 	  added->insert(oid);
 	} else if (op.is_delete()) {
@@ -632,7 +635,7 @@ void ReplicatedBackend::submit_transaction(
     parent->get_actingbackfill_shards().begin(),
     parent->get_actingbackfill_shards().end());
 
-  // send MOSDRepOp to other replicas
+  // send MOSDRepOp to PG::actingbackfill
   issue_op(
     soid,
     at_version,
@@ -647,6 +650,7 @@ void ReplicatedBackend::submit_transaction(
     &op,
     op_t);
 
+  // temp objects are for PGBackend::on_change_cleanup
   add_temp_objs(added);
   clear_temp_objs(removed);
 
@@ -1194,7 +1198,7 @@ Message * ReplicatedBackend::generate_subop(
     tid, at_version);
 
   // ship resulting transaction, log entries, and pg_stats
-  if (!parent->should_send_op(peer, soid)) {
+  if (!parent->should_send_op(peer, soid)) { // call PrimaryLogPG::should_send_op
     dout(10) << "issue_repop shipping empty opt to osd." << peer
 	     <<", object " << soid
 	     << " beyond MAX(last_backfill_started "
@@ -1217,8 +1221,10 @@ Message * ReplicatedBackend::generate_subop(
   wr->pg_trim_to = pg_trim_to;
   wr->pg_roll_forward_to = pg_roll_forward_to;
 
+  // see generate_transaction
   wr->new_temp_oid = new_temp_oid;
   wr->discard_temp_oid = discard_temp_oid;
+
   wr->updated_hit_set_history = hset_hist;
   return wr;
 }
@@ -1254,7 +1260,7 @@ void ReplicatedBackend::issue_op(
   for (set<pg_shard_t>::const_iterator i =
 	 parent->get_actingbackfill_shards().begin();
        i != parent->get_actingbackfill_shards().end();
-       ++i) {
+       ++i) { // iterate PG::actingbackfill
     if (*i == parent->whoami_shard()) continue;
 
     pg_shard_t peer = *i;
@@ -1269,8 +1275,8 @@ void ReplicatedBackend::issue_op(
       reqid,
       pg_trim_to,
       pg_roll_forward_to,
-      new_temp_oid,
-      discard_temp_oid,
+      new_temp_oid,             // see generate_transaction
+      discard_temp_oid,         // see generate_transaction
       log_entries,
       hset_hist,
       op_t,
@@ -1326,6 +1332,7 @@ void ReplicatedBackend::do_repop(OpRequestRef op)
 
   if (m->new_temp_oid != hobject_t()) {
     dout(20) << __func__ << " start tracking temp " << m->new_temp_oid << dendl;
+
     add_temp_obj(m->new_temp_oid);
   }
   if (m->discard_temp_oid != hobject_t()) {
@@ -1335,6 +1342,7 @@ void ReplicatedBackend::do_repop(OpRequestRef op)
 	       << " since we won't get the transaction" << dendl;
       rm->localt.remove(coll, ghobject_t(m->discard_temp_oid));
     }
+
     clear_temp_obj(m->discard_temp_oid);
   }
 
@@ -1344,7 +1352,7 @@ void ReplicatedBackend::do_repop(OpRequestRef op)
   rm->opt.set_fadvise_flag(CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
 
   bool update_snaps = false;
-  if (!rm->opt.empty()) {
+  if (!rm->opt.empty()) { // we may sent an empty tx, see PrimaryLogPG::should_send_op
     // If the opt is non-empty, we infer we are before
     // last_backfill (according to the primary, not our
     // not-quite-accurate value), and should update the

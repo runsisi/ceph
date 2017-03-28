@@ -1856,13 +1856,16 @@ void FileStore::init_temp_collections()
   for (vector<coll_t>::iterator p = ls.begin(); p != ls.end(); ++p)
     if (p->is_temp())
       temps.insert(*p);
+
   dout(20) << " temps " << temps << dendl;
 
+  // to ensure that each coll has a temp coll associated with it
   for (vector<coll_t>::iterator p = ls.begin(); p != ls.end(); ++p) {
     if (p->is_temp())
       continue;
     if (p->is_meta())
       continue;
+
     coll_t temp = p->get_temp();
     if (temps.count(temp)) {
       temps.erase(temp);
@@ -5405,6 +5408,9 @@ int FileStore::_collection_hint_expected_num_objs(const coll_t& c, uint32_t pg_n
   return 0;
 }
 
+// called by
+// FileStore::init_temp_collections, to ensure that each coll has a temp coll associated with it
+// FileStore::_do_transaction, for OP_MKCOLL
 int FileStore::_create_collection(
   const coll_t& c,
   int bits,

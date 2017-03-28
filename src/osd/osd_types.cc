@@ -432,6 +432,8 @@ bool spg_t::parse(const char *s)
   return true;
 }
 
+// called by
+// coll_t::calc_str
 char *spg_t::calc_name(char *buf, const char *suffix_backwords) const
 {
   while (*suffix_backwords)
@@ -591,6 +593,9 @@ ostream& operator<<(ostream& out, const pg_t &pg)
 
 // -- coll_t --
 
+// called by
+// coll_t::parse
+// coll_t::coll_t
 void coll_t::calc_str()
 {
   switch (type) {
@@ -611,6 +616,10 @@ void coll_t::calc_str()
   }
 }
 
+// called by
+// FileStore::list_collections
+// FuseStore::parse_fn
+// coll_t::decode
 bool coll_t::parse(const std::string& s)
 {
   if (s == "meta") {

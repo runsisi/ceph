@@ -3957,7 +3957,7 @@ void PG::requeue_object_waiters(map<hobject_t, list<OpRequestRef>>& m)
   for (map<hobject_t, list<OpRequestRef>>::iterator it = m.begin();
        it != m.end();
        ++it)
-    // queue front of osd->op_wq
+    // queue front of OSD::op_shardedwq
     requeue_ops(it->second);
 
   m.clear();
