@@ -107,6 +107,9 @@ void PGLog::clear() {
   undirty();
 }
 
+// static
+// called by
+// OSD::RemoveWQ::_process
 void PGLog::clear_info_log(
   spg_t pgid,
   ObjectStore::Transaction *t) {

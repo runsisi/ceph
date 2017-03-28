@@ -1759,6 +1759,8 @@ void PrimaryLogPG::calc_trim_to()
   }
 }
 
+// created by
+// OSD::_make_pg
 PrimaryLogPG::PrimaryLogPG(OSDService *o, OSDMapRef curmap,
 			   const PGPool &_pool, spg_t p) :
   PG(o, curmap, _pool, p),

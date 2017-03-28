@@ -125,6 +125,9 @@ static void log_subop_stats(
   }
 }
 
+// created by
+// PGBackend::build_pg_backend, which called by PrimaryLogPG::PrimaryLogPG, which
+// created by OSD::_make_pg
 ReplicatedBackend::ReplicatedBackend(
   PGBackend::Listener *pg,
   coll_t coll,

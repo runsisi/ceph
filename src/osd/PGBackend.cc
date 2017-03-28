@@ -460,6 +460,7 @@ PGBackend *PGBackend::build_pg_backend(
   case pg_pool_t::TYPE_REPLICATED: {
     return new ReplicatedBackend(l, coll, ch, store, cct);
   }
+
   case pg_pool_t::TYPE_ERASURE: {
     ErasureCodeInterfaceRef ec_impl;
     ErasureCodeProfile profile = curmap->get_erasure_code_profile(pool.erasure_code_profile);
