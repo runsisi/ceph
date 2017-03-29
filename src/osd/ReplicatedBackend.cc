@@ -673,13 +673,13 @@ void ReplicatedBackend::submit_transaction(
   //callback ReplicatedBackend::op_applied will call on_all_acked if all replicas applied
   op_t.register_on_applied(
     parent->bless_context(
-      new C_OSD_OnOpApplied(this, &op)));
+      new C_OSD_OnOpApplied(this, &op))); // pg->op_applied(op);
 
   // push back of ObjectStore::Transaction::on_commit
   // callback ReplicatedBackend::op_commit will call on_all_commit if all replicas committed
   op_t.register_on_commit(
     parent->bless_context(
-      new C_OSD_OnOpCommit(this, &op)));
+      new C_OSD_OnOpCommit(this, &op))); // pg->op_commit(op);
 
   vector<ObjectStore::Transaction> tls;
   tls.push_back(std::move(op_t));
@@ -714,7 +714,7 @@ void ReplicatedBackend::op_applied(
     op->on_applied = 0;
   }
 
-  if (op->done()) {
+  if (op->done()) { // waiting_for_commit.empty() && waiting_for_applied.empty();
     assert(!op->on_commit && !op->on_applied);
     in_progress_ops.erase(op->tid);
   }
@@ -743,7 +743,7 @@ void ReplicatedBackend::op_commit(
     op->on_commit = 0;
   }
 
-  if (op->done()) {
+  if (op->done()) { // waiting_for_commit.empty() && waiting_for_applied.empty();
     assert(!op->on_commit && !op->on_applied);
     in_progress_ops.erase(op->tid);
   }
