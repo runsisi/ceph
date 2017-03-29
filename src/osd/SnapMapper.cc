@@ -109,6 +109,7 @@ pair<string, bufferlist> SnapMapper::to_raw(
 {
   bufferlist bl;
   ::encode(Mapping(in), bl);
+  // "MAP_000000000000002A_"
   return make_pair(to_raw_key(in), bl);
 }
 
@@ -204,7 +205,9 @@ void SnapMapper::clear_snaps(
 {
   assert(check(oid));
   set<string> to_remove;
+  // "OBJ_"
   to_remove.insert(to_object_key(oid));
+
   backend.remove_keys(to_remove, t);
 }
 
@@ -222,6 +225,7 @@ void SnapMapper::set_snaps(
   bufferlist bl;
   ::encode(in, bl);
 
+  // "OBJ_"
   to_set[to_object_key(oid)] = bl;
 
   backend.set_keys(to_set, t);
@@ -232,7 +236,7 @@ void SnapMapper::set_snaps(
 int SnapMapper::update_snaps(
   const hobject_t &oid,
   const set<snapid_t> &new_snaps,
-  const set<snapid_t> *old_snaps_check,
+  const set<snapid_t> *old_snaps_check, // PG::update_snap_map call us with 0
   MapCacher::Transaction<std::string, bufferlist> *t)
 {
   dout(20) << __func__ << " " << oid << " " << new_snaps
@@ -244,6 +248,7 @@ int SnapMapper::update_snaps(
     return remove_oid(oid, t);
 
   object_snaps out;
+  // "OBJ_"
   int r = get_snaps(oid, &out);
   if (r < 0)
     return r;
@@ -252,6 +257,7 @@ int SnapMapper::update_snaps(
     assert(out.snaps == *old_snaps_check);
 
   object_snaps in(oid, new_snaps);
+  // "OBJ_"
   set_snaps(oid, in, t);
 
   set<string> to_remove;
@@ -259,9 +265,11 @@ int SnapMapper::update_snaps(
        i != out.snaps.end();
        ++i) {
     if (!new_snaps.count(*i)) {
+      // "MAP_000000000000002A_"
       to_remove.insert(to_raw_key(make_pair(*i, oid)));
     }
   }
+
   backend.remove_keys(to_remove, t);
   return 0;
 }
@@ -286,12 +294,14 @@ void SnapMapper::add_oid(
   }
 
   object_snaps _snaps(oid, snaps);
+  // "OBJ_"
   set_snaps(oid, _snaps, t);
 
   map<string, bufferlist> to_add;
   for (set<snapid_t>::iterator i = snaps.begin();
        i != snaps.end();
        ++i) {
+    // "MAP_000000000000002A_"
     to_add.insert(to_raw(make_pair(*i, oid)));
   }
 
@@ -314,6 +324,7 @@ int SnapMapper::get_next_objects_to_trim(
   for (set<string>::iterator i = prefixes.begin();
        i != prefixes.end() && out->size() < max && r == 0;
        ++i) {
+    // "MAP_000000000000002A_"
     string prefix(get_prefix(snap) + *i);
     string pos = prefix;
 
@@ -377,12 +388,14 @@ int SnapMapper::_remove_oid(
   if (r < 0)
     return r;
 
+  // "OBJ_"
   clear_snaps(oid, t);
 
   set<string> to_remove;
   for (set<snapid_t>::iterator i = out.snaps.begin();
        i != out.snaps.end();
        ++i) {
+    // "MAP_000000000000002A_"
     to_remove.insert(to_raw_key(make_pair(*i, oid)));
   }
 

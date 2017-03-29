@@ -3904,8 +3904,8 @@ void PG::update_snap_map(
 	  assert(i->is_clean());
 	}
       }
-    }
-  }
+    } // i->soid.snap < CEPH_MAXSNAP
+  } // iterate log_entries
 }
 
 // called by
@@ -6844,6 +6844,7 @@ boost::statechart::result PG::RecoveryState::Started::react(const AdvMap& advmap
 {
   PG *pg = context< RecoveryMachine >().pg;
   ldout(pg->cct, 10) << "Started advmap" << dendl;
+
   pg->check_full_transition(advmap.lastmap, advmap.osdmap);
 
   if (pg->should_restart_peering(

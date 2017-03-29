@@ -401,6 +401,7 @@ class C_OSD_OnOpCommit : public Context {
 public:
   C_OSD_OnOpCommit(ReplicatedBackend *pg, ReplicatedBackend::InProgressOp *op) 
     : pg(pg), op(op) {}
+
   void finish(int) override {
     pg->op_commit(op);
   }
@@ -415,6 +416,7 @@ class C_OSD_OnOpApplied : public Context {
 public:
   C_OSD_OnOpApplied(ReplicatedBackend *pg, ReplicatedBackend::InProgressOp *op) 
     : pg(pg), op(op) {}
+
   void finish(int) override {
     pg->op_applied(op);
   }
@@ -590,9 +592,9 @@ void ReplicatedBackend::submit_transaction(
   const eversion_t &roll_forward_to,
   const vector<pg_log_entry_t> &_log_entries,
   boost::optional<pg_hit_set_history_t> &hset_history,
-  Context *on_local_applied_sync, // PrimaryLogPG::issue_repop(onapplied_sync)
-  Context *on_all_acked, // PrimaryLogPG::issue_repop(on_all_applied)
-  Context *on_all_commit, // PrimaryLogPG::issue_repop(on_all_commit)
+  Context *on_local_applied_sync, // PrimaryLogPG.cc/C_OSD_OndiskWriteUnlock
+  Context *on_all_acked, // PrimaryLogPG.cc/C_OSD_RepopApplied
+  Context *on_all_commit, // PrimaryLogPG.cc/C_OSD_RepopCommit
   ceph_tid_t tid,
   osd_reqid_t reqid,
   OpRequestRef orig_op)
@@ -626,7 +628,9 @@ void ReplicatedBackend::submit_transaction(
     make_pair(
       tid,
       InProgressOp(
-	tid, on_all_commit, on_all_acked,
+	tid,
+	on_all_commit,  // PrimaryLogPG.cc/C_OSD_RepopCommit
+	on_all_acked,   // PrimaryLogPG.cc/C_OSD_RepopApplied
 	orig_op, at_version)
       )
     ).first->second;
@@ -708,7 +712,7 @@ void ReplicatedBackend::op_applied(
   parent->op_applied(op->v);
 
   if (op->waiting_for_applied.empty()) {
-    // submit_transaction(on_all_acked), i.e., all replicas written and synced
+    // submit_transaction(on_all_acked), i.e., all replicas applied
     op->on_applied->complete(0);
 
     op->on_applied = 0;

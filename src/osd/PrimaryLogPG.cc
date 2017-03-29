@@ -3714,6 +3714,24 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
   // no need to capture PG ref, repop cancel will handle that
   // Can capture the ctx by pointer, it's owned by the repop
 
+  // --------------------------------------------------------------------------
+  // - PrimaryLogPG::execute_ctx:
+  //    OpContext::on_committed
+  //    OpContext::on_success
+  //    OpContext::on_finish
+  //            - PrimaryLogPG::new_repop:
+  //               RepGather::on_committed
+  //               RepGather::on_success
+  //               RepGather::on_finish
+  //                    - PrimaryLogPG::issue_repop:
+  //                       C_OSD_RepopCommit
+  //                       C_OSD_RepopApplied
+  //                       C_OSD_OndiskWriteUnlock
+  //                            - ReplicatedBackend::submit_transaction:
+  //                               InProgressOp::on_commit
+  //                               InProgressOp::on_applied
+  // --------------------------------------------------------------------------
+
   // push back of OpContext::on_committed
   ctx->register_on_commit(
     [m, ctx, this](){
@@ -3732,7 +3750,9 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
 				    ctx->user_at_version);
 	}
 	reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
+
 	dout(10) << " sending reply on " << *m << " " << reply << dendl;
+
 	osd->send_message_osd_client(reply, m->get_connection());
 	ctx->sent_reply = true;
 	ctx->op->mark_commit_sent();
@@ -9713,6 +9733,7 @@ class C_OSD_RepopApplied : public Context {
 public:
   C_OSD_RepopApplied(PrimaryLogPG *pg, PrimaryLogPG::RepGather *repop)
   : pg(pg), repop(repop) {}
+
   void finish(int) override {
     pg->repop_all_applied(repop.get());
   }
@@ -9742,6 +9763,7 @@ class C_OSD_RepopCommit : public Context {
 public:
   C_OSD_RepopCommit(PrimaryLogPG *pg, PrimaryLogPG::RepGather *repop)
     : pg(pg), repop(repop) {}
+
   void finish(int) override {
     pg->repop_all_committed(repop.get());
   }
@@ -9757,6 +9779,7 @@ void PrimaryLogPG::repop_all_committed(RepGather *repop)
 	   << dendl;
   
   repop->all_committed = true;
+
   if (repop->applies_with_commit) {
     assert(!repop->all_applied);
     repop->all_applied = true;
@@ -9775,7 +9798,6 @@ void PrimaryLogPG::repop_all_committed(RepGather *repop)
 // called by
 // ECBackend::sub_write_applied
 // PrimaryLogPG::C_OSD_OnApplied::finish
-// ReplicatedBackend.cc/C_OSD_OnOpApplied::finish
 // ReplicatedBackend::op_applied
 // ReplicatedBackend::sub_op_modify_applied
 void PrimaryLogPG::op_applied(const eversion_t &applied_version)
@@ -9867,6 +9889,7 @@ void PrimaryLogPG::eval_repop(RepGather *repop)
     }
     dout(10) << " applied: " << *repop << " " << dendl;
     
+    // OpContext::on_applied never registered, so RepGather::on_applied should be empty
     for (auto p = repop->on_applied.begin();
 	 p != repop->on_applied.end();
 	 repop->on_applied.erase(p++)) {
@@ -9896,14 +9919,17 @@ void PrimaryLogPG::eval_repop(RepGather *repop)
       }
     } else {
       RepGather *to_remove = nullptr;
+
       while (!repop_queue.empty() &&
 	     (to_remove = repop_queue.front())->rep_done) {
 	repop_queue.pop_front();
+
 	for (auto p = to_remove->on_success.begin();
 	     p != to_remove->on_success.end();
 	     to_remove->on_success.erase(p++)) {
 	  (*p)();
 	}
+
 	remove_repop(to_remove);
       }
     }
@@ -9971,6 +9997,7 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
     ctx->obc,
     ctx->clone_obc,
     unlock_snapset_obc ? ctx->snapset_obc : ObjectContextRef());
+
   if (!(ctx->log.empty())) {
     assert(ctx->at_version >= projected_last_update);
     projected_last_update = ctx->at_version;
@@ -9993,9 +10020,9 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
     min_last_complete_ondisk,
     ctx->log, // vector<pg_log_entry_t>
     ctx->updated_hset_history,
-    onapplied_sync,
-    on_all_applied,
-    on_all_commit,
+    onapplied_sync,     // C_OSD_OndiskWriteUnlock
+    on_all_applied,     // C_OSD_RepopApplied
+    on_all_commit,      // C_OSD_RepopCommit
     repop->rep_tid,
     ctx->reqid,
     ctx->op);
@@ -10020,6 +10047,7 @@ PrimaryLogPG::RepGather *PrimaryLogPG::new_repop(
 
   repop->start = ceph_clock_now();
 
+  // will be popped by PrimaryLogPG::eval_repop
   repop_queue.push_back(&repop->queue_item);
   
   repop->get();
@@ -10053,6 +10081,7 @@ boost::intrusive_ptr<PrimaryLogPG::RepGather> PrimaryLogPG::new_repop(
 
   repop->start = ceph_clock_now();
 
+  // will be popped by PrimaryLogPG::eval_repop
   repop_queue.push_back(&repop->queue_item);
 
   osd->logger->inc(l_osd_op_wip);

@@ -903,6 +903,7 @@ void ECBackend::sub_write_applied(
   ceph_tid_t tid, eversion_t version,
   const ZTracer::Trace &trace) {
   parent->op_applied(version);
+
   if (get_parent()->pgb_is_primary()) {
     ECSubWriteReply reply;
     reply.from = get_parent()->whoami_shard();

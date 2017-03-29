@@ -185,7 +185,8 @@ public:
 
   uint32_t mask_bits;
   const uint32_t match;
-  string last_key_checked;
+  string last_key_checked; // never used
+
   const int64_t pool;
   const shard_id_t shard;
   const string shard_prefix;
