@@ -2503,7 +2503,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
     }
 
     return;
-  }
+  } // r && (r != -ENOENT || !obc)
 
   // ok, now r == 0 or (r == -ENOENT && obc), the later condition is only
   // possible for SNAPDIR
@@ -2588,7 +2588,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
     }
   } else if (!get_rw_locks(write_ordered, ctx)) {
 
-    // get lock of obc failed, the op is queued on ctx->obc->rwstate.waiters,
+    // get lock of obc failed, the op is queued on ObjectContext::RWState::waiters,
     // if succeeded, the <oid, <obc, lock type>> was inserted into ctx->lock_manager.locks
 
     dout(20) << __func__ << " waiting for rw locks " << dendl;
@@ -2610,6 +2610,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
     dout(20) << __func__ << " returned an error: " << r << dendl;
 
     close_op_ctx(ctx);
+
     if (op->may_write() &&
 	get_osdmap()->test_flag(CEPH_OSDMAP_REQUIRE_KRAKEN)) {
       record_write_error(op, oid, nullptr, r);
@@ -3706,7 +3707,7 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
     record_write_error(op, soid, reply, result);
 
     return;
-  }
+  } // ctx->update_log_only
 
   // register callbacks:
   // ctx->on_committed, ctx->on_success, ctx->on_finish
@@ -3789,17 +3790,23 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
   repop->put();
 }
 
+// called by
+// PrimaryLogPG::do_op
+// PrimaryLogPG::execute_ctx
 void PrimaryLogPG::reply_ctx(OpContext *ctx, int r)
 {
   if (ctx->op)
     osd->reply_op_error(ctx->op, r);
+
   close_op_ctx(ctx);
 }
 
+// never used
 void PrimaryLogPG::reply_ctx(OpContext *ctx, int r, eversion_t v, version_t uv)
 {
   if (ctx->op)
     osd->reply_op_error(ctx->op, r, v, uv);
+
   close_op_ctx(ctx);
 }
 
@@ -10064,7 +10071,8 @@ PrimaryLogPG::RepGather *PrimaryLogPG::new_repop(
 boost::intrusive_ptr<PrimaryLogPG::RepGather> PrimaryLogPG::new_repop(
   eversion_t version,
   int r,
-  ObcLockManager &&manager,
+  ObcLockManager &&manager, // stack variable from PrimaryLogPG::record_write_error or
+                            // PrimaryLogPG::mark_all_unfound_lost
   OpRequestRef &&op,
   boost::optional<std::function<void(void)> > &&on_complete)
 {
@@ -10163,7 +10171,7 @@ void PrimaryLogPG::simple_opc_submit(OpContextUPtr ctx)
 // PrimaryLogPG::mark_all_unfound_lost
 void PrimaryLogPG::submit_log_entries(
   const mempool::osd::list<pg_log_entry_t> &entries,
-  ObcLockManager &&manager,
+  ObcLockManager &&manager, // stack variable from the caller
   boost::optional<std::function<void(void)> > &&_on_complete,
   OpRequestRef op,
   int r)

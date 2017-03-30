@@ -340,6 +340,7 @@ int SnapMapper::get_next_objects_to_trim(
 	break; // Done with this prefix
       }
 
+      // starts with "MAP_" prefix
       assert(is_mapping(next.first));
 
       pair<snapid_t, hobject_t> next_decoded(from_raw(next));

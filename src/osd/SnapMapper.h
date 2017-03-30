@@ -227,6 +227,9 @@ public:
     for (set<string>::iterator i = _prefixes.begin();
 	 i != _prefixes.end();
 	 ++i) {
+      // will be used by SnapMapper::get_next_objects_to_trim to search
+      // snap mapping that belongs to this PG
+      // e.g., "0000000000000000.50"
       prefixes.insert(shard_prefix + *i);
     }
   }
