@@ -6214,6 +6214,7 @@ void PG::proc_primary_info(ObjectStore::Transaction &t, const pg_info_t &oinfo)
       interval_set<snapid_t> p;
       p.union_of(oinfo.purged_snaps, info.purged_snaps);
       p.subtract(info.purged_snaps);
+
       if (!p.empty()) {
 	for (interval_set<snapid_t>::iterator i = p.begin();
 	     i != p.end();
@@ -6227,7 +6228,7 @@ void PG::proc_primary_info(ObjectStore::Transaction &t, const pg_info_t &oinfo)
 	      derr << __func__ << ": snap_mapper get_next_object_to_trim returned "
 		   << cpp_strerror(r) << dendl;
 	      ceph_abort();
-	    } else if (r != -ENOENT) {
+	    } else if (r != -ENOENT) { // r == 0
 	      assert(!hoids.empty());
 	      derr << __func__ << ": snap_mapper get_next_object_to_trim returned "
 		   << cpp_strerror(r) << " for object "
@@ -6237,8 +6238,9 @@ void PG::proc_primary_info(ObjectStore::Transaction &t, const pg_info_t &oinfo)
 	    }
 	  }
 	}
-      }
-    }
+      } // !p.empty()
+    } // cct->_conf->osd_debug_verify_snaps_on_info
+
     info.purged_snaps = oinfo.purged_snaps;
     dirty_info = true;
     dirty_big_info = true;

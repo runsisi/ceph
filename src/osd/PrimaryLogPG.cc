@@ -2346,16 +2346,19 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
     version_t user_version;
     // see commit 4c709e9b6d4c
     int return_code = 0;
+    // check from PG::projected_log and PG::pg_log
     bool got = check_in_progress_op(
       m->get_reqid(), &version, &user_version, &return_code);
     if (got) {
       dout(3) << __func__ << " dup " << m->get_reqid()
 	      << " version " << version << dendl;
-      if (already_complete(version)) {
+
+      if (already_complete(version)) { // has been committed
 	osd->reply_op_error(op, return_code, version, user_version);
-      } else {
+      } else { // on PrimaryLogPG::repop_queue and RepGather::all_committed is false
 	dout(10) << " waiting for " << version << " to commit" << dendl;
-        // always queue ondisk waiters, so that we can requeue if needed
+
+	// always queue ondisk waiters, so that we can requeue if needed
 	waiting_for_ondisk[version].push_back(make_pair(op, user_version));
 	op->mark_delayed("waiting for ondisk");
       }
@@ -9793,6 +9796,8 @@ void PrimaryLogPG::repop_all_committed(RepGather *repop)
   }
 
   if (!repop->rep_aborted) {
+    // RepGather::v was set by PrimaryLogPG::issue_repop or
+    // PrimaryLogPG::new_repop(eversion_t version, ...)
     if (repop->v != eversion_t()) {
       last_update_ondisk = repop->v;
       last_complete_ondisk = repop->pg_local_last_complete;
@@ -9870,6 +9875,7 @@ void PrimaryLogPG::eval_repop(RepGather *repop)
     for (auto p = repop->on_committed.begin();
 	 p != repop->on_committed.end();
 	 repop->on_committed.erase(p++)) {
+      // OpContext::on_committed
       (*p)();
     }
          
@@ -9955,6 +9961,7 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
           << " o " << soid
           << dendl;
 
+  // will be used by PrimaryLogPG::repop_all_committed
   repop->v = ctx->at_version;
 
   if (ctx->at_version > eversion_t()) {
@@ -10047,10 +10054,11 @@ PrimaryLogPG::RepGather *PrimaryLogPG::new_repop(
   else
     dout(10) << "new_repop rep_tid " << rep_tid << " (no op)" << dendl;
 
-  // RepGather::on_applied, on_committed, on_success, on_finish are assigned from
+  // RepGather::on_applied(OpContext::on_applied never registered, tho), on_committed,
+  // on_success, on_finish are assigned from
   // OpContext with the same name
   RepGather *repop = new RepGather(
-    ctx, rep_tid, info.last_complete, false);
+    ctx, rep_tid, info.last_complete, false); // RepGather::pg_local_last_complete = info.last_complete
 
   repop->start = ceph_clock_now();
 
@@ -13529,10 +13537,13 @@ void PrimaryLogPG::update_range(
 	}
       }
     };
+
     dout(10) << "scanning pg log first" << dendl;
     pg_log.get_log().scan_log_after(bi->version, func);
+
     dout(10) << "scanning projected log" << dendl;
     projected_log.scan_log_after(bi->version, func);
+
     bi->version = projected_last_update;
   } else {
     assert(0 == "scan_range should have raised bi->version past log_tail");
@@ -14730,6 +14741,7 @@ bool PrimaryLogPG::already_complete(eversion_t v)
       return false;
     }
   }
+
   dout(20) << __func__ << ": returning true" << dendl;
   return true;
 }
