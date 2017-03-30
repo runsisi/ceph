@@ -7467,6 +7467,8 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
   bool was_dirty = ctx->obc->obs.oi.is_dirty();
   
   if (ctx->new_obs.exists) {
+    // ctx->undirty was set by CEPH_OSD_OP_UNDIRTY
+
     // we will mark the object dirty
     if (ctx->undirty && was_dirty) {
       dout(20) << " clearing DIRTY flag" << dendl;
@@ -7887,7 +7889,9 @@ int PrimaryLogPG::prepare_transaction(OpContext *ctx)
   // read-op?  write-op noop? done?
   if (ctx->op_t->empty() && !ctx->modify) {
 
-    // ctx->modify indicates force modification even if op_t is empty
+    // ctx->modify indicates force modification even if op_t is empty, for
+    // CEPH_OSD_OP_UNDIRTY/CACHE_PIN/CACHE_UNPIN and PrimaryLogPG::_rollback_to to
+    // CEPH_NOSNAP
 
     unstable_stats.add(ctx->delta_stats);
 
@@ -8020,7 +8024,7 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
 
       ctx->log.push_back(pg_log_entry_t(pg_log_entry_t::MODIFY, snapoid,
 					ctx->at_version,
-	                                eversion_t(),
+	                                eversion_t(), // prior_version
 					0, osd_reqid_t(), ctx->mtime, 0));
 
       if (!ctx->snapset_obc)
@@ -8093,6 +8097,15 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
   if (ctx->new_obs.exists) {
 
     // target object exists or newly created, update target object info, i.e., version, mtime, etc.
+
+    // pg_info_t:
+    //  version_t last_user_version; ///< last user object version applied to store
+    // object_info_t:
+    //  eversion_t version, prior_version;
+    //  version_t user_version;
+    // OpContext:
+    //  eversion_t at_version;       // pg's current version pointer
+    //  version_t user_at_version;   // pg's current user version pointer
 
     // on the head object
     ctx->new_obs.oi.version = ctx->at_version;
@@ -9961,6 +9974,7 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
           << " o " << soid
           << dendl;
 
+  // was set by PrimaryLogPG::execute_ctx and updated by PrimaryLogPG::finish_ctx,
   // will be used by PrimaryLogPG::repop_all_committed
   repop->v = ctx->at_version;
 
