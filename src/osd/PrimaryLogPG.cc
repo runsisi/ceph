@@ -1725,6 +1725,7 @@ void PrimaryLogPG::calc_trim_to()
   eversion_t limit = MIN(
     min_last_complete_ondisk,
     pg_log.get_can_rollback_to());
+
   if (limit != eversion_t() &&
       limit != pg_trim_to &&
       pg_log.get_log().approx_size() > target) {

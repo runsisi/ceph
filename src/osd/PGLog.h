@@ -31,6 +31,8 @@ using namespace std;
 
 class CephContext;
 
+// created by
+// as a member of PG, initialized by PG::PG
 struct PGLog : DoutPrefixProvider {
   DoutPrefixProvider *prefix_provider;
   string gen_prefix() const override {
@@ -91,7 +93,9 @@ public:
 
     //
   private:
+    // will be set by IndexedLog::index(__u16 to_index = PGLOG_INDEXED_ALL)
     mutable __u16 indexed_data = 0;
+
     /**
      * rollback_info_trimmed_to_riter points to the first log entry <=
      * rollback_info_trimmed_to
@@ -129,6 +133,8 @@ public:
 
     // indexes objects, caller ops and extra caller ops
   public:
+    // created by
+    // as a member of PGLog
     IndexedLog() :
       complete_to(log.end()),
       last_requested(0),
@@ -136,19 +142,24 @@ public:
       rollback_info_trimmed_to_riter(log.rbegin())
       {}
 
+    // called by
+    // IndexedLog::claim_log_and_clear_rollback_info
     template <typename... Args>
     IndexedLog(Args&&... args) :
-      pg_log_t(std::forward<Args>(args)...),
+      pg_log_t(std::forward<Args>(args)...), // pod type
       complete_to(log.end()),
       last_requested(0),
       indexed_data(0),
       rollback_info_trimmed_to_riter(log.rbegin()) {
       reset_rollback_info_trimmed_to_riter();
+      // (re)init index, init IndexedLog::indexed_data to PGLOG_INDEXED_ALL
       index();
     }
 
+    // called by
+    // IndexedLog &operator=(const IndexedLog &rhs)
     IndexedLog(const IndexedLog &rhs) :
-      pg_log_t(rhs),
+      pg_log_t(rhs), // pod type
       complete_to(log.end()),
       last_requested(rhs.last_requested),
       indexed_data(0),
@@ -157,8 +168,12 @@ public:
       index(rhs.indexed_data);
     }
 
+    // called by
+    // IndexedLog::claim_log_and_clear_rollback_info
     IndexedLog &operator=(const IndexedLog &rhs) {
       this->~IndexedLog();
+
+      // IndexedLog(const IndexedLog &rhs)
       new (this) IndexedLog(rhs);
       return *this;
     }
@@ -211,6 +226,7 @@ public:
       assert(rollback_info_trimmed_to == head);
       assert(rollback_info_trimmed_to_riter == log.rbegin());
 
+      // IndexedLog(Args&&... args) -> IndexedLog &operator=(const IndexedLog &rhs)
       *this = IndexedLog(o);
 
       skip_can_rollback_to_to_head();
@@ -331,6 +347,7 @@ public:
       }
     }
     
+    // (re)init index
     void index(__u16 to_index = PGLOG_INDEXED_ALL) const {
       if (to_index & PGLOG_INDEXED_OBJECTS)
 	objects.clear();
@@ -401,12 +418,14 @@ public:
         }
       }
     }
+
     void unindex() {
       objects.clear();
       caller_ops.clear();
       extra_caller_ops.clear();
       indexed_data = 0;
     }
+
     void unindex(pg_log_entry_t& e) {
       // NOTE: this only works if we remove from the _tail_ of the log!
       if (indexed_data & PGLOG_INDEXED_OBJECTS) {
@@ -457,6 +476,8 @@ public:
 
       // to our index
       if ((indexed_data & PGLOG_INDEXED_OBJECTS) && e.object_is_indexed()) {
+        // this is the only difference from IndexedLog::index(pg_log_entry_t& e), i.e., no
+        // need to check the update condition
         objects[e.soid] = &(log.back());
       }
       if (indexed_data & PGLOG_INDEXED_CALLER_OPS) {
@@ -560,6 +581,8 @@ protected:
     missing.flush();
   }
 public:
+  // called by
+  // PG::PG
   // cppcheck-suppress noExplicitConstructor
   PGLog(CephContext *cct, DoutPrefixProvider *dpp = 0) :
     prefix_provider(dpp),
@@ -578,6 +601,7 @@ public:
   //////////////////// get or set missing ////////////////////
 
   const pg_missing_tracker_t& get_missing() const { return missing; }
+
   void revise_have(hobject_t oid, eversion_t have) {
     missing.revise_have(oid, have);
   }
@@ -638,6 +662,7 @@ public:
   }
 
   eversion_t get_can_rollback_to() const {
+    // pg_log_t::can_rollback_to
     return log.get_can_rollback_to();
   }
 
@@ -982,13 +1007,19 @@ protected:
       rollbacker,
       this);
   }
+
 public:
+  // called by
+  // PG::rewind_divergent_log
+  // PGLog::merge_log
   void rewind_divergent_log(eversion_t newhead,
                             pg_info_t &info,
                             LogEntryHandler *rollbacker,
                             bool &dirty_info,
                             bool &dirty_big_info);
 
+  // called by
+  // PG::merge_log
   void merge_log(pg_info_t &oinfo,
 		 pg_log_t &olog,
 		 pg_shard_t from,
@@ -1353,6 +1384,6 @@ public:
     }
     ldpp_dout(dpp, 10) << "read_log_and_missing done" << dendl;
   }
-};
+}; // struct PGLog : DoutPrefixProvider
 
 #endif // CEPH_PG_LOG_H

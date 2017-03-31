@@ -3425,7 +3425,13 @@ protected:
 public:
   mempool::osd::list<pg_log_entry_t> log;  // the actual log.
   
+  // Giving a user-defined constructor, even though it does nothing, makes the type not
+  // an aggregate and also not trivial. If you want your class to be an aggregate or a
+  // trivial type (or by transitivity, a POD type), then you need to use = default
+  // http://stackoverflow.com/questions/20828907/the-new-keyword-default-in-c11
+  // http://stackoverflow.com/questions/4178175/what-are-aggregates-and-pods-and-how-why-are-they-special
   pg_log_t() = default;
+
   pg_log_t(const eversion_t &last_update,
 	   const eversion_t &log_tail,
 	   const eversion_t &can_rollback_to,
@@ -3434,6 +3440,7 @@ public:
     : head(last_update), tail(log_tail), can_rollback_to(can_rollback_to),
       rollback_info_trimmed_to(rollback_info_trimmed_to),
       log(std::move(entries)) {}
+
   pg_log_t(const eversion_t &last_update,
 	   const eversion_t &log_tail,
 	   const eversion_t &can_rollback_to,

@@ -43,6 +43,9 @@ void PGLog::IndexedLog::split_out_child(
   reset_rollback_info_trimmed_to_riter();
 }
 
+// called by
+// PGLog::trim
+// PG::append_log
 void PGLog::IndexedLog::trim(
   CephContext* cct,
   eversion_t s,
@@ -117,6 +120,9 @@ void PGLog::clear_info_log(
   t->remove(coll, pgid.make_pgmeta_oid());
 }
 
+// called by
+// PG::append_log
+// OSD::handle_pg_trim
 void PGLog::trim(
   eversion_t trim_to,
   pg_info_t &info)
@@ -127,7 +133,9 @@ void PGLog::trim(
     assert(trim_to <= info.last_complete);
 
     dout(10) << "trim " << log << " to " << trim_to << dendl;
+
     log.trim(cct, trim_to, &trimmed);
+
     info.log_tail = log.tail;
   }
 }
@@ -445,6 +453,8 @@ void PGLog::check() {
   }
 }
 
+// called by
+// PG::write_if_dirty
 void PGLog::write_log_and_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist> *km,
@@ -476,6 +486,9 @@ void PGLog::write_log_and_missing(
   }
 }
 
+// static
+// called by
+// ceph_objectstore_tool.cc/write_pg
 void PGLog::write_log_and_missing_wo_missing(
     ObjectStore::Transaction& t,
     map<string,bufferlist> *km,
@@ -491,10 +504,13 @@ void PGLog::write_log_and_missing_wo_missing(
     true, true, require_rollback, 0);
 }
 
+// static
+// called by
+// ceph_objectstore_tool.cc/write_pg
 void PGLog::write_log_and_missing(
     ObjectStore::Transaction& t,
     map<string,bufferlist> *km,
-    pg_log_t &log,
+    pg_log_t &log,      // for member method, this is PGLog::log member variable of type IndexedLog
     const coll_t& coll,
     const ghobject_t &log_oid,
     const pg_missing_tracker_t &missing,
@@ -510,6 +526,9 @@ void PGLog::write_log_and_missing(
     true, require_rollback, false, 0);
 }
 
+// static
+// called by
+// PGLog::write_log_and_missing_wo_missing
 void PGLog::_write_log_and_missing_wo_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist> *km,
@@ -600,6 +619,10 @@ void PGLog::_write_log_and_missing_wo_missing(
     t.omap_rmkeys(coll, log_oid, to_remove);
 }
 
+// static
+// called by
+// PGLog::write_log_and_missing
+// PGLog::write_log_and_missing(..., log, ...)
 void PGLog::_write_log_and_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist>* km,
