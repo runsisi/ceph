@@ -4508,6 +4508,8 @@ int OSD::handle_pg_peering_evt(
       pg->queue_peering_event(evt);
     }
     pg->unlock();
+
+    // the return value is only used by OSD::handle_pg_create
     return -EEXIST;
   }
 }

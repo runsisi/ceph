@@ -81,6 +81,8 @@ public:
   struct IndexedLog : public pg_log_t {
     mutable ceph::unordered_map<hobject_t,pg_log_entry_t*> objects;  // ptrs into log.  be careful!
     mutable ceph::unordered_map<osd_reqid_t,pg_log_entry_t*> caller_ops;
+
+    // for cache only, see PrimaryLogPG::finish_ctx
     mutable ceph::unordered_multimap<osd_reqid_t,pg_log_entry_t*> extra_caller_ops;
 
     // recovery pointers
@@ -285,7 +287,7 @@ public:
         index_extra_caller_ops();
       }
       p = extra_caller_ops.find(r);
-      if (p != extra_caller_ops.end()) {
+      if (p != extra_caller_ops.end()) { // for cache only, see PrimaryLogPG::finish_ctx
 	for (vector<pair<osd_reqid_t, version_t> >::const_iterator i =
 	       p->second->extra_reqids.begin();
 	     i != p->second->extra_reqids.end();
@@ -483,7 +485,7 @@ public:
       set<eversion_t> *trimmed);
 
     ostream& print(ostream& out) const;
-  };
+  }; // struct IndexedLog : public pg_log_t
 
 
 protected:

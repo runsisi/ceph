@@ -8171,6 +8171,9 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     }
   }
 
+  // OpContext::extra_reqids was set by:
+  //    PrimaryLogPG::finish_copyfrom
+  //    PrimaryLogPG::finish_promote
   if (!ctx->extra_reqids.empty()) {
     dout(20) << __func__ << "  extra_reqids " << ctx->extra_reqids << dendl;
 
