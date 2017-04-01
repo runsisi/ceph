@@ -48,7 +48,7 @@ void PGLog::IndexedLog::split_out_child(
 // PG::append_log
 void PGLog::IndexedLog::trim(
   CephContext* cct,
-  eversion_t s,
+  eversion_t s,         // trim_to, i.e., trim entries in [:trim_to]
   set<eversion_t> *trimmed)
 {
   if (complete_to != log.end() &&
@@ -64,7 +64,9 @@ void PGLog::IndexedLog::trim(
     pg_log_entry_t &e = *log.begin();
     if (e.version > s)
       break;
+
     generic_dout(20) << "trim " << e << dendl;
+
     if (trimmed)
       trimmed->insert(e.version);
 
@@ -74,7 +76,7 @@ void PGLog::IndexedLog::trim(
 	e.version == rollback_info_trimmed_to_riter->version) {
       log.pop_front();
       rollback_info_trimmed_to_riter = log.rend();
-    } else {
+    } else { // no need to update rollback_info_trimmed_to_riter
       log.pop_front();
     }
   }
@@ -98,6 +100,9 @@ ostream& PGLog::IndexedLog::print(ostream& out) const
 
 //////////////////// PGLog ////////////////////
 
+// called by
+// Stray::react(const MLogRec)
+// PrimaryLogPG::on_removal
 void PGLog::reset_backfill()
 {
   missing.clear();
@@ -469,6 +474,7 @@ void PGLog::write_log_and_missing(
 	     << ", trimmed: " << trimmed
 	     << ", clear_divergent_priors: " << clear_divergent_priors
 	     << dendl;
+
     _write_log_and_missing(
       t, km, log, coll, log_oid,
       dirty_to,
@@ -480,6 +486,7 @@ void PGLog::write_log_and_missing(
       require_rollback,
       clear_divergent_priors,
       (pg_log_debug ? &log_keys_debug : 0));
+
     undirty();
   } else {
     dout(10) << "log is not dirty" << dendl;

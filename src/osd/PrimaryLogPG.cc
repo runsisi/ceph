@@ -468,12 +468,14 @@ void PrimaryLogPG::on_local_recover(
   } else {
     // replica
 
+    // pg->_applied_recovered_object_replica();
     t->register_on_applied(
       new C_OSD_AppliedRecoveredObjectReplica(this));
 
   }
 
   t->register_on_commit(
+    // pg->_committed_pushed_object(epoch, last_complete);
     new C_OSD_CommittedPushedObject(
       this,
       get_osdmap()->get_epoch(),
@@ -1767,7 +1769,8 @@ PrimaryLogPG::PrimaryLogPG(OSDService *o, OSDMapRef curmap,
   PG(o, curmap, _pool, p),
   pgbackend(
     PGBackend::build_pg_backend(
-      _pool.info, curmap, this, coll_t(p), ch, o->store, cct)),
+      _pool.info, curmap, this, coll_t(p), ch, o->store, cct)), // ch is member of PG, will init until
+                                                                // OSD::load_pgs/C_OpenPGs::finish
   object_contexts(o->cct, o->cct->_conf->osd_pg_object_context_cache_count),
   snapset_contexts_lock("PrimaryLogPG::snapset_contexts_lock"),
   new_backfill(false),
@@ -10077,6 +10080,7 @@ PrimaryLogPG::RepGather *PrimaryLogPG::new_repop(
   // OpContext with the same name
   RepGather *repop = new RepGather(
     ctx, rep_tid, info.last_complete, false); // RepGather::pg_local_last_complete = info.last_complete
+                                              // used to update last_complete_ondisk by PrimaryLogPG::repop_all_committed
 
   repop->start = ceph_clock_now();
 

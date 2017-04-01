@@ -373,7 +373,11 @@ public:
   void upgrade(ObjectStore *store);
 
   const coll_t coll;
+  // set by
+  // OSD::load_pgs
+  // C_OpenPGs::finish
   ObjectStore::CollectionHandle ch;
+
   PGLog  pg_log;
 
   static string get_info_key(spg_t pgid) {
@@ -1059,10 +1063,22 @@ public:
   bool proc_replica_info(
     pg_shard_t from, const pg_info_t &info, epoch_t send_epoch);
 
+  // created by
+  // PG::merge_log
+  // PG::rewind_divergent_log
+  // PG::activate
+  // PG::append_log
+  // PG::append_log_entries_update_missing
+  // Stray::react(const MLogRec)
+  // PrimaryLogPG::on_local_recover
+  // PrimaryLogPG::on_removal
   struct PGLogEntryHandler : public PGLog::LogEntryHandler {
     PG *pg;
     ObjectStore::Transaction *t;
     PGLogEntryHandler(PG *pg, ObjectStore::Transaction *t) : pg(pg), t(t) {}
+
+    // remove/try_stash/rollback/rollforward/trim are defined by
+    // PGBackend, it's no difference between EC and Replicated
 
     // LogEntryHandler
     void remove(const hobject_t &hoid) override {
@@ -1071,6 +1087,9 @@ public:
     void try_stash(const hobject_t &hoid, version_t v) override {
       pg->get_pgbackend()->try_stash(hoid, v, t);
     }
+
+    // rollback/rollforward/trim is only valid for can local rollback entry
+
     // called by
     // PGLog::_merge_object_divergent_entries
     void rollback(const pg_log_entry_t &entry) override {

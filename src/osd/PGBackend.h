@@ -274,7 +274,7 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
      virtual bool check_osdmap_full(const set<pg_shard_t> &missing_on) = 0;
 
      virtual ~Listener() {}
-   };
+   }; // class Listener
 
    Listener *parent;
    Listener *get_parent() const { return parent; }
@@ -288,6 +288,7 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
      coll(coll),
      ch(ch),
      parent(l) {}
+
    bool is_primary() const { return get_parent()->pgb_is_primary(); }
    OSDMapRef get_osdmap() const { return get_parent()->pgb_get_osdmap(); }
    const pg_info_t &get_info() { return get_parent()->get_info(); }

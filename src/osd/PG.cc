@@ -3251,6 +3251,8 @@ void PG::init(
   info.stats.mapping_epoch = info.history.same_interval_since;
 
   if (backfill) {
+    // not a brand new pg, i.e., the pg is resurrected from a previously deleted pg/parent pg
+
     dout(10) << __func__ << ": Setting backfill" << dendl;
     info.set_last_backfill(hobject_t());
     info.last_complete = info.last_update;

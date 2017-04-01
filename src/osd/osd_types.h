@@ -2298,6 +2298,14 @@ struct pg_info_t {
       last_backfill_bitwise(false)
   { }
   
+  // called by
+  // OSD::handle_pg_query, when no PG instance on this osd
+  // PG::activate
+  // PG::split_into
+  // PG::init
+  // PrimaryLogPG::do_backfill
+  // PrimaryLogPG::on_removal
+  // PrimaryLogPG::recover_backfill
   void set_last_backfill(hobject_t pos) {
     last_backfill = pos;
     last_backfill_bitwise = true;
@@ -3083,6 +3091,10 @@ class ObjectModDesc {
   __u8 max_required_version = 1;
 
 public:
+
+  // derived by
+  // PGBackend.cc/struct RollbackVisitor
+  // PGBackend.cc/struct Trimmer
   class Visitor {
   public:
     virtual void append(uint64_t old_offset) {}

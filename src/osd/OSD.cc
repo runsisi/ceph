@@ -3747,6 +3747,7 @@ PG *OSD::_open_lock_pg(
 {
   assert(osd_lock.is_locked());
 
+  // create PrimaryLogPG instance
   PG* pg = _make_pg(createmap, pgid);
 
   {
@@ -3899,12 +3900,12 @@ OSD::res_result OSD::_try_resurrect_pg(
 }
 
 // called by
-// OSD::handle_pg_peering_evt
+// OSD::handle_pg_peering_evt, when there is no PG instance on this OSD
 PG *OSD::_create_lock_pg(
   OSDMapRef createmap,
   spg_t pgid,
-  bool hold_map_lock,
-  bool backfill,
+  bool hold_map_lock,   // never used
+  bool backfill,        // for brand new pg creation this is false
   int role,
   vector<int>& up, int up_primary,
   vector<int>& acting, int acting_primary,
@@ -3916,10 +3917,12 @@ PG *OSD::_create_lock_pg(
 
   dout(20) << "_create_lock_pg pgid " << pgid << dendl;
 
+  // create PrimaryLogPG instance
   PG *pg = _open_lock_pg(createmap, pgid, true);
 
   service.init_splits_between(pgid, pg->get_osdmap(), service.get_osdmap());
 
+  // write pg info and past intervals
   pg->init(
     role,
     up,
@@ -4373,7 +4376,10 @@ int OSD::handle_pg_peering_evt(
 		     << "the pool allows ec overwrites but is not stored in "
 		     << "bluestore, so deep scrubbing will not detect bitrot";
       }
+
+      // create coll
       PG::_create(*rctx.transaction, pgid, pgid.get_split_bits(pp->get_pg_num()));
+      // create pg meta object
       PG::_init(*rctx.transaction, pgid, pp);
 
       int role = osdmap->calc_pg_role(whoami, acting, acting.size());
@@ -9159,6 +9165,7 @@ void OSD::dispatch_context(PG::RecoveryCtx &ctx, PG *pg, OSDMapRef curmap,
     // ok, have tx to apply
 
     if (!ctx.created_pgs.empty()) {
+      // PG::ch = store->open_collection(p->coll); for every pg
       ctx.on_applied->add(new C_OpenPGs(ctx.created_pgs, store, this));
     }
 

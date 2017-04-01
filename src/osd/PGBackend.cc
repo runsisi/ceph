@@ -106,6 +106,7 @@ void PGBackend::rollback(
     }
   }; // struct RollbackVisitor : public ObjectModDesc::Visitor
 
+  // TODO: lrb: use entry.can_rollback() should be better
   assert(entry.mod_desc.can_rollback());
 
   RollbackVisitor vis(entry.soid, this);
@@ -113,7 +114,7 @@ void PGBackend::rollback(
   t->append(vis.t);
 }
 
-struct Trimmer : public ObjectModDesc::Visitor {
+struct Trimmer : public ObjectModDesc::Visitor { // class ObjectModDesc was defined in osd_types.h
   const hobject_t &soid;
   PGBackend *pg;
   ObjectStore::Transaction *t;
@@ -122,6 +123,7 @@ struct Trimmer : public ObjectModDesc::Visitor {
     PGBackend *pg,
     ObjectStore::Transaction *t)
     : soid(soid), pg(pg), t(t) {}
+
   void rmobject(version_t old_version) override {
     pg->trim_rollback_object(
       soid,
@@ -147,6 +149,7 @@ void PGBackend::rollforward(
 {
   auto dpp = get_parent()->get_dpp();
   ldpp_dout(dpp, 20) << __func__ << ": entry=" << entry << dendl;
+
   if (!entry.can_rollback())
     return;
 
@@ -189,6 +192,7 @@ void PGBackend::remove(
   t->remove(
     coll,
     ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard));
+
   get_parent()->pgb_clear_object_snap_mapping(hoid, t);
 }
 
@@ -458,6 +462,7 @@ PGBackend *PGBackend::build_pg_backend(
 {
   switch (pool.type) {
   case pg_pool_t::TYPE_REPLICATED: {
+    // merely to call base class's ctor, i.e., PGBackend(...)
     return new ReplicatedBackend(l, coll, ch, store, cct);
   }
 

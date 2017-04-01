@@ -111,7 +111,7 @@ public:
 	data_digest(-1), omap_digest(-1),
 	truncate_seq(0), truncate_size(0)
     {}
-  };
+  }; // struct CopyResults
 
   struct CopyOp {
     CopyCallback *cb;
@@ -163,7 +163,7 @@ public:
       results.user_version = v;
       results.mirror_snapset = mirror_snapset;
     }
-  };
+  }; // struct CopyOp
   typedef ceph::shared_ptr<CopyOp> CopyOpRef;
 
   /**

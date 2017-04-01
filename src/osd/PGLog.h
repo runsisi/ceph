@@ -47,6 +47,9 @@ struct PGLog : DoutPrefixProvider {
   }
 
   ////////////////////////////// sub classes //////////////////////////////
+
+  // derived by
+  // struct PGLogEntryHandler
   struct LogEntryHandler {
     virtual void rollback(
       const pg_log_entry_t &entry) = 0;
@@ -571,15 +574,17 @@ protected:
   }
 
   void check();
+
   void undirty() {
     dirty_to = eversion_t();
     dirty_from = eversion_t::max();
     touched_log = true;
     trimmed.clear();
     writeout_from = eversion_t::max();
-    check();
+    check(); // debug use only
     missing.flush();
   }
+
 public:
   // called by
   // PG::PG
@@ -952,7 +957,7 @@ protected:
 			   << info.log_tail << dendl;
       }
     }
-  }
+  } // static void _merge_object_divergent_entries
 
   // called by
   // PGLog::proc_replica_log
