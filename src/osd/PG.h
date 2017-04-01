@@ -2494,6 +2494,7 @@ public:
   void write_if_dirty(ObjectStore::Transaction& t);
 
   PGLog::IndexedLog projected_log;
+
   bool check_in_progress_op(
     const osd_reqid_t &r,
     eversion_t *version,

@@ -109,6 +109,10 @@ public:
     mempool::osd::list<pg_log_entry_t>::reverse_iterator
       rollback_info_trimmed_to_riter;
 
+    // called by
+    // IndexedLog::trim_rollback_info_to
+    // IndexedLog::roll_forward_to
+    // IndexedLog::skip_can_rollback_to_to_head
     template <typename F>
     void advance_can_rollback_to(eversion_t to, F &&f) {
       if (to > can_rollback_to)
@@ -119,10 +123,12 @@ public:
 
       while (rollback_info_trimmed_to_riter != log.rbegin()) {
 	--rollback_info_trimmed_to_riter;
+
 	if (rollback_info_trimmed_to_riter->version > rollback_info_trimmed_to) {
 	  ++rollback_info_trimmed_to_riter;
 	  break;
 	}
+
 	f(*rollback_info_trimmed_to_riter);
       }
     }
@@ -181,6 +187,8 @@ public:
       return *this;
     }
 
+    // called by
+    // PGLog::reset_backfill_claim_log
     void trim_rollback_info_to(eversion_t to, LogEntryHandler *h) {
       advance_can_rollback_to(
 	to,
@@ -189,6 +197,8 @@ public:
 	});
     }
 
+    // called by
+    // PGLog::roll_forward_to
     void roll_forward_to(eversion_t to, LogEntryHandler *h) {
       advance_can_rollback_to(
 	to,
@@ -197,6 +207,12 @@ public:
 	});
     }
 
+    // called by
+    // IndexedLog::claim_log_and_clear_rollback_info
+    // IndexedLog::clear
+    // IndexedLog::add
+    // PGLog::merge_log
+    // PG::append_log
     void skip_can_rollback_to_to_head() {
       advance_can_rollback_to(head, [&](const pg_log_entry_t &entry) {});
     }
@@ -516,6 +532,8 @@ protected:
   //////////////////// data members ////////////////////
 
   pg_missing_tracker_t missing;
+
+  // PG::projected_log has another instance of IndexedLog
   IndexedLog  log;
 
   eversion_t dirty_to;         ///< must clear/writeout all keys <= dirty_to
