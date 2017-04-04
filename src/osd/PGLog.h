@@ -647,10 +647,12 @@ public:
 
   const eversion_t &get_tail() const { return log.tail; }
 
+  // never called
   void set_tail(eversion_t tail) { log.tail = tail; }
 
   const eversion_t &get_head() const { return log.head; }
 
+  // never called
   void set_head(eversion_t head) { log.head = head; }
 
   void set_last_requested(version_t last_requested) {
@@ -741,14 +743,22 @@ public:
     assert(log.get_can_rollback_to() >= v);
   }
 
+  // called by
+  // PG::activate
   void activate_not_complete(pg_info_t &info) {
-    log.complete_to = log.log.begin();
+    // log entries are pushed back of IndexedLog::log, IndexedLog::head points to
+    // the newest entry
+
+    log.complete_to = log.log.begin(); // points to the oldest entry
+
     while (log.complete_to->version <
 	   missing.get_items().at(
-	     missing.get_rmissing().begin()->second
+	     missing.get_rmissing().begin()->second // hobject_t
 	     ).need)
       ++log.complete_to;
+
     assert(log.complete_to != log.log.end());
+
     if (log.complete_to == log.log.begin()) {
       info.last_complete = eversion_t();
     } else {
@@ -756,6 +766,7 @@ public:
       info.last_complete = log.complete_to->version;
       ++log.complete_to;
     }
+
     log.last_requested = 0;
   }
 
