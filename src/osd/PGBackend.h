@@ -58,6 +58,7 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
    ObjectStore *store;
    const coll_t coll;
    ObjectStore::CollectionHandle &ch;
+
  public:	
    /**
     * Provides interfaces for PGBackend callbacks
@@ -66,6 +67,8 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
     * implementation holding a lock and that the callbacks are
     * called under the same locks.
     */
+   // derived by
+   // class PrimaryLogPG
    class Listener {
    public:
      /// Debugging
@@ -153,6 +156,7 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
      virtual const pg_missing_tracker_t &get_local_missing() const = 0;
      virtual const map<pg_shard_t, pg_missing_t> &get_shard_missing()
        const = 0;
+
      virtual boost::optional<const pg_missing_const_i &> maybe_get_shard_missing(
        pg_shard_t peer) const {
        if (peer == primary_shard()) {
@@ -167,6 +171,7 @@ typedef ceph::shared_ptr<const OSDMap> OSDMapRef;
 	 }
        }
      }
+
      virtual const pg_missing_const_i &get_shard_missing(pg_shard_t peer) const {
        auto m = maybe_get_shard_missing(peer);
        assert(m);

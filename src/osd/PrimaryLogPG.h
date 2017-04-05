@@ -330,10 +330,12 @@ public:
     return peer_missing;
   }
   using PGBackend::Listener::get_shard_missing;
+
   const map<pg_shard_t, pg_info_t> &get_shard_info() const override {
     return peer_info;
   }
   using PGBackend::Listener::get_shard_info;  
+
   const pg_missing_tracker_t &get_local_missing() const override {
     return pg_log.get_missing();
   }

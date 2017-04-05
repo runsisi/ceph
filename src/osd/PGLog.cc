@@ -484,7 +484,7 @@ void PGLog::write_log_and_missing(
       missing,
       !touched_log,
       require_rollback,
-      clear_divergent_priors,
+      clear_divergent_priors, // was set by read_log_and_missing
       (pg_log_debug ? &log_keys_debug : 0));
 
     undirty();
@@ -613,6 +613,7 @@ void PGLog::_write_log_and_missing_wo_missing(
     //dout(10) << "write_log_and_missing: writing divergent_priors" << dendl;
     ::encode(divergent_priors, (*km)["divergent_priors"]);
   }
+
   if (require_rollback) {
     ::encode(
       log.get_can_rollback_to(),
@@ -650,6 +651,7 @@ void PGLog::_write_log_and_missing(
        i != trimmed.end();
        ++i) {
     to_remove.insert(i->get_key_name());
+
     if (log_keys_debug) {
       assert(log_keys_debug->count(i->get_key_name()));
       log_keys_debug->erase(i->get_key_name());
@@ -664,6 +666,7 @@ void PGLog::_write_log_and_missing(
       eversion_t().get_key_name(), dirty_to.get_key_name());
     clear_up_to(log_keys_debug, dirty_to.get_key_name());
   }
+
   if (dirty_to != eversion_t::max() && dirty_from != eversion_t::max()) {
     //   dout(10) << "write_log_and_missing, clearing from " << dirty_from << dendl;
     t.omap_rmkeyrange(
@@ -705,6 +708,7 @@ void PGLog::_write_log_and_missing(
     //dout(10) << "write_log_and_missing: writing divergent_priors" << dendl;
     to_remove.insert("divergent_priors");
   }
+
   missing.get_changed(
     [&](const hobject_t &obj) {
       string key = string("missing/") + obj.to_str();
@@ -715,6 +719,7 @@ void PGLog::_write_log_and_missing(
 	::encode(make_pair(obj, item), (*km)[key]);
       }
     });
+
   if (require_rollback) {
     ::encode(
       log.get_can_rollback_to(),

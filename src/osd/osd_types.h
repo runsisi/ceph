@@ -3641,6 +3641,8 @@ struct pg_missing_item {
 WRITE_CLASS_ENCODER(pg_missing_item)
 ostream& operator<<(ostream& out, const pg_missing_item &item);
 
+// derived by
+// class pg_missing_set
 class pg_missing_const_i {
 public:
   virtual const map<hobject_t, pg_missing_item> &
@@ -3777,6 +3779,10 @@ public:
    * this needs to be called in log order as we extend the log.  it
    * assumes missing is accurate up through the previous log entry.
    */
+  // called by
+  // PG::activate
+  // PGLog::missing_add_event, which never called
+  // append_log_entries_update_missing
   void add_next_event(const pg_log_entry_t& e) {
     if (e.is_update()) {
       map<hobject_t, item>::iterator missing_it;

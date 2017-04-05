@@ -471,11 +471,13 @@ int write_pg(ObjectStore::Transaction &t, epoch_t epoch, pg_info_t &info,
   int ret = write_info(t, epoch, info, past_intervals);
   if (ret)
     return ret;
+
   coll_t coll(info.pgid);
   map<string,bufferlist> km;
 
   if (!divergent.empty()) {
     assert(missing.get_items().empty());
+
     PGLog::write_log_and_missing_wo_missing(
       t, &km, log, coll, info.pgid.make_pgmeta_oid(), divergent, true);
   } else {
@@ -483,6 +485,7 @@ int write_pg(ObjectStore::Transaction &t, epoch_t epoch, pg_info_t &info,
     PGLog::write_log_and_missing(
       t, &km, log, coll, info.pgid.make_pgmeta_oid(), tmissing, true);
   }
+
   t.omap_setkeys(coll, info.pgid.make_pgmeta_oid(), km);
   return 0;
 }

@@ -153,6 +153,7 @@ public:
 
     // called by
     // IndexedLog::claim_log_and_clear_rollback_info
+    // read_log_and_missing
     template <typename... Args>
     IndexedLog(Args&&... args) :
       pg_log_t(std::forward<Args>(args)...), // pod type
@@ -633,10 +634,14 @@ public:
     missing.revise_need(oid, need);
   }
 
+  // called by
+  // PG::repair_object
+  // PrimaryLogPG::prep_object_replica_pushes
   void missing_add(const hobject_t& oid, eversion_t need, eversion_t have) {
     missing.add(oid, need, have);
   }
 
+  // never called
   void missing_add_event(const pg_log_entry_t &e) {
     missing.add_next_event(e);
   }
@@ -729,13 +734,16 @@ public:
 	log.complete_to = log.log.end();
 	info.last_complete = info.last_update;
       }
+
       while (log.complete_to != log.log.end()) {
 	if (missing.get_items().at(
 	      missing.get_rmissing().begin()->second
 	      ).need <= log.complete_to->version)
 	  break;
+
 	if (info.last_complete < log.complete_to->version)
 	  info.last_complete = log.complete_to->version;
+
 	++log.complete_to;
       }
     }
@@ -744,7 +752,7 @@ public:
   }
 
   // called by
-  // PG::activate
+  // PG::activate, when missing.num_missing() != 0
   void activate_not_complete(pg_info_t &info) {
     // log entries are pushed back of IndexedLog::log, IndexedLog::head points to
     // the newest entry
@@ -872,7 +880,9 @@ protected:
       } else {
 	assert(!missing.is_missing(hoid));
       }
+
       missing.revise_have(hoid, eversion_t());
+
       if (rollbacker) {
 	if (!object_not_in_store) {
 	  rollbacker->remove(hoid);
@@ -886,6 +896,7 @@ protected:
 
     ldpp_dout(dpp, 10) << __func__ << ": hoid " << hoid
 		       <<" has no more recent entries in log" << dendl;
+
     if (prior_version == eversion_t() || entries.front().is_clone()) {
       /// Case 2)
       ldpp_dout(dpp, 10) << __func__ << ": hoid " << hoid
@@ -894,6 +905,7 @@ protected:
 			 << dendl;
       if (missing.is_missing(hoid))
 	missing.rm(missing.get_items().find(hoid));
+
       if (rollbacker) {
 	if (!object_not_in_store) {
 	  rollbacker->remove(hoid);
@@ -928,6 +940,7 @@ protected:
 			     << info.log_tail << dendl;
 	}
       }
+
       if (rollbacker) {
 	for (auto &&i: entries) {
 	  rollbacker->trim(i);
@@ -978,6 +991,7 @@ protected:
 	  rollbacker->trim(i);
 	}
       }
+
       missing.add(hoid, prior_version, eversion_t());
       if (prior_version <= info.log_tail) {
 	ldpp_dout(dpp, 10) << __func__ << ": hoid " << hoid
@@ -1089,6 +1103,7 @@ public:
 	ldpp_dout(dpp, 20) << "update missing, append " << *p << dendl;
 	log->add(*p);
       }
+
       if (p->soid <= last_backfill &&
 	  !p->is_error()) {
 	missing.add_next_event(*p);
@@ -1186,6 +1201,8 @@ public:
     set<string> *log_keys_debug
     );
 
+  // called by
+  // PG::read_state
   void read_log_and_missing(
     ObjectStore *store, coll_t pg_coll,
     coll_t log_coll, ghobject_t log_oid,
@@ -1204,6 +1221,9 @@ public:
       debug_verify_stored_missing);
   }
 
+  // called by
+  // PGLog::read_log_and_missing, i.e., above
+  // ceph_objectstore_tool.cc/get_log
   template <typename missing_type>
   static void read_log_and_missing(ObjectStore *store, coll_t pg_coll,
     coll_t log_coll, ghobject_t log_oid,
@@ -1237,12 +1257,16 @@ public:
 	// non-log pgmeta_oid keys are prefixed with _; skip those
 	if (p->key()[0] == '_')
 	  continue;
+
 	bufferlist bl = p->value();//Copy bufferlist before creating iterator
 	bufferlist::iterator bp = bl.begin();
+
 	if (p->key() == "divergent_priors") {
 	  ::decode(divergent_priors, bp);
+
 	  ldpp_dout(dpp, 20) << "read_log_and_missing " << divergent_priors.size()
 			     << " divergent_priors" << dendl;
+
 	  has_divergent_priors = true;
 	  debug_verify_stored_missing = false;
 	} else if (p->key() == "can_rollback_to") {
@@ -1252,22 +1276,29 @@ public:
 	} else if (p->key().substr(0, 7) == string("missing")) {
 	  pair<hobject_t, pg_missing_item> p;
 	  ::decode(p, bp);
+
 	  missing.add(p.first, p.second.need, p.second.have);
 	} else {
 	  pg_log_entry_t e;
 	  e.decode_with_checksum(bp);
+
 	  ldpp_dout(dpp, 20) << "read_log_and_missing " << e << dendl;
+
 	  if (!entries.empty()) {
 	    pg_log_entry_t last_e(entries.back());
+
 	    assert(last_e.version.version < e.version.version);
 	    assert(last_e.version.epoch <= e.version.epoch);
 	  }
+
 	  entries.push_back(e);
+
 	  if (log_keys_debug)
 	    log_keys_debug->insert(e.get_key_name());
 	}
       }
-    }
+    } // p
+
     log = IndexedLog(
       info.last_update,
       info.log_tail,
@@ -1285,15 +1316,17 @@ public:
 	set<hobject_t> did;
 	set<hobject_t> checked;
 	set<hobject_t> skipped;
+
 	for (list<pg_log_entry_t>::reverse_iterator i = log.log.rbegin();
 	     i != log.log.rend();
-	     ++i) {
+	     ++i) { // start from the newest entry
 	  if (!debug_verify_stored_missing && i->version <= info.last_complete) break;
 	  if (i->soid > info.last_backfill)
 	    continue;
 	  if (i->is_error())
 	    continue;
 	  if (did.count(i->soid)) continue;
+
 	  did.insert(i->soid);
 
 	  if (i->is_delete()) continue;
@@ -1309,6 +1342,7 @@ public:
 	    if (oi.version < i->version) {
 	      ldpp_dout(dpp, 15) << "read_log_and_missing  missing " << *i
 				 << " (have " << oi.version << ")" << dendl;
+
 	      if (debug_verify_stored_missing) {
 		auto miter = missing.get_items().find(i->soid);
 		assert(miter != missing.get_items().end());
@@ -1321,6 +1355,7 @@ public:
 	    }
 	  } else {
 	    ldpp_dout(dpp, 15) << "read_log_and_missing  missing " << *i << dendl;
+
 	    if (debug_verify_stored_missing) {
 	      auto miter = missing.get_items().find(i->soid);
 	      assert(miter != missing.get_items().end());
@@ -1332,6 +1367,7 @@ public:
 	    }
 	  }
 	}
+
 	if (debug_verify_stored_missing) {
 	  for (auto &&i: missing.get_items()) {
 	    if (checked.count(i.first))
@@ -1358,6 +1394,7 @@ public:
 	  }
 	} else {
 	  assert(has_divergent_priors);
+
 	  for (map<eversion_t, hobject_t>::reverse_iterator i =
 		 divergent_priors.rbegin();
 	       i != divergent_priors.rend();
@@ -1366,7 +1403,9 @@ public:
 	    if (i->second > info.last_backfill)
 	      continue;
 	    if (did.count(i->second)) continue;
+
 	    did.insert(i->second);
+
 	    bufferlist bv;
 	    int r = store->getattr(
 	      pg_coll,
@@ -1406,16 +1445,19 @@ public:
 	    }
 	  }
 	}
+
 	if (clear_divergent_priors)
 	  (*clear_divergent_priors) = true;
       }
-    }
+    } // if (has_divergent_priors || debug_verify_stored_missing)
 
     if (!has_divergent_priors) {
       if (clear_divergent_priors)
 	(*clear_divergent_priors) = false;
+
       missing.flush();
     }
+
     ldpp_dout(dpp, 10) << "read_log_and_missing done" << dendl;
   }
 }; // struct PGLog : DoutPrefixProvider
