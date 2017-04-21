@@ -131,6 +131,10 @@ int CreateRequest<I>::validate_order(CephContext *cct, uint8_t order) {
 #define dout_prefix *_dout << "librbd::image::CreateRequest: " << this << " " \
                            << __func__ << ": "
 
+// created by
+// librbd/image/CloneRequest.cc/CloneRequest<I>::send_create
+// librbd/internal.cc/create(…, skip_mirror_enable)
+// tools/rbd_mirror/image_replayer/CreateImageRequest.cc/CreateImageRequest<I>::create_image
 template<typename I>
 CreateRequest<I>::CreateRequest(IoCtx &ioctx, const std::string &image_name,
                                 const std::string &image_id, uint64_t size,
