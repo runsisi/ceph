@@ -437,12 +437,18 @@ struct C_InvalidateCache : public Context {
     delete perfcounter;
   }
 
+  // called by
+  // RefreshParentRequest<I>::send_open_parent, for OPERATION_BALANCE_READS/OPERATION_LOCALIZE_READS
   void ImageCtx::set_read_flag(unsigned flag) {
     extra_read_flags |= flag;
   }
 
+  // called by
+  // ObjectReadRequest<I>::send
+  // LibrbdWriteback::read
   int ImageCtx::get_read_flags(snap_t snap_id) {
     int flags = librados::OPERATION_NOFLAG | extra_read_flags;
+
     if (snap_id == LIBRADOS_SNAP_HEAD)
       return flags;
 
