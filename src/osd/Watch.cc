@@ -350,6 +350,10 @@ Context *Watch::get_delayed_cb()
   return cb;
 }
 
+// called by
+// Watch::got_ping
+// Watch::connect
+// Watch::disconnect
 void Watch::register_cb()
 {
   Mutex::Locker l(osd->watch_lock);
@@ -387,7 +391,8 @@ void Watch::unregister_cb()
   cb = NULL;
 }
 
-// called by ReplicatedPG::do_osd_ops with op code CEPH_OSD_WATCH_OP_PING
+// called by
+// ReplicatedPG::do_osd_ops, for CEPH_OSD_WATCH_OP_PING
 void Watch::got_ping(utime_t t)
 {
   last_ping = t;
@@ -397,9 +402,10 @@ void Watch::got_ping(utime_t t)
   }
 }
 
-// called by do_osd_op_effects, CEPH_OSD_WATCH_OP_WATCH and
-// CEPH_OSD_WATCH_OP_RECONNECT will call this with _will_ping set to true,
-// while CEPH_OSD_WATCH_OP_LEGCY_WATCH will call this _will_ping set to false
+// called by
+// do_osd_op_effects, CEPH_OSD_WATCH_OP_WATCH and
+// CEPH_OSD_WATCH_OP_RECONNECT, with _will_ping set to true,
+// while CEPH_OSD_WATCH_OP_LEGACY_WATCH , with _will_ping set to false
 void Watch::connect(ConnectionRef con, bool _will_ping)
 {
   if (conn == con) {
@@ -485,7 +491,8 @@ bool Watch::is_discarded() const
   return discarded;
 }
 
-// called by ReplicatedPG::complete_disconnect_watches
+// called by
+// ReplicatedPG::complete_disconnect_watches
 void Watch::remove(bool send_disconnect)
 {
   dout(10) << "remove" << dendl;
