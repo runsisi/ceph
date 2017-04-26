@@ -481,6 +481,9 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
   }
 }
 
+// called by
+// OSDMonitor::update_from_paxos
+// OSDMonitor::on_active
 void OSDMonitor::start_mapping()
 {
   // initiate mapping job
@@ -489,9 +492,13 @@ void OSDMonitor::start_mapping()
 	     << dendl;
     mapping_job->abort();
   }
+
   auto fin = new C_UpdateCreatingPGs(this, osdmap.get_epoch());
+
+  // create MappingJob and queue on OSDMonitor::mapper
   mapping_job = mapping.start_update(osdmap, mapper,
-				     g_conf->mon_osd_mapping_pgs_per_chunk);
+				     g_conf->mon_osd_mapping_pgs_per_chunk); // 4096
+
   dout(10) << __func__ << " started mapping job " << mapping_job.get()
 	   << " at " << fin->start << dendl;
   mapping_job->set_finish_event(fin);
@@ -1047,7 +1054,7 @@ void OSDMonitor::maybe_prime_pg_temp()
     unsigned estimate =
       mapping.get_osd_acting_pgs(*osds.begin()).size() * osds.size();
     if (estimate > mapping.get_num_pgs() *
-	g_conf->mon_osd_prime_pg_temp_max_estimate) {
+	g_conf->mon_osd_prime_pg_temp_max_estimate) { // 0.25
       dout(10) << __func__ << " estimate " << estimate << " pgs on "
 	       << osds.size() << " osds >= "
 	       << g_conf->mon_osd_prime_pg_temp_max_estimate << " of total "
@@ -1066,7 +1073,10 @@ void OSDMonitor::maybe_prime_pg_temp()
 
   if (all) {
     PrimeTempJob job(next, this);
+
+    // prime all pg temp batched by shard
     mapper.queue(&job, g_conf->mon_osd_mapping_pgs_per_chunk);
+
     if (job.wait_for(g_conf->mon_osd_prime_pg_temp_max_time)) {
       dout(10) << __func__ << " done in " << job.get_duration() << dendl;
     } else {
@@ -1089,6 +1099,7 @@ void OSDMonitor::maybe_prime_pg_temp()
 	if (!did_pgs.insert(pgid).second) {
 	  continue;
 	}
+
 	prime_pg_temp(next, pgid);
 	if (--n <= 0) {
 	  n = chunk;
@@ -1136,6 +1147,7 @@ void OSDMonitor::prime_pg_temp(
 
   if (acting.empty())
     return;  // if previously empty now we can be no worse off
+
   const pg_pool_t *pool = next.get_pg_pool(pgid.pool());
   if (pool && acting.size() < pool->min_size)
     return;  // can be no worse off than before
@@ -1144,6 +1156,7 @@ void OSDMonitor::prime_pg_temp(
 	   << " -> " << next_up << "/" << next_acting
 	   << ", priming " << acting
 	   << dendl;
+
   {
     Mutex::Locker l(prime_pg_temp_lock);
     // do not touch a mapping if a change is pending
@@ -1168,13 +1181,15 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
   int r = pending_inc.propagate_snaps_to_tiers(g_ceph_context, osdmap);
   assert(r == 0);
 
-  if (mapping_job) {
-    if (!mapping_job->is_done()) {
+  if (mapping_job) { // was created by OSDMonitor::start_mapping
+    if (!mapping_job->is_done()) { // shards == 0 when job is done, even if aborted
       dout(1) << __func__ << " skipping prime_pg_temp; mapping job "
 	      << mapping_job.get() << " did not complete, "
 	      << mapping_job->shards << " left" << dendl;
       mapping_job->abort();
     } else if (mapping.get_epoch() < osdmap.get_epoch()) {
+      // OSDMapMapping::epoch was updated by OSDMapMapping::_finish
+
       dout(1) << __func__ << " skipping prime_pg_temp; mapping job "
 	      << mapping_job.get() << " is prior epoch "
 	      << mapping.get_epoch() << dendl;

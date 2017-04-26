@@ -11,6 +11,8 @@
 MEMPOOL_DEFINE_OBJECT_FACTORY(OSDMapMapping, osdmapmapping,
 			      osdmap_mapping);
 
+// called by
+// OSDMapMapping::_start, which called by MappingJob::MappingJob
 // ensure that we have a PoolMappings for each pool and that
 // the dimensions (pg_num and size) match up.
 void OSDMapMapping::_init_mappings(const OSDMap& osdmap)
@@ -19,10 +21,12 @@ void OSDMapMapping::_init_mappings(const OSDMap& osdmap)
   auto q = pools.begin();
   for (auto& p : osdmap.get_pools()) {
     num_pgs += p.second.get_pg_num();
+
     // drop unneeded pools
     while (q != pools.end() && q->first < p.first) {
       q = pools.erase(q);
     }
+
     if (q != pools.end() && q->first == p.first) {
       if (q->second.pg_num != p.second.get_pg_num() ||
 	  q->second.size != p.second.get_size()) {
@@ -34,6 +38,7 @@ void OSDMapMapping::_init_mappings(const OSDMap& osdmap)
 	continue;
       }
     }
+
     pools.emplace(p.first, PoolMapping(p.second.get_size(),
 				       p.second.get_pg_num()));
   }
@@ -41,6 +46,7 @@ void OSDMapMapping::_init_mappings(const OSDMap& osdmap)
   assert(pools.size() == osdmap.get_pools().size());
 }
 
+// never used
 void OSDMapMapping::update(const OSDMap& osdmap)
 {
   _start(osdmap);
@@ -51,11 +57,14 @@ void OSDMapMapping::update(const OSDMap& osdmap)
   //_dump();  // for debugging
 }
 
+// never used
 void OSDMapMapping::update(const OSDMap& osdmap, pg_t pgid)
 {
   _update_range(osdmap, pgid.pool(), pgid.ps(), pgid.ps() + 1);
 }
 
+// called by
+// OSDMapMapping::_finish
 void OSDMapMapping::_build_rmap(const OSDMap& osdmap)
 {
   acting_rmap.resize(osdmap.get_max_osd());
@@ -83,6 +92,9 @@ void OSDMapMapping::_build_rmap(const OSDMap& osdmap)
   }
 }
 
+// called by
+// OSDMapMapping::update, which never used
+// MappingJob::complete, which called by ParallelPGMapper::Job::finish_one when all shards finished
 void OSDMapMapping::_finish(const OSDMap& osdmap)
 {
   _build_rmap(osdmap);
@@ -101,6 +113,8 @@ void OSDMapMapping::_dump()
   }
 }
 
+// called by
+// MappingJob::process, which called by ParallelPGMapper::WQ::_process
 void OSDMapMapping::_update_range(
   const OSDMap& osdmap,
   int64_t pool,
@@ -114,9 +128,12 @@ void OSDMapMapping::_update_range(
   for (unsigned ps = pg_begin; ps < pg_end; ++ps) {
     vector<int> up, acting;
     int up_primary, acting_primary;
+
     osdmap.pg_to_up_acting_osds(
       pg_t(ps, pool),
       &up, &up_primary, &acting, &acting_primary);
+
+    // PoolMapping::set
     i->second.set(ps, std::move(up), up_primary,
 		  std::move(acting), acting_primary);
   }
@@ -148,11 +165,18 @@ void ParallelPGMapper::WQ::_process(Item *i, ThreadPool::TPHandle &h)
 {
   ldout(m->cct, 20) << __func__ << " " << i->job << " " << i->pool
 		    << " [" << i->begin << "," << i->end << ")" << dendl;
+
+  // process one shard
   i->job->process(i->pool, i->begin, i->end);
+
+  // finish one shard
   i->job->finish_one();
   delete i;
 }
 
+// called by
+// OSDMapMapping::start_update
+// OSDMonitor::maybe_prime_pg_temp
 void ParallelPGMapper::queue(
   Job *job,
   unsigned pgs_per_item)
@@ -160,8 +184,12 @@ void ParallelPGMapper::queue(
   for (auto& p : job->osdmap->get_pools()) {
     for (unsigned ps = 0; ps < p.second.get_pg_num(); ps += pgs_per_item) {
       unsigned ps_end = MIN(ps + pgs_per_item, p.second.get_pg_num());
+
+      // ++shards;
       job->start_one();
+
       wq.queue(new Item(job, p.first, ps, ps_end));
+
       ldout(cct, 20) << __func__ << " " << job << " " << p.first << " [" << ps
 		     << "," << ps_end << ")" << dendl;
     }
