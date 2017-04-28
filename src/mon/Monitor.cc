@@ -863,6 +863,9 @@ void Monitor::init_paxos()
   refresh_from_paxos(NULL);
 }
 
+// called by
+// Monitor::init_paxos
+// Paxos::do_refresh
 void Monitor::refresh_from_paxos(bool *need_bootstrap)
 {
   dout(10) << __func__ << dendl;
@@ -882,6 +885,7 @@ void Monitor::refresh_from_paxos(bool *need_bootstrap)
   }
 
   for (int i = 0; i < PAXOS_NUM; ++i) {
+    // call specific PaxosService::update_from_paxos override
     paxos_service[i]->refresh(need_bootstrap);
   }
 

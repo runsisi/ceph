@@ -92,7 +92,7 @@ bool PaxosService::dispatch(MonOpRequestRef op)
   }
 
   // update
-  if (prepare_update(op)) {
+  if (prepare_update(op)) { // handled op, need to update cluster map
 
     // to propose
 
@@ -103,6 +103,7 @@ bool PaxosService::dispatch(MonOpRequestRef op)
       // always be true, either delay or no delay
 
       if (delay == 0.0) {
+        // encode pending then call Paxos::propose_pending to propose
 	propose_pending();
       } else {
 	// delay a bit
@@ -136,7 +137,7 @@ bool PaxosService::dispatch(MonOpRequestRef op)
 }
 
 // called by
-// Monitor::refresh_from_paxos
+// Monitor::refresh_from_paxos, which called by Paxos::do_refresh
 void PaxosService::refresh(bool *need_bootstrap)
 {
   // update cached versions
@@ -154,6 +155,7 @@ void PaxosService::refresh(bool *need_bootstrap)
 
   dout(10) << __func__ << dendl;
 
+  // call specific PaxosService override
   update_from_paxos(need_bootstrap);
 }
 
@@ -187,7 +189,9 @@ bool PaxosService::should_propose(double& delay)
   return true;
 }
 
-
+// called by
+// OSDMonitor::tick, for OSDMonitor, leader only
+// and others
 void PaxosService::propose_pending()
 {
   dout(10) << "propose_pending" << dendl;
@@ -247,7 +251,7 @@ void PaxosService::propose_pending()
     void finish(int r) override {
       ps->proposing = false;
       if (r >= 0)
-	ps->_active();
+	ps->_active(); // PaxosService::_active which calls OSDMonitor::on_active(), etc.
       else if (r == -ECANCELED || r == -EAGAIN)
 	return;
       else
@@ -257,6 +261,7 @@ void PaxosService::propose_pending()
 
   paxos->queue_pending_finisher(new C_Committed(this));
 
+  // call Paxos::propose_pending
   paxos->trigger_propose();
 }
 
@@ -307,9 +312,8 @@ void PaxosService::election_finished()
 }
 
 // called by
-// C_Committed::finish
+// PaxosService::propose_pending/C_Committed::finish, NOTE: not the same as Paxos.cc/C_Committed
 // PaxosService::election_finished
-// C_Active::finish
 void PaxosService::_active()
 {
   if (is_proposing()) {

@@ -80,9 +80,14 @@ Context *OpenRequest<I>::handle_v1_detect_header(int *result) {
   return nullptr;
 }
 
+// called by
+// OpenRequest<I>::send
 template <typename I>
 void OpenRequest<I>::send_v2_detect_header() {
   if (m_image_ctx->id.empty()) {
+    // image id is not given, only the image name is given, so
+    // need to detect the image format first
+
     CephContext *cct = m_image_ctx->cct;
     ldout(cct, 10) << this << " " << __func__ << dendl;
 
@@ -98,6 +103,7 @@ void OpenRequest<I>::send_v2_detect_header() {
                                    comp, &op, &m_out_bl);
     comp->release();
   } else {
+    // get image name by given id
     send_v2_get_name();
   }
 }
@@ -115,6 +121,8 @@ Context *OpenRequest<I>::handle_v2_detect_header(int *result) {
     send_close_image(*result);
   } else {
     m_image_ctx->old_format = false;
+
+    // detected this image is format 2, get its id by given name
     send_v2_get_id();
   }
   return nullptr;
@@ -181,6 +189,7 @@ Context *OpenRequest<I>::handle_v2_get_name(int *result) {
     bufferlist::iterator it = m_out_bl.begin();
     *result = cls_client::dir_get_name_finish(&it, &m_image_ctx->name);
   }
+
   if (*result < 0 && *result != -ENOENT) {
     lderr(cct) << "failed to retreive name: "
                << cpp_strerror(*result) << dendl;
@@ -225,6 +234,7 @@ Context *OpenRequest<I>::handle_v2_get_name_from_trash(int *result) {
     m_image_ctx->name = trash_spec.name;
   }
   if (*result < 0) {
+    // we did not find the name by id in RBD_DIRECTORY, and now we failed in RBD_TRASH too
     if (*result == -EOPNOTSUPP) {
       *result = -ENOENT;
     } else if (*result == -ENOENT) {

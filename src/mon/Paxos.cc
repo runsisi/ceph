@@ -595,7 +595,9 @@ void Paxos::collect_timeout()
   mon->bootstrap();
 }
 
-
+// called by
+// Paxos::handle_last
+// Paxos::propose_pending
 // leader
 void Paxos::begin(bufferlist& v)
 {
@@ -810,6 +812,8 @@ void Paxos::accept_timeout()
   mon->bootstrap();
 }
 
+// created by
+// Paxos::commit_start
 struct C_Committed : public Context {
   Paxos *paxos;
   explicit C_Committed(Paxos *p) : paxos(p) {}
@@ -820,6 +824,9 @@ struct C_Committed : public Context {
   }
 };
 
+// called by
+// Paxos::begin, when only one mon
+// Paxos::handle_accept
 void Paxos::commit_start()
 {
   dout(10) << __func__ << " " << (last_committed+1) << dendl;
@@ -862,6 +869,8 @@ void Paxos::commit_start()
   }
 }
 
+// called by
+// C_Committed::finish, which created by Paxos::commit_start
 void Paxos::commit_finish()
 {
   dout(20) << __func__ << " " << (last_committed+1) << dendl;
@@ -910,8 +919,14 @@ void Paxos::commit_finish()
   assert(is_writing() || is_writing_previous());
   state = STATE_REFRESH;
 
-  if (do_refresh()) {
+  if (do_refresh()) { // call Monitor::refresh_from_paxos which calls
+                      // specific PaxosService::update_from_paxos override
+
+    // no need to bootstrap
+
+    // finish committing_finishers which queued by PaxosService::propose_pending
     commit_proposal();
+
     if (mon->get_quorum().size() > 1) {
       extend_lease();
     }
@@ -924,7 +939,8 @@ void Paxos::commit_finish()
   }
 }
 
-
+// called by
+// Paxos::dispatch
 void Paxos::handle_commit(MonOpRequestRef op)
 {
   op->mark_paxos_event("handle_commit");
@@ -1017,6 +1033,10 @@ void Paxos::warn_on_future_time(utime_t t, entity_name_t from)
 
 }
 
+// called by
+// Paxos::handle_last, for leader
+// Paxos::commit_finish, for leader
+// Paxos::handle_commit, for poen
 bool Paxos::do_refresh()
 {
   bool need_bootstrap = false;
@@ -1024,7 +1044,7 @@ bool Paxos::do_refresh()
   utime_t start = ceph_clock_now();
 
   // make sure we have the latest state loaded up
-  mon->refresh_from_paxos(&need_bootstrap);
+  mon->refresh_from_paxos(&need_bootstrap); // call specific PaxosService::update_from_paxos override
 
   utime_t end = ceph_clock_now();
   logger->inc(l_paxos_refresh);
@@ -1039,6 +1059,8 @@ bool Paxos::do_refresh()
   return true;
 }
 
+// called by
+// Paxos::commit_finish
 void Paxos::commit_proposal()
 {
   dout(10) << __func__ << dendl;
@@ -1048,6 +1070,9 @@ void Paxos::commit_proposal()
   finish_contexts(g_ceph_context, committing_finishers);
 }
 
+// called by
+// Paxos::handle_last
+// Paxos::commit_finish
 void Paxos::finish_round()
 {
   dout(10) << __func__ << dendl;
@@ -1495,6 +1520,9 @@ bool Paxos::is_writeable()
     is_lease_valid();
 }
 
+// called by
+// Paxos::finish_round
+// Paxos::trigger_propose
 void Paxos::propose_pending()
 {
   assert(is_active());
@@ -1515,7 +1543,9 @@ void Paxos::propose_pending()
 
   pending_proposal.reset();
 
+  // will be finished by Paxos::commit_proposal
   committing_finishers.swap(pending_finishers);
+
   state = STATE_UPDATING;
 
   begin(bl);
@@ -1547,9 +1577,19 @@ MonitorDBStore::TransactionRef Paxos::get_pending_transaction()
     assert(pending_finishers.empty());
   }
 
+  // the tx will be populated by PaxosService specific encode_pending which
+  // called by PaxosService::propose_pending
   return pending_proposal;
 }
 
+// called by
+// ConfigKeyService::store_put(
+// ConfigKeyService::store_delete
+// MDSMonitor::update_metadata
+// Monitor::update_mon_metadata
+// Monitor::tick
+// PaxosService::propose_pending
+// PaxosService::maybe_trim
 bool Paxos::trigger_propose()
 {
   if (is_active()) {

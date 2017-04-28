@@ -64,10 +64,12 @@ void OSDMapMapping::update(const OSDMap& osdmap, pg_t pgid)
 }
 
 // called by
-// OSDMapMapping::_finish
+// OSDMapMapping::_finish, which called by MappingJob::complete
 void OSDMapMapping::_build_rmap(const OSDMap& osdmap)
 {
+  // vector<vector<pg_t>>
   acting_rmap.resize(osdmap.get_max_osd());
+
   //up_rmap.resize(osdmap.get_max_osd());
   for (auto& v : acting_rmap) {
     v.resize(0);
@@ -175,12 +177,14 @@ void ParallelPGMapper::WQ::_process(Item *i, ThreadPool::TPHandle &h)
 }
 
 // called by
-// OSDMapMapping::start_update
-// OSDMonitor::maybe_prime_pg_temp
+// OSDMapMapping::start_update, for MappingJob, which called by OSDMonitor::start_mapping
+// OSDMonitor::maybe_prime_pg_temp, for PrimeTempJob
 void ParallelPGMapper::queue(
   Job *job,
   unsigned pgs_per_item)
 {
+  // for MappingJob, Job::osdmap is current osdmap
+  // for PrimeTempJob, Job::osdmap is next osdmap
   for (auto& p : job->osdmap->get_pools()) {
     for (unsigned ps = 0; ps < p.second.get_pg_num(); ps += pgs_per_item) {
       unsigned ps_end = MIN(ps + pgs_per_item, p.second.get_pg_num());

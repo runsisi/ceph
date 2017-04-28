@@ -248,7 +248,7 @@ void OSDMonitor::get_store_prefixes(std::set<string>& s)
 }
 
 // called by
-// PaxosService::refresh
+// PaxosService::refresh, which called by Monitor::refresh_from_paxos
 void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 {
   version_t version = get_last_committed();
@@ -482,8 +482,8 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 }
 
 // called by
-// OSDMonitor::update_from_paxos
-// OSDMonitor::on_active
+// OSDMonitor::update_from_paxos, for poen, which called by PaxosService::refresh
+// OSDMonitor::on_active, for leader
 void OSDMonitor::start_mapping()
 {
   // initiate mapping job
@@ -529,6 +529,9 @@ void OSDMonitor::update_msgr_features()
   }
 }
 
+// called by
+// PaxosService::_active, leader only, which called by PaxosService::election_finished
+//      or PaxosService::propose_pending/C_Committed::finish
 void OSDMonitor::on_active()
 {
   update_logger();
@@ -537,6 +540,7 @@ void OSDMonitor::on_active()
     mon->clog->info() << "osdmap " << osdmap;
   } else {
     list<MonOpRequestRef> ls;
+
     take_all_failures(ls);
 
     while (!ls.empty()) {
@@ -548,6 +552,7 @@ void OSDMonitor::on_active()
       ls.pop_front();
     }
   }
+
   start_mapping();
 }
 
@@ -955,6 +960,9 @@ void OSDMonitor::create_pending()
   }
 }
 
+// created by
+// OSDMonitor::update_from_paxos
+// OSDMonitor::encode_pending
 creating_pgs_t
 OSDMonitor::update_pending_pgs(const OSDMap::Incremental& inc)
 {
@@ -1006,6 +1014,8 @@ OSDMonitor::update_pending_pgs(const OSDMap::Incremental& inc)
   return pending_creatings;
 }
 
+// called by
+// OSDMonitor::encode_pending
 void OSDMonitor::maybe_prime_pg_temp()
 {
   bool all = false;
@@ -1072,6 +1082,7 @@ void OSDMonitor::maybe_prime_pg_temp()
   next.apply_incremental(pending_inc);
 
   if (all) {
+    // OSDMonitor::prime_pg_temp
     PrimeTempJob job(next, this);
 
     // prime all pg temp batched by shard
@@ -1087,22 +1098,29 @@ void OSDMonitor::maybe_prime_pg_temp()
     }
   } else {
     dout(10) << __func__ << " " << osds.size() << " interesting osds" << dendl;
+
     utime_t stop = ceph_clock_now();
     stop += g_conf->mon_osd_prime_pg_temp_max_time;
+
     const int chunk = 1000;
     int n = chunk;
     std::unordered_set<pg_t> did_pgs;
+
     for (auto osd : osds) {
       auto& pgs = mapping.get_osd_acting_pgs(osd);
+
       dout(20) << __func__ << " osd." << osd << " " << pgs << dendl;
+
       for (auto pgid : pgs) {
 	if (!did_pgs.insert(pgid).second) {
 	  continue;
 	}
 
 	prime_pg_temp(next, pgid);
-	if (--n <= 0) {
+
+	if (--n <= 0) { // finished a chunk of pgs
 	  n = chunk;
+
 	  if (ceph_clock_now() > stop) {
 	    dout(10) << __func__ << " consumed more than "
 		     << g_conf->mon_osd_prime_pg_temp_max_time
@@ -1188,7 +1206,7 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
 	      << mapping_job->shards << " left" << dendl;
       mapping_job->abort();
     } else if (mapping.get_epoch() < osdmap.get_epoch()) {
-      // OSDMapMapping::epoch was updated by OSDMapMapping::_finish
+      // OSDMapMapping::epoch was updated by OSDMapMapping::_finish, which called by MappingJob::complete
 
       dout(1) << __func__ << " skipping prime_pg_temp; mapping job "
 	      << mapping_job.get() << " is prior epoch "
@@ -1202,6 +1220,8 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
     dout(1) << __func__ << " skipping prime_pg_temp; mapping job did not start"
 	    << dendl;
   }
+
+  // will be recreated by OSDMonitor::start_mapping
   mapping_job.reset();
 
   bufferlist bl;
@@ -1353,11 +1373,13 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
   if (mon->monmap->get_required_features().contains_all(
 	ceph::features::mon::FEATURE_LUMINOUS)) {
     auto pending_creatings = update_pending_pgs(pending_inc);
+
     if (!osdmap.test_flag(CEPH_OSDMAP_REQUIRE_LUMINOUS)) {
       dout(7) << __func__ << " in the middle of upgrading, "
 	      << " trimming pending creating_pgs using pgmap" << dendl;
       trim_creating_pgs(&pending_creatings, mon->pgmon()->pg_map);
     }
+
     bufferlist creatings_bl;
     ::encode(pending_creatings, creatings_bl);
     t->put(OSD_PG_CREATING_PREFIX, "creating", creatings_bl);
@@ -2243,6 +2265,9 @@ void OSDMonitor::process_failures()
   }
 }
 
+// called by
+// OSDMonitor::on_active, for poen
+// OSDMonitor::on_shutdown
 void OSDMonitor::take_all_failures(list<MonOpRequestRef>& ls)
 {
   dout(10) << __func__ << " on " << failure_info.size() << " osds" << dendl;
@@ -2252,6 +2277,7 @@ void OSDMonitor::take_all_failures(list<MonOpRequestRef>& ls)
        ++p) {
     p->second.take_report_messages(ls);
   }
+
   failure_info.clear();
 }
 

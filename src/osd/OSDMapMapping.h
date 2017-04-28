@@ -265,7 +265,7 @@ private:
 
   // called by
   // OSDMapMapping::update, never used
-  // MappingJob::MappingJob
+  // MappingJob::MappingJob, which created by OSDMapMapping::start_update
   void _start(const OSDMap& osdmap) {
     _init_mappings(osdmap);
   }

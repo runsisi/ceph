@@ -1422,7 +1422,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
       }
     } else {
       if (ictx->old_format) {
-        ictx->state->close();
+        ictx->state->close(); // close will delete ictx
         return -EOPNOTSUPP;
       }
 
@@ -1461,6 +1461,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     };
 
     ldout(cct, 2) << "adding image entry to rbd_trash" << dendl;
+
     utime_t ts = ceph_clock_now();
     utime_t deferment_end_time = ts;
     deferment_end_time += (double)delay;
@@ -1480,6 +1481,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     }
 
     ldout(cct, 2) << "removing id object..." << dendl;
+
     r = io_ctx.remove(util::id_obj_name(image_name));
     if (r < 0 && r != -ENOENT) {
       lderr(cct) << "error removing id object: " << cpp_strerror(r)
@@ -1488,6 +1490,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     }
 
     ldout(cct, 2) << "removing rbd image from v2 directory..." << dendl;
+
     r = cls_client::dir_remove_image(&io_ctx, RBD_DIRECTORY, image_name,
                                      image_id);
     if (r < 0) {
