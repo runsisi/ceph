@@ -102,6 +102,8 @@ void BreakRequest<I>::handle_get_watchers(int r) {
     if ((strncmp(m_locker.address.c_str(),
                  watcher.addr, sizeof(watcher.addr)) == 0) &&
         (m_locker.handle == watcher.cookie)) {
+      // the current locker has alive watcher
+
       ldout(m_cct, 10) << "lock owner is still alive" << dendl;
       found_alive_locker = true;
     }

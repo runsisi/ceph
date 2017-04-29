@@ -162,6 +162,7 @@ void ManagedLock<I>::try_acquire_lock(Context *on_acquired) {
     if (is_state_shutdown()) {
       r = -ESHUTDOWN;
     } else if (m_state != STATE_LOCKED || !m_actions_contexts.empty()) {
+      // not locked, or locked but has pending contexts
       ldout(m_cct, 10) << dendl;
       execute_action(ACTION_TRY_LOCK, on_acquired);
       return;
@@ -380,6 +381,7 @@ template <typename I>
 void ManagedLock<I>::execute_action(Action action, Context *ctx) {
   assert(m_lock.is_locked());
 
+  // merge or append, the same as ImageState state machine
   append_context(action, ctx);
 
   if (!is_transition_state()) {
@@ -391,7 +393,8 @@ template <typename I>
 void ManagedLock<I>::execute_next_action() {
   assert(m_lock.is_locked());
   assert(!m_actions_contexts.empty());
-  switch (get_active_action()) {
+
+  switch (get_active_action()) { // the first action on the fifo queue
   case ACTION_ACQUIRE_LOCK:
   case ACTION_TRY_LOCK:
     send_acquire_lock();
@@ -423,6 +426,7 @@ void ManagedLock<I>::complete_active_action(State next_state, int r) {
   assert(m_lock.is_locked());
   assert(!m_actions_contexts.empty());
 
+  // std::list<ActionContexts>
   ActionContexts action_contexts(std::move(m_actions_contexts.front()));
   m_actions_contexts.pop_front();
   m_state = next_state;

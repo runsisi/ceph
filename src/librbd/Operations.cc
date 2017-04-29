@@ -1677,6 +1677,7 @@ void Operations<I>::execute_metadata_remove(const std::string &key,
 }
 
 // called by
+// librbd::trash_move
 // Operations<I>::snap_rollback
 template <typename I>
 int Operations<I>::prepare_image_update() {
@@ -1700,6 +1701,11 @@ int Operations<I>::prepare_image_update() {
     if (m_image_ctx.exclusive_lock != nullptr &&
         (!m_image_ctx.exclusive_lock->is_lock_owner() ||
          !m_image_ctx.exclusive_lock->accept_requests(&r))) {
+      // the ImageCtx::exclusive_lock could be set to nullptr and try
+      // to shutdown the lock if another refresh is running at parallel,
+      // and at the same time ImageWather could try to release
+      // the ImageCtx::exclusive_lock, but as the ExclusiveLock is a
+      // fifo state machine, so there is no race between them
       m_image_ctx.exclusive_lock->try_acquire_lock(&ctx);
       trying_lock = true;
     }
@@ -1709,6 +1715,10 @@ int Operations<I>::prepare_image_update() {
     r = ctx.wait();
   }
 
+  // so no one could destroy or release ImageCtx::exclusive_lock afterward,
+  // though the ImageCtx::exclusive_lock could have been destroyed or
+  // released by RefreshRequest or ImageWatcher as described above, so
+  // we need to check the nullness and lock owner before using it
   m_image_ctx.owner_lock.get_read();
 
   return r;

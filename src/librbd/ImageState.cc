@@ -626,9 +626,12 @@ void ImageState<I>::execute_next_action_unlock() {
 
 template <typename I>
 void ImageState<I>::execute_action_unlock(const Action &action,
-                                          Context *on_finish) {
+                                          Context *on_finish) { // for prepare_lock this is nullptr, but
+                                                                // its Action::on_ready is not nullptr
   assert(m_lock.is_locked());
 
+  // merge with exsiting action with the same type, or append to
+  // the action list
   append_context(action, on_finish);
 
   if (!is_transition_state()) {

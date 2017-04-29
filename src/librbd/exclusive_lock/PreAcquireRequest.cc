@@ -53,6 +53,8 @@ void PreAcquireRequest<I>::send_prepare_lock() {
   // acquire the lock if the image is not busy performing other actions
   Context *ctx = create_context_callback<
     PreAcquireRequest<I>, &PreAcquireRequest<I>::handle_prepare_lock>(this);
+
+  // lock the ImageState state machine
   m_image_ctx.state->prepare_lock(ctx);
 }
 
@@ -60,6 +62,8 @@ template <typename I>
 void PreAcquireRequest<I>::handle_prepare_lock(int r) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << "r=" << r << dendl;
+
+  // now the ImageState state machine is locked
 
   send_flush_notifies();
 }

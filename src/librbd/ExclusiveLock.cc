@@ -40,7 +40,7 @@ ExclusiveLock<I>::ExclusiveLock(I &image_ctx)
 }
 
 // called by:
-// ImageWatcher::handle_payload
+// ImageWatcher::handle_payload(XxxPayload)
 // C_InvokeAsyncRequest::send_acquire_exclusive_lock
 // Operations<I>::prepare_image_update
 template <typename I>
@@ -121,7 +121,10 @@ void ExclusiveLock<I>::shut_down(Context *on_shut_down) {
 }
 
 // called by:
-// C_InvokeAsyncRequest::send_acquire_exclusive_lock
+// ExclusiveLock<I>::shut_down
+// ImageWatcher<I>::handle_request_lock, only here called with -EROFS
+// ImageWatcher<I>::handle_payload(const AcquiredLockPayload)
+// ImageWatcher<I>::handle_payload(const ReleasedLockPayload)
 template <typename I>
 void ExclusiveLock<I>::handle_peer_notification(int r) {
   Mutex::Locker locker(ML<I>::m_lock);

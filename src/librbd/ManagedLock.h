@@ -85,6 +85,9 @@ protected:
     assert(m_state == STATE_INITIALIZING || m_state == STATE_RELEASING);
     m_state = STATE_UNLOCKED;
   }
+
+  // called by
+  // ExclusiveLock<I>::post_acquire_lock_handler
   inline void set_state_waiting_for_lock() {
     assert(m_lock.is_locked());
     assert(m_state == STATE_ACQUIRING);

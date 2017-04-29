@@ -1429,6 +1429,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
       image_id = ictx->id;
       ictx->owner_lock.get_read();
       if (ictx->exclusive_lock != nullptr) {
+        // try to acquire exclusive lock
         r = ictx->operations->prepare_image_update();
         if (r < 0 || (ictx->exclusive_lock != nullptr &&
                       !ictx->exclusive_lock->is_lock_owner())) {
