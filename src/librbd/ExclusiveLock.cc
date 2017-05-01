@@ -56,9 +56,10 @@ bool ExclusiveLock<I>::accept_requests(int *ret_val) const {
   return accept_requests;
 }
 
-// called by:
-// librbd::update_features
-// librbd::mirror_image_demote
+// called by
+// DemoteRequest<I>::acquire_lock
+// DisableFeaturesRequest<I>::handle_block_writes
+// EnableFeaturesRequest<I>::handle_get_mirror_mode
 // OpenLocalImageRequest<I>::send_lock_image
 template <typename I>
 void ExclusiveLock<I>::block_requests(int r) {
@@ -74,8 +75,9 @@ void ExclusiveLock<I>::block_requests(int r) {
 }
 
 // called by:
-// librbd::update_features
-// librbd::mirror_image_demote
+// DemoteRequest<I>::finish
+// DisableFeaturesRequest<I>::handle_finish
+// EnableFeaturesRequest<I>::handle_finish
 template <typename I>
 void ExclusiveLock<I>::unblock_requests() {
   Mutex::Locker locker(ML<I>::m_lock);
