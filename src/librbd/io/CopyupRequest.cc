@@ -171,6 +171,7 @@ bool CopyupRequest::send_copyup() {
     r = rados.ioctx_create2(m_ictx->data_ctx.get_id(), m_data_ctx);
     assert(r == 0);
 
+    // use the specified snapc instead of IoCtxImpl::snapc
     r = m_data_ctx.aio_operate(m_oid, comp, &copyup_op, 0, snaps);
     assert(r == 0);
     comp->release();
