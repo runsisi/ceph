@@ -502,6 +502,7 @@ int librados::RadosClient::create_ioctx(const char *name, IoCtxImpl **io)
 int librados::RadosClient::create_ioctx(int64_t pool_id, IoCtxImpl **io)
 {
   // IoCtxImpl::oloc will be initialized by pool_id
+  // IoCtxImpl::snap_seq = CEPH_NOSNAP
   *io = new librados::IoCtxImpl(this, objecter, pool_id, CEPH_NOSNAP);
   return 0;
 }

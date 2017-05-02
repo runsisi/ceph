@@ -2375,7 +2375,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
   // now check the target oid itself
 
   ObjectContextRef obc;
-  bool can_create = op->may_write() || op->may_cache();
+  bool can_create = op->may_write() || op->may_cache(); // set by OSD::init_op_flags, which called above
   hobject_t missing_oid;
   const hobject_t& oid = m->get_hobj();
 

@@ -10512,6 +10512,7 @@ int OSD::init_op_flags(OpRequestRef& op)
 	    r = -EIO;
 	  return r;
 	}
+
 	int flags = cls->get_method_flags(mname.c_str());
 	if (flags < 0) {
 	  if (flags == -ENOENT)
@@ -10520,6 +10521,11 @@ int OSD::init_op_flags(OpRequestRef& op)
 	    r = flags;
 	  return r;
 	}
+
+	// for class requests ceph_osd_op_mode_modify return false, so we need to get
+	// the rmw flags by methods definition
+	// PrimaryLogPG::do_op need to check the rmw flags to determine if it can
+	// create ObjectContext in find_object_context
 	is_read = flags & CLS_METHOD_RD;
 	is_write = flags & CLS_METHOD_WR;
         bool is_promote = flags & CLS_METHOD_PROMOTE;

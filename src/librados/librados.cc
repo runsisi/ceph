@@ -2505,7 +2505,7 @@ int librados::Rados::ioctx_create2(int64_t pool_id, IoCtx &io)
   int ret = rados_ioctx_create2((rados_t)client, pool_id, &p);
   if (ret)
     return ret;
-  io.close();
+  io.close(); // IoCtx::io_ctx_impl->put(); IoCtx::io_ctx_impl = 0;
   io.io_ctx_impl = (IoCtxImpl*)p;
   return 0;
 }
@@ -3423,6 +3423,8 @@ extern "C" int rados_ioctx_create2(rados_t cluster, int64_t pool_id,
   librados::RadosClient *client = (librados::RadosClient *)cluster;
   librados::IoCtxImpl *ctx;
 
+  // ctx = new librados::IoCtxImpl(this, objecter, pool_id, CEPH_NOSNAP);
+  // IoCtxImpl::snap_seq = CEPH_NOSNAP
   int r = client->create_ioctx(pool_id, &ctx);
   if (r < 0) {
     tracepoint(librados, rados_ioctx_create2_exit, r, NULL);

@@ -156,7 +156,7 @@ bool CopyupRequest::send_copyup() {
     librados::ObjectWriteOperation copyup_op;
     // if the child object does not exist, then write the data to the
     // child object blindly
-    copyup_op.exec("rbd", "copyup", m_copyup_data);
+    copyup_op.exec("rbd", "copyup", m_copyup_data); // copyup has CLS_METHOD_RD | CLS_METHOD_WR set
 
     // send only the copyup request with a blank snapshot context so that
     // all snapshots are detected from the parent for this object.  If
@@ -167,11 +167,12 @@ bool CopyupRequest::send_copyup() {
     ldout(m_ictx->cct, 20) << "copyup with empty snapshot context" << dendl;
     librados::AioCompletion *comp = util::create_rados_callback(this);
 
-    librados::Rados rados(m_ictx->data_ctx);
+    // create a new ioctx, with snap_seq = CEPH_NOSNAP and snapc is default constructed
+    librados::Rados rados(m_ictx->data_ctx); // Rados::client = ioctx.io_ctx_impl->client; client->get();
     r = rados.ioctx_create2(m_ictx->data_ctx.get_id(), m_data_ctx);
     assert(r == 0);
 
-    // use the specified snapc instead of IoCtxImpl::snapc
+    // use the newly created ioctx, with empty snap_seq set set to CEPH_NOSNAP and empty snapc
     r = m_data_ctx.aio_operate(m_oid, comp, &copyup_op, 0, snaps);
     assert(r == 0);
     comp->release();
@@ -195,7 +196,9 @@ bool CopyupRequest::send_copyup() {
     for (size_t i=0; i<m_pending_requests.size(); ++i) {
       ObjectRequest<> *req = m_pending_requests[i];
       ldout(m_ictx->cct, 20) << "add_copyup_ops " << req << dendl;
-      req->add_copyup_ops(&write_op);
+      // merge original req to write_op
+      req->add_copyup_ops(&write_op); // overrided by AbstractObjectWriteRequest::add_copyup_ops only,
+                                      // which call add_write_ops directly
     }
 
     assert(write_op.size() != 0);
