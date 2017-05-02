@@ -806,14 +806,6 @@ struct C_InvalidateCache : public Context {
     return CEPH_NOSNAP;
   }
 
-  // called by
-  // librbd::operation::TrimRequest<I>::send_pre_copyup
-  // AioObjectRequest<I>::compute_parent_extents
-  // AioObjectRead<I>::should_complete
-  // DiffIterate::execute
-  // librbd::get_overlap
-  // LibrbdWriteback::may_copy_on_write
-  // librbd::Operations<I>::execute_flatten
   int ImageCtx::get_parent_overlap(snap_t in_snap_id, uint64_t *overlap) const
   {
     assert(snap_lock.is_locked());

@@ -101,7 +101,7 @@ ObjectRequest<I>::ObjectRequest(ImageCtx *ictx, const std::string &oid,
   RWLock::RLocker snap_locker(m_ictx->snap_lock);
   RWLock::RLocker parent_locker(m_ictx->parent_lock);
 
-  // determines if we have a parent image, see AioObjectRequest::has_parent
+  // determines if we have a parent image, see ObjectRequest::has_parent
   compute_parent_extents();
 }
 
@@ -114,7 +114,7 @@ void ObjectRequest<I>::complete(int r)
       r = 0;
     }
 
-    // C_AioRequest/C_AioRead/C_ImageCacheRead
+    // io::ReadResult::C_SparseReadRequest<I> / C_AioRequest
     m_completion->complete(r);
 
     delete this;
@@ -122,9 +122,9 @@ void ObjectRequest<I>::complete(int r)
 }
 
 // called by
-// AioObjectRequest<I>::AioObjectRequest
-// AioObjectRead<I>::send_copyup
-// AbstractAioObjectWrite::handle_write_guard
+// ObjectRequest<I>::ObjectRequest
+// ObjectReadRequest<I>::send_copyup
+// AbstractObjectWriteRequest::handle_write_guard
 template <typename I>
 bool ObjectRequest<I>::compute_parent_extents() {
   assert(m_ictx->snap_lock.is_locked());
@@ -192,6 +192,7 @@ template <typename I>
 void ObjectReadRequest<I>::guard_read()
 {
   ImageCtx *image_ctx = this->m_ictx;
+
   RWLock::RLocker snap_locker(image_ctx->snap_lock);
   RWLock::RLocker parent_locker(image_ctx->parent_lock);
 
@@ -261,6 +262,7 @@ bool ObjectReadRequest<I>::should_complete(int r)
           // the original portion of the read request is to read, so the
           // later copyup need to read the whole parent object again
           read_from_parent(std::move(parent_extents));
+
           finished = false;
         }
       }
@@ -337,6 +339,8 @@ void ObjectReadRequest<I>::send() {
   rados_completion->release();
 }
 
+// called by
+// ObjectReadRequest<I>::should_complete
 // do CoR, this is not a necessary step for object read request, so the
 // original object read request is not appended to CopyupRequest::m_pending_requests
 // vector, which is not the same as object write request
@@ -381,11 +385,14 @@ void ObjectReadRequest<I>::send_copyup()
   }
 }
 
+// called by
+// ObjectReadRequest<I>::should_complete, for LIBRBD_AIO_READ_GUARD
 template <typename I>
 void ObjectReadRequest<I>::read_from_parent(Extents&& parent_extents)
 {
   ImageCtx *image_ctx = this->m_ictx;
 
+  // ObjectRequest<I>::complete
   AioCompletion *parent_completion = AioCompletion::create_and_start<
     ObjectRequest<I> >(this, image_ctx, AIO_TYPE_READ);
 
@@ -413,6 +420,9 @@ AbstractObjectWriteRequest::AbstractObjectWriteRequest(ImageCtx *ictx,
   m_snaps.insert(m_snaps.end(), snapc.snaps.begin(), snapc.snaps.end());
 }
 
+// called by
+// AbstractObjectWriteRequest::send_write_op
+// ObjectRemoveRequest::guard_write
 void AbstractObjectWriteRequest::guard_write()
 {
   if (has_parent()) {
@@ -458,8 +468,8 @@ bool AbstractObjectWriteRequest::should_complete(int r)
     ldout(m_ictx->cct, 20) << "WRITE_CHECK_GUARD" << dendl;
 
     if (r == -ENOENT) {
-
-      // the child object does not exist, copyup, i.e., call send_copyup
+      // the child object does not exist, so the write failed, need the
+      // copyup to finish the write
 
       handle_write_guard();
       finished = false;
@@ -472,6 +482,7 @@ bool AbstractObjectWriteRequest::should_complete(int r)
       break;
     }
 
+    // child object exists, client write succeeded
     finished = send_post_object_map_update();
     break;
 
@@ -535,9 +546,12 @@ void AbstractObjectWriteRequest::send_pre_object_map_update() {
 
   {
     RWLock::RLocker snap_lock(m_ictx->snap_lock);
+
     if (m_ictx->object_map != nullptr) {
       uint8_t new_state;
+
       pre_object_map_update(&new_state);
+
       RWLock::WLocker object_map_locker(m_ictx->object_map_lock);
       ldout(m_ictx->cct, 20) << m_oid << " " << m_object_off
                              << "~" << m_object_len << dendl;
@@ -550,6 +564,7 @@ void AbstractObjectWriteRequest::send_pre_object_map_update() {
     }
   }
 
+  // guard write if needed or normal write
   send_write_op();
 }
 
@@ -577,23 +592,36 @@ bool AbstractObjectWriteRequest::send_post_object_map_update() {
   return true;
 }
 
+// AbstractObjectWriteRequest:
+//      ObjectWriteRequest::send_write
+//      ObjectRemoveRequest::send_write
+//      ObjectTrimRequest
+//      ObjectTruncateRequest::send_write
+//      ObjectZeroRequest
+//      ObjectWriteSameRequest::send_write
+
+// called by
+// AbstractObjectWriteRequest::send
+// AbstractObjectWriteRequest::handle_write_guard
 void AbstractObjectWriteRequest::send_write() {
   ldout(m_ictx->cct, 20) << m_oid << " " << m_object_off << "~" << m_object_len
                          << " object exist " << m_object_exist << dendl;
 
   if (!m_object_exist && has_parent()) {
-
-    // we know the child object does not exist definitely, so copyup
+    // by object-map, we know the child object does not exist definitely, so
+    // skip object map update and guard write, do copyup directly
 
     m_state = LIBRBD_AIO_WRITE_GUARD;
 
     // copyup
-    handle_write_guard();
+    handle_write_guard(); // call send_copyup if still has parent or call send_write again
   } else {
-    send_pre_object_map_update();
+    send_pre_object_map_update(); // update object map or call send_write_op if object map is disabled
   }
 }
 
+// called by
+// AbstractObjectWriteRequest::handle_write_guard
 void AbstractObjectWriteRequest::send_copyup()
 {
   ldout(m_ictx->cct, 20) << m_oid << " " << m_object_off
@@ -634,11 +662,14 @@ void AbstractObjectWriteRequest::send_copyup()
     m_ictx->copyup_list_lock.Unlock();
   }
 }
+
 void AbstractObjectWriteRequest::send_write_op()
 {
   m_state = LIBRBD_AIO_WRITE_FLAT;
+
   if (m_guard) {
-    guard_write();
+    // add an assert op to m_write
+    guard_write(); // if has parent, change to state LIBRBD_AIO_WRITE_GUARD
   }
 
   add_write_ops(&m_write);
@@ -652,6 +683,10 @@ void AbstractObjectWriteRequest::send_write_op()
   assert(r == 0);
   rados_completion->release();
 }
+
+// called by
+// AbstractObjectWriteRequest::should_complete, for LIBRBD_AIO_WRITE_GUARD
+// AbstractObjectWriteRequest::send_write, child object does not exist and has parent
 void AbstractObjectWriteRequest::handle_write_guard()
 {
   bool has_parent;
@@ -660,6 +695,7 @@ void AbstractObjectWriteRequest::handle_write_guard()
     RWLock::RLocker snap_locker(m_ictx->snap_lock);
     RWLock::RLocker parent_locker(m_ictx->parent_lock);
 
+    // re-compute
     has_parent = compute_parent_extents();
   }
 
@@ -695,6 +731,7 @@ void ObjectWriteRequest::send_write() {
   ldout(m_ictx->cct, 20) << m_oid << " " << m_object_off << "~" << m_object_len
                          << " object exist " << m_object_exist
                          << " write_full " << write_full << dendl;
+
   if (write_full && !has_parent()) {
     m_guard = false;
   }

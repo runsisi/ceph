@@ -43,11 +43,13 @@ public:
 
   int send() override {
     uint64_t snap_id = m_snap_ids[m_snap_id_idx];
+
     if (snap_id == CEPH_NOSNAP) {
       RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
       RWLock::WLocker object_map_locker(m_image_ctx.object_map_lock);
       assert(m_image_ctx.exclusive_lock->is_lock_owner());
       assert(m_image_ctx.object_map != nullptr);
+
       bool sent = m_image_ctx.object_map->aio_update<Context>(
         CEPH_NOSNAP, m_object_no, OBJECT_EXISTS, {}, this);
       return (sent ? 0 : 1);
@@ -127,7 +129,7 @@ bool CopyupRequest::send_copyup() {
   // read request, see AioObjectRead<I>::send_copyup
   bool copy_on_read = m_pending_requests.empty();
 
-  if (!add_copyup_op && copy_on_read) {
+  if (!add_copyup_op && copy_on_read) { // parent has no data
     // copyup empty object to prevent future CoR attempts
     m_copyup_data.clear();
     add_copyup_op = true;
@@ -188,7 +190,7 @@ bool CopyupRequest::send_copyup() {
       write_op.exec("rbd", "copyup", m_copyup_data);
     }
 
-    // merge all pending write ops into this single RADOS op
+    // merge all pending write op with the copyup into a single RADOS op
     for (size_t i=0; i<m_pending_requests.size(); ++i) {
       ObjectRequest<> *req = m_pending_requests[i];
       ldout(m_ictx->cct, 20) << "add_copyup_ops " << req << dendl;
@@ -198,6 +200,7 @@ bool CopyupRequest::send_copyup() {
     assert(write_op.size() != 0);
 
     snaps.insert(snaps.end(), snapc.snaps.begin(), snapc.snaps.end());
+
     librados::AioCompletion *comp = util::create_rados_callback(this);
     r = m_ictx->data_ctx.aio_operate(m_oid, comp, &write_op);
     assert(r == 0);
@@ -209,8 +212,10 @@ bool CopyupRequest::send_copyup() {
 
 bool CopyupRequest::is_copyup_required() {
   bool noop = true;
+
   for (const ObjectRequest<> *req : m_pending_requests) {
-    if (!req->is_op_payload_empty()) {
+    if (!req->is_op_payload_empty()) { // default false, only ObjectWriteRequest may return true if
+                                       // ObjectWriteRequest::m_write_data.length() == 0
       noop = false;
       break;
     }
@@ -226,6 +231,7 @@ void CopyupRequest::send()
 {
   m_state = STATE_READ_FROM_PARENT;
 
+  // CopyupRequest::complete
   AioCompletion *comp = AioCompletion::create_and_start(
     this, m_ictx, AIO_TYPE_READ);
 
@@ -233,6 +239,8 @@ void CopyupRequest::send()
                          << ", oid " << m_oid
                          << ", extents " << m_image_extents
                          << dendl;
+
+  // read from parent
   ImageRequest<>::aio_read(m_ictx->parent, comp, std::move(m_image_extents),
                            ReadResult{&m_copyup_data}, 0);
 }
@@ -258,8 +266,9 @@ bool CopyupRequest::should_complete(int r)
     ldout(cct, 20) << "READ_FROM_PARENT" << dendl;
 
     // remove this copyup request from m_ictx->copyup_list which stashed
-    // by AioObjectRead<I>::send_copyup and AbstractAioObjectWrite::send_copyup
+    // by ObjectReadRequest<I>::send_copyup or AbstractObjectWriteRequest::send_copyup
     remove_from_list();
+
     if (r >= 0 || r == -ENOENT) {
       if (is_copyup_required()) {
         ldout(cct, 20) << "nop, skipping" << dendl;
@@ -332,8 +341,10 @@ bool CopyupRequest::send_object_map_head() {
   {
     RWLock::RLocker owner_locker(m_ictx->owner_lock);
     RWLock::RLocker snap_locker(m_ictx->snap_lock);
+
     if (m_ictx->object_map != nullptr) {
       bool copy_on_read = m_pending_requests.empty();
+
       assert(m_ictx->exclusive_lock->is_lock_owner());
 
       RWLock::WLocker object_map_locker(m_ictx->object_map_lock);
