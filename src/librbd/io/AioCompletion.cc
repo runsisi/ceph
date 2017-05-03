@@ -39,6 +39,9 @@ int AioCompletion::wait_for_complete() {
   return 0;
 }
 
+// called by
+// AioCompletion::complete_request, complete each object request until ref count reached 0
+// AioCompletion::unblock, i.e., no object requests generated
 void AioCompletion::finalize(ssize_t rval)
 {
   assert(lock.is_locked());
@@ -175,8 +178,11 @@ void AioCompletion::set_request_count(uint32_t count) {
   unblock();
 }
 
-// called by C_AioRequest::finish
-// complete image request, i.e., read, write, discard, flush
+// called by
+// librbd::io::C_AioRequest::finish
+// librbd::io::anon::C_DiscardJournalCommit::finish
+// librbd::io::anon::C_FlushJournalCommit::finish
+// librbd::io::ReadResult::C_ReadRequest::finish
 void AioCompletion::complete_request(ssize_t r)
 {
   lock.Lock();
@@ -203,6 +209,7 @@ void AioCompletion::complete_request(ssize_t r)
     // assemble result buffer for image read request
     finalize(rval);
 
+    // journal commit io event, call user callback, and finish tracked asyncop
     complete();
   }
 

@@ -819,13 +819,14 @@ struct C_InvalidateCache : public Context {
   }
 
   // called by
-  // ImageReadRequest<I>::send_request
-  // librbd::readahead
+  // ImageReadRequest<I>::send_request, onfinish = librbd::io::anon::C_ObjectCacheRead
+  // librbd::readahead, onfinish = internal.cc/C_RBD_Readahead
   void ImageCtx::aio_read_from_cache(object_t o, uint64_t object_no,
 				     bufferlist *bl, size_t len,
 				     uint64_t off, Context *onfinish,
 				     int fadvise_flags) {
     snap_lock.get_read();
+    // new OSDRead(snap, b, f);
     ObjectCacher::OSDRead *rd = object_cacher->prepare_read(snap_id, bl, fadvise_flags);
     snap_lock.put_read();
 
@@ -838,6 +839,7 @@ struct C_InvalidateCache : public Context {
     int r = object_cacher->readx(rd, object_set, onfinish);
     cache_lock.Unlock();
 
+    // r != 0 means finished, either hit or error
     if (r != 0)
       onfinish->complete(r);
   }

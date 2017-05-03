@@ -107,7 +107,7 @@ struct AioCompletion {
                                          aio_type_t type) {
     AioCompletion *comp = create<T, MF>(obj);
     comp->init_time(image_ctx, type);
-    comp->start_op();
+    comp->start_op(); // async_op.start_op(*ictx);
     return comp;
   }
 
@@ -202,6 +202,10 @@ struct AioCompletion {
     Mutex::Locker l(lock);
     ++blockers;
   }
+
+  // called by, i.e., no object requests generated
+  // AioCompletion::set_request_count
+  // AbstractImageWriteRequest<I>::send_request
   void unblock() {
     Mutex::Locker l(lock);
     assert(blockers > 0);
@@ -222,14 +226,15 @@ struct AioCompletion {
   }
 };
 
-// inherited by: C_AioRead, C_ImageCacheRead
-// allocated by：
+// created by：
 // AbstractAioImageWrite<I>::send_object_requests
-// AioImageWrite<I>::send_image_cache_request
-// AioImageWrite<I>::send_object_cache_requests
-// AioImageDiscard<I>::send_image_cache_request
-// AioImageFlush<I>::send_request
-// AioImageFlush<I>::send_image_cache_request
+// ImageWriteRequest<I>::send_image_cache_request
+// ImageWriteRequest<I>::send_object_cache_requests
+// ImageDiscardRequest<I>::send_image_cache_request
+// ImageFlushRequest<I>::send_request
+// ImageFlushRequest<I>::send_image_cache_request
+// ImageWriteSameRequest<I>::send_image_cache_request
+// ImageWriteSameRequest<I>::send_object_cache_requests
 class C_AioRequest : public Context {
 public:
   C_AioRequest(AioCompletion *completion) : m_completion(completion) {

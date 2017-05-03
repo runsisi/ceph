@@ -101,7 +101,7 @@ ObjectRequest<I>::ObjectRequest(ImageCtx *ictx, const std::string &oid,
   RWLock::RLocker snap_locker(m_ictx->snap_lock);
   RWLock::RLocker parent_locker(m_ictx->parent_lock);
 
-  // determines if we have a parent image, see ObjectRequest::has_parent
+  // calc m_parent_extents with full sized object and pruned with overlap
   compute_parent_extents();
 }
 
@@ -133,7 +133,6 @@ bool ObjectRequest<I>::compute_parent_extents() {
   uint64_t parent_overlap;
   int r = m_ictx->get_parent_overlap(m_snap_id, &parent_overlap);
   if (r < 0) {
-
     // r == -ENOENT, no parent found
 
     // NOTE: it's possible for a snapshot to be deleted while we are
@@ -141,16 +140,19 @@ bool ObjectRequest<I>::compute_parent_extents() {
     lderr(m_ictx->cct) << "failed to retrieve parent overlap: "
                        << cpp_strerror(r)
                        << dendl;
+
     m_has_parent = false;
     m_parent_extents.clear();
     return false;
   }
 
+  // m_parent_extents was full object sized, see ObjectRequest<I>::ObjectRequest
   uint64_t object_overlap = m_ictx->prune_parent_extents(
     m_parent_extents, parent_overlap);
   if (object_overlap > 0) {
     ldout(m_ictx->cct, 20) << "overlap " << parent_overlap << " "
                            << "extents " << m_parent_extents << dendl;
+
     m_has_parent = !m_parent_extents.empty();
     return true;
   }
@@ -179,7 +181,7 @@ ObjectReadRequest<I>::ObjectReadRequest(I *ictx, const std::string &oid,
                                         librados::snap_t snap_id, bool sparse,
                                         Context *completion, int op_flags)
   : ObjectRequest<I>(util::get_image_ctx(ictx), oid, objectno, offset, len,
-                     snap_id, completion, false),
+                     snap_id, completion, false), // will calc m_parent_extents in ctor
     m_buffer_extents(be), m_tried_parent(false), m_sparse(sparse),
     m_op_flags(op_flags), m_state(LIBRBD_AIO_READ_FLAT) {
 
@@ -196,7 +198,7 @@ void ObjectReadRequest<I>::guard_read()
   RWLock::RLocker snap_locker(image_ctx->snap_lock);
   RWLock::RLocker parent_locker(image_ctx->parent_lock);
 
-  if (this->has_parent()) {
+  if (this->has_parent()) { // change from LIBRBD_AIO_READ_FLAT -> LIBRBD_AIO_READ_GUARD
     ldout(image_ctx->cct, 20) << "guarding read" << dendl;
     m_state = LIBRBD_AIO_READ_GUARD;
   }
@@ -216,6 +218,10 @@ bool ObjectReadRequest<I>::should_complete(int r)
   case LIBRBD_AIO_READ_GUARD:
     ldout(image_ctx->cct, 20) << "READ_CHECK_GUARD" << dendl;
 
+    // the same state for:
+    // guard_read
+    // read_from_parent if no copyup needed
+
     // This is the step to read from parent
     if (!m_tried_parent && r == -ENOENT) {
 
@@ -228,22 +234,27 @@ bool ObjectReadRequest<I>::should_complete(int r)
 
         if (image_ctx->parent == NULL) {
           ldout(image_ctx->cct, 20) << "parent is gone; do nothing" << dendl;
+
           m_state = LIBRBD_AIO_READ_FLAT;
           finished = false;
           break;
         }
 
-        // calculate reverse mapping onto the image
+        // try parent
+
+        // calculate reverse mapping onto the image, only the portion
+        // of the original request, not the full sized object
         vector<pair<uint64_t,uint64_t> > parent_extents;
         Striper::extent_to_file(image_ctx->cct, &image_ctx->layout,
                                 this->m_object_no, this->m_object_off,
                                 this->m_object_len, parent_extents);
 
+        // pruned the portion of the original request with the overlap
         uint64_t parent_overlap = 0;
         uint64_t object_overlap = 0;
         r = image_ctx->get_parent_overlap(this->m_snap_id, &parent_overlap);
         if (r == 0) {
-          object_overlap = image_ctx->prune_parent_extents(parent_extents,
+          object_overlap = image_ctx->prune_parent_extents(parent_extents, // NOTE: not full sized object extent
                                                            parent_overlap);
         }
 
@@ -258,9 +269,9 @@ bool ObjectReadRequest<I>::should_complete(int r)
             m_state = LIBRBD_AIO_READ_COPYUP;
           }
 
-          // initiate AioImageRequest<>::aio_read to parent image
-          // the original portion of the read request is to read, so the
-          // later copyup need to read the whole parent object again
+          // initiate ImageRequest<I>::aio_read to parent image
+          // the original portion of the read request is to read, the
+          // later copyup will read the whole parent object and write
           read_from_parent(std::move(parent_extents));
 
           finished = false;
@@ -280,8 +291,10 @@ bool ObjectReadRequest<I>::should_complete(int r)
       // If read entire object from parent success and CoR is possible, kick
       // off a asynchronous copyup. This approach minimizes the latency
       // impact.
-      send_copyup();
+      send_copyup(); // read m_parent_extents, i.e., the whole parent object with overlap pruned
     }
+
+    // the finish the original read request, the copyup is async
     break;
   case LIBRBD_AIO_READ_FLAT:
     ldout(image_ctx->cct, 20) << "READ_FLAT" << dendl;
@@ -308,7 +321,7 @@ void ObjectReadRequest<I>::send() {
     // send read request to parent if the object doesn't exist locally
     if (image_ctx->object_map != nullptr &&
         !image_ctx->object_map->object_may_exist(this->m_object_no)) {
-      // the callback will call AioObjectRequest<I>::complete
+      // the callback will call ObjectRequest<I>::complete
       image_ctx->op_work_queue->queue(util::create_context_callback<
         ObjectRequest<I> >(this), -ENOENT);
       return;
@@ -355,9 +368,10 @@ void ObjectReadRequest<I>::send_copyup()
     RWLock::RLocker snap_locker(image_ctx->snap_lock);
     RWLock::RLocker parent_locker(image_ctx->parent_lock);
 
+    // re-calc m_parent_extents, parent may have gone
     if (!this->compute_parent_extents() ||
         (image_ctx->exclusive_lock != nullptr &&
-         !image_ctx->exclusive_lock->is_lock_owner())) {
+         !image_ctx->exclusive_lock->is_lock_owner())) { // no overlap or not exclusive lock owner
       return;
     }
   }
@@ -372,9 +386,11 @@ void ObjectReadRequest<I>::send_copyup()
 
   if (it == image_ctx->copyup_list.end()) {
     // create and kick off a CopyupRequest
-    CopyupRequest *new_req = new CopyupRequest(
+    CopyupRequest *new_req = new CopyupRequest( // m_async_op.start_op();
       image_ctx, this->m_oid, this->m_object_no,
-      std::move(this->m_parent_extents));
+      std::move(this->m_parent_extents)); // m_parent_extents was recalc above
+
+    // has moved to CopyupRequest, so clear it
     this->m_parent_extents.clear();
 
     // will be erased by CopyupRequest::should_complete
@@ -392,12 +408,15 @@ void ObjectReadRequest<I>::read_from_parent(Extents&& parent_extents)
 {
   ImageCtx *image_ctx = this->m_ictx;
 
-  // ObjectRequest<I>::complete
+  // the callback is the child request's ObjectRequest<I>::complete
   AioCompletion *parent_completion = AioCompletion::create_and_start<
     ObjectRequest<I> >(this, image_ctx, AIO_TYPE_READ);
 
   ldout(image_ctx->cct, 20) << "parent completion " << parent_completion
                             << " extents " << parent_extents << dendl;
+
+  // read portion of parent object with pruned overlap, i.e., the overlap
+  // portion of the original child object read request
   ImageRequest<>::aio_read(image_ctx->parent, parent_completion,
                            std::move(parent_extents),
                            ReadResult{&m_read_data}, 0);
@@ -636,6 +655,7 @@ void AbstractObjectWriteRequest::send_copyup()
 
     // no inprogress copyup request for this child object
 
+    // full sized parent object with overlap pruned
     CopyupRequest *new_req = new CopyupRequest(m_ictx, m_oid,
                                                m_object_no,
                                                std::move(m_parent_extents));
@@ -695,7 +715,7 @@ void AbstractObjectWriteRequest::handle_write_guard()
     RWLock::RLocker snap_locker(m_ictx->snap_lock);
     RWLock::RLocker parent_locker(m_ictx->parent_lock);
 
-    // re-compute
+    // re-calc m_parent_extents, parent may has gone
     has_parent = compute_parent_extents();
   }
 

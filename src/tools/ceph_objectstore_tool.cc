@@ -881,6 +881,8 @@ int get_omap(ObjectStore *store, coll_t coll, ghobject_t hoid,
   return 0;
 }
 
+// called by
+// ObjectStoreTool::do_import
 int ObjectStoreTool::get_object(ObjectStore *store, coll_t coll,
 				bufferlist &bl, OSDMap &curmap,
 				bool *skipped_objects,
@@ -1884,6 +1886,8 @@ int get_snapset(ObjectStore *store, coll_t coll, ghobject_t &ghobj, SnapSet &ss,
   return 0;
 }
 
+// called by
+// main, for "dump"
 int print_obj_info(ObjectStore *store, coll_t coll, ghobject_t &ghobj, Formatter* formatter)
 {
   int r = 0;

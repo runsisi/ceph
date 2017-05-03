@@ -481,6 +481,7 @@ void ImageRequestWQ::process(ImageRequest<> *req) {
   ldout(cct, 20) << "ictx=" << &m_image_ctx << ", "
                  << "req=" << req << dendl;
 
+  // like the implementation of ImageRequest<I>::aio_xxx static methods
   req->send();
 
   // update counter

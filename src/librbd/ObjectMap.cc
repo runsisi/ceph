@@ -107,8 +107,9 @@ uint8_t ObjectMap<I>::operator[](uint64_t object_no) const
 }
 
 // called by
-// AioObjectRead<I>::send
-// AbstractAioObjectWrite::send_pre
+// ObjectReadRequest<I>::send
+// AbstractObjectWriteRequest::send
+// operations/TrimRequests.cc/C_RemoveObject::send
 // LibrbdWriteback::read
 template <typename I>
 bool ObjectMap<I>::object_may_exist(uint64_t object_no) const
@@ -129,9 +130,11 @@ bool ObjectMap<I>::object_may_exist(uint64_t object_no) const
 
   // if state is OBJECT_NONEXISTENT, then it does not exist definitely
   bool exists = (state != OBJECT_NONEXISTENT);
+
   ldout(m_image_ctx.cct, 20) << "object_no=" << object_no << " r=" << exists
 			     << dendl;
-  return exists;
+
+  return exists; // exists false means does not exist, true means maybe exist
 }
 
 // called by

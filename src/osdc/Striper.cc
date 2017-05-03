@@ -200,8 +200,10 @@ void Striper::extent_to_file(CephContext *cct, file_layout_t *layout,
     uint64_t objectsetno = objectno / stripe_count;
     uint64_t stripeno = off / su + objectsetno * stripes_per_object;
     uint64_t blockno = stripeno * stripe_count + stripepos;
+
     uint64_t extent_off = blockno * su + off_in_block;
     uint64_t extent_len = MIN(len, su - off_in_block);
+
     extents.push_back(make_pair(extent_off, extent_len));
 
     ldout(cct, 20) << " object " << off << "~" << extent_len

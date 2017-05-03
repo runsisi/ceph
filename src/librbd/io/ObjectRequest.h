@@ -129,6 +129,7 @@ public:
                                    uint64_t len, Extents &buffer_extents,
                                    librados::snap_t snap_id, bool sparse,
                                    Context *completion, int op_flags) {
+    // the base class, i.e., ObjectRequest, will calc m_parent_extents
     return new ObjectReadRequest(ictx, oid, objectno, offset, len,
                                  buffer_extents, snap_id, sparse, completion,
                                  op_flags);

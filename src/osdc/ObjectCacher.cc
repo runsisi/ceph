@@ -67,10 +67,11 @@ class ObjectCacher::C_RetryRead : public Context {
   ObjectCacher *oc;
   OSDRead *rd;
   ObjectSet *oset;
-  Context *onfinish;
+  Context *onfinish; // this is the callback of outer caller
 public:
   C_RetryRead(ObjectCacher *_oc, OSDRead *r, ObjectSet *os, Context *c)
     : oc(_oc), rd(r), oset(os), onfinish(c) {}
+
   void finish(int r) override {
     if (r < 0) {
       if (onfinish)
@@ -820,7 +821,8 @@ void ObjectCacher::close_object(Object *ob)
 }
 
 // called by
-// ObjectCacher::_readx
+// ObjectCacher::_readx <- ObjectCacher::readx / ObjectCacher::C_RetryRead::finish
+//      ObjectCacher::readx <- ImageCtx::aio_read_from_cache / ObjectCacher::file_read
 void ObjectCacher::bh_read(BufferHead *bh, int op_flags)
 {
   assert(lock.is_locked());
@@ -828,6 +830,7 @@ void ObjectCacher::bh_read(BufferHead *bh, int op_flags)
 		<< reads_outstanding << dendl;
 
   mark_rx(bh);
+
   bh->last_read_tid = ++last_read_tid;
 
   // finisher
@@ -851,6 +854,7 @@ void ObjectCacher::bh_read_finish(int64_t poolid, sobject_t oid,
 				  bool trust_enoent)
 {
   assert(lock.is_locked());
+
   ldout(cct, 7) << "bh_read_finish "
 		<< oid
 		<< " tid " << tid
@@ -891,7 +895,9 @@ void ObjectCacher::bh_read_finish(int64_t poolid, sobject_t oid,
 	     p != bh->waitfor_read.end();
 	     ++p)
 	  ls.splice(ls.end(), p->second);
+
 	bh->waitfor_read.clear();
+
 	if (!bh->is_zero() && !bh->is_rx())
 	  allzero = false;
       }
@@ -955,6 +961,7 @@ void ObjectCacher::bh_read_finish(int64_t poolid, sobject_t oid,
 	   it != bh->waitfor_read.end();
 	   ++it)
 	ls.splice(ls.end(), it->second);
+
       bh->waitfor_read.clear();
 
       if (bh->start() > opos) {
@@ -1020,6 +1027,7 @@ void ObjectCacher::bh_read_finish(int64_t poolid, sobject_t oid,
   ldout(cct, 20) << "finishing waiters " << ls << dendl;
 
   finish_contexts(cct, ls, err);
+
   retry_waiting_reads();
 
   --reads_outstanding;
@@ -1415,7 +1423,9 @@ bool ObjectCacher::is_cached(ObjectSet *oset, vector<ObjectExtent>& extents,
   return true;
 }
 
-
+// called by
+// ImageCtx::aio_read_from_cache
+// ObjectCacher::file_read
 /*
  * returns # bytes read (if in cache).  onfinish is untouched (caller
  *           must delete it)
@@ -1423,7 +1433,7 @@ bool ObjectCacher::is_cached(ObjectSet *oset, vector<ObjectExtent>& extents,
  */
 int ObjectCacher::readx(OSDRead *rd, ObjectSet *oset, Context *onfinish)
 {
-  return _readx(rd, oset, onfinish, true);
+  return _readx(rd, oset, onfinish, true); // called by external
 }
 
 // called by
@@ -1463,26 +1473,34 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
     sobject_t soid(ex_it->oid, rd->snap);
     Object *o = get_object(soid, ex_it->objectno, oset, ex_it->oloc,
 			   ex_it->truncate_size, oset->truncate_seq);
+
     if (external_call)
       touch_ob(o);
 
     // does not exist and no hits?
     if (oset->return_enoent && !o->exists) {
+      // o->exists was default to true, can only be set to false by ObjectCacher::bh_read_finish
+
       ldout(cct, 10) << "readx  object !exists, 1 extent..." << dendl;
 
       // should we worry about COW underneath us?
       if (writeback_handler.may_copy_on_write(soid.oid, ex_it->offset,
-					      ex_it->length, soid.snap)) {
+					      ex_it->length, soid.snap)) { // has overlap with parent object
 	ldout(cct, 20) << "readx  may copy on write" << dendl;
+
 	bool wait = false;
 	list<BufferHead*> blist;
+
 	for (map<loff_t, BufferHead*>::iterator bh_it = o->data.begin();
 	     bh_it != o->data.end();
 	     ++bh_it) {
 	  BufferHead *bh = bh_it->second;
+
 	  if (bh->is_dirty() || bh->is_tx()) {
 	    ldout(cct, 10) << "readx  flushing " << *bh << dendl;
+
 	    wait = true;
+
 	    if (bh->is_dirty()) {
 	      if (scattered_write)
 		blist.push_back(bh);
@@ -1498,12 +1516,14 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 	if (wait) {
 	  ldout(cct, 10) << "readx  waiting on tid " << o->last_write_tid
 			 << " on " << *o << dendl;
+
 	  o->waitfor_commit[o->last_write_tid].push_back(
 	    new C_RetryRead(this,rd, oset, onfinish));
+
 	  // FIXME: perfcounter!
 	  return 0;
 	}
-      }
+      } // has overlap with parent object
 
       // can we return ENOENT?
       bool allzero = true;
@@ -1523,9 +1543,10 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 	delete rd;
 	if (dontneed)
 	  bottouch_ob(o);
+
 	return -ENOENT;
       }
-    }
+    } // oset->return_enoent && !o->exists
 
     // map extent into bufferheads
     map<loff_t, BufferHead*> hits, missing, rx, errors;
@@ -1544,12 +1565,14 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
     if (!missing.empty() || !rx.empty()) {
       // read missing
       map<loff_t, BufferHead*>::iterator last = missing.end();
+
       for (map<loff_t, BufferHead*>::iterator bh_it = missing.begin();
 	   bh_it != missing.end();
 	   ++bh_it) {
 	uint64_t rx_bytes = static_cast<uint64_t>(
 	  stat_rx + bh_it->second->length());
 	bytes_not_in_cache += bh_it->second->length();
+
 	if (!waitfor_read.empty() || (stat_rx > 0 && rx_bytes > max_size)) {
 	  // cache is full with concurrent reads -- wait for rx's to complete
 	  // to constrain memory growth (especially during copy-ups)
@@ -1558,6 +1581,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 			   << waitfor_read.size() << " blocked reads, "
 			   << (MAX(rx_bytes, max_size) - max_size)
 			   << " read bytes" << dendl;
+
 	    waitfor_read.push_back(new C_RetryRead(this, rd, oset, onfinish));
 	  }
 
@@ -1569,8 +1593,9 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 	  if ((success && onfinish) || last != missing.end())
 	    last = bh_it;
 	}
+
 	success = false;
-      }
+      } // for each missing
 
       //add wait in last bh avoid wakeup early. Because read is order
       if (last != missing.end()) {
@@ -1586,13 +1611,16 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 	   bh_it != rx.end();
 	   ++bh_it) {
 	touch_bh(bh_it->second); // bump in lru, so we don't lose it.
+
 	if (success && onfinish) {
 	  ldout(cct, 10) << "readx missed, waiting on " << *bh_it->second
 			 << " off " << bh_it->first << dendl;
 	  bh_it->second->waitfor_read[bh_it->first].push_back(
 	    new C_RetryRead(this, rd, oset, onfinish) );
 	}
+
 	bytes_not_in_cache += bh_it->second->length();
+
 	success = false;
       }
 
@@ -1601,7 +1629,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 	//bump in lru, so we don't lose it when later read
 	touch_bh(bh_it->second);
 
-    } else {
+    } else { // missing.empty() && rx.empty()
       assert(!hits.empty());
 
       // make a plain list
@@ -1609,9 +1637,12 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 	   bh_it != hits.end();
 	   ++bh_it) {
 	BufferHead *bh = bh_it->second;
+
 	ldout(cct, 10) << "readx hit bh " << *bh << dendl;
+
 	if (bh->is_error() && bh->error)
 	  error = bh->error;
+
 	bytes_in_cache += bh->length();
 
 	if (bh->get_nocache() && bh->is_clean())
@@ -1685,8 +1716,8 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 
       if (dontneed && o->include_all_cached_data(ex_it->offset, ex_it->length))
 	  bottouch_ob(o);
-    }
-  }
+    } // missing.empty() && rx.empty()
+  } // for each rd->extents
 
   if (!success) {
     if (perfcounter && external_call) {
@@ -1694,6 +1725,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
       perfcounter->inc(l_objectcacher_cache_bytes_miss, bytes_not_in_cache);
       perfcounter->inc(l_objectcacher_cache_ops_miss);
     }
+
     if (onfinish) {
       ldout(cct, 20) << "readx defer " << rd << dendl;
     } else {
@@ -1717,6 +1749,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
   uint64_t pos = 0;
   if (rd->bl && !error) {
     rd->bl->clear();
+
     for (map<uint64_t,bufferlist>::iterator i = stripe_map.begin();
 	 i != stripe_map.end();
 	 ++i) {
@@ -1736,6 +1769,7 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 
   // done with read.
   int ret = error ? error : pos;
+
   ldout(cct, 20) << "readx done " << rd << " " << ret << dendl;
   assert(pos <= (uint64_t) INT_MAX);
 
@@ -1751,13 +1785,14 @@ int ObjectCacher::_readx(OSDRead *rd, ObjectSet *oset, Context *onfinish,
 void ObjectCacher::retry_waiting_reads()
 {
   list<Context *> ls;
-  ls.swap(waitfor_read);
+  ls.swap(waitfor_read); // was pushed back by ObjectCacher::_readx
 
   while (!ls.empty() && waitfor_read.empty()) {
     Context *ctx = ls.front();
     ls.pop_front();
     ctx->complete(0);
   }
+
   waitfor_read.splice(waitfor_read.end(), ls);
 }
 
@@ -2811,7 +2846,9 @@ void ObjectCacher::bh_stat_sub(BufferHead *bh)
 void ObjectCacher::bh_set_state(BufferHead *bh, int s)
 {
   assert(lock.is_locked());
+
   int state = bh->get_state();
+
   // move between lru lists?
   if (s == BufferHead::STATE_DIRTY && state != BufferHead::STATE_DIRTY) {
     bh_lru_rest.lru_remove(bh);

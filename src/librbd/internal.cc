@@ -2382,7 +2382,9 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
       ictx->md_lock.put_write();
       return;
     }
+
     ictx->total_bytes_read += total_bytes;
+
     ictx->snap_lock.get_read();
     uint64_t image_size = ictx->get_image_size(ictx->snap_id);
     ictx->snap_lock.put_read();

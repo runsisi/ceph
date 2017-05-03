@@ -244,7 +244,7 @@ void CopyupRequest::send()
                          << ", extents " << m_image_extents
                          << dendl;
 
-  // read from parent
+  // read from parent, send directly, i.e., skip the ImageRequestWQ
   ImageRequest<>::aio_read(m_ictx->parent, comp, std::move(m_image_extents),
                            ReadResult{&m_copyup_data}, 0);
 }

@@ -246,7 +246,7 @@ class ObjectCacher {
     uint64_t truncate_size, truncate_seq;
 
     bool complete;
-    bool exists;
+    bool exists; // default to true
 
     map<loff_t, BufferHead*>     data;
 

@@ -80,6 +80,8 @@ struct C_FlushJournalCommit : public Context {
   }
 };
 
+// created by
+// ImageReadRequest<I>::send_request
 template <typename ImageCtxT>
 class C_ObjectCacheRead : public Context {
 public:
@@ -94,6 +96,7 @@ public:
       m_image_ctx.op_work_queue->queue(this, r);
       return;
     }
+
     Context::complete(r);
   }
 
@@ -111,8 +114,12 @@ private:
 } // anonymous namespace
 
 // static
-// AioImageRequestWQ::aio_read will construct std::vector<std::pair<uint64_t,uint64_t> >
-// from user provided <off, len>
+// called by
+// ImageRequestWQ::aio_read
+// CopyupRequest::send
+// ObjectReadRequest<I>::read_from_parent
+// librbd::copy
+// librbd::read_iterate
 template <typename I>
 void ImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
                                Extents &&image_extents,
@@ -123,8 +130,8 @@ void ImageRequest<I>::aio_read(I *ictx, AioCompletion *c,
 }
 
 // static
-// never been used, AioImageRequestWQ::aio_write uses the above method,
-// AioImageWrite has ctors accept <off, len> and std::vector<std::pair<uint64_t,uint64_t> >
+// called by
+// ImageRequestWQ::aio_write
 template <typename I>
 void ImageRequest<I>::aio_write(I *ictx, AioCompletion *c,
                                 Extents &&image_extents, bufferlist &&bl,
@@ -260,12 +267,13 @@ void ImageReadRequest<I>::send_request() {
 
   auto &image_extents = this->m_image_extents;
 
-  if (image_ctx.object_cacher && image_ctx.readahead_max_bytes > 0 &&
+  if (image_ctx.object_cacher && image_ctx.readahead_max_bytes > 0 && // 512 * 1024
       !(m_op_flags & LIBRADOS_OP_FLAG_FADVISE_RANDOM)) {
     readahead(get_image_ctx(&image_ctx), image_extents);
   }
 
   AioCompletion *aio_comp = this->m_aio_comp;
+
   librados::snap_t snap_id;
   map<object_t,vector<ObjectExtent> > object_extents;
   uint64_t buffer_ofs = 0;
@@ -314,13 +322,19 @@ void ImageReadRequest<I>::send_request() {
                      << extent.length << " from " << extent.buffer_extents
                      << dendl;
 
+      // assemble result for each object request then call
+      // AioCompletion::complete_request to dec ref by one
       auto req_comp = new io::ReadResult::C_SparseReadRequest<I>(
         aio_comp);
+
+      // calc m_parent_extents and set state to guard read if has parent
       ObjectReadRequest<I> *req = ObjectReadRequest<I>::create(
         &image_ctx, extent.oid.name, extent.objectno, extent.offset,
         extent.length, extent.buffer_extents, snap_id, true, req_comp,
         m_op_flags);
-      req_comp->request = req;
+
+      // used to assemble result of each object request
+      req_comp->request = req; // object request
 
       if (image_ctx.object_cacher) {
         // object cacher enabled, try to read from cache
