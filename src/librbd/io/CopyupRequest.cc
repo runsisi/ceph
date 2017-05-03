@@ -113,6 +113,7 @@ void CopyupRequest::complete_requests(int r) {
     ObjectRequest<> *req = *it;
     ldout(m_ictx->cct, 20) << "completing request " << req << dendl;
     req->complete(r);
+
     m_pending_requests.erase(it);
   }
 }
@@ -245,7 +246,7 @@ void CopyupRequest::send()
                          << dendl;
 
   // read from parent, send directly, i.e., skip the ImageRequestWQ
-  ImageRequest<>::aio_read(m_ictx->parent, comp, std::move(m_image_extents),
+  ImageRequest<>::aio_read(m_ictx->parent, comp, std::move(m_image_extents), // full sized object read
                            ReadResult{&m_copyup_data}, 0);
 }
 
@@ -274,7 +275,7 @@ bool CopyupRequest::should_complete(int r)
     remove_from_list();
 
     if (r >= 0 || r == -ENOENT) {
-      if (is_copyup_required()) {
+      if (is_copyup_required()) { // all pending object requests are nop, i.e., write and no data
         ldout(cct, 20) << "nop, skipping" << dendl;
         return true;
       }
