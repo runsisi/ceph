@@ -34,6 +34,10 @@ RefreshParentRequest<I>::RefreshParentRequest(I &child_image_ctx,
     m_parent_snap_id(CEPH_NOSNAP), m_error_result(0) {
 }
 
+// static
+// called by
+// RefreshRequest<I>::send_v2_refresh_parent
+// SetSnapRequest<I>::send_refresh_parent
 template <typename I>
 bool RefreshParentRequest<I>::is_refresh_required(I &child_image_ctx,
                                                   const ParentInfo &parent_md) {
@@ -67,10 +71,13 @@ void RefreshParentRequest<I>::send() {
     send_open_parent();
   } else {
     // parent will be closed (if necessary) during finalize
-    send_complete(0);
+    send_complete(0); // m_on_finish->complete(r); i.e., delete m_on_finish
   }
 }
 
+// called by
+// RefreshRequest<I>::apply
+// SetSnapRequest<I>::apply
 template <typename I>
 void RefreshParentRequest<I>::apply() {
   if (m_child_image_ctx.parent != nullptr) {
@@ -85,16 +92,22 @@ void RefreshParentRequest<I>::apply() {
   std::swap(m_child_image_ctx.parent, m_parent_image_ctx);
 }
 
+// called by
+// RefreshRequest<I>::send_v2_finalize_refresh_parent
+// SetSnapRequest<I>::send_finalize_refresh_parent
 template <typename I>
 void RefreshParentRequest<I>::finalize(Context *on_finish) {
   CephContext *cct = m_child_image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
+  // m_on_finish has been deleted, but this instance was not destroyed,
+  // becoz the third template parameter for create_context_callback was set to false
   m_on_finish = on_finish;
 
   if (m_parent_image_ctx != nullptr) {
     send_close_parent();
   } else {
+    // m_on_finish->complete(r);
     send_complete(0);
   }
 }
@@ -115,7 +128,7 @@ void RefreshParentRequest<I>::send_open_parent() {
   // since we don't know the image and snapshot name, set their ids and
   // reset the snap_name and snap_exists fields after we read the header
   m_parent_image_ctx = new I("", m_parent_md.spec.image_id, NULL, parent_io_ctx,
-                             true);
+                             true); // open parent with read only, no snapname set
 
   // set rados flags for reading the parent image
   if (m_child_image_ctx.balance_parent_reads) {
@@ -127,7 +140,7 @@ void RefreshParentRequest<I>::send_open_parent() {
   using klass = RefreshParentRequest<I>;
   Context *ctx = create_async_context_callback(
     m_child_image_ctx, create_context_callback<
-      klass, &klass::handle_open_parent, false>(this));
+      klass, &klass::handle_open_parent, false>(this)); // do not destroy this instance
   OpenRequest<I> *req = OpenRequest<I>::create(m_parent_image_ctx, false, ctx);
   req->send();
 }
@@ -149,6 +162,7 @@ Context *RefreshParentRequest<I>::handle_open_parent(int *result) {
     return m_on_finish;
   }
 
+  // parent image without snap has been open, now set the snap for it
   send_set_parent_snap();
 
   return nullptr;
@@ -166,19 +180,26 @@ void RefreshParentRequest<I>::send_set_parent_snap() {
 
   {
     RWLock::RLocker snap_locker(m_parent_image_ctx->snap_lock);
+
     const SnapInfo *info = m_parent_image_ctx->get_snap_info(m_parent_md.spec.snap_id);
     if (!info) {
       lderr(cct) << "failed to locate snapshot: Snapshot with this id not found" << dendl;
       send_complete(-ENOENT);
       return;
     }
+
     snap_namespace = info->snap_namespace;
     snap_name = info->name;
   }
 
+  // RefreshParentRequest is almost the same as OpenRequest, except
+  // the snap set is mandatory becoz the ImageCtx is created with
+  // empty ImageCtx::snap_name set
+  // for OpenRequest snap set is optional becoz the ImageCtx instance may
+  // be created with empty/non-empty ImageCtx::snap_name set
   using klass = RefreshParentRequest<I>;
   Context *ctx = create_context_callback<
-    klass, &klass::handle_set_parent_snap, false>(this);
+    klass, &klass::handle_set_parent_snap, false>(this); // do not destroy this instance
   SetSnapRequest<I> *req = SetSnapRequest<I>::create(
     *m_parent_image_ctx, snap_namespace, snap_name, ctx);
   req->send();
@@ -210,7 +231,7 @@ void RefreshParentRequest<I>::send_close_parent() {
   using klass = RefreshParentRequest<I>;
   Context *ctx = create_async_context_callback(
     m_child_image_ctx, create_context_callback<
-      klass, &klass::handle_close_parent, false>(this));
+      klass, &klass::handle_close_parent, false>(this)); // do not destroy this instance
   CloseRequest<I> *req = CloseRequest<I>::create(m_parent_image_ctx, ctx);
   req->send();
 }

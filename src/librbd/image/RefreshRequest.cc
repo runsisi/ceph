@@ -582,7 +582,7 @@ void RefreshRequest<I>::send_v2_refresh_parent() {
     // get parent info of this image(maybe snapshot of the image), the
     // m_snap_parents were just got by RefreshRequest<I>::handle_v2_get_snapshots,
     // so we can not use ImageCtx::get_parent_info instead
-    int r = get_parent_info(m_image_ctx.snap_id, &parent_md);
+    int r = get_parent_info(m_image_ctx.snap_id, &parent_md); // ImageCtx::snap_id was set by SetSnapRequest<I>::apply
     if (!m_skip_open_parent_image && (r < 0 ||
         RefreshParentRequest<I>::is_refresh_required(m_image_ctx, parent_md))) {
 
@@ -945,6 +945,7 @@ Context *RefreshRequest<I>::send_v2_finalize_refresh_parent() {
   Context *ctx = create_context_callback<
     klass, &klass::handle_v2_finalize_refresh_parent>(this);
 
+  // close parent image if needed
   m_refresh_parent->finalize(ctx);
 
   return nullptr;
@@ -1213,7 +1214,8 @@ void RefreshRequest<I>::apply() {
 
       if (it == m_image_ctx.snaps.end()) {
 
-        // new snapshot added, it does not exist in previous refresh
+        // new snapshot added, it does not exist in previous refresh, or
+        // this is the first time refresh
 
         // will be tested by RefreshRequest<I>::send_flush_aio
         m_flush_aio = true;
@@ -1262,6 +1264,7 @@ void RefreshRequest<I>::apply() {
     // --------------------------------------------------------
 
     if (m_refresh_parent != nullptr) {
+      // std::swap(m_child_image_ctx.parent, m_parent_image_ctx);
       m_refresh_parent->apply();
     }
 

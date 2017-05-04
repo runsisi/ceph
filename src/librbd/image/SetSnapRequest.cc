@@ -168,6 +168,9 @@ Context *SetSnapRequest<I>::send_shut_down_exclusive_lock(int *result) {
     m_exclusive_lock = m_image_ctx.exclusive_lock;
   }
 
+  // if SetSnapRequest was called by RefreshParentRequest, the parent image
+  // should be opened with read only, so ImageCtx::exclusive_lock should
+  // be nullptr
   if (m_exclusive_lock == nullptr) {
     return send_refresh_parent(result);
   }
@@ -217,7 +220,7 @@ Context *SetSnapRequest<I>::send_refresh_parent(int *result) {
 
     // see also RefreshRequest<I>::send_v2_refresh_parent
     const ParentInfo *parent_info = m_image_ctx.get_parent_info(m_snap_id);
-    if (parent_info == nullptr) {
+    if (parent_info == nullptr) { // even if we have no parent, the ParentInfo should not be nullptr
       *result = -ENOENT;
 
       lderr(cct) << "failed to retrieve snapshot parent info" << dendl;
@@ -227,6 +230,8 @@ Context *SetSnapRequest<I>::send_refresh_parent(int *result) {
 
     parent_md = *parent_info;
 
+    // if SetSnapRequest was called by RefreshParentRequest, the parent image
+    // should have been opened which have refreshed
     refresh_parent = RefreshParentRequest<I>::is_refresh_required(m_image_ctx,
                                                                   parent_md);
   }
@@ -366,6 +371,7 @@ Context *SetSnapRequest<I>::send_finalize_refresh_parent(int *result) {
   Context *ctx = create_context_callback<
     klass, &klass::handle_finalize_refresh_parent>(this);
 
+  // close parent image if needed
   m_refresh_parent->finalize(ctx);
 
   return nullptr;
@@ -415,6 +421,7 @@ int SetSnapRequest<I>::apply() {
   }
 
   if (m_refresh_parent != nullptr) {
+    // std::swap(m_child_image_ctx.parent, m_parent_image_ctx);
     m_refresh_parent->apply();
   }
 
@@ -431,6 +438,8 @@ void SetSnapRequest<I>::finalize() {
   }
 }
 
+// called by
+// SetSnapRequest<I>::send_init_exclusive_lock
 template <typename I>
 void SetSnapRequest<I>::send_complete() {
   finalize();

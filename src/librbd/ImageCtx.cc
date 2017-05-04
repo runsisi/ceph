@@ -459,6 +459,8 @@ struct C_InvalidateCache : public Context {
     return flags;
   }
 
+  // called by
+  // SetSnapRequest<I>::apply
   int ImageCtx::snap_set(cls::rbd::SnapshotNamespace in_snap_namespace,
 			 string in_snap_name)
   {

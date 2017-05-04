@@ -7978,7 +7978,7 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
     // if we are to create/delete the HEAD, try to store ssc in
     // proper place, either SNAPDIR or HEAD
 
-    // ctx->new_snapset was updated by PrimaryLogPG::make_writable
+    // ctx->new_snapset was updated by PrimaryLogPG::make_writeable
     ::encode(ctx->new_snapset, bss);
 
     assert(ctx->new_obs.exists == ctx->new_snapset.head_exists);
