@@ -68,8 +68,12 @@ bool RefreshParentRequest<I>::is_open_required(I &child_image_ctx,
 template <typename I>
 void RefreshParentRequest<I>::send() {
   if (is_open_required(m_child_image_ctx, m_parent_md)) {
+    // parent exists and has overlap, but parent has not opened yet, open it
+
     send_open_parent();
   } else {
+    // parent opened, but parent has gone or overlap is 0, close it
+
     // parent will be closed (if necessary) during finalize
     send_complete(0); // m_on_finish->complete(r); i.e., delete m_on_finish
   }
@@ -88,7 +92,7 @@ void RefreshParentRequest<I>::apply() {
   assert(m_child_image_ctx.snap_lock.is_wlocked());
   assert(m_child_image_ctx.parent_lock.is_wlocked());
 
-  // set parent image context of the child image context
+  // set parent ictx, close the old parent ictx if needed later
   std::swap(m_child_image_ctx.parent, m_parent_image_ctx);
 }
 
@@ -105,6 +109,10 @@ void RefreshParentRequest<I>::finalize(Context *on_finish) {
   m_on_finish = on_finish;
 
   if (m_parent_image_ctx != nullptr) {
+    // three possible reasons:
+    // 1. child parent relationship explicit flatten
+    // 2. child shrink to 0 then resize results 0 overlap
+    // 3. failed parent open
     send_close_parent();
   } else {
     // m_on_finish->complete(r);
@@ -128,7 +136,8 @@ void RefreshParentRequest<I>::send_open_parent() {
   // since we don't know the image and snapshot name, set their ids and
   // reset the snap_name and snap_exists fields after we read the header
   m_parent_image_ctx = new I("", m_parent_md.spec.image_id, NULL, parent_io_ctx,
-                             true); // open parent with read only, no snapname set
+                             true); // open parent with read only,
+                                    // we do not know snapname yet, so snap str is set to nullptr
 
   // set rados flags for reading the parent image
   if (m_child_image_ctx.balance_parent_reads) {
@@ -162,7 +171,7 @@ Context *RefreshParentRequest<I>::handle_open_parent(int *result) {
     return m_on_finish;
   }
 
-  // parent image without snap has been open, now set the snap for it
+  // HEAD parent opened, now set the snap for it
   send_set_parent_snap();
 
   return nullptr;
@@ -181,6 +190,8 @@ void RefreshParentRequest<I>::send_set_parent_snap() {
   {
     RWLock::RLocker snap_locker(m_parent_image_ctx->snap_lock);
 
+    // m_parent_md is parent info for child, which was got by
+    // RefreshRequest<I>::send_v2_refresh_parent
     const SnapInfo *info = m_parent_image_ctx->get_snap_info(m_parent_md.spec.snap_id);
     if (!info) {
       lderr(cct) << "failed to locate snapshot: Snapshot with this id not found" << dendl;

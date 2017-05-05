@@ -582,7 +582,16 @@ void RefreshRequest<I>::send_v2_refresh_parent() {
     // get parent info of this image(maybe snapshot of the image), the
     // m_snap_parents were just got by RefreshRequest<I>::handle_v2_get_snapshots,
     // so we can not use ImageCtx::get_parent_info instead
-    int r = get_parent_info(m_image_ctx.snap_id, &parent_md); // ImageCtx::snap_id was set by SetSnapRequest<I>::apply
+    int r = get_parent_info(m_image_ctx.snap_id, &parent_md); // ImageCtx::snap_id was init to CEPH_NOSNAP
+                                                              // and then re-set by SetSnapRequest<I>::apply
+                                                              // so if called a different time, parent_md may
+                                                              // be different, especially the overlap field
+
+    // if we are opening a child image with snapshot, since the HEAD
+    // image may have zero overlap with the parent, so will not open
+    // the parent, but later during snap set, if snapshot's overlap with the
+    // parent is not zero, then the parent will be opened
+
     if (!m_skip_open_parent_image && (r < 0 ||
         RefreshParentRequest<I>::is_refresh_required(m_image_ctx, parent_md))) {
 
@@ -602,8 +611,8 @@ void RefreshRequest<I>::send_v2_refresh_parent() {
   }
 
   if (m_refresh_parent != nullptr) {
-
-    // need to refresh the parent image first
+    // open parent image if needed, otherwise close it later in
+    // RefreshRequest<I>::send_v2_finalize_refresh_parent
 
     m_refresh_parent->send();
   } else {
@@ -1336,9 +1345,13 @@ void RefreshRequest<I>::apply() {
   }
 }
 
+// called by
+// RefreshRequest<I>::send_v2_refresh_parent
 template <typename I>
 int RefreshRequest<I>::get_parent_info(uint64_t snap_id,
                                        ParentInfo *parent_md) {
+  // parent info was got by RefreshRequest<I>::handle_v2_get_mutable_metadata
+
   if (snap_id == CEPH_NOSNAP) {
     *parent_md = m_parent_md;
     return 0;

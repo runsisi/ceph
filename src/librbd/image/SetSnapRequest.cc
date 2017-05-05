@@ -143,6 +143,7 @@ Context *SetSnapRequest<I>::handle_block_writes(int *result) {
 
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
+
     m_snap_id = m_image_ctx.get_snap_id(m_snap_namespace, m_snap_name);
     if (m_snap_id == CEPH_NOSNAP) {
       ldout(cct, 5) << "failed to locate snapshot '" << m_snap_name << "'"
@@ -218,9 +219,9 @@ Context *SetSnapRequest<I>::send_refresh_parent(int *result) {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     RWLock::RLocker parent_locker(m_image_ctx.parent_lock);
 
-    // see also RefreshRequest<I>::send_v2_refresh_parent
+    // m_snap_id was got by SetSnapRequest<I>::handle_block_writes
     const ParentInfo *parent_info = m_image_ctx.get_parent_info(m_snap_id);
-    if (parent_info == nullptr) { // even if we have no parent, the ParentInfo should not be nullptr
+    if (parent_info == nullptr) { // even if we have no parent, the default parent spec should be returned
       *result = -ENOENT;
 
       lderr(cct) << "failed to retrieve snapshot parent info" << dendl;
@@ -230,11 +231,15 @@ Context *SetSnapRequest<I>::send_refresh_parent(int *result) {
 
     parent_md = *parent_info;
 
-    // if SetSnapRequest was called by RefreshParentRequest, the parent image
-    // should have been opened which have refreshed
+    // HEAD may have zero overlap with the parent, while snapshot may
+    // have non-zero overlap, in this case we need to open the parent
     refresh_parent = RefreshParentRequest<I>::is_refresh_required(m_image_ctx,
                                                                   parent_md);
   }
+
+  // if HEAD image's parent spec is different from the snapshot image's
+  // parent spec, then we need to open the snapshot image's parent as
+  // the ictx's parent and close the previously opened HEAD image's parent
 
   if (!refresh_parent) {
     if (m_snap_id == CEPH_NOSNAP) {

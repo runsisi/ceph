@@ -29,6 +29,9 @@ static uint64_t MAX_METADATA_ITEMS = 128;
 using util::create_context_callback;
 using util::create_rados_callback;
 
+// created by
+// RefreshParentRequest<I>::send_open_parent
+// ImageState<I>::send_open_unlock
 template <typename I>
 OpenRequest<I>::OpenRequest(I *image_ctx, bool skip_open_parent,
                             Context *on_finish)
