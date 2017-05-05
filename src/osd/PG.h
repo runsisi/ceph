@@ -258,7 +258,7 @@ protected:
   OSDService *osd;
   CephContext *cct;
 
-  OSDriver osdriver;
+  OSDriver osdriver; // as object store driver for SnapMapper backend
   SnapMapper snap_mapper;
 
   virtual PGBackend *get_pgbackend() = 0;

@@ -35,6 +35,9 @@ int OSDriver::get_next(
   const std::string &key,
   pair<std::string, bufferlist> *next)
 {
+  // see PG::PG
+  // cid = coll_t()
+  // hoid = OSD::make_snapmapper_oid()), i.e., "snapmapper"
   ObjectMap::ObjectMapIterator iter =
     os->get_omap_iterator(cid, hoid);
   if (!iter) {
@@ -331,7 +334,9 @@ int SnapMapper::get_next_objects_to_trim(
     while (out->size() < max) {
       pair<string, bufferlist> next;
 
-      r = backend.get_next(pos, &next);
+      // MapCacher::MapCacher<std::string, bufferlist>
+      r = backend.get_next(pos, &next); // rely on os driver->get_next, see SnapMapper.h/OSDriver
+                                        // which rely on ObjectStore::get_omap_iterator
       if (r != 0) {
 	break; // Done
       }

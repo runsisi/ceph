@@ -525,10 +525,10 @@ void AbstractImageWriteRequest<I>::send_request() {
 }
 
 // called by
-// AbstractAioImageWrite<I>::send_request, for AioImageDiscard
-// AioImageWrite<I>::send_object_requests, for object cache disabled, if object cache
-// enabled, we write cache first, then let the cache to create and send the object
-// requests
+// AbstractImageWriteRequest<I>::send_request, i.e., for  ImageDiscardRequest<I>
+// ImageWriteRequest<I>::send_object_requests, if cache disabled, for cache we
+//      write cache first, then let the cache to create and send the object requests
+// ImageWriteSameRequest<I>::send_object_requests, if cache disabled
 template <typename I>
 void AbstractImageWriteRequest<I>::send_object_requests(
     const ObjectExtents &object_extents, const ::SnapContext &snapc,

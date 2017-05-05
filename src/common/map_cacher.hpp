@@ -28,6 +28,9 @@
 #include "common/sharedptr_registry.hpp"
 
 namespace MapCacher {
+
+// derived by
+// osd/SnapMapper.h/OSDriver::OSTransaction
 /**
  * Abstraction for ordering key updates
  */
@@ -51,6 +54,8 @@ public:
   virtual ~Transaction() {}
 };
 
+// derived by
+// osd/SnapMapper/OSDriver
 /**
  * Abstraction for fetching keys
  */
