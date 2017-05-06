@@ -189,7 +189,7 @@ static int lock_obj(cls_method_context_t hctx,
   map<locker_id_t, locker_info_t>& lockers = linfo.lockers;
   map<locker_id_t, locker_info_t>::iterator iter;
 
-  // <entity_name_t, cookie>
+  // locker is identified by entity_name_t + cookie
   locker_id_t id;
   id.cookie = cookie;
 

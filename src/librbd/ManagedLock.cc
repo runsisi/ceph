@@ -62,8 +62,8 @@ using managed_lock::util::decode_lock_cookie;
 using managed_lock::util::encode_lock_cookie;
 
 // derived by
-// ExclusiveLock
-// LeaderLock
+// ExclusiveLock, mode == EXCLUSIVE
+// LeaderLock, mode == EXCLUSIVE
 template <typename I>
 ManagedLock<I>::ManagedLock(librados::IoCtx &ioctx, ContextWQ *work_queue,
                             const string& oid, Watcher *watcher, Mode mode,
@@ -471,6 +471,8 @@ void ManagedLock<I>::send_acquire_lock() {
     m_state = STATE_WAITING_FOR_REGISTER;
     return;
   }
+
+  // "auto " + watch_handle
   m_cookie = encode_lock_cookie(watch_handle);
 
   m_work_queue->queue(new FunctionContext([this](int r) {

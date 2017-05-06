@@ -118,8 +118,8 @@ namespace librbd {
     uint8_t order;
     uint64_t size;
     uint64_t features;
-    std::string object_prefix;
-    char *format_string;
+    std::string object_prefix; // set by OpenRequest<I>::handle_v2_get_immutable_metadata
+    char *format_string; // set by ImageCtx::init_layout
     std::string header_oid; // only used for old-format images
     std::string id; // only used for new-format images
     ParentInfo parent_md;

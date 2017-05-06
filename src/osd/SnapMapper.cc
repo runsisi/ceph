@@ -297,7 +297,7 @@ void SnapMapper::add_oid(
   }
 
   object_snaps _snaps(oid, snaps);
-  // "OBJ_"
+  // set keys start with "OBJ_"
   set_snaps(oid, _snaps, t);
 
   map<string, bufferlist> to_add;
@@ -308,6 +308,7 @@ void SnapMapper::add_oid(
     to_add.insert(to_raw(make_pair(*i, oid)));
   }
 
+  // set keys start with "MAP_"
   backend.set_keys(to_add, t);
 }
 

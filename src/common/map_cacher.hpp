@@ -152,10 +152,12 @@ public:
 	 ++i) {
       VPtr ip = in_progress.lookup_or_create(i->first, i->second);
       *ip = i->second;
+
       vptrs.insert(ip);
     }
 
     t->set_keys(keys);
+    // used to release vptrs
     t->add_callback(new TransHolder(vptrs)); // t->register_on_applied
   }
 

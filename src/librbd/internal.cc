@@ -2049,7 +2049,8 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
   }
 
   int lock(ImageCtx *ictx, bool exclusive, const string& cookie,
-	   const string& tag)
+	   const string& tag) // cookie and tag are user provided, for exclusive lock tag is empty
+                              // for AcquireRequest, tag is "internal"
   {
     ldout(ictx->cct, 20) << "lock image " << ictx << " exclusive=" << exclusive
 			 << " cookie='" << cookie << "' tag='" << tag << "'"

@@ -2885,6 +2885,7 @@ int main(int argc, char **argv)
         // Special: Need head/snapdir so set even if user didn't specify
         if (vm.count("objcmd") && (objcmd == "remove-clone-metadata"))
 	  head = true;
+
 	lookup_ghobject lookup(object, nspace, head);
 	if (action_on_all_objects(fs, lookup, debug)) {
 	  throw std::runtime_error("Internal error");
@@ -2896,8 +2897,10 @@ int main(int argc, char **argv)
 	    else
 	      ss << "Found " << lookup.size() << " objects with id '" << object
 		 << "', please use a JSON spec from --op list instead";
+
 	    throw std::runtime_error(ss.str());
 	  }
+
 	  pair<coll_t, ghobject_t> found = lookup.pop();
 	  pgidstr = found.first.to_str();
 	  pgid.parse(pgidstr.c_str());
