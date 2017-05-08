@@ -134,7 +134,7 @@ bool SnapshotCreateRequest::send_add_snapshot() {
 
   CephContext *cct = m_image_ctx.cct;
 
-  // add a new object_map for HEAD
+  // update HEAD object map state from OBJECT_EXISTS -> OBJECT_EXISTS_CLEAN
   std::string oid(ObjectMap<>::object_map_name(m_image_ctx.id, CEPH_NOSNAP));
 
   ldout(cct, 5) << this << " " << __func__ << ": oid=" << oid << dendl;

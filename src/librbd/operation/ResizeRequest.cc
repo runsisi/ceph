@@ -23,8 +23,10 @@ using util::create_async_context_callback;
 using util::create_context_callback;
 using util::create_rados_callback;
 
-// called by Operations<I>::execute_resize, the allow_shrink parameter
-// was added to support rbd_resize2
+// created by
+// Operations<I>::execute_resize
+// SnapshotRollbackRequest<I>::send_resize_image
+// NOTE: allow_shrink parameter was added to support rbd_resize2
 template <typename I>
 ResizeRequest<I>::ResizeRequest(I &image_ctx, Context *on_finish,
                                 uint64_t new_size, bool allow_shrink, ProgressContext &prog_ctx,
@@ -65,7 +67,8 @@ void ResizeRequest<I>::send() {
 
     if (!m_xlist_item.is_on_list()) {
       image_ctx.resize_reqs.push_back(&m_xlist_item);
-      if (image_ctx.resize_reqs.front() != this) {
+
+      if (image_ctx.resize_reqs.front() != this) { // let the previous resize op to finish first
         return;
       }
     }

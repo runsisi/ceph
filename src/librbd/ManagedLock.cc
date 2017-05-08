@@ -693,7 +693,7 @@ void ManagedLock<I>::handle_release_lock(int r) {
   m_post_next_state = r < 0 ? STATE_LOCKED : STATE_UNLOCKED;
 
   m_work_queue->queue(new FunctionContext([this, r](int ret) {
-    post_release_lock_handler(false, r, create_context_callback<
+    post_release_lock_handler(false, r, create_context_callback< // not shutting down
         ManagedLock<I>, &ManagedLock<I>::handle_post_release_lock>(this));
   }));
 }
@@ -763,7 +763,7 @@ void ManagedLock<I>::handle_shutdown_pre_release(int r) {
   ReleaseRequest<I>* req = ReleaseRequest<I>::create(m_ioctx, m_watcher,
       m_work_queue, m_oid, cookie,
       new FunctionContext([this](int r) {
-        post_release_lock_handler(true, r, create_context_callback<
+        post_release_lock_handler(true, r, create_context_callback< // shutting down
             ManagedLock<I>, &ManagedLock<I>::handle_shutdown_post_release>(this));
       }));
   req->send();

@@ -153,6 +153,8 @@ void ExclusiveLock<I>::handle_init_complete(uint64_t features) {
   ML<I>::set_state_unlocked();
 }
 
+// called by
+// ManagedLock<I>::send_shutdown
 template <typename I>
 void ExclusiveLock<I>::shutdown_handler(int r, Context *on_finish) {
   ldout(m_image_ctx.cct, 10) << dendl;
@@ -195,6 +197,8 @@ void ExclusiveLock<I>::pre_acquire_lock_handler(Context *on_finish) {
   }));
 }
 
+// called by
+// ManagedLock<I>::handle_acquire_lock
 template <typename I>
 void ExclusiveLock<I>::post_acquire_lock_handler(int r, Context *on_finish) {
   ldout(m_image_ctx.cct, 10) << ": r=" << r << dendl;
@@ -293,6 +297,8 @@ void ExclusiveLock<I>::pre_release_lock_handler(bool shutting_down,
   }));
 }
 
+// called by
+// ManagedLock<I>::handle_release_lock
 template <typename I>
 void ExclusiveLock<I>::post_release_lock_handler(bool shutting_down, int r,
                                                  Context *on_finish) {
@@ -313,7 +319,7 @@ void ExclusiveLock<I>::post_release_lock_handler(bool shutting_down, int r,
         ML<I>::acquire_lock(nullptr);
       }
     }
-  } else {
+  } else { // shutting down
     {
       RWLock::WLocker owner_locker(m_image_ctx.owner_lock);
       m_image_ctx.io_work_queue->clear_require_lock_on_read();

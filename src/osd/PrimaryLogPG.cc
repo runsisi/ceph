@@ -7637,7 +7637,8 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
     ctx->at_version.version++;
   } // create a clone, i.e., snap object
 
-  // update most recent clone_overlap and usage stats
+  // update most recent clone_overlap and usage stats, even if we did not
+  // create a new clone object, we should update the new overlap
   if (ctx->new_snapset.clones.size() > 0) {
 
     // there is at least one clone object, we may have not created a new
@@ -7661,7 +7662,7 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
 
       // modified_ranges is still in use by the clone
       // iterate ctx->modified_ranges to add each lenght to ctx->delta_stats
-      add_interval_usage(ctx->modified_ranges, ctx->delta_stats);
+      add_interval_usage(ctx->modified_ranges, ctx->delta_stats); // update ctx->delta_stats
 
       // the overlapped intervals is area when compared with the clone object
       // that has never touched by the modification op on the HEAD

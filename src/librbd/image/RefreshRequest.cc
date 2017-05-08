@@ -27,7 +27,10 @@ using util::create_async_context_callback;
 using util::create_context_callback;
 
 // created by
+// librbd::exclusive_lock::PostAcquireRequest<I>::send_refresh
+// librbd::image::CloneRequest<I>::send_refresh
 // librbd::image::OpenRequest<I>::send_refresh
+// librbd::ImageState<I>::send_refresh_unlock
 template <typename I>
 RefreshRequest<I>::RefreshRequest(I &image_ctx, bool acquiring_lock,
                                   bool skip_open_parent, Context *on_finish)
@@ -1337,8 +1340,9 @@ void RefreshRequest<I>::apply() {
           m_object_map != nullptr) {
         std::swap(m_object_map, m_image_ctx.object_map);
       }
+
       if (m_image_ctx.clone_copy_on_read &&
-          m_image_ctx.io_work_queue->is_lock_required()) {
+          m_image_ctx.io_work_queue->is_lock_required()) { // not lock owner
         m_image_ctx.io_work_queue->set_require_lock_on_read();
       }
     }

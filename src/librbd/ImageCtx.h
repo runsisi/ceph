@@ -153,6 +153,7 @@ namespace librbd {
     ExclusiveLock<ImageCtx> *exclusive_lock;
     ObjectMap<ImageCtx> *object_map;
 
+    // was pushed back by librbd::operation::ResizeRequest<I>::send
     xlist<operation::ResizeRequest<ImageCtx>*> resize_reqs;
 
     io::ImageRequestWQ *io_work_queue;

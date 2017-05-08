@@ -122,6 +122,8 @@ private:
     }
 
   protected:
+    // called by
+    // ManagedLock<I>::handle_acquire_lock
     void post_acquire_lock_handler(int r, Context *on_finish) {
       if (r == 0) {
         // lock is owned at this point
@@ -134,6 +136,9 @@ private:
                                   Context *on_finish) {
       watcher->handle_pre_release_leader_lock(on_finish);
     }
+
+    // called by
+    // ManagedLock<I>::handle_release_lock
     void post_release_lock_handler(bool shutting_down, int r,
                                    Context *on_finish) {
       watcher->handle_post_release_leader_lock(r, on_finish);

@@ -146,12 +146,13 @@ void ImageRequestWQ::aio_read(AioCompletion *c, uint64_t off, uint64_t len,
   bool lock_required;
   {
     RWLock::RLocker locker(m_lock);
+    // journaling enabled or clone_copy_on_read enabled
     lock_required = m_require_lock_on_read;
   }
 
   // <off, len> -> std::vector<std::pair<uint64_t,uint64_t> >
   if (m_image_ctx.non_blocking_aio || writes_blocked() || !writes_empty() ||
-      lock_required) {
+      lock_required) { // need to get lock first
     // the allocated request will be deleted when the request is dequeued
     // and processed by the thread pool worker, see AioImageRequestWQ::process
     queue(new ImageReadRequest<>(m_image_ctx, c, {{off, len}},
@@ -372,6 +373,7 @@ void ImageRequestWQ::unblock_writes() {
 // librbd::ExclusiveLock<I>::handle_init_complete
 // librbd::exclusive_lock::PreReleaseRequest<I>::send_block_writes
 // librbd::image::RefreshRequest<I>::send_v2_open_journal
+// librbd::image::RefreshRequest<I>::apply
 void ImageRequestWQ::set_require_lock_on_read() {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
@@ -381,6 +383,11 @@ void ImageRequestWQ::set_require_lock_on_read() {
   m_require_lock_on_read = true;
 }
 
+// called by
+// librbd::image::RefreshRequest<I>::apply
+// librbd::ExclusiveLock<I>::shutdown_handler
+// librbd::ExclusiveLock<I>::handle_post_acquired_lock
+// librbd::ExclusiveLock<I>::post_release_lock_handler, for shutdown
 void ImageRequestWQ::clear_require_lock_on_read() {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
@@ -593,7 +600,7 @@ void ImageRequestWQ::queue(ImageRequest<> *req) {
   bool write_op = req->is_write_op();
   bool lock_required = (m_image_ctx.exclusive_lock != nullptr &&
                         ((write_op && is_lock_required()) ||
-                          (!write_op && m_require_lock_on_read)));
+                          (!write_op && m_require_lock_on_read))); // journaling enabled or cor enabled
 
   if (lock_required && !m_image_ctx.get_exclusive_lock_policy()->may_auto_request_lock()) {
     lderr(cct) << "op requires exclusive lock" << dendl;
@@ -648,7 +655,7 @@ void ImageRequestWQ::handle_refreshed(int r, ImageRequest<> *req) {
   // we acquire the lock
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
 
-  if (is_lock_required() && is_lock_request_needed()) {
+  if (is_lock_required() && is_lock_request_needed()) { // not lock owner and has queued writes/reads
     m_image_ctx.exclusive_lock->acquire_lock(nullptr);
   }
 }

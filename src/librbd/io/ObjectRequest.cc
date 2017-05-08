@@ -261,7 +261,7 @@ bool ObjectReadRequest<I>::should_complete(int r)
         if (object_overlap > 0) {
           m_tried_parent = true;
 
-          if (is_copy_on_read(image_ctx, this->m_snap_id)) {
+          if (is_copy_on_read(image_ctx, this->m_snap_id)) { // must be lock owner if exclusive lock enabled
 
             // COR enabled
             // after read the parent object, send an extra copyup request
@@ -634,7 +634,7 @@ void AbstractObjectWriteRequest::send_write() {
 
     // copyup
     handle_write_guard(); // call send_copyup if still has parent or call send_write again
-  } else {
+  } else { // know nothing about the object, all start from the every first step
     send_pre_object_map_update(); // update object map or call send_write_op if object map is disabled
   }
 }

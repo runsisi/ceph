@@ -233,6 +233,13 @@ int simple_diff_cb(uint64_t off, size_t len, int exists, void *arg) {
 
 } // anonymous namespace
 
+// static
+// called by
+// Image::diff_iterate
+// Image::diff_iterate2
+// rbd_diff_iterate
+// rbd_diff_iterate2
+//
 template <typename I>
 int DiffIterate<I>::diff_iterate(I *ictx,
 				 const cls::rbd::SnapshotNamespace& from_snap_namespace,
@@ -340,12 +347,14 @@ int DiffIterate<I>::execute() {
   if (m_include_parent && from_snap_id == 0) {
     RWLock::RLocker l(m_image_ctx.snap_lock);
     RWLock::RLocker l2(m_image_ctx.parent_lock);
+
     uint64_t overlap = 0;
     m_image_ctx.get_parent_overlap(m_image_ctx.snap_id, &overlap);
     r = 0;
 
     if (m_image_ctx.parent && overlap > 0) {
       ldout(cct, 10) << " first getting parent diff" << dendl;
+
       DiffIterate diff_parent(*m_image_ctx.parent, {},
 			      nullptr, 0, overlap,
                               m_include_parent, m_whole_object,

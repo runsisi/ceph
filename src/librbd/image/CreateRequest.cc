@@ -29,6 +29,8 @@ using util::create_context_callback;
 
 namespace {
 
+// called by
+// CreateRequest<I>::send
 int validate_features(CephContext *cct, uint64_t features,
                        bool force_non_primary) {
   if (features & ~RBD_FEATURES_ALL) {

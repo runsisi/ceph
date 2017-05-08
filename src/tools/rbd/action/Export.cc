@@ -375,6 +375,8 @@ private:
   int m_fd;
 };
 
+// called by
+// do_export
 static int do_export_v2(librbd::Image& image, librbd::image_info_t &info, int fd,
 		        uint64_t period, int max_concurrent_ops, utils::ProgressContext &pc)
 {
