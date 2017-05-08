@@ -7638,7 +7638,8 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
   } // create a clone, i.e., snap object
 
   // update most recent clone_overlap and usage stats, even if we did not
-  // create a new clone object, we should update the new overlap
+  // create a new clone object, we should substract the modified range to
+  // update the new overlap
   if (ctx->new_snapset.clones.size() > 0) {
 
     // there is at least one clone object, we may have not created a new
