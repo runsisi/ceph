@@ -7598,7 +7598,7 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
 
     // t->clone(head, coid), set OI_ATTR and remove SS_ATTR for coid
     // NOTE: SS_ATTR stores on HEAD/SNAPDIR object
-    _make_clone(ctx, ctx->op_t.get(), ctx->clone_obc, soid, coid, snap_oi);
+    _make_clone(ctx, ctx->op_t.get(), ctx->clone_obc, soid, coid, snap_oi); // set snap_oi into OI_ATTR
     
     ctx->delta_stats.num_objects++;
     if (snap_oi->is_dirty()) {
@@ -7683,21 +7683,27 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
 }
 
 // called by
-// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_WRITE, CEPH_OSD_OP_WRITEFULL, CEPH_OSD_OP_CLONERANGE
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_WRITE, CEPH_OSD_OP_WRITEFULL
 void PrimaryLogPG::write_update_size_and_usage(object_stat_sum_t& delta_stats, object_info_t& oi,
 					       interval_set<uint64_t>& modified, uint64_t offset,
 					       uint64_t length, bool count_bytes, bool force_changesize)
 {
+  // force_changesize default to false, i.e., for CEPH_OSD_OP_WRITE
+  // for CEPH_OSD_OP_WRITEFULL, if it is a truncate write, force_changesize is true
   interval_set<uint64_t> ch;
   if (length)
     ch.insert(offset, length);
   modified.union_of(ch);
+
   if (force_changesize || offset + length > oi.size) {
     uint64_t new_size = offset + length;
+
     delta_stats.num_bytes -= oi.size;
     delta_stats.num_bytes += new_size;
+
     oi.size = new_size;
   }
+
   delta_stats.num_wr++;
   if (count_bytes)
     delta_stats.num_wr_kb += SHIFT_ROUND_UP(length, 10);
