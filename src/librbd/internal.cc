@@ -308,6 +308,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     {RBD_IMAGE_OPTION_FEATURES_SET, UINT64},
     {RBD_IMAGE_OPTION_FEATURES_CLEAR, UINT64},
     {RBD_IMAGE_OPTION_DATA_POOL, STR},
+    {RBD_IMAGE_OPTION_PROVISION_TYPE, UINT64},
   };
 
   std::string image_option_name(int optname) {

@@ -418,7 +418,7 @@ public:
     // OSD::do_command, for "debug dump_missing"
     // PG::MissingLoc::readable_with_acting
     // PG::MissingLoc::is_unfound
-    // PG::MissingLoc::revise_need, assert only
+    // PG::MissingLoc::revise_need, never used
     // PrimaryLogPG::on_local_recover, assert only
     // PrimaryLogPG::maybe_kick_recovery
     bool needs_recovery(
@@ -480,6 +480,9 @@ public:
     void remove_location(const hobject_t &hoid, pg_shard_t location) {
       missing_loc[hoid].erase(location);
     }
+
+    // called by
+    // PG::activate
     void add_active_missing(const pg_missing_t &missing) {
       for (map<hobject_t, pg_missing_item>::const_iterator i =
 	     missing.get_items().begin();
@@ -495,9 +498,13 @@ public:
       }
     }
 
+    // called by
+    // PG::repair_object
     void add_missing(const hobject_t &hoid, eversion_t need, eversion_t have) {
       needs_recovery_map[hoid] = pg_missing_item(need, have);
     }
+
+    // never used
     void revise_need(const hobject_t &hoid, eversion_t need) {
       assert(needs_recovery(hoid));
       needs_recovery_map[hoid].need = need;

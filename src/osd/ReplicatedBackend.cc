@@ -159,8 +159,8 @@ void ReplicatedBackend::run_recovery_op(
 }
 
 // called by
-// PrimaryLogPG::recover_missing,
-// PrimaryLogPG::prep_object_replica_pushes,
+// PrimaryLogPG::recover_missing, i.e., recover primary object
+// PrimaryLogPG::prep_object_replica_pushes, // head is null
 // PrimaryLogPG::prep_backfill_object_push
 void ReplicatedBackend::recover_object(
   const hobject_t &hoid,
@@ -174,7 +174,9 @@ void ReplicatedBackend::recover_object(
 
   RPGHandle *h = static_cast<RPGHandle *>(_h);
 
-  if (get_parent()->get_local_missing().is_missing(hoid)) {
+  // PrimaryLogPG::maybe_kick_recovery will do the same test to
+  // kick the primary object recovery
+  if (get_parent()->get_local_missing().is_missing(hoid)) { // PG::pg_log.get_missing
     // local backend store does not has the object, so the obc is null
     assert(!obc);
 
@@ -186,7 +188,7 @@ void ReplicatedBackend::recover_object(
       h);
     return;
   } else {
-    // local object store has the object, so the obc is not null
+    // we are to push the object to the replica
     assert(obc);
 
     int started = start_pushes(
@@ -1566,8 +1568,10 @@ void ReplicatedBackend::calc_clone_subsets(
   interval_set<uint64_t> prev;
   if (size)
     prev.insert(0, size);
+
   for (int j=i-1; j>=0; j--) {
     hobject_t c = soid;
+
     c.snap = snapset.clones[j];
     prev.intersection_of(snapset.clone_overlap[snapset.clones[j]]);
     if (!missing.is_missing(c) &&
@@ -1575,10 +1579,12 @@ void ReplicatedBackend::calc_clone_subsets(
 	get_parent()->try_lock_for_read(c, manager)) {
       dout(10) << "calc_clone_subsets " << soid << " has prev " << c
 	       << " overlap " << prev << dendl;
+
       clone_subsets[c] = prev;
       cloning.union_of(prev);
       break;
     }
+
     dout(10) << "calc_clone_subsets " << soid << " does not have prev " << c
 	     << " overlap " << prev << dendl;
   }
@@ -1589,6 +1595,7 @@ void ReplicatedBackend::calc_clone_subsets(
     next.insert(0, size);
   for (unsigned j=i+1; j<snapset.clones.size(); j++) {
     hobject_t c = soid;
+
     c.snap = snapset.clones[j];
     next.intersection_of(snapset.clone_overlap[snapset.clones[j-1]]);
     if (!missing.is_missing(c) &&
@@ -1596,10 +1603,12 @@ void ReplicatedBackend::calc_clone_subsets(
 	get_parent()->try_lock_for_read(c, manager)) {
       dout(10) << "calc_clone_subsets " << soid << " has next " << c
 	       << " overlap " << next << dendl;
+
       clone_subsets[c] = next;
       cloning.union_of(next);
       break;
     }
+
     dout(10) << "calc_clone_subsets " << soid << " does not have next " << c
 	     << " overlap " << next << dendl;
   }
@@ -1607,6 +1616,7 @@ void ReplicatedBackend::calc_clone_subsets(
   // default 10
   if (cloning.num_intervals() > cct->_conf->osd_recover_clone_overlap_limit) {
     dout(10) << "skipping clone, too many holes" << dendl;
+
     get_parent()->release_locks(manager);
     clone_subsets.clear();
     cloning.clear();
@@ -1624,19 +1634,24 @@ void ReplicatedBackend::calc_clone_subsets(
 // called by
 // ReplicatedBackend::recover_object
 void ReplicatedBackend::prepare_pull(
-  eversion_t v,
+  eversion_t v, // from PG::MissingLoc::needs_recovery_map
   const hobject_t& soid,
   ObjectContextRef headctx,
   RPGHandle *h)
 {
+  // PG::pg_log.missing, i.e., pg_missing_tracker_t
   assert(get_parent()->get_local_missing().get_items().count(soid));
+
+  // from PG::pg_log.missing.missing
   eversion_t _v = get_parent()->get_local_missing().get_items().find(
     soid)->second.need;
   assert(_v == v);
+
   const map<hobject_t, set<pg_shard_t>> &missing_loc(
-    get_parent()->get_missing_loc_shards());
+    get_parent()->get_missing_loc_shards()); // PG::MissingLoc::missing_loc
   const map<pg_shard_t, pg_missing_t > &peer_missing(
-    get_parent()->get_shard_missing());
+    get_parent()->get_shard_missing()); // PG::peer_missing
+
   map<hobject_t, set<pg_shard_t>>::const_iterator q = missing_loc.find(soid);
   assert(q != missing_loc.end());
   assert(!q->second.empty());
@@ -1659,7 +1674,7 @@ void ReplicatedBackend::prepare_pull(
   assert(peer_missing.count(fromshard));
 
   const pg_missing_t &pmissing = peer_missing.find(fromshard)->second;
-  if (pmissing.is_missing(soid, v)) {
+  if (pmissing.is_missing(soid, v)) { // v >= need
     assert(pmissing.get_items().find(soid)->second.have != v);
 
     dout(10) << "pulling soid " << soid << " from osd " << fromshard
@@ -1679,10 +1694,7 @@ void ReplicatedBackend::prepare_pull(
   ObjectRecoveryInfo recovery_info;
   ObcLockManager lock_manager;
 
-  if (soid.is_snap()) {
-
-    // pulling a snap object
-
+  if (soid.is_snap()) { // pulling a snap object
     assert(!get_parent()->get_local_missing().is_missing(
 	     soid.get_head()) ||
 	   !get_parent()->get_local_missing().is_missing(
@@ -1694,12 +1706,14 @@ void ReplicatedBackend::prepare_pull(
     assert(ssc);
 
     dout(10) << " snapset " << ssc->snapset << dendl;
+
     calc_clone_subsets(
-      ssc->snapset, soid, get_parent()->get_local_missing(),
+      ssc->snapset, soid, get_parent()->get_local_missing(), // PG::pg_log.missing
       get_info().last_backfill,
       recovery_info.copy_subset,
       recovery_info.clone_subset,
       lock_manager);
+
     // FIXME: this may overestimate if we are pulling multiple clones in parallel...
     dout(10) << " pulling " << recovery_info << dendl;
 
@@ -1729,7 +1743,8 @@ void ReplicatedBackend::prepare_pull(
   assert(!pulling.count(soid));
   pull_from_peer[fromshard].insert(soid);
 
-  // register a pulling request
+  // register a pulling request, for response handle, i.e., ReplicatedBackend::handle_pull_response
+  // and clearing work
   PullInfo &pi = pulling[soid];
 
   pi.from = fromshard;
@@ -2636,7 +2651,7 @@ void ReplicatedBackend::clear_pull(
 // C_ReplicatedBackend_OnPullComplete::finish
 int ReplicatedBackend::start_pushes(
   const hobject_t &soid,
-  ObjectContextRef obc,
+  ObjectContextRef obc, // obc for soid
   RPGHandle *h)
 {
   int pushes = 0;

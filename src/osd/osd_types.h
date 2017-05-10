@@ -3692,7 +3692,8 @@ public:
 
 template <bool TrackChanges>
 class pg_missing_set : public pg_missing_const_i {
-  using item = pg_missing_item;
+  using item = pg_missing_item; // eversion_t need, have
+
   map<hobject_t, item> missing;  // oid -> (need v, have v)
   map<version_t, hobject_t> rmissing;  // v -> oid
 
@@ -3702,7 +3703,8 @@ public:
   pg_missing_set() = default;
 
   template <typename missing_type>
-  pg_missing_set(const missing_type &m) {
+  pg_missing_set(const missing_type &m) { // construct from pg_missing_set<false>, i.e., pg_missing_t, see
+                                           // ceph_objectstore_tool/write_pg
     for (auto &&i: missing)
       tracker.changed(i.first);
 
@@ -3731,6 +3733,8 @@ public:
     return !missing.empty();
   }
 
+  // only PrimaryLogPG::pick_newest_available and PGLog::_write_log_and_missing
+  // call with parameter out set to not nullptr
   bool is_missing(const hobject_t& oid, pg_missing_item *out = nullptr) const override {
     auto iter = missing.find(oid);
 
@@ -3743,6 +3747,10 @@ public:
     return true;
   }
 
+  // called by
+  // PGLog::recover_got
+  // PrimaryLogPG::recover_primary, for pg_log_entry_t::LOST_REVERT
+  // PrimaryLogPG::prep_object_replica_pushes
   bool is_missing(const hobject_t& oid, eversion_t v) const override {
     map<hobject_t, item>::const_iterator m =
       missing.find(oid);
@@ -3754,6 +3762,8 @@ public:
     if (item.need > v)
       return false;
 
+    // v >= item.need, the v version object is missing definitely becoz
+    // the currently lower version is missing
     return true;
   }
 
@@ -3794,12 +3804,14 @@ public:
 	// new object.
 	if (is_missing_divergent_item) {  // use iterator
 	  rmissing.erase((missing_it->second).need.version);
+
 	  missing_it->second = item(e.version, eversion_t());  // .have = nil
 	} else  // create new element in missing map
 	  missing[e.soid] = item(e.version, eversion_t());     // .have = nil
       } else if (is_missing_divergent_item) {
 	// already missing (prior).
 	rmissing.erase((missing_it->second).need.version);
+
 	(missing_it->second).need = e.version;  // leave .have unchanged.
       } else if (e.is_backlog()) {
 	// May not have prior version
@@ -3807,6 +3819,7 @@ public:
       } else {
 	// not missing, we must have prior_version (if any)
 	assert(!is_missing_divergent_item);
+
 	missing[e.soid] = item(e.version, e.prior_version);
       }
 
@@ -3962,6 +3975,7 @@ public:
       hobject_t(object_t("foo"), "foo", 123, 456, 0, ""),
       eversion_t(5, 6), eversion_t(5, 1));
   }
+
   template <typename F>
   void get_changed(F &&f) const {
     tracker.get_changed(f);
@@ -4037,8 +4051,8 @@ ostream& operator<<(ostream& out, const pg_missing_set<TrackChanges> &missing)
   return out;
 }
 
-using pg_missing_t = pg_missing_set<false>;
-using pg_missing_tracker_t = pg_missing_set<true>;
+using pg_missing_t = pg_missing_set<false>; // for replica missing
+using pg_missing_tracker_t = pg_missing_set<true>; // for primary missing
 
 
 /**

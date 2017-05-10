@@ -709,6 +709,7 @@ void PGLog::_write_log_and_missing(
     to_remove.insert("divergent_priors");
   }
 
+  // pg_missing_tracker_t
   missing.get_changed(
     [&](const hobject_t &obj) {
       string key = string("missing/") + obj.to_str();

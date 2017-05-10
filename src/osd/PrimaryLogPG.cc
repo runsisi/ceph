@@ -612,6 +612,7 @@ PerfCounters *PrimaryLogPG::get_logger()
 
 bool PrimaryLogPG::is_missing_object(const hobject_t& soid) const
 {
+  // PGLog::missing, maybe pg_log.get_missing().is_missing(soid) is better
   return pg_log.get_missing().get_items().count(soid);
 }
 
@@ -623,6 +624,7 @@ void PrimaryLogPG::maybe_kick_recovery(
 {
   eversion_t v;
 
+  // in PG::MissingLoc::needs_recovery_map
   if (!missing_loc.needs_recovery(soid, &v))
     return;
 
@@ -636,7 +638,9 @@ void PrimaryLogPG::maybe_kick_recovery(
 
     PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op();
 
-    if (is_missing_object(soid)) {
+    if (is_missing_object(soid)) { // primary missing it, ReplicatedBackend::recover_object will
+                                   // do the same test
+      // why not recover_primary ?
       recover_missing(soid, v, cct->_conf->osd_client_op_priority, h);
     } else {
       prep_object_replica_pushes(soid, v, h);
@@ -6247,11 +6251,13 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	} else if (obs.exists && op.extent.length < oi.size) {
 	  t->truncate(soid, op.extent.length);
 	}
+
 	if (op.extent.length) {
 	  t->write(soid, 0, op.extent.length, osd_op.indata, op.flags);
 	}
 	obs.oi.set_data_digest(osd_op.indata.crc32c(-1));
 
+	// update oi.size and ctx->modified_ranges, op.extent.length != oi.size means truncate occurred
 	write_update_size_and_usage(ctx->delta_stats, oi, ctx->modified_ranges,
 	    0, op.extent.length, true, op.extent.length != oi.size ? true : false);
       }
@@ -7621,7 +7627,9 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
     if (ctx->obs->oi.size)
       // the original overlap size is the clone object size, we will update
       // this overlap with substracting ctx->modified_ranges
-      ctx->new_snapset.clone_overlap[coid.snap].insert(0, ctx->obs->oi.size);
+      ctx->new_snapset.clone_overlap[coid.snap].insert(0, ctx->obs->oi.size); // this is the size of old object
+                                                              // what write_update_size_and_usage updated
+                                                              // was ctx->new_obs->oi.size
     
     // log clone
     dout(10) << " cloning v " << ctx->obs->oi.version
@@ -7688,20 +7696,24 @@ void PrimaryLogPG::write_update_size_and_usage(object_stat_sum_t& delta_stats, o
 					       interval_set<uint64_t>& modified, uint64_t offset,
 					       uint64_t length, bool count_bytes, bool force_changesize)
 {
+  // count_bytes always be true
   // force_changesize default to false, i.e., for CEPH_OSD_OP_WRITE
   // for CEPH_OSD_OP_WRITEFULL, if it is a truncate write, force_changesize is true
   interval_set<uint64_t> ch;
+
   if (length)
     ch.insert(offset, length);
+
   modified.union_of(ch);
 
-  if (force_changesize || offset + length > oi.size) {
+  if (force_changesize || offset + length > oi.size) { // truncate occurred for write_full, or
+                                                       // size extended for write
     uint64_t new_size = offset + length;
 
     delta_stats.num_bytes -= oi.size;
     delta_stats.num_bytes += new_size;
 
-    oi.size = new_size;
+    oi.size = new_size; // update ctx->new_obs->oi.size
   }
 
   delta_stats.num_wr++;
@@ -11319,9 +11331,9 @@ void PrimaryLogPG::put_snapset_context(SnapSetContext *ssc)
 enum { PULL_NONE, PULL_OTHER, PULL_YES };
 
 // called by
-// PrimaryLogPG::maybe_kick_recovery
+// PrimaryLogPG::maybe_kick_recovery, if primary missing it
 // PrimaryLogPG::recover_primary, which called by PrimaryLogPG::start_recovery_ops
-int PrimaryLogPG::recover_missing(
+int PrimaryLogPG::recover_missing( // better name it recover_primary_missing
   const hobject_t &soid, eversion_t v,
   int priority,
   PGBackend::RecoveryHandle *h)
@@ -11337,7 +11349,7 @@ int PrimaryLogPG::recover_missing(
   ObjectContextRef obc;
   ObjectContextRef head_obc;
 
-  if (soid.snap && soid.snap < CEPH_NOSNAP) {
+  if (soid.snap && soid.snap < CEPH_NOSNAP) { // snap object
     // do we have the head and/or snapdir?
     hobject_t head = soid.get_head();
 
@@ -11357,6 +11369,8 @@ int PrimaryLogPG::recover_missing(
       }
     }
 
+    // head is not missing
+
     head = soid.get_snapdir();
     if (pg_log.get_missing().is_missing(head)) {
       if (recovering.count(head)) {
@@ -11374,6 +11388,11 @@ int PrimaryLogPG::recover_missing(
       }
     }
 
+    // snapdir is not missing
+
+    // both head and snapdir are not missing, so we are to recover the
+    // snap object
+
     // we must have one or the other
     head_obc = get_object_context(
       soid.get_head(),
@@ -11388,6 +11407,8 @@ int PrimaryLogPG::recover_missing(
     assert(head_obc);
   } // soid.snap && soid.snap < CEPH_NOSNAP
 
+  // we are to recover head or snap that has both head and snapdir are exist
+
   // only inc counters
   start_recovery_op(soid);
 
@@ -11399,8 +11420,8 @@ int PrimaryLogPG::recover_missing(
   pgbackend->recover_object(
     soid,
     v,
-    head_obc,
-    obc,
+    head_obc, // if not null we are to recover a snap object, else we are to recover the head
+    obc, // always be null
     h);
 
   return PULL_YES;
@@ -12617,6 +12638,7 @@ uint64_t PrimaryLogPG::recover_primary(uint64_t max, ThreadPool::TPHandle &handl
       latest = 0;
       soid = p->second;
     }
+
     const pg_missing_item& item = missing.get_items().find(p->second)->second;
     ++p;
 
@@ -12760,7 +12782,7 @@ int PrimaryLogPG::prep_object_replica_pushes(
 
     // can not find the object from the object store
 
-    pg_log.missing_add(soid, v, eversion_t());
+    pg_log.missing_add(soid, v, eversion_t()); // add <soid, need, have> to PGLog::missing
     missing_loc.remove_location(soid, pg_whoami);
 
     bool uhoh = true;
@@ -12777,6 +12799,7 @@ int PrimaryLogPG::prep_object_replica_pushes(
       pg_shard_t peer = *i;
       if (!peer_missing[peer].is_missing(soid, v)) {
 	missing_loc.add_location(soid, peer);
+
 	dout(10) << info.pgid << " unexpectedly missing " << soid << " v" << v
 		 << ", there should be a copy on shard " << peer << dendl;
 	uhoh = false;
@@ -12790,6 +12813,8 @@ int PrimaryLogPG::prep_object_replica_pushes(
 			 << ", will try copies on " << missing_loc.get_locations(soid);
     return 0;
   } // !obc
+
+  // got obc read off the backend
 
   if (!obc->get_recovery_read()) {
     dout(20) << "recovery delayed on " << soid
@@ -12813,11 +12838,11 @@ int PrimaryLogPG::prep_object_replica_pushes(
    */
   obc->ondisk_read_lock();
 
-  // either prepare send or prepare pull
+  // prepare push becoz replica missing it and we have it
   pgbackend->recover_object(
     soid,
     v,
-    ObjectContextRef(),
+    ObjectContextRef(), // head obc
     obc, // has snapset context
     h);
 
@@ -12830,6 +12855,7 @@ int PrimaryLogPG::prep_object_replica_pushes(
 uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &handle)
 {
   dout(10) << __func__ << "(" << max << ")" << dendl;
+
   uint64_t started = 0;
 
   PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op();
@@ -12858,15 +12884,19 @@ uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
     // oldest first!
     const pg_missing_t &m(pm->second);
 
-    // iterate peer missing
+    // iterate this peer's missing objects
     for (map<version_t, hobject_t>::const_iterator p = m.get_rmissing().begin();
 	 p != m.get_rmissing().end() && started < max;
 	   ++p) {
       handle.reset_tp_timeout();
 
+      // this is the replica object needs to be recovered
+      // in ReplicatedBackend::recover_object we do not pass the pg shard
+      // which missing the object, so we will iterate replicas and its
+      // missing set to determine which replica we need to push to
       const hobject_t soid(p->second);
 
-      if (soid > pi->second.last_backfill) {
+      if (soid > pi->second.last_backfill) { // object need to be backfilled
 	if (!recovering.count(soid)) {
 	  derr << __func__ << ": object added to missing set for backfill, but "
 	       << "is not in recovering, error!" << dendl;
@@ -12883,7 +12913,9 @@ uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
       // erased by
       // PrimaryLogPG::failed_push
       // PrimaryLogPG::cancel_pull
-      if (recovering.count(soid)) {
+      if (recovering.count(soid)) { // once we recovering a missing object, all peer shards will
+                                    // start recovering, so no need to start a second recovering
+                                    // for the same object
 	dout(10) << __func__ << ": already recovering " << soid << dendl;
 	continue;
       }
@@ -12913,13 +12945,14 @@ uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
       dout(10) << __func__ << ": recover_object_replicas(" << soid << ")" << dendl;
 
       map<hobject_t,pg_missing_item>::const_iterator r = m.get_items().find(soid);
+
       // call pgbackend->recover_object to prepare push
-      started += prep_object_replica_pushes(soid, r->second.need,
+      started += prep_object_replica_pushes(soid, r->second.need, // the need version
 					    h);
-    } // iterate peer missing
+    } // iterate peer's missing objects
   } // iterate actingbackfill
 
-  // either send or pull
+  // send_pushes(h->pushes) and send_pulls(h->pulls), then delete h
   pgbackend->run_recovery_op(h, get_recovery_op_priority());
 
   return started;

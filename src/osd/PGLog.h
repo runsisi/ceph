@@ -624,7 +624,7 @@ public:
 
   //////////////////// get or set missing ////////////////////
 
-  const pg_missing_tracker_t& get_missing() const { return missing; }
+  const pg_missing_tracker_t& get_missing() const { return missing; } // pg_missing_tracker_t
 
   void revise_have(hobject_t oid, eversion_t have) {
     missing.revise_have(oid, have);

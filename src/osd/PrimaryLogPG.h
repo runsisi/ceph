@@ -324,24 +324,33 @@ public:
   
   const map<hobject_t, set<pg_shard_t>>
     &get_missing_loc_shards() const override {
+    // PG::MissingLoc::missing_loc
     return missing_loc.get_missing_locs();
   }
+
   const map<pg_shard_t, pg_missing_t> &get_shard_missing() const override {
+    // PG::peer_missing
     return peer_missing;
   }
+
   using PGBackend::Listener::get_shard_missing;
 
   const map<pg_shard_t, pg_info_t> &get_shard_info() const override {
+    // PG::peer_info
     return peer_info;
   }
+
   using PGBackend::Listener::get_shard_info;  
 
   const pg_missing_tracker_t &get_local_missing() const override {
+    // PGLog::missing
     return pg_log.get_missing();
   }
+
   const PGLog &get_log() const override {
     return pg_log;
   }
+
   bool pgb_is_primary() const override {
     return is_primary();
   }
