@@ -160,8 +160,14 @@ void ReplicatedBackend::run_recovery_op(
 
 // called by
 // PrimaryLogPG::recover_missing, i.e., recover primary object
-// PrimaryLogPG::prep_object_replica_pushes, // head is null
+//      head:   not null to recover snap object, null to recover head
+//      obc:    null
+// PrimaryLogPG::prep_object_replica_pushes
+//      head:   null
+//      obc:    not null
 // PrimaryLogPG::prep_backfill_object_push
+//      head:   null
+//      obc:    not null
 void ReplicatedBackend::recover_object(
   const hobject_t &hoid,
   eversion_t v,
@@ -177,23 +183,26 @@ void ReplicatedBackend::recover_object(
   // PrimaryLogPG::maybe_kick_recovery will do the same test to
   // kick the primary object recovery
   if (get_parent()->get_local_missing().is_missing(hoid)) { // PG::pg_log.get_missing
-    // local backend store does not has the object, so the obc is null
+    // called by PrimaryLogPG::recover_missing
+
     assert(!obc);
 
     // pull
     prepare_pull(
       v,
       hoid,
-      head,
+      head, // null if to recover the head
       h);
     return;
   } else {
-    // we are to push the object to the replica
+    // called by PrimaryLogPG::prep_object_replica_pushes or
+    // PrimaryLogPG::prep_backfill_object_push
+
     assert(obc);
 
     int started = start_pushes(
       hoid,
-      obc,
+      obc, // not null
       h);
     assert(started > 0);
   }
@@ -1674,7 +1683,7 @@ void ReplicatedBackend::prepare_pull(
   assert(peer_missing.count(fromshard));
 
   const pg_missing_t &pmissing = peer_missing.find(fromshard)->second;
-  if (pmissing.is_missing(soid, v)) { // v >= need
+  if (pmissing.is_missing(soid, v)) { // peer also missing this object and its need <= v
     assert(pmissing.get_items().find(soid)->second.have != v);
 
     dout(10) << "pulling soid " << soid << " from osd " << fromshard
@@ -1699,7 +1708,8 @@ void ReplicatedBackend::prepare_pull(
 	     soid.get_head()) ||
 	   !get_parent()->get_local_missing().is_missing(
 	     soid.get_snapdir()));
-    assert(headctx);
+
+    assert(headctx); // head exists, we are to recover a snap object
 
     // check snapset
     SnapSetContext *ssc = headctx->ssc;
@@ -1718,6 +1728,7 @@ void ReplicatedBackend::prepare_pull(
     dout(10) << " pulling " << recovery_info << dendl;
 
     assert(ssc->snapset.clone_size.count(soid.snap));
+
     recovery_info.size = ssc->snapset.clone_size[soid.snap];
   } else {
     // pulling head or unversioned object.
@@ -1777,6 +1788,7 @@ void ReplicatedBackend::prep_push_to_replica(
   interval_set<uint64_t> data_subset;
 
   ObcLockManager lock_manager;
+
   // are we doing a clone on the replica?
   if (soid.snap && soid.snap < CEPH_NOSNAP) {
 
@@ -1789,6 +1801,7 @@ void ReplicatedBackend::prep_push_to_replica(
     // we need the head (and current SnapSet) locally to do that.
     if (get_parent()->get_local_missing().is_missing(head)) {
       dout(15) << "push_to_replica missing head " << head << ", pushing raw clone" << dendl;
+
       return prep_push(obc, soid, peer, pop, cache_dont_need);
     }
 
@@ -1858,6 +1871,7 @@ void ReplicatedBackend::prep_push(ObjectContextRef obc,
   interval_set<uint64_t> data_subset;
   if (obc->obs.oi.size)
     data_subset.insert(0, obc->obs.oi.size);
+
   map<hobject_t, interval_set<uint64_t>> clone_subsets;
 
   prep_push(obc, soid, peer,
@@ -2651,7 +2665,7 @@ void ReplicatedBackend::clear_pull(
 // C_ReplicatedBackend_OnPullComplete::finish
 int ReplicatedBackend::start_pushes(
   const hobject_t &soid,
-  ObjectContextRef obc, // obc for soid
+  ObjectContextRef obc,
   RPGHandle *h)
 {
   int pushes = 0;

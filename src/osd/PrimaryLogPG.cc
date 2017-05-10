@@ -11407,7 +11407,7 @@ int PrimaryLogPG::recover_missing( // better name it recover_primary_missing
     assert(head_obc);
   } // soid.snap && soid.snap < CEPH_NOSNAP
 
-  // we are to recover head or snap that has both head and snapdir are exist
+  // recover snap object before both head and snapdir are recovered
 
   // only inc counters
   start_recovery_op(soid);
@@ -11420,7 +11420,7 @@ int PrimaryLogPG::recover_missing( // better name it recover_primary_missing
   pgbackend->recover_object(
     soid,
     v,
-    head_obc, // if not null we are to recover a snap object, else we are to recover the head
+    head_obc, // not null to recover a snap object, null to recover the head
     obc, // always be null
     h);
 
