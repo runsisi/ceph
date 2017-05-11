@@ -7,7 +7,7 @@
 
 namespace librbd
 {
-
+// all async requests are recorded in ImageCtx::async_requests
 template <typename T>
 AsyncRequest<T>::AsyncRequest(T &image_ctx, Context *on_finish)
   : m_image_ctx(image_ctx), m_on_finish(on_finish), m_canceled(false),

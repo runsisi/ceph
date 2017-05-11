@@ -85,6 +85,7 @@ void ImageWatcher<I>::unregister_watch(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << this << " unregistering image watcher" << dendl;
 
+  // PreReleaseRequest<I>::send_cancel_op_requests will do this too, but async
   cancel_async_requests();
 
   FunctionContext *ctx = new FunctionContext([this, on_finish](int r) {

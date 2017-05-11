@@ -1066,12 +1066,17 @@ struct C_InvalidateCache : public Context {
     flush_async_operations(on_safe);
   }
 
+  // called by
+  // ImageWatcher<I>::unregister_watch
   void ImageCtx::cancel_async_requests() {
     C_SaferCond ctx;
     cancel_async_requests(&ctx);
     ctx.wait();
   }
 
+  // called by
+  // PreReleaseRequest<I>::send_cancel_op_requests
+  // ImageCtx::cancel_async_requests(), above
   void ImageCtx::cancel_async_requests(Context *on_finish) {
     {
       Mutex::Locker async_ops_locker(async_ops_lock);
@@ -1090,10 +1095,13 @@ struct C_InvalidateCache : public Context {
     on_finish->complete(0);
   }
 
+  // never called
   void ImageCtx::clear_pending_completions() {
     Mutex::Locker l(completed_reqs_lock);
     ldout(cct, 10) << "clear pending AioCompletion: count="
                    << completed_reqs.size() << dendl;
+
+    // pushed back by AioCompletion::complete, popped by librbd::poll_io_events
     completed_reqs.clear();
   }
 

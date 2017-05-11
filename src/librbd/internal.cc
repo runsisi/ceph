@@ -2333,6 +2333,8 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     while (i < numcomp) {
       if (ictx->completed_reqs.empty())
         break;
+
+      // pushed back by AioCompletion::complete
       comps[i++] = ictx->completed_reqs.front();
       ictx->completed_reqs.pop_front();
     }

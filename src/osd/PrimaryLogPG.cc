@@ -11680,9 +11680,9 @@ void PrimaryLogPG::put_snapset_context(SnapSetContext *ssc)
 enum { PULL_NONE, PULL_OTHER, PULL_YES };
 
 // called by
-// PrimaryLogPG::maybe_kick_recovery, if primary missing it
+// PrimaryLogPG::maybe_kick_recovery, if primary missing the object
 // PrimaryLogPG::recover_primary, which called by PrimaryLogPG::start_recovery_ops
-int PrimaryLogPG::recover_missing( // better name it recover_primary_missing
+int PrimaryLogPG::recover_missing( // recover missing objects on primary
   const hobject_t &soid, eversion_t v,
   int priority,
   PGBackend::RecoveryHandle *h)
@@ -11765,6 +11765,8 @@ int PrimaryLogPG::recover_missing( // better name it recover_primary_missing
 
   recovering.insert(make_pair(soid, obc));
   // either prepare pull or prepare push
+  // split it into recover_push and rcover_pull two methods should be better,
+  // so we do not have to test if we are to push or pull again in recover_object
   int r = pgbackend->recover_object(
     soid,
     v,
@@ -12834,12 +12836,12 @@ bool PrimaryLogPG::start_recovery_ops(
     // All of the missing objects we have are unfound.
     // Recover the replicas.
     // iterate peer missing set to push objects to replicas
-    started = recover_replicas(max, handle);
+    started = recover_replicas(max, handle); // iterate PG::peer_missing to recover
   }
 
   if (!started) {
     // We still have missing objects that we should grab from replicas.
-    started += recover_primary(max, handle);
+    started += recover_primary(max, handle); // iterate PG::missing to recover
   }
 
   if (!started && num_unfound != get_num_unfound()) {
@@ -13101,7 +13103,8 @@ uint64_t PrimaryLogPG::recover_primary(uint64_t max, ThreadPool::TPHandle &handl
       if (recovering.count(head)) {
 	++skipped;
       } else {
-        // call pgbackend->recover_object to either prepare send or pull
+        // call pgbackend->recover_object to recover both head/snapdir and snap objects
+
 	int r = recover_missing(
 	  soid, need, get_recovery_op_priority(), h);
 	switch (r) {
@@ -13201,6 +13204,8 @@ int PrimaryLogPG::prep_object_replica_pushes(
    */
   obc->ondisk_read_lock();
   // prepare push becoz replica missing it and we have it
+  // split it into recover_push and rcover_pull two methods should be better,
+  // so we do not have to test if we are to push or pull again in recover_object
   int r = pgbackend->recover_object(
     soid,
     v,

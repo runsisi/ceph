@@ -99,8 +99,10 @@ void AioCompletion::complete() {
 
   if (ictx && event_notify && ictx->event_socket.is_valid()) {
     ictx->completed_reqs_lock.Lock();
+    // will be popped by librbd::poll_io_events
     ictx->completed_reqs.push_back(&m_xlist_item);
     ictx->completed_reqs_lock.Unlock();
+
     ictx->event_socket.notify();
   }
 

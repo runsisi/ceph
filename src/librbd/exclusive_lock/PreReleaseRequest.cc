@@ -93,6 +93,8 @@ void PreReleaseRequest<I>::send_cancel_op_requests() {
 
   // cancel and wait all requests on ImageCtx::async_requests, note
   // these are async op requests while not aio requests
+
+  // ImageWatcher<I>::unregister_watch will do this too,  but sync
   m_image_ctx.cancel_async_requests(ctx);
 }
 

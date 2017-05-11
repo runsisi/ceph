@@ -158,6 +158,18 @@ void ReplicatedBackend::run_recovery_op(
   delete h;
 }
 
+/*
+ * PrimaryLogPG::recover_primary                 // iterate PG::missing to select primary objects to recover
+ *      PrimaryLogPG::recover_missing            // recover single primary object
+ *              pgbackend->recover_objct         // test if to recover primary object or replica object
+ *                                               // then prepare pull or push accordingly
+ *
+ * PrimaryLogPG::recover_replicas                // iterate PG::peer_missing to select replica objects to recover
+ *      PrimaryLogPG::prep_object_replica_pushes // recover single replica object
+ *              pgbackend->recover_objct         // test if to recover primary object or replica object
+ *                                               // then prepare pull or push accordingly
+ */
+
 // called by
 // PrimaryLogPG::recover_missing, i.e., recover primary object
 //      head:   not null to recover snap object, null to recover head
@@ -181,20 +193,21 @@ int ReplicatedBackend::recover_object(
   RPGHandle *h = static_cast<RPGHandle *>(_h);
 
   // PrimaryLogPG::maybe_kick_recovery will do the same test to
-  // kick the primary object recovery
-  if (get_parent()->get_local_missing().is_missing(hoid)) { // PG::pg_log.get_missing
-    // called by PrimaryLogPG::recover_missing
+  // kick the primary object to recovery
+  if (get_parent()->get_local_missing().is_missing(hoid)) {
+    // primary missing it, so the caller is PrimaryLogPG::recover_missing
 
     assert(!obc);
 
-    // pull
+    // pull, either pull head/snapdir or snap object, if head is null which
+    // means we are pull the head/snapdir, else we are pll the snap object
     prepare_pull(
       v,
       hoid,
-      head, // null if to recover the head
+      head, // null or not null determined by if we are to pull head/snapdir or not
       h);
   } else {
-    // called by PrimaryLogPG::prep_object_replica_pushes or
+    // replica missing it, so the caller is PrimaryLogPG::prep_object_replica_pushes or
     // PrimaryLogPG::prep_backfill_object_push
 
     assert(obc);
@@ -1706,6 +1719,10 @@ void ReplicatedBackend::prepare_pull(
   ObcLockManager lock_manager;
 
   if (soid.is_snap()) { // pulling a snap object
+
+    // to recover a snap object on primary, we must have the head obc, most
+    // important the ssc, so we know how to use the local snap object to
+    // reduce remote copy, i.e., to calc clone_subset and copy_subset
     assert(!get_parent()->get_local_missing().is_missing(
 	     soid.get_head()) ||
 	   !get_parent()->get_local_missing().is_missing(
@@ -1733,6 +1750,8 @@ void ReplicatedBackend::prepare_pull(
 
     recovery_info.size = ssc->snapset.clone_size[soid.snap];
   } else {
+    // to recover a head object on primary, do full copy
+
     // pulling head or unversioned object.
     // always pull the whole thing.
     recovery_info.copy_subset.insert(0, (uint64_t)-1);
@@ -1792,7 +1811,7 @@ int ReplicatedBackend::prep_push_to_replica(
   ObcLockManager lock_manager;
 
   // are we doing a clone on the replica?
-  if (soid.snap && soid.snap < CEPH_NOSNAP) {
+  if (soid.snap && soid.snap < CEPH_NOSNAP) { // replica missing a snap object
 
     // --- SNAP -----------------------------------------------------------------
 
@@ -1804,6 +1823,7 @@ int ReplicatedBackend::prep_push_to_replica(
     if (get_parent()->get_local_missing().is_missing(head)) {
       dout(15) << "push_to_replica missing head " << head << ", pushing raw clone" << dendl;
 
+      // use empty clone_subset and full data_subset
       return prep_push(obc, soid, peer, pop, cache_dont_need);
     }
 
@@ -1813,28 +1833,34 @@ int ReplicatedBackend::prep_push_to_replica(
       dout(15) << "push_to_replica missing snapdir " << snapdir
 	       << ", pushing raw clone" << dendl;
 
+      // use empty clone_subset and full data_subset
       return prep_push(obc, soid, peer, pop, cache_dont_need);
     }
 
-    // clone object
+    // we have head/snapdir for this snap object the replica is missing,
+    // i.e., we know the SnapSet of the object, so we can calc if we
+    // could try to construct the snap object's data from other snap objects
+    // and head so reduce the data transfer
 
     SnapSetContext *ssc = obc->ssc;
     assert(ssc);
+
     dout(15) << "push_to_replica snapset is " << ssc->snapset << dendl;
     pop->recovery_info.ss = ssc->snapset;
     map<pg_shard_t, pg_missing_t>::const_iterator pm =
-      get_parent()->get_shard_missing().find(peer);
+      get_parent()->get_shard_missing().find(peer); // PG::peer_missing[peer]
     assert(pm != get_parent()->get_shard_missing().end());
     map<pg_shard_t, pg_info_t>::const_iterator pi =
-      get_parent()->get_shard_info().find(peer);
+      get_parent()->get_shard_info().find(peer); // PG::peer_info[peer]
     assert(pi != get_parent()->get_shard_info().end());
+
     calc_clone_subsets(
       ssc->snapset, soid,
       pm->second,
       pi->second.last_backfill,
       data_subset, clone_subsets,
       lock_manager);
-  } else if (soid.snap == CEPH_NOSNAP) {
+  } else if (soid.snap == CEPH_NOSNAP) { // replica missing head/snapdir
 
     // --- HEAD -----------------------------------------------------------------
 
@@ -1842,12 +1868,13 @@ int ReplicatedBackend::prep_push_to_replica(
     // base this on partially on replica's clones?
     SnapSetContext *ssc = obc->ssc;
     assert(ssc);
+
     dout(15) << "push_to_replica snapset is " << ssc->snapset << dendl;
 
     calc_head_subsets(
       obc,
-      ssc->snapset, soid, get_parent()->get_shard_missing().find(peer)->second,
-      get_parent()->get_shard_info().find(peer)->second.last_backfill,
+      ssc->snapset, soid, get_parent()->get_shard_missing().find(peer)->second, // PG::peer_missing[peer]
+      get_parent()->get_shard_info().find(peer)->second.last_backfill, // PG::peer_info[peer]
       data_subset, clone_subsets,
       lock_manager);
   }
