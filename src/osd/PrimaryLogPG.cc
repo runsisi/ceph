@@ -8797,6 +8797,7 @@ int PrimaryLogPG::fill_in_copy_get(
     // include reqids only in the final step.  this is a bit fragile
     // but it works...
     pg_log.get_log().get_object_reqids(ctx->obc->obs.oi.soid, 10, &reply_obj.reqids);
+
     dout(20) << " got reqids" << dendl;
   }
 
@@ -13002,6 +13003,7 @@ uint64_t PrimaryLogPG::recover_primary(uint64_t max, ThreadPool::TPHandle &handl
     if (pg_log.get_log().objects.count(p->second)) {
       latest = pg_log.get_log().objects.find(p->second)->second;
       assert(latest->is_update());
+
       soid = latest->soid;
     } else {
       latest = 0;

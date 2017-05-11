@@ -1823,7 +1823,7 @@ int ReplicatedBackend::prep_push_to_replica(
     if (get_parent()->get_local_missing().is_missing(head)) {
       dout(15) << "push_to_replica missing head " << head << ", pushing raw clone" << dendl;
 
-      // use empty clone_subset and full data_subset
+      // no ssc available, use empty clone_subset and full data_subset
       return prep_push(obc, soid, peer, pop, cache_dont_need);
     }
 
@@ -1833,7 +1833,7 @@ int ReplicatedBackend::prep_push_to_replica(
       dout(15) << "push_to_replica missing snapdir " << snapdir
 	       << ", pushing raw clone" << dendl;
 
-      // use empty clone_subset and full data_subset
+      // no ssc available, use empty clone_subset and full data_subset
       return prep_push(obc, soid, peer, pop, cache_dont_need);
     }
 
@@ -1915,7 +1915,7 @@ int ReplicatedBackend::prep_push(ObjectContextRef obc,
 int ReplicatedBackend::prep_push(
   ObjectContextRef obc,
   const hobject_t& soid, pg_shard_t peer,
-  eversion_t version,
+  eversion_t version, // obc->obs.oi.version
   interval_set<uint64_t> &data_subset,
   map<hobject_t, interval_set<uint64_t>>& clone_subsets,
   PushOp *pop,

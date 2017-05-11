@@ -3552,7 +3552,7 @@ void PG::trim_log()
 }
 
 // called by
-// PG::append_log
+// PG::append_log, which called by PrimaryLogPG::log_operation
 void PG::add_log_entry(const pg_log_entry_t& e, bool applied)
 {
   // raise last_complete only if we were previously up to date
@@ -3570,6 +3570,7 @@ void PG::add_log_entry(const pg_log_entry_t& e, bool applied)
 
   // log mutation
   pg_log.add(e, applied);
+
   dout(10) << "add_log_entry " << e << dendl;
 }
 

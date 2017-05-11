@@ -37,6 +37,7 @@ void PGLog::IndexedLog::split_out_child(
   PGLog::IndexedLog *target)
 {
   unindex();
+
   *target = pg_log_t::split_out_child(child_pgid, split_bits);
   index();
   target->index();
@@ -108,6 +109,7 @@ void PGLog::reset_backfill()
   missing.clear();
 }
 
+// never called
 void PGLog::clear() {
   missing.clear();
   log.clear();

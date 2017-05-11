@@ -258,6 +258,8 @@ public:
       unsigned split_bits,
       IndexedLog *target);
 
+    // called by
+    // IndexedLog::clear, i.e., below
     void zero() {
       // we must have already trimmed the old entries
       assert(rollback_info_trimmed_to == head);
@@ -268,15 +270,20 @@ public:
       rollback_info_trimmed_to_riter = log.rbegin();
       reset_recovery_pointers();
     }
+
+    // called by
+    // PGLog::clear, which never used
     void clear() {
       skip_can_rollback_to_to_head();
       zero();
     }
+
     void reset_recovery_pointers() {
       complete_to = log.end();
       last_requested = 0;
     }
 
+    // never called
     bool logged_object(const hobject_t& oid) const {
       if (!(indexed_data & PGLOG_INDEXED_OBJECTS)) {
          index_objects();
@@ -284,6 +291,8 @@ public:
       return objects.count(oid);
     }
 
+    // called by
+    // IndexedLog::print, for assert only
     bool logged_req(const osd_reqid_t &r) const {
       if (!(indexed_data & PGLOG_INDEXED_CALLER_OPS)) {
         index_caller_ops();
@@ -297,6 +306,8 @@ public:
       return true;
     }
 
+    // called by
+    // PG::check_in_progress_op
     bool get_request(
       const osd_reqid_t &r,
       eversion_t *version,
@@ -305,6 +316,7 @@ public:
       assert(version);
       assert(user_version);
       assert(return_code);
+
       ceph::unordered_map<osd_reqid_t,pg_log_entry_t*>::const_iterator p;
       if (!(indexed_data & PGLOG_INDEXED_CALLER_OPS)) {
         index_caller_ops();
@@ -336,9 +348,13 @@ public:
 	}
 	assert(0 == "in extra_caller_ops but not extra_reqids");
       }
+
       return false;
     }
 
+    // called by
+    // PrimaryLogPG::fill_in_copy_get
+    // PrimaryLogPG::fill_in_copy_get_noent
     /// get a (bounded) list of recent reqids for the given object
     void get_object_reqids(const hobject_t& oid, unsigned max,
 			   mempool::osd_pglog::vector<pair<osd_reqid_t, version_t> > *pls) const {
@@ -366,6 +382,14 @@ public:
       }
     }
     
+    // called by
+    // IndexedLog::index_objects
+    // IndexedLog::index_caller_ops
+    // IndexedLog::index_extra_caller_ops
+    // IndexedLog::IndexedLog::split_out_child
+    // IndexedLog::IndexedLog
+    // IndexedLog::rewind_from_head
+    // IndexedLog::claim_log_and_clear_rollback_info
     // (re)init index
     void index(__u16 to_index = PGLOG_INDEXED_ALL) const {
       if (to_index & PGLOG_INDEXED_OBJECTS)
@@ -403,18 +427,29 @@ public:
       indexed_data |= to_index;
     }
 
+    // called by
+    // IndexedLog::logged_object, which never called
+    // IndexedLog::get_object_reqids, for cache tier only
     void index_objects() const {
       index(PGLOG_INDEXED_OBJECTS);
     }
 
+    // called by
+    // IndexedLog::logged_req, debug only
+    // IndexedLog::get_request, which called by PG::check_in_progress_op
     void index_caller_ops() const {
       index(PGLOG_INDEXED_CALLER_OPS);
     }
 
+    // called by
+    // IndexedLog::logged_req, debug only
+    // IndexedLog::get_request, which called by PG::check_in_progress_op
     void index_extra_caller_ops() const {
       index(PGLOG_INDEXED_EXTRA_CALLER_OPS);
     }
 
+    // called by
+    // PGLog::merge_log
     void index(pg_log_entry_t& e) {
       if ((indexed_data & PGLOG_INDEXED_OBJECTS) && e.object_is_indexed()) {
         if (objects.count(e.soid) == 0 ||
@@ -436,6 +471,9 @@ public:
       }
     }
 
+    // called by
+    // IndexedLog::zero, IndexedLog::clear <- PGLog::clear, which never used
+    // IndexedLog::split_out_child
     void unindex() {
       objects.clear();
       caller_ops.clear();
@@ -443,6 +481,8 @@ public:
       indexed_data = 0;
     }
 
+    // called by
+    // IndexedLog::trim
     void unindex(pg_log_entry_t& e) {
       // NOTE: this only works if we remove from the _tail_ of the log!
       if (indexed_data & PGLOG_INDEXED_OBJECTS) {
@@ -473,6 +513,10 @@ public:
       }
     }
 
+    // called by
+    // append_log_entries_update_missing
+    // PGLog::add, which called by PG::add_log_entry
+    // PrimaryLogPG::issue_repop, for PG::projected_log
     // actors
     void add(const pg_log_entry_t& e, bool applied = true) {
       if (!applied) {
@@ -483,7 +527,7 @@ public:
       e.mod_desc.trim_bl();
 
       // add to log
-      log.push_back(e);
+      log.push_back(e); // mempool::osd::list<pg_log_entry_t> pg_log_t::log
 
       // riter previously pointed to the previous entry
       if (rollback_info_trimmed_to_riter == log.rbegin())
@@ -499,6 +543,7 @@ public:
         // need to check the update condition
         objects[e.soid] = &(log.back());
       }
+
       if (indexed_data & PGLOG_INDEXED_CALLER_OPS) {
         if (e.reqid_is_indexed()) {
 	  caller_ops[e.reqid] = &(log.back());
@@ -518,6 +563,9 @@ public:
       }
     }
 
+    // called by
+    // PG::append_log
+    // PGLog::trim
     void trim(
       CephContext* cct,
       eversion_t s,
@@ -653,19 +701,31 @@ public:
   // never called
   void set_head(eversion_t head) { log.head = head; }
 
+  // called by
+  // PrimaryLogPG::recover_primary
+  // PrimaryLogPG::cancel_pull
+  // PG::repair_object
   void set_last_requested(version_t last_requested) {
     log.last_requested = last_requested;
   }
 
+  // never called
   void index() { log.index(); }
 
+  // never called
   void unindex() { log.unindex(); }
 
+  // called by
+  // PG::add_log_entry, which called by PG::append_log, which called by PrimaryLogPG::log_operation
   void add(const pg_log_entry_t& e, bool applied = true) {
     mark_writeout_from(e.version);
     log.add(e, applied);
   }
 
+  // called by
+  // PG::clear_primary_state
+  // PG::clear_recovery_state
+  // PG::activate
   void reset_recovery_pointers() { log.reset_recovery_pointers(); }
 
   static void clear_info_log(
