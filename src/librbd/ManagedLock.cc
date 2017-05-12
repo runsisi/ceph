@@ -75,8 +75,8 @@ ManagedLock<I>::ManagedLock(librados::IoCtx &ioctx, ContextWQ *work_queue,
     m_oid(oid),
     m_watcher(watcher),
     m_mode(mode),
-    m_blacklist_on_break_lock(blacklist_on_break_lock),
-    m_blacklist_expire_seconds(blacklist_expire_seconds),
+    m_blacklist_on_break_lock(blacklist_on_break_lock), // true
+    m_blacklist_expire_seconds(blacklist_expire_seconds), // 0
     m_state(STATE_UNLOCKED) {
 }
 
@@ -246,9 +246,9 @@ void ManagedLock<I>::get_locker(managed_lock::Locker *locker,
 }
 
 // called by
-// librbd::lock_break
-// InstanceWatcher<I>::break_instance_lock
-// LeaderWatcher<I>::break_leader_lock
+// librbd::lock_break, true
+// InstanceWatcher<I>::break_instance_lock, true
+// LeaderWatcher<I>::break_leader_lock, true
 template <typename I>
 void ManagedLock<I>::break_lock(const managed_lock::Locker &locker,
                                 bool force_break_lock, Context *on_finish) {

@@ -33,8 +33,8 @@ template <typename I>
 ExclusiveLock<I>::ExclusiveLock(I &image_ctx)
   : ML<I>(image_ctx.md_ctx, image_ctx.op_work_queue, image_ctx.header_oid,
           image_ctx.image_watcher, managed_lock::EXCLUSIVE,
-          image_ctx.blacklist_on_break_lock,
-          image_ctx.blacklist_expire_seconds),
+          image_ctx.blacklist_on_break_lock, // true
+          image_ctx.blacklist_expire_seconds), // 0, use osd default
     m_image_ctx(image_ctx) {
   Mutex::Locker locker(ML<I>::m_lock);
   ML<I>::set_state_uninitialized();

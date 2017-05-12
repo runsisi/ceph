@@ -53,9 +53,9 @@ struct C_BlacklistClient : public Context {
 template <typename I>
 BreakRequest<I>::BreakRequest(librados::IoCtx& ioctx, ContextWQ *work_queue,
                               const std::string& oid, const Locker &locker,
-                              bool exclusive, bool blacklist_locker,
-                              uint32_t blacklist_expire_seconds,
-                              bool force_break_lock, Context *on_finish)
+                              bool exclusive, bool blacklist_locker, // true
+                              uint32_t blacklist_expire_seconds, // 0
+                              bool force_break_lock, Context *on_finish) // true
   : m_ioctx(ioctx), m_cct(reinterpret_cast<CephContext *>(m_ioctx.cct())),
     m_work_queue(work_queue), m_oid(oid), m_locker(locker),
     m_exclusive(exclusive), m_blacklist_locker(blacklist_locker),

@@ -109,8 +109,8 @@ private:
 
     LeaderLock(librados::IoCtx& ioctx, ContextWQ *work_queue,
                const std::string& oid, LeaderWatcher *watcher,
-               bool blacklist_on_break_lock,
-               uint32_t blacklist_expire_seconds)
+               bool blacklist_on_break_lock, // true
+               uint32_t blacklist_expire_seconds) // 0
       : Parent(ioctx, work_queue, oid, watcher, librbd::managed_lock::EXCLUSIVE,
                blacklist_on_break_lock, blacklist_expire_seconds),
         watcher(watcher) {
