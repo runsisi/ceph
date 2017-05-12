@@ -7392,7 +7392,10 @@ void OSD::ms_fast_dispatch(Message *m)
 
   if (m->get_connection()->has_features(CEPH_FEATUREMASK_RESEND_ON_SPLIT) ||
       m->get_type() != CEPH_MSG_OSD_OP) {
-    // queue it directly
+    // queue it directly, we do handle the epoch issue here, and let
+    // PrimayLogPG::do_request handle it, if we have lower epoch than
+    // the client, the op will be put on PG::waiting_for_map
+
     // enqueue OSD::op_shardedwq
     enqueue_op(
       static_cast<MOSDFastDispatchOp*>(m)->get_spg(),
@@ -7408,8 +7411,9 @@ void OSD::ms_fast_dispatch(Message *m)
 	Mutex::Locker l(session->session_dispatch_lock);
 	op->get();
 	session->waiting_on_map.push_back(*op);
+
 	OSDMapRef nextmap = service.get_nextmap_reserved();
-	dispatch_session_waiting(session, nextmap);
+	dispatch_session_waiting(session, nextmap); // leave the op on Session::waiting_on_map if needed
 	service.release_map(nextmap);
       }
       session->put();
