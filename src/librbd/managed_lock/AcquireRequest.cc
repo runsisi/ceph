@@ -31,7 +31,7 @@ using librbd::util::create_rados_callback;
 namespace managed_lock {
 
 // created by
-// ManagedLock<I>::handle_pre_acquire_lock
+// ManagedLock<I>::handle_pre_acquire_lock, which is callback of ManagedLock<I>::send_acquire_lock
 template <typename I>
 AcquireRequest<I>* AcquireRequest<I>::create(librados::IoCtx& ioctx,
                                              Watcher *watcher,

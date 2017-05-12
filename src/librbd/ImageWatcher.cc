@@ -1169,6 +1169,7 @@ void ImageWatcher<I>::handle_error(uint64_t handle, int err) {
     set_owner_client_id(ClientId());
   }
 
+  // will Watcher::rewatch
   Watcher::handle_error(handle, err);
 }
 

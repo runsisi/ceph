@@ -2076,6 +2076,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
   // change anything that will break other reads on m (operator<<).
   MOSDOp *m = static_cast<MOSDOp*>(op->get_nonconst_req());
   assert(m->get_type() == CEPH_MSG_OSD_OP);
+
   if (m->finish_decode()) {
     op->reset_desc();   // for TrackedOp
     m->clear_payload();
@@ -6602,15 +6603,18 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 
 	watch_info_t w(cookie, timeout,
 	  ctx->op->get_req()->get_connection()->get_peer_addr());
+
 	if (op.watch.op == CEPH_OSD_WATCH_OP_WATCH ||
 	    op.watch.op == CEPH_OSD_WATCH_OP_LEGACY_WATCH) {
 	  if (oi.watchers.count(make_pair(cookie, entity))) {
 	    dout(10) << " found existing watch " << w << " by " << entity << dendl;
 	  } else {
 	    dout(10) << " registered new watch " << w << " by " << entity << dendl;
+
 	    oi.watchers[make_pair(cookie, entity)] = w;
 	    t->nop(soid);  // make sure update the object_info on disk!
 	  }
+
 	  bool will_ping = (op.watch.op == CEPH_OSD_WATCH_OP_WATCH);
 	  ctx->watch_connects.push_back(make_pair(w, will_ping));
         } else if (op.watch.op == CEPH_OSD_WATCH_OP_RECONNECT) {
@@ -8036,12 +8040,16 @@ void PrimaryLogPG::complete_disconnect_watches(
        i != to_disconnect.end();
        ++i) {
     pair<uint64_t, entity_name_t> watcher(i->cookie, i->name);
+
     auto watchers_entry = obc->watchers.find(watcher);
     if (watchers_entry != obc->watchers.end()) {
       WatchRef watch = watchers_entry->second;
+
       dout(10) << "do_osd_op_effects disconnect watcher " << watcher << dendl;
+
       obc->watchers.erase(watcher);
-      watch->remove(i->send_disconnect);
+      watch->remove(i->send_disconnect); // for PrimaryLogPG::handle_watch_timeout, true
+                                         // for PrimaryLogPG::do_osd_ops, CEPH_OSD_WATCH_OP_RECONNECT, false
     } else {
       dout(10) << "do_osd_op_effects disconnect failed to find watcher "
 	       << watcher << dendl;
@@ -8070,24 +8078,30 @@ void PrimaryLogPG::do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn)
        i != ctx->watch_connects.end();
        ++i) {
     pair<uint64_t, entity_name_t> watcher(i->first.cookie, entity);
+
     dout(15) << "do_osd_op_effects applying watch connect on session "
 	     << session.get() << " watcher " << watcher << dendl;
+
     WatchRef watch;
     if (ctx->obc->watchers.count(watcher)) {
       dout(15) << "do_osd_op_effects found existing watch watcher " << watcher
 	       << dendl;
+
       watch = ctx->obc->watchers[watcher];
     } else {
       dout(15) << "do_osd_op_effects new watcher " << watcher
 	       << dendl;
+
       watch = Watch::makeWatchRef(
 	this, osd, ctx->obc, i->first.timeout_seconds,
 	i->first.cookie, entity, conn->get_peer_addr());
+
       ctx->obc->watchers.insert(
 	make_pair(
 	  watcher,
 	  watch));
     }
+
     watch->connect(conn, i->second);
   }
 

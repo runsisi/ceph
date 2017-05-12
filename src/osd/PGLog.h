@@ -517,7 +517,6 @@ public:
     // append_log_entries_update_missing
     // PGLog::add, which called by PG::add_log_entry
     // PrimaryLogPG::issue_repop, for PG::projected_log
-    // actors
     void add(const pg_log_entry_t& e, bool applied = true) {
       if (!applied) {
 	assert(get_can_rollback_to() == head);

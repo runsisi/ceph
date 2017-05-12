@@ -17,6 +17,8 @@
 namespace librbd {
 namespace object_map {
 
+// created by
+// ObjectMap.cc/ObjectMap<I>::aio_update(..., Context *on_finish)
 template <typename I>
 void UpdateRequest<I>::send() {
   assert(m_image_ctx.snap_lock.is_locked());
@@ -41,7 +43,7 @@ void UpdateRequest<I>::send() {
   cls_client::object_map_update(&op, m_start_object_no, m_end_object_no,
 				m_new_state, m_current_state);
 
-  librados::AioCompletion *rados_completion = create_callback_completion();
+  librados::AioCompletion *rados_completion = create_callback_completion(); // this->complete
   std::vector<librados::snap_t> snaps;
   int r = m_image_ctx.md_ctx.aio_operate(
     oid, rados_completion, &op, 0, snaps,

@@ -273,6 +273,11 @@ void Message::dump(Formatter *f) const
   f->dump_string("summary", ss.str());
 }
 
+// called by
+// AsyncConnection::process, for STATE_OPEN_MESSAGE_READ_FOOTER_AND_DISPATCH
+// Pipe::read_message
+// XioConnection::handle_data_msg
+// decode_message(CephContext *cct, int crcflags, bufferlist::iterator& p), i.e., below
 Message *decode_message(CephContext *cct, int crcflags,
 			ceph_msg_header& header,
 			ceph_msg_footer& footer,
@@ -916,6 +921,11 @@ void encode_message(Message *msg, uint64_t features, bufferlist& payload)
 // We've slipped in a 0 signature at this point, so any signature checking after this will
 // fail.  PLR
 
+// called by
+// MForward::decode_payload
+// MRoute::MRoute
+// MRoute::decode_payload
+// Monitor::resend_routed_requests
 Message *decode_message(CephContext *cct, int crcflags, bufferlist::iterator& p)
 {
   ceph_msg_header h;

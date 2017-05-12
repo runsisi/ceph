@@ -46,6 +46,10 @@ struct C_BlacklistClient : public Context {
 
 } // anonymous namespace
 
+// created by
+// AcquireRequest<I>::send_break_lock, which called by ManagedLock<I>::handle_pre_acquire_lock
+// ManagedLock<I>::break_lock, which called by librbd::lock_break,
+//      InstanceWatcher<I>::break_instance_lock, LeaderWatcher<I>::break_leader_lock
 template <typename I>
 BreakRequest<I>::BreakRequest(librados::IoCtx& ioctx, ContextWQ *work_queue,
                               const std::string& oid, const Locker &locker,
@@ -106,6 +110,7 @@ void BreakRequest<I>::handle_get_watchers(int r) {
       // the current locker has alive watcher
 
       ldout(m_cct, 10) << "lock owner is still alive" << dendl;
+
       found_alive_locker = true;
     }
   }

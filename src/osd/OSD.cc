@@ -7315,6 +7315,9 @@ void OSD::maybe_share_map(
   op->check_send_map = false;
 }
 
+// called by
+// OSD::ms_fast_dispatch, for legacy client
+// OSD::dispatch_sessions_waiting_on_map
 void OSD::dispatch_session_waiting(Session *session, OSDMapRef osdmap)
 {
   assert(session->session_dispatch_lock.is_locked());
@@ -7323,11 +7326,15 @@ void OSD::dispatch_session_waiting(Session *session, OSDMapRef osdmap)
   while (i != session->waiting_on_map.end()) {
     OpRequestRef op = &(*i);
     assert(ms_can_fast_dispatch(op->get_req()));
+
     const MOSDFastDispatchOp *m = static_cast<const MOSDFastDispatchOp*>(
       op->get_req());
+
     if (m->get_min_epoch() > osdmap->get_epoch()) {
       break;
     }
+
+    // if session reset, will be cleared by OSD::session_handle_reset
     session->waiting_on_map.erase(i++);
     op->put();
 
@@ -10214,11 +10221,13 @@ bool OSD::op_is_discardable(const MOSDOp *op)
 void OSD::enqueue_op(spg_t pg, OpRequestRef& op, epoch_t epoch)
 {
   utime_t latency = ceph_clock_now() - op->get_req()->get_recv_stamp();
+
   dout(15) << "enqueue_op " << op << " prio " << op->get_req()->get_priority()
 	   << " cost " << op->get_req()->get_cost()
 	   << " latency " << latency
 	   << " epoch " << epoch
 	   << " " << *(op->get_req()) << dendl;
+
   op->osd_trace.event("enqueue op");
   op->osd_trace.keyval("priority", op->get_req()->get_priority());
   op->osd_trace.keyval("cost", op->get_req()->get_cost());

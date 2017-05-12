@@ -245,6 +245,10 @@ void ManagedLock<I>::get_locker(managed_lock::Locker *locker,
   on_finish->complete(r);
 }
 
+// called by
+// librbd::lock_break
+// InstanceWatcher<I>::break_instance_lock
+// LeaderWatcher<I>::break_leader_lock
 template <typename I>
 void ManagedLock<I>::break_lock(const managed_lock::Locker &locker,
                                 bool force_break_lock, Context *on_finish) {

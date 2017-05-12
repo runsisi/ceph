@@ -389,12 +389,15 @@ struct ceph_osd_request_head {
     }
   }
 
+  // called by
+  // Message.cc/decode_message
   void decode_payload() override {
     assert(partial_decode_needed && final_decode_needed);
+
     p = payload.begin();
 
     // Always keep here the newest version of decoding order/rule
-    if (header.version == HEAD_VERSION) {
+    if (header.version == HEAD_VERSION) { // 8
       ::decode(pgid, p);      // actual pgid
       uint32_t hash;
       ::decode(hash, p); // raw hash value
@@ -524,13 +527,20 @@ struct ceph_osd_request_head {
 	reqid.inc = client_inc;
     }
 
+    // new header.version >= HEAD_VERSION will need finish_decode which
+    // called by PrimaryLogPG::do_op to decode the remaining data
+
     partial_decode_needed = false;
   }
 
+  // called by
+  // PrimaryLogPG::do_op
   bool finish_decode() {
     assert(!partial_decode_needed); // partial decoding required
+
     if (!final_decode_needed)
       return false; // Message is already final decoded
+
     assert(header.version >= 7);
 
     ::decode(client_inc, p);

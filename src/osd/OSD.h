@@ -1527,6 +1527,7 @@ private:
   void session_handle_reset(Session *session) {
     Mutex::Locker l(session->session_dispatch_lock);
 
+    // OSD::session_waiting_for_map
     clear_session_waiting_on_map(session);
 
     session->clear_backoffs();
@@ -1536,7 +1537,7 @@ private:
      * cycles which result.
      * Bug #12338
      */
-    session->waiting_on_map.clear_and_dispose(TrackedOp::Putter());
+    session->waiting_on_map.clear_and_dispose(TrackedOp::Putter()); // pushed by OSD::ms_fast_dispatch
   }
 
 private:

@@ -69,6 +69,8 @@ protected:
 
   // called by
   // AsyncRequest::complete
+  // overrided by librbd::operation::Request to commit op event before delete op, so
+  // it override finish too
   // NOTE: temporary until converted to new state machine format
   virtual void finish_and_destroy(int r) {
     finish(r);

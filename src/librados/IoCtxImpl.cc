@@ -1772,6 +1772,7 @@ int librados::IoCtxImpl::watch(const object_t& oid, uint64_t *handle,
   version_t objver;
   C_SaferCond onfinish;
 
+  // create a new LingerOp instance and register in Objecter::linger_ops
   Objecter::LingerOp *linger_op = objecter->linger_register(oid, oloc, 0);
 
   *handle = linger_op->get_cookie();

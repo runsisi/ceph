@@ -257,23 +257,31 @@ class HandleWatchTimeout : public CancelableContext {
 public:
   bool canceled; // protected by watch->pg->lock
   explicit HandleWatchTimeout(WatchRef watch) : watch(watch), canceled(false) {}
+
   void cancel() override {
     canceled = true;
   }
+
   void finish(int) override { ceph_abort(); /* not used */ }
+
   void complete(int) override {
     OSDService *osd(watch->osd);
+
     ldout(osd->cct, 10) << "HandleWatchTimeout" << dendl;
+
     boost::intrusive_ptr<PrimaryLogPG> pg(watch->pg);
     osd->watch_lock.Unlock();
+
     pg->lock();
 
     watch->cb = NULL;
     if (!watch->is_discarded() && !canceled)
-      watch->pg->handle_watch_timeout(watch);
+      watch->pg->handle_watch_timeout(watch); // remove watch from oi.watchers, then disconnect
+
     delete this; // ~Watch requires pg lock!
 
     pg->unlock();
+
     osd->watch_lock.Lock();
   }
 };
@@ -367,7 +375,7 @@ void Watch::register_cb()
   }
 
   // ReplicatedPG::handle_watch_timeout
-  cb = new HandleWatchTimeout(self.lock());
+  cb = new HandleWatchTimeout(self.lock()); // remove from oi.watchers then disconnect
   osd->watch_timer.add_event_after(
     timeout,
     cb);
@@ -497,7 +505,10 @@ void Watch::remove(bool send_disconnect)
 {
   dout(10) << "remove" << dendl;
 
-  if (send_disconnect && conn) {
+  // PrimaryLogPG::handle_watch_timeout, send_disconnect true
+  // PrimaryLogPG::do_osd_ops, CEPH_OSD_WATCH_OP_RECONNECT, send_disconnect false
+
+  if (send_disconnect && conn) { // will be handled by Objecter::handle_watch_notify
     bufferlist empty;
     MWatchNotify *reply(new MWatchNotify(cookie, 0, 0,
 					 CEPH_WATCH_EVENT_DISCONNECT, empty));

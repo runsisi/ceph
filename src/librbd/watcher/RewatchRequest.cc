@@ -20,6 +20,8 @@ namespace watcher {
 
 using std::string;
 
+// created by
+// librbd::Watcher::rewatch
 RewatchRequest::RewatchRequest(librados::IoCtx& ioctx, const string& oid,
                                RWLock &watch_lock,
                                librados::WatchCtx2 *watch_ctx,
@@ -89,6 +91,7 @@ void RewatchRequest::handle_rewatch(int r) {
   } else if (r < 0) {
     lderr(cct) << "failed to watch object: " << cpp_strerror(r)
                << dendl;
+    // repeat until success or fatal error: blacklisted or object deleted
     rewatch();
     return;
   }

@@ -284,6 +284,9 @@ void ObjectMap<I>::aio_resize(uint64_t new_size, uint8_t default_object_state,
   req->send();
 }
 
+// called by
+// ObjectMap<I>::aio_update(..., T *callback_object), for snap_id == CEPH_NOSNAP
+// ObjectMap<I>::handle_detained_aio_update
 template <typename I>
 void ObjectMap<I>::detained_aio_update(UpdateOperation &&op) {
   CephContext *cct = m_image_ctx.cct;
@@ -292,15 +295,16 @@ void ObjectMap<I>::detained_aio_update(UpdateOperation &&op) {
   assert(m_image_ctx.snap_lock.is_locked());
   assert(m_image_ctx.object_map_lock.is_wlocked());
 
-  BlockGuardCell *cell;
+  BlockGuardCell *cell; // records a pointer to DetainedBlockExtent, reinterpret_cast to access the content
   int r = m_update_guard->detain({op.start_object_no, op.end_object_no},
                                 &op, &cell);
-  if (r < 0) {
+  if (r < 0) { // could never happen
     lderr(cct) << "failed to detain object map update: " << cpp_strerror(r)
                << dendl;
     m_image_ctx.op_work_queue->queue(op.on_finish, r);
     return;
-  } else if (r > 0) {
+  } else if (r > 0) { // the op was emplaced back of BlockGuard::m_detained_block_extents[].block_operations,
+                      // i.e., the update has to be blocked
     ldout(cct, 20) << "detaining object map update due to in-flight update: "
                    << "start=" << op.start_object_no << ", "
 		   << "end=" << op.end_object_no << ", "
@@ -311,13 +315,17 @@ void ObjectMap<I>::detained_aio_update(UpdateOperation &&op) {
     return;
   }
 
+  // ok, not blocked, update object map immediately
+
   ldout(cct, 20) << "in-flight update cell: " << cell << dendl;
-  Context *on_finish = op.on_finish;
+
+  Context *on_finish = op.on_finish; // callback of the external caller
   Context *ctx = new FunctionContext([this, cell, on_finish](int r) {
       handle_detained_aio_update(cell, r, on_finish);
     });
+
   aio_update(CEPH_NOSNAP, op.start_object_no, op.end_object_no, op.new_state,
-             op.current_state, op.parent_trace, ctx);
+             op.current_state, op.parent_trace, ctx); // ObjectMap<I>::handle_detained_aio_update
 }
 
 template <typename I>
@@ -326,13 +334,20 @@ void ObjectMap<I>::handle_detained_aio_update(BlockGuardCell *cell, int r,
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "cell=" << cell << ", r=" << r << dendl;
 
+  // aip_update may failed, which will result Request::should_complete
+  // to invalidate the object map, which will finally call this callback,
+  // so the returned result for aio_update(CEPH_NOSNAP, ...) should be
+  // lost, we only get the return result of the invalidate request
+
   typename UpdateGuard::BlockOperations block_ops;
+  // get aio_update blocked by m_update_guard->detain
   m_update_guard->release(cell, &block_ops);
 
   {
     RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
     RWLock::WLocker object_map_locker(m_image_ctx.object_map_lock);
-    for (auto &op : block_ops) {
+
+    for (auto &op : block_ops) { // send any blocked aio_update
       detained_aio_update(std::move(op));
     }
   }
@@ -340,12 +355,15 @@ void ObjectMap<I>::handle_detained_aio_update(BlockGuardCell *cell, int r,
   on_finish->complete(r);
 }
 
+// called by
+// ObjectMap<I>::detained_aio_update
+// ObjectMap<I>::aio_update(..., T *callback_object)
 template <typename I>
 void ObjectMap<I>::aio_update(uint64_t snap_id, uint64_t start_object_no,
                               uint64_t end_object_no, uint8_t new_state,
                               const boost::optional<uint8_t> &current_state,
                               const ZTracer::Trace &parent_trace,
-                              Context *on_finish) {
+                              Context *on_finish) { // external caller use T *callback_object version
   assert(m_image_ctx.snap_lock.is_locked());
 
   assert((m_image_ctx.features & RBD_FEATURE_OBJECT_MAP) != 0);
@@ -361,6 +379,7 @@ void ObjectMap<I>::aio_update(uint64_t snap_id, uint64_t start_object_no,
                  << (current_state ?
                        stringify(static_cast<uint32_t>(*current_state)) : "")
 		 << "->" << static_cast<uint32_t>(new_state) << dendl;
+
   if (snap_id == CEPH_NOSNAP) {
     if (end_object_no > m_object_map.size()) {
       ldout(cct, 20) << "skipping update of invalid object map" << dendl;
@@ -374,8 +393,10 @@ void ObjectMap<I>::aio_update(uint64_t snap_id, uint64_t start_object_no,
         break;
       }
     }
+
     if (object_no == end_object_no) {
       ldout(cct, 20) << "object map update not required" << dendl;
+
       m_image_ctx.op_work_queue->queue(on_finish, 0);
       return;
     }

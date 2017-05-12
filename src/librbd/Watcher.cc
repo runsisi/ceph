@@ -239,6 +239,8 @@ void Watcher::acknowledge_notify(uint64_t notify_id, uint64_t handle,
   m_ioctx.notify_ack(m_oid, notify_id, handle, out);
 }
 
+// called by
+// librbd::Watcher::handle_error
 void Watcher::rewatch() {
   ldout(m_cct, 10) << dendl;
 

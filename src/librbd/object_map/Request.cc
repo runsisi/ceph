@@ -21,7 +21,7 @@ bool Request::should_complete(int r) {
 
   switch (m_state)
   {
-  case STATE_REQUEST:
+  case STATE_REQUEST: // was set by ctor
     if (r < 0) {
       lderr(cct) << "failed to update object map: " << cpp_strerror(r)
 		 << dendl;

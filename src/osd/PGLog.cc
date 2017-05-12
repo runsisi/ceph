@@ -39,8 +39,10 @@ void PGLog::IndexedLog::split_out_child(
   unindex();
 
   *target = pg_log_t::split_out_child(child_pgid, split_bits);
+
   index();
   target->index();
+
   reset_rollback_info_trimmed_to_riter();
 }
 

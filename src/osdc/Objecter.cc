@@ -529,7 +529,9 @@ void Objecter::shutdown()
   }
 }
 
-// called by Objecter::_linger_submit, Objecter::handle_osd_map,
+// called by
+// Objecter::_linger_submit
+// Objecter::handle_osd_map
 // Objecter::_linger_ops_resend
 void Objecter::_send_linger(LingerOp *info,
 			    shunique_lock& sul)
@@ -541,7 +543,7 @@ void Objecter::_send_linger(LingerOp *info,
   LingerOp::shared_lock watchl(info->watch_lock);
   bufferlist *poutbl = NULL;
 
-  if (info->registered && info->is_watch) {
+  if (info->registered && info->is_watch) { // reconnect, use CEPH_OSD_WATCH_OP_RECONNECT subop
 
     // info->registered set in Objecter::_linger_commit
 
@@ -555,10 +557,11 @@ void Objecter::_send_linger(LingerOp *info,
     opv.back().op.watch.gen = ++info->register_gen;
 
     oncommit = new C_Linger_Reconnect(this, info);
-  } else {
+  } else { // initial connect, use CEPH_OSD_WATCH_OP_WATCH subop
     ldout(cct, 15) << "send_linger " << info->linger_id << " register"
 		   << dendl;
 
+    // CEPH_OSD_WATCH_OP_WATCH op was inserted by librados::IoCtxImpl::watch
     opv = info->ops;
 
     // Objecter::_linger_commit
@@ -571,6 +574,7 @@ void Objecter::_send_linger(LingerOp *info,
 
     oncommit = c;
   }
+
   watchl.unlock();
 
   Op *o = new Op(info->target.base_oid, info->target.base_oloc,
@@ -678,6 +682,8 @@ int Objecter::_normalize_watch_error(int r)
   return r;
 }
 
+// called by
+// Objecter::C_Linger_Reconnect::finish
 void Objecter::_linger_reconnect(LingerOp *info, int r)
 {
   ldout(cct, 10) << __func__ << " " << info->linger_id << " = " << r
@@ -695,6 +701,8 @@ void Objecter::_linger_reconnect(LingerOp *info, int r)
   }
 }
 
+// called by
+// Objecter::tick
 void Objecter::_send_linger_ping(LingerOp *info)
 {
   // rwlock is locked unique
@@ -736,6 +744,8 @@ void Objecter::_send_linger_ping(LingerOp *info)
   logger->inc(l_osdc_linger_ping);
 }
 
+// called by
+// Objecter::C_Linger_Ping::finish
 void Objecter::_linger_ping(LingerOp *info, int r, mono_time sent,
 			    uint32_t register_gen)
 {
@@ -759,6 +769,8 @@ void Objecter::_linger_ping(LingerOp *info, int r, mono_time sent,
   }
 }
 
+// called by
+// librados::IoCtxImpl::watch_check
 int Objecter::linger_check(LingerOp *info)
 {
   LingerOp::shared_lock l(info->watch_lock);
@@ -778,6 +790,11 @@ int Objecter::linger_check(LingerOp *info)
     1 + std::chrono::duration_cast<std::chrono::milliseconds>(age).count();
 }
 
+// called by
+// IoCtxImpl.cc/C_aio_linger_cancel::finish
+// librados::IoCtxImpl::watch, for r < 0
+// librados::IoCtxImpl::unwatch
+// librados::IoCtxImpl::notify
 void Objecter::linger_cancel(LingerOp *info)
 {
   unique_lock wl(rwlock);
@@ -785,6 +802,10 @@ void Objecter::linger_cancel(LingerOp *info)
   info->put();
 }
 
+// called by
+// Objecter::linger_cancel
+// Objecter::_scan_requests
+// Objecter::C_Linger_Map_Latest::finish
 void Objecter::_linger_cancel(LingerOp *info)
 {
   // rwlock is locked unique
@@ -807,7 +828,11 @@ void Objecter::_linger_cancel(LingerOp *info)
 }
 
 
-
+// called by
+// librados::IoCtxImpl::watch
+// librados::IoCtxImpl::aio_watch
+// librados::IoCtxImpl::notify
+// librados::IoCtxImpl::aio_notify
 Objecter::LingerOp *Objecter::linger_register(const object_t& oid,
 					      const object_locator_t& oloc,
 					      int flags)
@@ -824,10 +849,12 @@ Objecter::LingerOp *Objecter::linger_register(const object_t& oid,
 
   // Acquire linger ID
   info->linger_id = ++max_linger_id;
+
   ldout(cct, 10) << __func__ << " info " << info
 		 << " linger_id " << info->linger_id
 		 << " cookie " << info->get_cookie()
 		 << dendl;
+
   linger_ops[info->linger_id] = info;
   linger_ops_set.insert(info);
   assert(linger_ops.size() == linger_ops_set.size());
@@ -836,6 +863,9 @@ Objecter::LingerOp *Objecter::linger_register(const object_t& oid,
   return info;
 }
 
+// called by
+// librados::IoCtxImpl::watch
+// librados::IoCtxImpl::aio_watch
 ceph_tid_t Objecter::linger_watch(LingerOp *info,
 				  ObjectOperation& op,
 				  const SnapContext& snapc,
@@ -861,6 +891,9 @@ ceph_tid_t Objecter::linger_watch(LingerOp *info,
   return info->linger_id;
 }
 
+// called by
+// librados::IoCtxImpl::notify
+// librados::IoCtxImpl::aio_notify
 ceph_tid_t Objecter::linger_notify(LingerOp *info,
 				   ObjectOperation& op,
 				   snapid_t snap, bufferlist& inbl,
@@ -883,6 +916,9 @@ ceph_tid_t Objecter::linger_notify(LingerOp *info,
   return info->linger_id;
 }
 
+// called by
+// Objecter::linger_watch
+// Objecter::linger_notify
 void Objecter::_linger_submit(LingerOp *info, shunique_lock& sul)
 {
   assert(sul.owns_lock() && sul.mutex() == &rwlock);
@@ -932,7 +968,7 @@ void Objecter::handle_watch_notify(MWatchNotify *m)
   }
 
   LingerOp::unique_lock wl(info->watch_lock);
-  if (m->opcode == CEPH_WATCH_EVENT_DISCONNECT) {
+  if (m->opcode == CEPH_WATCH_EVENT_DISCONNECT) { // sent by Watch::remove
     if (!info->last_error) {
       info->last_error = -ENOTCONN;
       if (info->watch_context) {
