@@ -12712,6 +12712,7 @@ void PrimaryLogPG::cancel_pull(const hobject_t &soid)
 
   finish_recovery_op(soid);
   release_backoffs(soid);
+
   if (waiting_for_degraded_object.count(soid)) {
     dout(20) << " kicking degraded waiters on " << soid << dendl;
 
@@ -13008,10 +13009,12 @@ uint64_t PrimaryLogPG::recover_primary(uint64_t max, ThreadPool::TPHandle &handl
   PGBackend::RecoveryHandle *h = pgbackend->open_recovery_op();
 
   map<version_t, hobject_t>::const_iterator p =
-    missing.get_rmissing().lower_bound(pg_log.get_log().last_requested);
-  while (p != missing.get_rmissing().end()) {
+    missing.get_rmissing().lower_bound(pg_log.get_log().last_requested); // was set by PGLog::set_last_requested
+  while (p != missing.get_rmissing().end()) { // recover from oldest to newest
     handle.reset_tp_timeout();
+
     hobject_t soid;
+
     version_t v = p->first;
 
     if (pg_log.get_log().objects.count(p->second)) {
@@ -13025,6 +13028,7 @@ uint64_t PrimaryLogPG::recover_primary(uint64_t max, ThreadPool::TPHandle &handl
     }
 
     const pg_missing_item& item = missing.get_items().find(p->second)->second;
+
     ++p;
 
     hobject_t head = soid.get_head();
@@ -13118,16 +13122,15 @@ uint64_t PrimaryLogPG::recover_primary(uint64_t max, ThreadPool::TPHandle &handl
     if (!recovering.count(soid)) {
       if (recovering.count(head)) {
 	++skipped;
-      } else {
-        // call pgbackend->recover_object to recover both head/snapdir and snap objects
-
+      } else { // !recovering.count(soid) && !recovering.count(head)
+        // call pgbackend->recover_object to recover this object
 	int r = recover_missing(
 	  soid, need, get_recovery_op_priority(), h);
 	switch (r) {
-	case PULL_YES:
+	case PULL_YES: // recover soid started, i.e., head/snapdir exists
 	  ++started;
 	  break;
-	case PULL_OTHER:
+	case PULL_OTHER: // need to recover head/snapdir first
 	  ++started;
 	case PULL_NONE:
 	  ++skipped;
@@ -13273,7 +13276,7 @@ uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
     // oldest first!
     const pg_missing_t &m(pm->second);
 
-    // iterate this peer's missing objects
+    // iterate this peer's missing objects, from oldest to newest
     for (map<version_t, hobject_t>::const_iterator p = m.get_rmissing().begin();
 	 p != m.get_rmissing().end() && started < max;
 	   ++p) {
@@ -13336,7 +13339,9 @@ uint64_t PrimaryLogPG::recover_replicas(uint64_t max, ThreadPool::TPHandle &hand
 
       map<hobject_t,pg_missing_item>::const_iterator r = m.get_items().find(soid);
 
-      // call pgbackend->recover_object to prepare push
+      // call pgbackend->recover_object to push single object, this object may
+      // be missing on one peer, but maybe not on another, ReplicatedBackend::start_pushes
+      // will filter out those peers that missing the object to push
       started += prep_object_replica_pushes(soid, r->second.need, // the need version
 					    h);
     } // iterate peer's missing objects

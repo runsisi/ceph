@@ -275,6 +275,8 @@ void ManagedLock<I>::break_lock(const managed_lock::Locker &locker,
   on_finish->complete(r);
 }
 
+// called by
+// librbd::is_exclusive_lock_owner
 template <typename I>
 int ManagedLock<I>::assert_header_locked() {
   ldout(m_cct, 10) << dendl;
@@ -718,12 +720,17 @@ void ManagedLock<I>::handle_post_release_lock(int r) {
   complete_active_action(m_post_next_state, r);
 }
 
+// called by
+// ManagedLock<I>::execute_next_action, for ACTION_SHUT_DOWN
 template <typename I>
 void ManagedLock<I>::send_shutdown() {
   ldout(m_cct, 10) << dendl;
+
   assert(m_lock.is_locked());
+
   if (m_state == STATE_UNLOCKED) {
     m_state = STATE_SHUTTING_DOWN;
+
     m_work_queue->queue(new FunctionContext([this](int r) {
       shutdown_handler(r, create_context_callback<
           ManagedLock<I>, &ManagedLock<I>::handle_shutdown>(this));

@@ -222,7 +222,9 @@ private:
   bool m_blacklist_on_break_lock;
   uint32_t m_blacklist_expire_seconds;
 
+  // ManagedLock<I>::send_acquire_lock
   std::string m_cookie;
+  // ManagedLock<I>::send_reacquire_lock
   std::string m_new_cookie;
 
   State m_state;

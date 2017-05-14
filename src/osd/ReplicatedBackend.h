@@ -226,6 +226,9 @@ private:
 
   void _do_push(OpRequestRef op);
   void _do_pull_response(OpRequestRef op);
+
+  // called by
+  // ReplicatedBackend::handle_message, for MSG_OSD_PG_PUSH
   void do_push(OpRequestRef op) {
     if (is_primary()) {
       _do_pull_response(op);
@@ -233,6 +236,7 @@ private:
       _do_push(op);
     }
   }
+
   void do_pull(OpRequestRef op);
   void do_push_reply(OpRequestRef op);
 

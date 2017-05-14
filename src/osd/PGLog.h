@@ -403,7 +403,7 @@ public:
 	   i != log.end();
 	   ++i) {
 	if (to_index & PGLOG_INDEXED_OBJECTS) {
-	  if (i->object_is_indexed()) {
+	  if (i->object_is_indexed()) { // !is_error()
 	    objects[i->soid] = const_cast<pg_log_entry_t*>(&(*i));
 	  }
 	}
@@ -702,8 +702,8 @@ public:
 
   // called by
   // PrimaryLogPG::recover_primary
-  // PrimaryLogPG::cancel_pull
-  // PG::repair_object
+  // PrimaryLogPG::cancel_pull, set to 0
+  // PG::repair_object, set to 0
   void set_last_requested(version_t last_requested) {
     log.last_requested = last_requested;
   }

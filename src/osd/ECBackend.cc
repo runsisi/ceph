@@ -569,6 +569,7 @@ void ECBackend::continue_recovery_op(
 	recovery_ops.erase(op.hoid);
 	return;
       }
+
       m->read(
 	this,
 	op.hoid,
@@ -698,16 +699,21 @@ void ECBackend::run_recovery_op(
   int priority)
 {
   ECRecoveryHandle *h = static_cast<ECRecoveryHandle*>(_h);
+
   RecoveryMessages m;
   for (list<RecoveryOp>::iterator i = h->ops.begin();
        i != h->ops.end();
        ++i) {
     dout(10) << __func__ << ": starting " << *i << dendl;
     assert(!recovery_ops.count(i->hoid));
+
     RecoveryOp &op = recovery_ops.insert(make_pair(i->hoid, *i)).first->second;
+
     continue_recovery_op(op, &m);
   }
+
   dispatch_recovery_messages(m, priority);
+
   delete _h;
 }
 
@@ -723,16 +729,20 @@ int ECBackend::recover_object(
   RecoveryHandle *_h)
 {
   ECRecoveryHandle *h = static_cast<ECRecoveryHandle*>(_h);
+
   h->ops.push_back(RecoveryOp());
+
   h->ops.back().v = v;
   h->ops.back().hoid = hoid;
   h->ops.back().obc = obc;
   h->ops.back().recovery_info.soid = hoid;
   h->ops.back().recovery_info.version = v;
+
   if (obc) {
     h->ops.back().recovery_info.size = obc->obs.oi.size;
     h->ops.back().recovery_info.oi = obc->obs.oi;
   }
+
   if (hoid.is_snap()) {
     if (obc) {
       assert(obc->ssc);
@@ -744,17 +754,21 @@ int ECBackend::recover_object(
       assert(0 == "neither obc nor head set for a snap object");
     }
   }
+
   h->ops.back().recovery_progress.omap_complete = true;
+
   for (set<pg_shard_t>::const_iterator i =
 	 get_parent()->get_actingbackfill_shards().begin();
        i != get_parent()->get_actingbackfill_shards().end();
        ++i) {
     dout(10) << "checking " << *i << dendl;
+
     if (get_parent()->get_shard_missing(*i).is_missing(hoid)) {
       h->ops.back().missing_on.insert(*i);
       h->ops.back().missing_on_shards.insert(i->shard);
     }
   }
+
   dout(10) << __func__ << ": built op " << h->ops.back() << dendl;
   return 0;
 }

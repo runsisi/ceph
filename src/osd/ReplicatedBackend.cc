@@ -1490,7 +1490,7 @@ void ReplicatedBackend::repop_commit(RepModifyRef rm)
 // ReplicatedBackend::prep_push_to_replica
 void ReplicatedBackend::calc_head_subsets(
   ObjectContextRef obc, SnapSet& snapset, const hobject_t& head,
-  const pg_missing_t& missing,
+  const pg_missing_t& missing, // PG::peer_missing[peer]
   const hobject_t &last_backfill,
   interval_set<uint64_t>& data_subset,
   map<hobject_t, interval_set<uint64_t>>& clone_subsets,
@@ -1503,11 +1503,12 @@ void ReplicatedBackend::calc_head_subsets(
   if (size)
     data_subset.insert(0, size);
 
-  if (get_parent()->get_pool().allow_incomplete_clones()) {
+  if (get_parent()->get_pool().allow_incomplete_clones()) { // cache pool
     dout(10) << __func__ << ": caching (was) enabled, skipping clone subsets" << dendl;
     return;
   }
 
+  // default true
   if (!cct->_conf->osd_recover_clone_overlap) {
     dout(10) << "calc_head_subsets " << head << " -- osd_recover_clone_overlap disabled" << dendl;
     return;
@@ -1515,30 +1516,39 @@ void ReplicatedBackend::calc_head_subsets(
 
 
   interval_set<uint64_t> cloning;
+
   interval_set<uint64_t> prev;
   if (size)
     prev.insert(0, size);
 
-  for (int j=snapset.clones.size()-1; j>=0; j--) {
+  for (int j=snapset.clones.size()-1; j>=0; j--) { // search down to lower snaps
     hobject_t c = head;
     c.snap = snapset.clones[j];
+
     prev.intersection_of(snapset.clone_overlap[snapset.clones[j]]);
-    if (!missing.is_missing(c) &&
+
+    if (!missing.is_missing(c) && // PG::peer_missing[peer]
 	c < last_backfill &&
 	get_parent()->try_lock_for_read(c, manager)) {
       dout(10) << "calc_head_subsets " << head << " has prev " << c
 	       << " overlap " << prev << dendl;
+
       clone_subsets[c] = prev;
       cloning.union_of(prev);
       break;
     }
+
+    // try older snap, NOTE: prev has been updated to cover only the overlapped area
+
     dout(10) << "calc_head_subsets " << head << " does not have prev " << c
 	     << " overlap " << prev << dendl;
   }
 
+  // for head, no newer snaps to search
 
-  if (cloning.num_intervals() > cct->_conf->osd_recover_clone_overlap_limit) {
+  if (cloning.num_intervals() > cct->_conf->osd_recover_clone_overlap_limit) { // default 10
     dout(10) << "skipping clone, too many holes" << dendl;
+
     get_parent()->release_locks(manager);
     clone_subsets.clear();
     cloning.clear();
@@ -1558,7 +1568,7 @@ void ReplicatedBackend::calc_head_subsets(
 // ReplicatedBackend::recalc_subsets
 void ReplicatedBackend::calc_clone_subsets(
   SnapSet& snapset, const hobject_t& soid,
-  const pg_missing_t& missing,
+  const pg_missing_t& missing, // for pull PG::pg_log.missing, for push PG::peer_missing[peer]
   const hobject_t &last_backfill,
   interval_set<uint64_t>& data_subset,
   map<hobject_t, interval_set<uint64_t>>& clone_subsets,
@@ -1571,7 +1581,7 @@ void ReplicatedBackend::calc_clone_subsets(
   if (size)
     data_subset.insert(0, size);
 
-  if (get_parent()->get_pool().allow_incomplete_clones()) {
+  if (get_parent()->get_pool().allow_incomplete_clones()) { // cache pool
     dout(10) << __func__ << ": caching (was) enabled, skipping clone subsets" << dendl;
     return;
   }
@@ -1583,21 +1593,23 @@ void ReplicatedBackend::calc_clone_subsets(
   }
 
   unsigned i;
-  for (i=0; i < snapset.clones.size(); i++)
+  for (i=0; i < snapset.clones.size(); i++) // ascending order, locate the snapid
     if (snapset.clones[i] == soid.snap)
       break;
 
-  // any overlap with next older clone?
   interval_set<uint64_t> cloning;
+
+  // any overlap with next older clone?
   interval_set<uint64_t> prev;
   if (size)
     prev.insert(0, size);
 
-  for (int j=i-1; j>=0; j--) {
+  for (int j=i-1; j>=0; j--) { // search down to the older snaps
     hobject_t c = soid;
-
     c.snap = snapset.clones[j];
+
     prev.intersection_of(snapset.clone_overlap[snapset.clones[j]]);
+
     if (!missing.is_missing(c) &&
 	c < last_backfill &&
 	get_parent()->try_lock_for_read(c, manager)) {
@@ -1609,19 +1621,24 @@ void ReplicatedBackend::calc_clone_subsets(
       break;
     }
 
+    // try older snap, NOTE: prev has been updated to cover only the overlapped area
+
     dout(10) << "calc_clone_subsets " << soid << " does not have prev " << c
 	     << " overlap " << prev << dendl;
   }
 
   // overlap with next newest?
   interval_set<uint64_t> next;
+
   if (size)
     next.insert(0, size);
-  for (unsigned j=i+1; j<snapset.clones.size(); j++) {
-    hobject_t c = soid;
 
+  for (unsigned j=i+1; j<snapset.clones.size(); j++) { // search up to the newer snaps
+    hobject_t c = soid;
     c.snap = snapset.clones[j];
+
     next.intersection_of(snapset.clone_overlap[snapset.clones[j-1]]);
+
     if (!missing.is_missing(c) &&
 	c < last_backfill &&
 	get_parent()->try_lock_for_read(c, manager)) {
@@ -1735,7 +1752,9 @@ void ReplicatedBackend::prepare_pull(
     assert(ssc);
 
     dout(10) << " snapset " << ssc->snapset << dendl;
+
     recovery_info.ss = ssc->snapset;
+
     calc_clone_subsets(
       ssc->snapset, soid, get_parent()->get_local_missing(), // PG::pg_log.missing
       get_info().last_backfill,
@@ -1815,6 +1834,10 @@ int ReplicatedBackend::prep_push_to_replica(
 
     // --- SNAP -----------------------------------------------------------------
 
+    // PrimaryLogPG::recover_replicas only allow the snap object to recover
+    // if the primary head/snapdir object is not missing, so the tests here
+    // should not be needed
+
     hobject_t head = soid;
     head.snap = CEPH_NOSNAP;
 
@@ -1846,7 +1869,9 @@ int ReplicatedBackend::prep_push_to_replica(
     assert(ssc);
 
     dout(15) << "push_to_replica snapset is " << ssc->snapset << dendl;
+
     pop->recovery_info.ss = ssc->snapset;
+
     map<pg_shard_t, pg_missing_t>::const_iterator pm =
       get_parent()->get_shard_missing().find(peer); // PG::peer_missing[peer]
     assert(pm != get_parent()->get_shard_missing().end());
@@ -1911,7 +1936,7 @@ int ReplicatedBackend::prep_push(ObjectContextRef obc,
 
 // called by
 // ReplicatedBackend::prep_push_to_replica
-// ReplicatedBackend::prep_push, i.e., the method above
+// ReplicatedBackend::prep_push, i.e., the method above, with empty clone_subsets
 int ReplicatedBackend::prep_push(
   ObjectContextRef obc,
   const hobject_t& soid, pg_shard_t peer,
@@ -2050,7 +2075,7 @@ void ReplicatedBackend::submit_push_complete(
 }
 
 // called by
-// ReplicatedBackend::handle_pull_response
+// ReplicatedBackend::handle_pull_response, which called by ReplicatedBackend::_do_pull_response
 ObjectRecoveryInfo ReplicatedBackend::recalc_subsets(
   const ObjectRecoveryInfo& recovery_info,
   SnapSetContext *ssc,
@@ -2073,7 +2098,6 @@ ObjectRecoveryInfo ReplicatedBackend::recalc_subsets(
 
 // called by
 // ReplicatedBackend::_do_pull_response
-// ReplicatedBackend::sub_op_push
 bool ReplicatedBackend::handle_pull_response(
   pg_shard_t from, const PushOp &pop, PullOp *response,
   list<pull_complete_info> *to_continue,
@@ -2520,7 +2544,6 @@ void ReplicatedBackend::prep_push_op_blank(const hobject_t& soid, PushOp *op)
 
 // called by
 // ReplicatedBackend::do_push_reply
-// ReplicatedBackend::sub_op_push_reply
 bool ReplicatedBackend::handle_push_reply(
   pg_shard_t peer, const PushReplyOp &op, PushOp *reply)
 {
@@ -2607,7 +2630,6 @@ done:
 
 // called by
 // ReplicatedBackend::do_pull
-// ReplicatedBackend::sub_op_pull
 void ReplicatedBackend::handle_pull(pg_shard_t peer, PullOp &op, PushOp *reply)
 {
   const hobject_t &soid = op.soid;

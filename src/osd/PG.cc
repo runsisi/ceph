@@ -805,7 +805,9 @@ void PG::discover_all_missing(map<int, map<spg_t,pg_query_t> > &query_map)
     // Request missing
     dout(10) << __func__ << ": osd." << peer << ": requesting pg_missing_t"
 	     << dendl;
+
     peer_missing_requested.insert(peer);
+
     query_map[peer.osd][spg_t(info.pgid.pgid, peer.shard)] =
       pg_query_t(
 	pg_query_t::FULLLOG,
@@ -5707,6 +5709,7 @@ bool PG::append_log_entries_update_missing(
   assert(entries.begin()->version > info.last_update);
 
   PGLogEntryHandler rollbacker{this, &t};
+
   bool invalidate_stats =
     pg_log.append_new_log_entries(info.last_backfill,
 				  info.last_backfill_bitwise,

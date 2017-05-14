@@ -3820,7 +3820,7 @@ public:
   // called by
   // PG::activate
   // PGLog::missing_add_event, which never called
-  // append_log_entries_update_missing
+  // PGLog::append_log_entries_update_missing
   void add_next_event(const pg_log_entry_t& e) {
     if (e.is_update()) {
       map<hobject_t, item>::iterator missing_it;
@@ -3879,6 +3879,11 @@ public:
     }
   }
 
+  // called by
+  // pg_missing_set::split_into
+  // PG::repair_object
+  // PGLog::missing_add
+  // PrimaryLogPG::prep_backfill_object_push
   void add(const hobject_t& oid, eversion_t need, eversion_t have) {
     missing[oid] = item(need, have);
     rmissing[need.version] = oid;
