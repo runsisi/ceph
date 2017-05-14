@@ -3859,6 +3859,9 @@ public:
     tracker.changed(e.soid);
   }
 
+  // called by
+  // PGLog::revise_need, which never called
+  // PGLog::_merge_object_divergent_entries
   void revise_need(hobject_t oid, eversion_t need) {
     if (missing.count(oid)) {
       rmissing.erase(missing[oid].need.version);
@@ -3872,6 +3875,10 @@ public:
     tracker.changed(oid);
   }
 
+  // called by
+  // PGLog::_merge_object_divergent_entries
+  // PrimaryLogPG::begin_peer_recover
+  // PGLog::revise_have, which never called
   void revise_have(hobject_t oid, eversion_t have) {
     if (missing.count(oid)) {
       tracker.changed(oid);

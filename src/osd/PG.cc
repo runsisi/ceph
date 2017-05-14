@@ -3312,15 +3312,20 @@ int PG::_prepare_write_info(CephContext* cct,
   if (!dirty_big_info && try_fast_info &&
       info.last_update > last_written_info.last_update) {
     pg_fast_info_t fast;
+
     fast.populate_from(info);
     bool did = fast.try_apply_to(&last_written_info);
     assert(did);  // we verified last_update increased above
+
     if (info == last_written_info) {
       ::encode(fast, (*km)[fastinfo_key]);
+
       if (logger)
 	logger->inc(l_osd_pg_fastinfo);
+
       return 0;
     }
+
     generic_dout(30) << __func__ << " fastinfo failed, info:\n";
     {
       JSONFormatter jf(true);
@@ -3335,20 +3340,26 @@ int PG::_prepare_write_info(CephContext* cct,
     }
     *_dout << dendl;
   }
+
   last_written_info = info;
 
   // info.  store purged_snaps separately.
   interval_set<snapid_t> purged_snaps;
   purged_snaps.swap(info.purged_snaps);
+
   ::encode(info, (*km)[info_key]);
+
   purged_snaps.swap(info.purged_snaps);
 
   if (dirty_big_info) {
     // potentially big stuff
     bufferlist& bigbl = (*km)[biginfo_key];
+
     ::encode(past_intervals, bigbl);
     ::encode(info.purged_snaps, bigbl);
+
     //dout(20) << "write_info bigbl " << bigbl.length() << dendl;
+
     if (logger)
       logger->inc(l_osd_pg_biginfo);
   }
@@ -3409,8 +3420,10 @@ void PG::prepare_write_info(map<string,bufferlist> *km)
 				cct->_conf->osd_fast_info,
 				osd->logger);
   assert(ret == 0);
+
   if (need_update_epoch)
     last_epoch = get_osdmap()->get_epoch();
+
   last_persisted_osdmap_ref = osdmap_ref;
 
   dirty_info = false;
@@ -3563,6 +3576,7 @@ void PG::add_log_entry(const pg_log_entry_t& e, bool applied)
   
   // raise last_update.
   assert(e.version > info.last_update);
+
   info.last_update = e.version;
 
   // raise user_version, if it increased (it may have not get bumped
@@ -3589,7 +3603,8 @@ void PG::append_log(
   bool transaction_applied)
 {
   if (transaction_applied)
-    update_snap_map(logv, t);
+    update_snap_map(logv, t); // iterate log entries to decode pg_log_entry_t::snaps to
+                              // snap_mapper.add_oid/snap_mapper.update_snaps
 
   /* The primary has sent an info updating the history, but it may not
    * have arrived yet.  We want to make sure that we cannot remember this
@@ -3599,9 +3614,11 @@ void PG::append_log(
   if (info.last_epoch_started != info.history.last_epoch_started) {
     info.history.last_epoch_started = info.last_epoch_started;
   }
+
   if (info.last_interval_started != info.history.last_interval_started) {
     info.history.last_interval_started = info.last_interval_started;
   }
+
   dout(10) << "append_log " << pg_log.get_log() << " " << logv << dendl;
 
   PGLogEntryHandler handler{this, &t};
@@ -3638,6 +3655,7 @@ void PG::append_log(
     pg_log.roll_forward_to(
       roll_forward_to,
       &handler);
+
     t.register_on_applied(
       new C_UpdateLastRollbackInfoTrimmedToApplied(
 	this,
@@ -3841,6 +3859,7 @@ void PG::update_snap_map(
 	} catch (...) {
 	  snaps.clear();
 	}
+
 	set<snapid_t> _snaps(snaps.begin(), snaps.end());
 
 	if (i->is_clone() || i->is_promote()) {

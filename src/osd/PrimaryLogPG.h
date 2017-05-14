@@ -411,7 +411,7 @@ public:
   // called by
   // ECBackend::handle_sub_write
   // ReplicatedBackend::submit_transaction, with transaction_applied set to true
-  // ReplicatedBackend::sub_op_modify
+  // ReplicatedBackend::do_repop
   void log_operation(
     const vector<pg_log_entry_t> &logv,
     const boost::optional<pg_hit_set_history_t> &hset_history,

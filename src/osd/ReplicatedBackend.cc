@@ -476,7 +476,7 @@ void generate_transaction(
       ::encode(oiter->second.updated_snaps->second, bl);
       // log_entry_t::snaps was set by PrimaryLogPG::make_writeable/PrimaryLogPG::finish_ctx
       le.snaps.swap(bl);
-      le.snaps.reassign_to_mempool(mempool::mempool_osd_pglog);
+      le.snaps.reassign_to_mempool(mempool::mempool_osd_pglog); // used by PG::update_snap_map
     }
   }
 

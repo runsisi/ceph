@@ -467,7 +467,7 @@ void PGLog::check() {
 void PGLog::write_log_and_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist> *km,
-  const coll_t& coll, const ghobject_t &log_oid,
+  const coll_t& coll, const ghobject_t &log_oid, // pgmeta_oid
   bool require_rollback)
 {
   if (is_dirty()) {
@@ -561,6 +561,7 @@ void PGLog::_write_log_and_missing_wo_missing(
        i != trimmed.end();
        ++i) {
     to_remove.insert(i->get_key_name());
+
     if (log_keys_debug) {
       assert(log_keys_debug->count(i->get_key_name()));
       log_keys_debug->erase(i->get_key_name());
@@ -570,12 +571,15 @@ void PGLog::_write_log_and_missing_wo_missing(
 //dout(10) << "write_log_and_missing, clearing up to " << dirty_to << dendl;
   if (touch_log)
     t.touch(coll, log_oid);
+
   if (dirty_to != eversion_t()) {
     t.omap_rmkeyrange(
       coll, log_oid,
       eversion_t().get_key_name(), dirty_to.get_key_name());
+
     clear_up_to(log_keys_debug, dirty_to.get_key_name());
   }
+
   if (dirty_to != eversion_t::max() && dirty_from != eversion_t::max()) {
     //   dout(10) << "write_log_and_missing, clearing from " << dirty_from << dendl;
     t.omap_rmkeyrange(

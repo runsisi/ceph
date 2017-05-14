@@ -469,15 +469,28 @@ public:
       }
       return false;
     }
+
+    // called by
+    // PG::clear_primary_state
+    // PrimaryLogPG::_clear_recovery_state
     void clear() {
       needs_recovery_map.clear();
       missing_loc.clear();
       missing_loc_sources.clear();
     }
 
+    // called by
+    // PG::repair_object
+    // PrimaryLogPG::on_local_recover
+    // PrimaryLogPG::recover_primary
+    // PrimaryLogPG::prep_object_replica_pushes
     void add_location(const hobject_t &hoid, pg_shard_t location) {
       missing_loc[hoid].insert(location);
     }
+
+    // called by
+    // PrimaryLogPG::failed_push
+    // PrimaryLogPG::prep_object_replica_pushes
     void remove_location(const hobject_t &hoid, pg_shard_t location) {
       missing_loc[hoid].erase(location);
     }

@@ -534,6 +534,7 @@ public:
 
       assert(e.version > head);
       assert(head.version == 0 || e.version.version > head.version);
+
       head = e.version;
 
       // to our index
@@ -671,6 +672,7 @@ public:
 
   const pg_missing_tracker_t& get_missing() const { return missing; } // pg_missing_tracker_t
 
+  // never called
   void revise_have(hobject_t oid, eversion_t have) {
     missing.revise_have(oid, have);
   }
