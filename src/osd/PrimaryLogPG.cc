@@ -4244,6 +4244,7 @@ int PrimaryLogPG::trim_object(
     old_snaps.insert(snapset.clone_snaps[coid.snap].begin(),
 		     snapset.clone_snaps[coid.snap].end());
   }
+
   if (old_snaps.empty()) {
     osd->clog->error() << __func__ << " No object info snaps for " << coid;
     return -ENOENT;
@@ -4376,6 +4377,7 @@ int PrimaryLogPG::trim_object(
   } else { // !new_snaps.empty()
     // save adjusted snaps for this object
     dout(10) << coid << " snaps " << old_snaps << " -> " << new_snaps << dendl;
+
     if (legacy) {
       coi.legacy_snaps = vector<snapid_t>(new_snaps.rbegin(), new_snaps.rend());
     } else {
@@ -4413,6 +4415,7 @@ int PrimaryLogPG::trim_object(
   // save head snapset
   dout(10) << coid << " new snapset " << snapset << " on "
 	   << snapset_obc->obs.oi << dendl;
+
   if (snapset.clones.empty() &&
       (!snapset.head_exists ||
        (snapset_obc->obs.oi.is_whiteout() &&
@@ -7926,6 +7929,7 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
 	     << " to " << coid << " v " << ctx->at_version
 	     << " snaps=" << snaps
 	     << " snapset=" << ctx->new_snapset << dendl;
+
     ctx->log.push_back(pg_log_entry_t(pg_log_entry_t::CLONE, coid, ctx->at_version,
 				      ctx->obs->oi.version,
 				      ctx->obs->oi.user_version,
@@ -10426,7 +10430,7 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
     ctx->at_version,
     std::move(ctx->op_t),
     pg_trim_to,
-    min_last_complete_ondisk,
+    min_last_complete_ondisk, // not used
     ctx->log, // vector<pg_log_entry_t>
     ctx->updated_hset_history,
     onapplied_sync,     // C_OSD_OndiskWriteUnlock
@@ -11863,7 +11867,7 @@ void PrimaryLogPG::_committed_pushed_object(
 	// we are fully up to date.  tell the primary!
 	osd->send_message_osd_cluster(
 	  get_primary().osd,
-	  new MOSDPGTrim(
+	  new MOSDPGTrim(       // will be handled by OSD::handle_pg_trim
 	    get_osdmap()->get_epoch(),
 	    spg_t(info.pgid.pgid, get_primary().shard),
 	    last_complete_ondisk),

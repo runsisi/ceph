@@ -68,8 +68,7 @@ class PG_RecoveryQueueAsync : public Context {
 }
 
 // created by
-// ReplicatedBackend::sub_op_modify
-// replica PG write onreadable callback, see ReplicatedBackend::sub_op_modify
+// ReplicatedBackend::do_repop
 struct ReplicatedBackend::C_OSD_RepModifyApply : public Context {
   ReplicatedBackend *pg;
   RepModifyRef rm;
@@ -81,8 +80,7 @@ struct ReplicatedBackend::C_OSD_RepModifyApply : public Context {
 };
 
 // created by
-// ReplicatedBackend::sub_op_modify
-// replica PG write ondisk callback, see ReplicatedBackend::sub_op_modify
+// ReplicatedBackend::do_repop
 struct ReplicatedBackend::C_OSD_RepModifyCommit : public Context {
   ReplicatedBackend *pg;
   RepModifyRef rm;
@@ -450,7 +448,8 @@ public:
 };
 
 // called by
-// ReplicatedBackend::submit_transaction, which called by PrimaryLogPG::issue_repop
+// ReplicatedBackend::submit_transaction, which called by PrimaryLogPG::issue_repop, which
+//      can be called by PrimaryLogPG::execute_ctx/PrimaryLogPG::simple_opc_submit
 void generate_transaction(
   PGTransactionUPtr &pgt,
   const coll_t &coll,
@@ -471,12 +470,13 @@ void generate_transaction(
 
     // updated by PGTransaction::update_snaps, which called by PrimaryLogPG::trim_object,
     // which called by PrimaryLogPG::AwaitAsyncWork::react(const DoSnapWork)
-    if (oiter != pgt->op_map.end() && oiter->second.updated_snaps) {
+    if (oiter != pgt->op_map.end() && oiter->second.updated_snaps) { // we are called by PrimaryLogPG::simple_opc_submit
       bufferlist bl(oiter->second.updated_snaps->second.size() * 8 + 8);
       ::encode(oiter->second.updated_snaps->second, bl);
       // log_entry_t::snaps was set by PrimaryLogPG::make_writeable/PrimaryLogPG::finish_ctx
       le.snaps.swap(bl);
-      le.snaps.reassign_to_mempool(mempool::mempool_osd_pglog); // used by PG::update_snap_map
+      le.snaps.reassign_to_mempool(mempool::mempool_osd_pglog); // used by PG::update_snap_map <- PG::append_log
+                                                                // <- PrimaryLogPG::log_operation <- ReplicatedBackend::submit_transaction
     }
   }
 
@@ -612,10 +612,10 @@ void generate_transaction(
 void ReplicatedBackend::submit_transaction(
   const hobject_t &soid,
   const object_stat_sum_t &delta_stats,
-  const eversion_t &at_version,
+  const eversion_t &at_version,         // ctx->at_version
   PGTransactionUPtr &&_t,
-  const eversion_t &trim_to,
-  const eversion_t &roll_forward_to,
+  const eversion_t &trim_to,            // pg_trim_to
+  const eversion_t &roll_forward_to,    // min_last_complete_ondisk, not used
   const vector<pg_log_entry_t> &_log_entries,
   boost::optional<pg_hit_set_history_t> &hset_history,
   Context *on_local_applied_sync, // PrimaryLogPG.cc/C_OSD_OndiskWriteUnlock
@@ -657,7 +657,7 @@ void ReplicatedBackend::submit_transaction(
 	tid,
 	on_all_commit,  // PrimaryLogPG.cc/C_OSD_RepopCommit
 	on_all_acked,   // PrimaryLogPG.cc/C_OSD_RepopApplied
-	orig_op, at_version)
+	orig_op, at_version) // ctx->at_version
       )
     ).first->second;
 
@@ -671,11 +671,11 @@ void ReplicatedBackend::submit_transaction(
   // send MOSDRepOp to PG::actingbackfill
   issue_op(
     soid,
-    at_version,
+    at_version, // ctx->at_version
     tid,
     reqid,
-    trim_to,
-    at_version,
+    trim_to,    // pg_trim_to
+    at_version, // ctx->at_version
     added.size() ? *(added.begin()) : hobject_t(),
     removed.size() ? *(removed.begin()) : hobject_t(),
     log_entries,
@@ -691,9 +691,9 @@ void ReplicatedBackend::submit_transaction(
   parent->log_operation(
     log_entries,
     hset_history,
-    trim_to,
-    at_version,
-    true,
+    trim_to,    // pg_trim_to
+    at_version, // ctx->at_version
+    true,       // transaction_applied
     op_t);
 
   // ObjectStore::Transaction::on_applied_sync
@@ -1204,14 +1204,14 @@ void ReplicatedBackend::do_push_reply(OpRequestRef op)
 }
 
 // called by
-// ReplicatedBackend::issue_op
+// ReplicatedBackend::issue_op, which called by ReplicatedBackend::submit_transaction
 Message * ReplicatedBackend::generate_subop(
   const hobject_t &soid,
   const eversion_t &at_version,
   ceph_tid_t tid,
   osd_reqid_t reqid,
   eversion_t pg_trim_to,
-  eversion_t pg_roll_forward_to,
+  eversion_t pg_roll_forward_to, // ctx->at_version
   hobject_t new_temp_oid,
   hobject_t discard_temp_oid,
   const vector<pg_log_entry_t> &log_entries,
@@ -1221,6 +1221,7 @@ Message * ReplicatedBackend::generate_subop(
   const pg_info_t &pinfo)
 {
   int acks_wanted = CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK;
+
   // forward the write/update/whatever
   MOSDRepOp *wr = new MOSDRepOp(
     reqid, parent->whoami_shard(),
@@ -1231,16 +1232,18 @@ Message * ReplicatedBackend::generate_subop(
     tid, at_version);
 
   // ship resulting transaction, log entries, and pg_stats
-  if (!parent->should_send_op(peer, soid)) { // call PrimaryLogPG::should_send_op
+  if (!parent->should_send_op(peer, soid)) { // send op_t? if the peer is a backfill target, do not send op_t
     dout(10) << "issue_repop shipping empty opt to osd." << peer
 	     <<", object " << soid
 	     << " beyond MAX(last_backfill_started "
 	     << ", pinfo.last_backfill "
 	     << pinfo.last_backfill << ")" << dendl;
+
     ObjectStore::Transaction t;
-    ::encode(t, wr->get_data());
+    ::encode(t, wr->get_data()); // empty tx
   } else {
     ::encode(op_t, wr->get_data());
+
     wr->get_header().data_off = op_t.get_data_alignment();
   }
 
@@ -1266,11 +1269,11 @@ Message * ReplicatedBackend::generate_subop(
 // ReplicatedBackend::submit_transaction
 void ReplicatedBackend::issue_op(
   const hobject_t &soid,
-  const eversion_t &at_version,
+  const eversion_t &at_version, // ctx->at_version
   ceph_tid_t tid,
   osd_reqid_t reqid,
   eversion_t pg_trim_to,
-  eversion_t pg_roll_forward_to,
+  eversion_t pg_roll_forward_to, // ctx->at_version
   hobject_t new_temp_oid,
   hobject_t discard_temp_oid,
   const vector<pg_log_entry_t> &log_entries,
@@ -1307,7 +1310,7 @@ void ReplicatedBackend::issue_op(
       tid,
       reqid,
       pg_trim_to,
-      pg_roll_forward_to,
+      pg_roll_forward_to,       // ctx->at_version
       new_temp_oid,             // see generate_transaction
       discard_temp_oid,         // see generate_transaction
       log_entries,
@@ -1315,16 +1318,17 @@ void ReplicatedBackend::issue_op(
       op_t,
       peer,
       pinfo);
+
     if (op->op)
       wr->trace.init("replicated op", nullptr, &op->op->pg_trace);
+
     get_parent()->send_message_osd_cluster(
       peer.osd, wr, get_osdmap()->get_epoch());
   }
 }
 
 // called by
-// ReplicatedBackend::handle_message, for MSG_OSD_SUBOP, MSG_OSD_REPOP
-// sub op modify
+// ReplicatedBackend::handle_message, for MSG_OSD_REPOP
 void ReplicatedBackend::do_repop(OpRequestRef op)
 {
   static_cast<MOSDRepOp*>(op->get_nonconst_req())->finish_decode();
@@ -1368,11 +1372,14 @@ void ReplicatedBackend::do_repop(OpRequestRef op)
 
     add_temp_obj(m->new_temp_oid);
   }
+
   if (m->discard_temp_oid != hobject_t()) {
     dout(20) << __func__ << " stop tracking temp " << m->discard_temp_oid << dendl;
+
     if (rm->opt.empty()) {
       dout(10) << __func__ << ": removing object " << m->discard_temp_oid
 	       << " since we won't get the transaction" << dendl;
+
       rm->localt.remove(coll, ghobject_t(m->discard_temp_oid));
     }
 

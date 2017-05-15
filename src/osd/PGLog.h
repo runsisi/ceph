@@ -737,6 +737,10 @@ public:
     eversion_t trim_to,
     pg_info_t &info);
 
+  // called by
+  // PG::append_log
+  // PrimaryLogPG::on_local_recover
+  // PGLog::roll_forward, i.e., below, which set roll_forward_to to log.head
   void roll_forward_to(
     eversion_t roll_forward_to,
     LogEntryHandler *h) {
@@ -750,6 +754,10 @@ public:
     return log.get_can_rollback_to();
   }
 
+  // called by
+  // PG::activate
+  // PG::append_log
+  // PrimaryLogPG::on_removal
   void roll_forward(LogEntryHandler *h) {
     roll_forward_to(
       log.head,
@@ -1270,12 +1278,14 @@ public:
   // called by
   // PG::read_state
   void read_log_and_missing(
-    ObjectStore *store, coll_t pg_coll,
-    coll_t log_coll, ghobject_t log_oid,
+    ObjectStore *store,
+    coll_t pg_coll,     // PG::coll
+    coll_t log_coll,    // PG::coll
+    ghobject_t log_oid, // PG::pgmeta_oid
     const pg_info_t &info,
     ostringstream &oss,
-    bool tolerate_divergent_missing_log,
-    bool debug_verify_stored_missing = false
+    bool tolerate_divergent_missing_log,        // false
+    bool debug_verify_stored_missing = false    // false
     ) {
     return read_log_and_missing(
       store, pg_coll, log_coll, log_oid, info,
@@ -1291,16 +1301,18 @@ public:
   // PGLog::read_log_and_missing, i.e., above
   // ceph_objectstore_tool.cc/get_log
   template <typename missing_type>
-  static void read_log_and_missing(ObjectStore *store, coll_t pg_coll,
-    coll_t log_coll, ghobject_t log_oid,
+  static void read_log_and_missing(ObjectStore *store,
+    coll_t pg_coll,
+    coll_t log_coll,
+    ghobject_t log_oid,
     const pg_info_t &info,
     IndexedLog &log,
     missing_type &missing, ostringstream &oss,
-    bool tolerate_divergent_missing_log,
+    bool tolerate_divergent_missing_log, // _conf->osd_ignore_stale_divergent_priors, i.e., false, for both caller
     bool *clear_divergent_priors = NULL,
     const DoutPrefixProvider *dpp = NULL,
     set<string> *log_keys_debug = 0,
-    bool debug_verify_stored_missing = false
+    bool debug_verify_stored_missing = false // false, for both caller
     ) {
     ldpp_dout(dpp, 20) << "read_log_and_missing coll " << pg_coll
 		       << " log_oid " << log_oid << dendl;
@@ -1314,14 +1326,16 @@ public:
     // will get overridden below if it had been recorded
     eversion_t on_disk_can_rollback_to = info.last_update;
     eversion_t on_disk_rollback_info_trimmed_to = eversion_t();
+
     ObjectMap::ObjectMapIterator p = store->get_omap_iterator(log_coll, log_oid);
+
     map<eversion_t, hobject_t> divergent_priors;
     bool has_divergent_priors = false;
     list<pg_log_entry_t> entries;
     if (p) {
       for (p->seek_to_first(); p->valid() ; p->next(false)) {
 	// non-log pgmeta_oid keys are prefixed with _; skip those
-	if (p->key()[0] == '_')
+	if (p->key()[0] == '_') // i.e., "_infover"/"_info"/"_biginfo"/"_epoch"/"_fastinfo"
 	  continue;
 
 	bufferlist bl = p->value();//Copy bufferlist before creating iterator

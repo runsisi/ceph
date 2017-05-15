@@ -9566,7 +9566,7 @@ void OSD::handle_pg_info(OpRequestRef op)
 }
 
 // called by
-// OSD::dispatch_op, for MSG_OSD_PG_TRIM
+// OSD::dispatch_op, for MSG_OSD_PG_TRIM, sent by PG::trim_log, PrimaryLogPG::_committed_pushed_object
 void OSD::handle_pg_trim(OpRequestRef op)
 {
   const MOSDPGTrim *m = static_cast<const MOSDPGTrim*>(op->get_req());

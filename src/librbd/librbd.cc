@@ -3301,7 +3301,7 @@ extern "C" ssize_t rbd_list_children(rbd_image_t image, char *pools,
   set<pair<string, string> > image_set;
 
   int r = librbd::list_children(ictx, image_set);
-  if (r < 0) {
+  if (r < 0) { // -ENOENT can never be returned
     tracepoint(librbd, list_children_exit, r);
     return r;
   }

@@ -296,7 +296,6 @@ public:
   // called by
   // ECBackend::handle_sub_write
   // ReplicatedBackend::submit_transaction
-  // ReplicatedBackend::sub_op_modify
   void queue_transactions(vector<ObjectStore::Transaction>& tls,
 			  OpRequestRef op) override {
     // do not add additional onreadable, ondisk, onreadable_sync callback
@@ -409,14 +408,14 @@ public:
   }
 
   // called by
-  // ECBackend::handle_sub_write
+  // ECBackend::handle_sub_write, transaction_applied is true if !op_t.empty, see PrimaryLogPG::should_send_op
   // ReplicatedBackend::submit_transaction, with transaction_applied set to true
-  // ReplicatedBackend::do_repop
+  // ReplicatedBackend::do_repop, transaction_applied is true if !op_t.empty, see PrimaryLogPG::should_send_op
   void log_operation(
     const vector<pg_log_entry_t> &logv,
     const boost::optional<pg_hit_set_history_t> &hset_history,
-    const eversion_t &trim_to,
-    const eversion_t &roll_forward_to,
+    const eversion_t &trim_to,         // pg_trim_to
+    const eversion_t &roll_forward_to, // ctx->at_version
     bool transaction_applied,
     ObjectStore::Transaction &t) override {
     if (hset_history) {

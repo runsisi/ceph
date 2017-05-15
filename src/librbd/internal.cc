@@ -676,7 +676,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     map< pair<int64_t, string>, set<string> > image_info;
 
     int r = api::Image<>::list_children(ictx, parent_spec, &image_info);
-    if (r < 0) {
+    if (r < 0) { // no need to handle -ENOENT
       return r;
     }
 

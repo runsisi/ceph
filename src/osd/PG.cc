@@ -3539,21 +3539,28 @@ void PG::write_if_dirty(ObjectStore::Transaction& t)
     t.omap_setkeys(coll, pgmeta_oid, km);
 }
 
+// called by
+// PG::RecoveryState::Recovered::Recovered
 void PG::trim_log()
 {
   assert(is_primary());
+
   calc_trim_to();
+
   dout(10) << __func__ << " to " << pg_trim_to << dendl;
+
   if (pg_trim_to != eversion_t()) {
     // inform peers to trim log
     assert(!actingbackfill.empty());
+
     for (set<pg_shard_t>::iterator i = actingbackfill.begin();
 	 i != actingbackfill.end();
 	 ++i) {
       if (*i == pg_whoami) continue;
+
       osd->send_message_osd_cluster(
 	i->osd,
-	new MOSDPGTrim(
+	new MOSDPGTrim( // will be handled by OSD::handle_pg_trim
 	  get_osdmap()->get_epoch(),
 	  spg_t(info.pgid.pgid, i->shard),
 	  pg_trim_to),
@@ -3562,6 +3569,7 @@ void PG::trim_log()
 
     // trim primary as well
     pg_log.trim(pg_trim_to, info);
+
     dirty_info = true;
   }
 }
@@ -3592,17 +3600,19 @@ void PG::add_log_entry(const pg_log_entry_t& e, bool applied)
 
 // called by
 // PrimaryLogPG::log_operation, which called by
-//      ECBackend::handle_sub_write
+//      ECBackend::handle_sub_write, transaction_applied is true if !op_t.empty, see PrimaryLogPG::should_send_op
+//              i.e., if this is not a backfill target
 //      ReplicatedBackend::submit_transaction, with transaction_applied set to true
-//      ReplicatedBackend::sub_op_modify
+//      ReplicatedBackend::do_repop, if !op_t.empty, see PrimaryLogPG::should_send_op
+//              i.e., if this is not a backfill target
 void PG::append_log(
   const vector<pg_log_entry_t>& logv,
-  eversion_t trim_to,
-  eversion_t roll_forward_to,
+  eversion_t trim_to,           // pg_trim_to
+  eversion_t roll_forward_to,   // ctx->at_version
   ObjectStore::Transaction &t,
   bool transaction_applied)
 {
-  if (transaction_applied)
+  if (transaction_applied) // not a backfill target, op_t is not empty
     update_snap_map(logv, t); // iterate log entries to decode pg_log_entry_t::snaps to
                               // snap_mapper.add_oid/snap_mapper.update_snaps
 
@@ -3653,7 +3663,7 @@ void PG::append_log(
 
   if (transaction_applied && roll_forward_to > pg_log.get_can_rollback_to()) {
     pg_log.roll_forward_to(
-      roll_forward_to,
+      roll_forward_to, // ctx->at_version
       &handler);
 
     t.register_on_applied(
@@ -3786,12 +3796,13 @@ void PG::read_state(ObjectStore *store, bufferlist &bl)
   pg_log.read_log_and_missing(
     store,
     coll,
-    info_struct_v < 8 ? coll_t::meta() : coll,
-    ghobject_t(info_struct_v < 8 ? OSD::make_pg_log_oid(pg_id) : pgmeta_oid),
+    info_struct_v < 8 ? coll_t::meta() : coll, // PG::PG
+    ghobject_t(info_struct_v < 8 ? OSD::make_pg_log_oid(pg_id) : pgmeta_oid), // PG::PG
     info,
     oss,
-    cct->_conf->osd_ignore_stale_divergent_priors,
-    cct->_conf->osd_debug_verify_missing_on_start);
+    cct->_conf->osd_ignore_stale_divergent_priors, // false
+    cct->_conf->osd_debug_verify_missing_on_start); // false
+
   if (oss.tellp())
     osd->clog->error() << oss.rdbuf();
 
@@ -3832,7 +3843,7 @@ void PG::log_weirdness()
 }
 
 // called by
-// PG::append_log, which called by PrimaryLogPG::log_operation
+// PG::append_log, which called by PrimaryLogPG::log_operation <- ReplicatedBackend::submit_transaction
 void PG::update_snap_map(
   const vector<pg_log_entry_t> &log_entries,
   ObjectStore::Transaction &t)

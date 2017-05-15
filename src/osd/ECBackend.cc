@@ -965,14 +965,20 @@ void ECBackend::handle_sub_write(
 {
   if (msg)
     msg->mark_started();
+
   trace.event("handle_sub_write");
+
   assert(!get_parent()->get_log().get_missing().is_missing(op.soid));
+
   if (!get_parent()->pgb_is_primary())
     get_parent()->update_stats(op.stats);
+
   ObjectStore::Transaction localt;
+
   if (!op.temp_added.empty()) {
     add_temp_objs(op.temp_added);
   }
+
   if (op.backfill) {
     for (set<hobject_t>::iterator i = op.temp_removed.begin();
 	 i != op.temp_removed.end();
@@ -987,7 +993,9 @@ void ECBackend::handle_sub_write(
 	  get_parent()->whoami_shard().shard));
     }
   }
+
   clear_temp_objs(op.temp_removed);
+
   get_parent()->log_operation(
     op.log_entries,
     op.updated_hit_set_history,
@@ -1005,6 +1013,7 @@ void ECBackend::handle_sub_write(
     dout(10) << "Queueing onreadable_sync: " << on_local_applied_sync << dendl;
     localt.register_on_applied_sync(on_local_applied_sync);
   }
+
   localt.register_on_commit(
     get_parent()->bless_context(
       new SubWriteCommitted(
@@ -1018,6 +1027,7 @@ void ECBackend::handle_sub_write(
   tls.reserve(2);
   tls.push_back(std::move(op.t));
   tls.push_back(std::move(localt));
+
   get_parent()->queue_transactions(tls, msg);
 }
 
@@ -2015,7 +2025,10 @@ bool ECBackend::try_reads_to_commit()
     map<shard_id_t, ObjectStore::Transaction>::iterator iter =
       trans.find(i->shard);
     assert(iter != trans.end());
+
+    // send op_t? if the peer is a backfill target, do not send op_t
     bool should_send = get_parent()->should_send_op(*i, op->hoid);
+
     const pg_stat_t &stats =
       should_send ?
       get_info().stats :
@@ -2049,14 +2062,17 @@ bool ECBackend::try_reads_to_commit()
       local_write_op.claim(sop);
     } else {
       MOSDECSubOpWrite *r = new MOSDECSubOpWrite(sop);
+
       r->pgid = spg_t(get_parent()->primary_spg_t().pgid, i->shard);
       r->map_epoch = get_parent()->get_epoch();
       r->min_epoch = get_parent()->get_interval_start_epoch();
       r->trace = trace;
+
       get_parent()->send_message_osd_cluster(
 	i->osd, r, get_parent()->get_epoch());
     }
   }
+
   if (should_write_local) {
       handle_sub_write(
 	get_parent()->whoami_shard(),

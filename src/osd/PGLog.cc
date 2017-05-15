@@ -130,8 +130,9 @@ void PGLog::clear_info_log(
 }
 
 // called by
-// PG::append_log
-// OSD::handle_pg_trim
+// PG::trim_log, which called by PG::RecoveryState::Recovered::Recovered
+// PG::append_log, which called by PrimaryLogPG::log_operation
+// OSD::handle_pg_trim, to handle MOSDPGTrim
 void PGLog::trim(
   eversion_t trim_to,
   pg_info_t &info)
@@ -467,8 +468,9 @@ void PGLog::check() {
 void PGLog::write_log_and_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist> *km,
-  const coll_t& coll, const ghobject_t &log_oid, // pgmeta_oid
-  bool require_rollback)
+  const coll_t& coll,
+  const ghobject_t &log_oid, // pgmeta_oid
+  bool require_rollback) // pool.info.require_rollback(), i.e., ec pool
 {
   if (is_dirty()) {
     dout(5) << "write_log_and_missing with: "
@@ -504,7 +506,8 @@ void PGLog::write_log_and_missing_wo_missing(
     ObjectStore::Transaction& t,
     map<string,bufferlist> *km,
     pg_log_t &log,
-    const coll_t& coll, const ghobject_t &log_oid,
+    const coll_t& coll,
+    const ghobject_t &log_oid,
     map<eversion_t, hobject_t> &divergent_priors,
     bool require_rollback)
 {
@@ -539,12 +542,13 @@ void PGLog::write_log_and_missing(
 
 // static
 // called by
-// PGLog::write_log_and_missing_wo_missing
+// PGLog::write_log_and_missing_wo_missing, which called by ceph_objectstore_tool.cc/write_pg
 void PGLog::_write_log_and_missing_wo_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist> *km,
   pg_log_t &log,
-  const coll_t& coll, const ghobject_t &log_oid,
+  const coll_t& coll,
+  const ghobject_t &log_oid,
   map<eversion_t, hobject_t> &divergent_priors,
   eversion_t dirty_to,
   eversion_t dirty_from,
@@ -585,6 +589,7 @@ void PGLog::_write_log_and_missing_wo_missing(
     t.omap_rmkeyrange(
       coll, log_oid,
       dirty_from.get_key_name(), eversion_t::max().get_key_name());
+
     clear_after(log_keys_debug, dirty_from.get_key_name());
   }
 
@@ -593,6 +598,7 @@ void PGLog::_write_log_and_missing_wo_missing(
        ++p) {
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
+
     (*km)[p->get_key_name()].claim(bl);
   }
 
@@ -603,6 +609,7 @@ void PGLog::_write_log_and_missing_wo_missing(
        ++p) {
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
+
     (*km)[p->get_key_name()].claim(bl);
   }
 
@@ -637,8 +644,9 @@ void PGLog::_write_log_and_missing_wo_missing(
 
 // static
 // called by
-// PGLog::write_log_and_missing
-// PGLog::write_log_and_missing(..., log, ...)
+// PGLog::write_log_and_missing, i.e., member method, which called by PG::write_if_dirty
+// PGLog::write_log_and_missing(..., log, ..., missing, ...), i.e., static, which
+//      called by ceph_objectstore_tool.cc/write_pg
 void PGLog::_write_log_and_missing(
   ObjectStore::Transaction& t,
   map<string,bufferlist>* km,
@@ -650,7 +658,7 @@ void PGLog::_write_log_and_missing(
   const set<eversion_t> &trimmed,
   const pg_missing_tracker_t &missing,
   bool touch_log,
-  bool require_rollback,
+  bool require_rollback, // ec pool?
   bool clear_divergent_priors,
   set<string> *log_keys_debug
   ) {
@@ -668,10 +676,12 @@ void PGLog::_write_log_and_missing(
 
   if (touch_log)
     t.touch(coll, log_oid);
+
   if (dirty_to != eversion_t()) {
     t.omap_rmkeyrange(
       coll, log_oid,
       eversion_t().get_key_name(), dirty_to.get_key_name());
+
     clear_up_to(log_keys_debug, dirty_to.get_key_name());
   }
 
@@ -688,6 +698,7 @@ void PGLog::_write_log_and_missing(
        ++p) {
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
+
     (*km)[p->get_key_name()].claim(bl);
   }
 
@@ -698,6 +709,7 @@ void PGLog::_write_log_and_missing(
        ++p) {
     bufferlist bl(sizeof(*p) * 2);
     p->encode_with_checksum(bl);
+
     (*km)[p->get_key_name()].claim(bl);
   }
 
@@ -712,7 +724,7 @@ void PGLog::_write_log_and_missing(
     }
   }
 
-  if (clear_divergent_priors) {
+  if (clear_divergent_priors) { // was set by PG::read_log_and_missing
     //dout(10) << "write_log_and_missing: writing divergent_priors" << dendl;
     to_remove.insert("divergent_priors");
   }
