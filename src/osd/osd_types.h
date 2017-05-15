@@ -3256,6 +3256,9 @@ public:
     ENCODE_FINISH(bl);
   }
 
+  // called by
+  // pg_log_entry_t::mark_unrollbackable
+  // ObjectModDesc::claim_append
   // cannot be rolled back
   void mark_unrollbackable() {
     can_local_rollback = false;

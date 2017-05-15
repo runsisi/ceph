@@ -10429,7 +10429,7 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
     ctx->delta_stats,
     ctx->at_version,
     std::move(ctx->op_t),
-    pg_trim_to,
+    pg_trim_to, // calc by PrimaryLogPG::calc_trim_to, which called by PrimaryLogPG::calc_trim_to
     min_last_complete_ondisk, // not used
     ctx->log, // vector<pg_log_entry_t>
     ctx->updated_hset_history,

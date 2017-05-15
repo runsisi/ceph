@@ -218,6 +218,10 @@ public:
       advance_can_rollback_to(head, [&](const pg_log_entry_t &entry) {});
     }
 
+    // called by
+    // PGLog::proc_replica_log
+    // PGLog::rewind_divergent_log
+    // PGLog::merge_log
     mempool::osd_pglog::list<pg_log_entry_t> rewind_from_head(eversion_t newhead) {
       auto divergent = pg_log_t::rewind_from_head(newhead);
       index();
@@ -720,7 +724,8 @@ public:
   // PG::add_log_entry, which called by PG::append_log, which called by PrimaryLogPG::log_operation
   void add(const pg_log_entry_t& e, bool applied = true) {
     mark_writeout_from(e.version);
-    log.add(e, applied);
+
+    log.add(e, applied); // push back of log entry list
   }
 
   // called by

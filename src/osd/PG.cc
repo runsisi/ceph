@@ -3568,7 +3568,8 @@ void PG::trim_log()
     }
 
     // trim primary as well
-    pg_log.trim(pg_trim_to, info);
+    pg_log.trim(pg_trim_to, info); // pg_trim_to calc by PrimaryLogPG::calc_trim_to, which called
+                                   // by PrimaryLogPG::calc_trim_to
 
     dirty_info = true;
   }
@@ -3593,7 +3594,7 @@ void PG::add_log_entry(const pg_log_entry_t& e, bool applied)
     info.last_user_version = e.user_version;
 
   // log mutation
-  pg_log.add(e, applied);
+  pg_log.add(e, applied); // push back of log entry list
 
   dout(10) << "add_log_entry " << e << dendl;
 }
@@ -3632,12 +3633,13 @@ void PG::append_log(
   dout(10) << "append_log " << pg_log.get_log() << " " << logv << dendl;
 
   PGLogEntryHandler handler{this, &t};
+
   if (!transaction_applied) {
      /* We must be a backfill peer, so it's ok if we apply
       * out-of-turn since we won't be considered when
       * determining a min possible last_update.
       */
-    pg_log.roll_forward(&handler);
+    pg_log.roll_forward(&handler); // roll forward to log.head
   }
 
   for (vector<pg_log_entry_t>::const_iterator p = logv.begin();
@@ -3650,7 +3652,7 @@ void PG::append_log(
      * above */
     if (transaction_applied &&
 	p->soid > info.last_backfill) {
-      pg_log.roll_forward(&handler);
+      pg_log.roll_forward(&handler); // roll forward to log.head
     }
   }
 
