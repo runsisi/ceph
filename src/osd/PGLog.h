@@ -122,7 +122,9 @@ public:
 	rollback_info_trimmed_to = to;
 
       while (rollback_info_trimmed_to_riter != log.rbegin()) {
-	--rollback_info_trimmed_to_riter;
+        // update reverse iterator to reach version rollback_info_trimmed_to
+
+        --rollback_info_trimmed_to_riter;
 
 	if (rollback_info_trimmed_to_riter->version > rollback_info_trimmed_to) {
 	  ++rollback_info_trimmed_to_riter;
@@ -133,11 +135,15 @@ public:
       }
     }
 
+    // called by
+    // PGLog::IndexedLog::split_out_child
+    // IndexedLog::IndexedLog
+    // IndexedLog::rewind_from_head
     void reset_rollback_info_trimmed_to_riter() {
       rollback_info_trimmed_to_riter = log.rbegin();
       while (rollback_info_trimmed_to_riter != log.rend() &&
 	     rollback_info_trimmed_to_riter->version > rollback_info_trimmed_to)
-	++rollback_info_trimmed_to_riter;
+	++rollback_info_trimmed_to_riter; // back to older entries
     }
 
     // indexes objects, caller ops and extra caller ops
@@ -223,12 +229,20 @@ public:
     // PGLog::rewind_divergent_log
     // PGLog::merge_log
     mempool::osd_pglog::list<pg_log_entry_t> rewind_from_head(eversion_t newhead) {
+      // step back pg_log_t::can_rollback_to and pg_log_t::rollback_info_trimmed_to
       auto divergent = pg_log_t::rewind_from_head(newhead);
+
       index();
+
+      // step back rollback_info_trimmed_to_riter point to IndexedLog::rollback_info_trimmed_to
+      // which stepped back by pg_log_t::rewind_from_head called above
       reset_rollback_info_trimmed_to_riter();
+
       return divergent;
     }
 
+    // called by
+    // PrimaryLogPG::update_range, which called by PrimaryLogPG::recover_backfill
     template <typename T>
     void scan_log_after(
       const eversion_t &bound, ///< [in] scan entries > bound
@@ -244,7 +258,8 @@ public:
       }
     }
 
-    /****/
+    // called by
+    // PGLog::reset_backfill_claim_log, which called by PG::RecoveryState::Stray::react(const MLogRec)
     void claim_log_and_clear_rollback_info(const pg_log_t& o) {
       // we must have already trimmed the old entries
       assert(rollback_info_trimmed_to == head);
@@ -734,6 +749,8 @@ public:
   // PG::activate
   void reset_recovery_pointers() { log.reset_recovery_pointers(); }
 
+  // called by
+  // OSD::RemoveWQ::_process
   static void clear_info_log(
     spg_t pgid,
     ObjectStore::Transaction *t);
@@ -771,6 +788,8 @@ public:
 
   //////////////////// get or set log & missing ////////////////////
 
+  // called by
+  // PG::RecoveryState::Stray::react(const MLogRec)
   void reset_backfill_claim_log(const pg_log_t &o, LogEntryHandler *h) {
     log.trim_rollback_info_to(log.head, h);
     log.claim_log_and_clear_rollback_info(o);

@@ -223,7 +223,9 @@ void PGLog::proc_replica_log(
     first_non_divergent->version;
 
   IndexedLog folog(olog);
+
   auto divergent = folog.rewind_from_head(lu);
+
   _merge_divergent_entries(
     folog,
     divergent,
@@ -284,6 +286,7 @@ void PGLog::rewind_divergent_log(eversion_t newhead,
   for (auto &&entry: divergent) {
     dout(10) << "rewind_divergent_log future divergent " << entry << dendl;
   }
+
   info.last_update = newhead;
 
   _merge_divergent_entries(
@@ -391,6 +394,7 @@ void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
     mark_dirty_from(lower_bound);
 
     auto divergent = log.rewind_from_head(lower_bound);
+
     // move aside divergent items
     for (auto &&oe: divergent) {
       dout(10) << "merge_log divergent " << oe << dendl;

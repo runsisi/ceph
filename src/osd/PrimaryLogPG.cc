@@ -4241,6 +4241,7 @@ int PrimaryLogPG::trim_object(
 			 << " for " << coid << "\n";
       return -ENOENT;
     }
+
     old_snaps.insert(snapset.clone_snaps[coid.snap].begin(),
 		     snapset.clone_snaps[coid.snap].end());
   }
@@ -4346,6 +4347,7 @@ int PrimaryLogPG::trim_object(
 
     if (coi.is_cache_pinned())
       ctx->delta_stats.num_objects_pinned--;
+
     obc->obs.exists = false;
 
     snapset.clones.erase(p);
@@ -10411,8 +10413,10 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
     ctx->clone_obc,
     unlock_snapset_obc ? ctx->snapset_obc : ObjectContextRef());
 
-  if (!(ctx->log.empty())) {
+  if (!(ctx->log.empty())) { // ctx->at_version was set to inc projected_last_update by one,
+                             // see PG::get_next_version
     assert(ctx->at_version >= projected_last_update);
+
     projected_last_update = ctx->at_version;
   }
 
@@ -10590,7 +10594,8 @@ void PrimaryLogPG::submit_log_entries(
 
   eversion_t version;
 
-  if (!entries.empty()) {
+  if (!entries.empty()) { // ctx->at_version was set to inc projected_last_update by one,
+                          // see PG::get_next_version
     assert(entries.rbegin()->version >= projected_last_update);
 
     version = projected_last_update = entries.rbegin()->version;

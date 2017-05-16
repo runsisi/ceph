@@ -2522,14 +2522,30 @@ public:
     eversion_t *version,
     version_t *user_version,
     int *return_code) const;
+
   eversion_t projected_last_update;
+
+  // called by
+  // PrimaryLogPG::record_write_error
+  // PrimaryLogPG::execute_ctx
+  // PrimaryLogPG::trim_object
+  // PrimaryLogPG::finish_promote
+  // PrimaryLogPG::try_flush_mark_clean
+  // PrimaryLogPG::handle_watch_timeout
+  // PrimaryLogPG::mark_all_unfound_lost
+  // PrimaryLogPG::hit_set_remove_all
+  // PrimaryLogPG::hit_set_persist
+  // PrimaryLogPG::agent_maybe_evict
+  // PrimaryLogPG::scrub_snapshot_metadata
   eversion_t get_next_version() const {
     eversion_t at_version(
       get_osdmap()->get_epoch(),
       projected_last_update.version+1);
+
     assert(at_version > info.last_update);
     assert(at_version > pg_log.get_head());
     assert(at_version > projected_last_update);
+
     return at_version;
   }
 

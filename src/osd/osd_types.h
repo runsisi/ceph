@@ -3465,8 +3465,9 @@ protected:
 
   // always <= can_rollback_to, indicates how far stashed rollback
   // data can be found
-  eversion_t rollback_info_trimmed_to;
-
+  eversion_t rollback_info_trimmed_to; // advanced by IndexedLog::advance_can_rollback_to
+                                       // stepped back by pg_log_t::rewind_from_head which called by
+                                       //       IndexedLog::rewind_from_head
 public:
   mempool::osd_pglog::list<pg_log_entry_t> log;  // the actual log.
   
@@ -3537,6 +3538,8 @@ public:
       std::move(childlog));
   }
 
+  // called by
+  // IndexedLog::rewind_from_head
   mempool::osd_pglog::list<pg_log_entry_t> rewind_from_head(eversion_t newhead) {
     assert(newhead >= tail);
 
@@ -3549,7 +3552,10 @@ public:
 	swap(divergent, log);
 	break;
       }
+
+      // step back to older entry
       --p;
+
       if (p->version.version <= newhead.version) {
 	/*
 	 * look at eversion.version here.  we want to avoid a situation like:
@@ -3559,12 +3565,15 @@ public:
 	 * i.e, same request, different version.  If the eversion.version is > the
 	 * lower_bound, we it is divergent.
 	 */
-	++p;
+	++p; // step forward one entry
+
 	divergent.splice(divergent.begin(), log, p, log.end());
 	break;
       }
+
       assert(p->version > newhead);
     }
+
     head = newhead;
 
     if (can_rollback_to > newhead)

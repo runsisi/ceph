@@ -2056,7 +2056,10 @@ void PG::activate(ObjectStore::Transaction& t,
     }
 
     state_set(PG_STATE_ACTIVATING);
+
     release_pg_backoffs();
+
+    // was set to eversion_t() by PG::start_peering_interval
     projected_last_update = info.last_update;
   } // is_primary()
 
