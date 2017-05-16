@@ -90,7 +90,7 @@ void PreAcquireRequest<I>::handle_flush_notifies(int r) {
 
 template <typename I>
 void PreAcquireRequest<I>::finish() {
-  m_on_finish->complete(m_error_result);
+  m_on_finish->complete(m_error_result); // ManagedLock<I>::handle_pre_acquire_lock
   delete this;
 }
 

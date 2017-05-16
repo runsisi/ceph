@@ -249,6 +249,9 @@ void ManagedLock<I>::get_locker(managed_lock::Locker *locker,
 // librbd::lock_break, true
 // InstanceWatcher<I>::break_instance_lock, true
 // LeaderWatcher<I>::break_leader_lock, true
+// NOTE: AcquireRequest sent by ManagedLock<I>::send_acquire_lock will not force break the lock,
+//      i.e., not to blacklist if the other client is alive
+//      see ManagedLock<I>::handle_pre_acquire_lock and AcquireRequest<I>::send_break_lock
 template <typename I>
 void ManagedLock<I>::break_lock(const managed_lock::Locker &locker,
                                 bool force_break_lock, Context *on_finish) {
@@ -487,6 +490,8 @@ void ManagedLock<I>::send_acquire_lock() {
   m_cookie = encode_lock_cookie(watch_handle);
 
   m_work_queue->queue(new FunctionContext([this](int r) {
+    // override by ExclusiveLock<I>::pre_acquire_lock_handler, to call
+    // m_image_ctx.image_watcher->flush and m_image_ctx.state->prepare_lock
     pre_acquire_lock_handler(create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_pre_acquire_lock>(this));
   }));
@@ -504,6 +509,8 @@ void ManagedLock<I>::handle_pre_acquire_lock(int r) {
   using managed_lock::AcquireRequest;
   AcquireRequest<I>* req = AcquireRequest<I>::create(
     m_ioctx, m_watcher, m_work_queue, m_oid, m_cookie, m_mode == EXCLUSIVE,
+    // use default config, i.e., true, 0, which is not used, AcquireRequest<I>::send_break_lock
+    // always set force_break_lock to false, i.e., not to blacklist if the other client is alive
     m_blacklist_on_break_lock, m_blacklist_expire_seconds,
     create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_acquire_lock>(this));

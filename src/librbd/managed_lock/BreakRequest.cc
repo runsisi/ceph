@@ -47,9 +47,12 @@ struct C_BlacklistClient : public Context {
 } // anonymous namespace
 
 // created by
-// AcquireRequest<I>::send_break_lock, which called by ManagedLock<I>::handle_pre_acquire_lock
-// ManagedLock<I>::break_lock, which called by librbd::lock_break,
-//      InstanceWatcher<I>::break_instance_lock, LeaderWatcher<I>::break_leader_lock
+// AcquireRequest<I>::send_break_lock, which called by ManagedLock<I>::handle_pre_acquire_lock,
+//      with force_break_lock set to false, i.e., not to blacklist if the other client is alive
+// ManagedLock<I>::break_lock, which called by
+//      librbd::lock_break, with force_break_lock set to true
+//      InstanceWatcher<I>::break_instance_lock, with force_break_lock set to true
+//      LeaderWatcher<I>::break_leader_lock, with force_break_lock set to true
 template <typename I>
 BreakRequest<I>::BreakRequest(librados::IoCtx& ioctx, ContextWQ *work_queue,
                               const std::string& oid, const Locker &locker,

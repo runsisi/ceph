@@ -149,7 +149,7 @@ void AcquireRequest<I>::send_break_lock() {
     AcquireRequest<I>, &AcquireRequest<I>::handle_break_lock>(this);
   auto req = BreakRequest<I>::create(
     m_ioctx, m_work_queue, m_oid, m_locker, m_exclusive,
-    m_blacklist_on_break_lock, m_blacklist_expire_seconds, false, ctx);
+    m_blacklist_on_break_lock, m_blacklist_expire_seconds, false, ctx); // not force break the lock, i.e., not to blacklist
   req->send();
 }
 
