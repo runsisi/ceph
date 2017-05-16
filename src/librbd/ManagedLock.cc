@@ -670,6 +670,9 @@ void ManagedLock<I>::send_release_lock() {
   m_state = STATE_PRE_RELEASING;
 
   m_work_queue->queue(new FunctionContext([this](int r) {
+    // override by
+    // ExclusiveLock<I>::pre_release_lock_handler
+    // LeaderLock::pre_release_lock_handler
     pre_release_lock_handler(false, create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_pre_release_lock>(this));
   }));
@@ -711,9 +714,13 @@ void ManagedLock<I>::handle_release_lock(int r) {
     m_cookie = "";
   }
 
+  // r should always be 0, see librbd::managed_lock::ReleaseRequest<I>::finish
   m_post_next_state = r < 0 ? STATE_LOCKED : STATE_UNLOCKED;
 
   m_work_queue->queue(new FunctionContext([this, r](int ret) {
+    // override by
+    // ExclusiveLock<I>::post_release_lock_handler
+    // LeaderLock::post_release_lock_handler
     post_release_lock_handler(false, r, create_context_callback< // not shutting down
         ManagedLock<I>, &ManagedLock<I>::handle_post_release_lock>(this));
   }));
