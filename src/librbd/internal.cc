@@ -676,7 +676,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     map< pair<int64_t, string>, set<string> > image_info;
 
     int r = api::Image<>::list_children(ictx, parent_spec, &image_info);
-    if (r < 0) { // no need to handle -ENOENT
+    if (r < 0) { // no need to handle -ENOENT, Image<>::list_children has handled it
       return r;
     }
 
@@ -2041,8 +2041,10 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
       *exclusive = ictx->exclusive_locked;
     if (tag)
       *tag = ictx->lock_tag;
+
     if (lockers) {
       lockers->clear();
+
       map<rados::cls::lock::locker_id_t,
 	  rados::cls::lock::locker_info_t>::const_iterator it;
       for (it = ictx->lockers.begin(); it != ictx->lockers.end(); ++it) {
