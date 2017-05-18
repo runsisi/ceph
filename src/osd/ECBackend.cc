@@ -1023,6 +1023,7 @@ void ECBackend::handle_sub_write(
   localt.register_on_applied(
     get_parent()->bless_context(
       new SubWriteApplied(this, msg, op.tid, op.at_version, trace)));
+
   vector<ObjectStore::Transaction> tls;
   tls.reserve(2);
   tls.push_back(std::move(op.t));
@@ -1521,7 +1522,9 @@ void ECBackend::submit_transaction(
   )
 {
   assert(!tid_to_op_map.count(tid));
+
   Op *op = &(tid_to_op_map[tid]);
+
   op->hoid = hoid;
   op->delta_stats = delta_stats;
   op->version = at_version;
@@ -1539,7 +1542,9 @@ void ECBackend::submit_transaction(
     op->trace = client_op->pg_trace;
   
   dout(10) << __func__ << ": op " << *op << " starting" << dendl;
+
   start_rmw(op, std::move(t));
+
   dout(10) << "onreadable_sync: " << op->on_local_applied_sync << dendl;
 }
 
@@ -1847,6 +1852,7 @@ void ECBackend::start_rmw(Op *op, PGTransactionUPtr &&t)
   dout(10) << __func__ << ": " << *op << dendl;
 
   waiting_state.push_back(*op);
+
   check_ops();
 }
 
@@ -2071,7 +2077,7 @@ bool ECBackend::try_reads_to_commit()
       get_parent()->send_message_osd_cluster(
 	i->osd, r, get_parent()->get_epoch());
     }
-  }
+  } // for-each PG::actingbackfill
 
   if (should_write_local) {
       handle_sub_write(

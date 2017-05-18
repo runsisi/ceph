@@ -3109,6 +3109,8 @@ inline ostream& operator<<(ostream& out, const pg_query_t& q) {
 }
 
 class PGBackend;
+// created by
+// as member of pg_log_entry_t
 class ObjectModDesc {
   bool can_local_rollback;
   bool rollback_info_completed;
@@ -3214,6 +3216,9 @@ public:
     rollback_info_completed = true;
     return true;
   }
+
+  // called by
+  // PrimaryLogPG::mark_all_unfound_lost, for pg_log_entry_t::LOST_DELETE
   bool try_rmobject(version_t deletion_version) {
     if (!can_local_rollback || rollback_info_completed)
       return false;
@@ -3243,6 +3248,8 @@ public:
     ::encode(old_snaps, bl);
     ENCODE_FINISH(bl);
   }
+
+  // to support overwrite
   void rollback_extents(
     version_t gen, const vector<pair<uint64_t, uint64_t> > &extents) {
     assert(can_local_rollback);
@@ -3257,7 +3264,8 @@ public:
   }
 
   // called by
-  // pg_log_entry_t::mark_unrollbackable
+  // pg_log_entry_t::mark_unrollbackable, called by PrimaryLogPG::mark_all_unfound_lost
+  //            and ReplicatedBackend.cc/generate_transaction
   // ObjectModDesc::claim_append
   // cannot be rolled back
   void mark_unrollbackable() {
@@ -3350,7 +3358,7 @@ struct pg_log_entry_t {
   }
 
   // describes state for a locally-rollbackable entry
-  ObjectModDesc mod_desc;
+  ObjectModDesc mod_desc; // will be populated by ECTransaction::generate_transactions
 
   bufferlist snaps;   // only for clone entries
   hobject_t  soid;
@@ -3401,7 +3409,7 @@ struct pg_log_entry_t {
   }
 
   bool can_rollback() const {
-    return mod_desc.can_rollback();
+    return mod_desc.can_rollback(); // ModDesc::can_local_rollback
   }
 
   // called by

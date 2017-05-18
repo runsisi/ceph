@@ -132,6 +132,7 @@ public:
 	  break;
 	}
 
+	// LogEntryHandler::rollforward(entry)
 	f(*rollback_info_trimmed_to_riter);
       }
     }
@@ -213,7 +214,7 @@ public:
       advance_can_rollback_to(
 	to,
 	[&](pg_log_entry_t &entry) {
-	  h->rollforward(entry);
+	  h->rollforward(entry); // PGLogEntryHandler::rollforward, PG::pgbackend->rollforward
 	});
     }
 

@@ -464,7 +464,7 @@ void generate_transaction(
   assert(removed);
 
   for (auto &&le: log_entries) {
-    le.mark_unrollbackable();
+    le.mark_unrollbackable(); // for replicated backend, all log entries are marked unrollbackable
 
     auto oiter = pgt->op_map.find(le.soid);
 

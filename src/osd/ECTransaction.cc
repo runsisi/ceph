@@ -114,6 +114,7 @@ void ECTransaction::generate_transactions(
   assert(temp_added);
   assert(temp_removed);
   assert(plan.t);
+
   auto &t = *(plan.t);
 
   auto &hash_infos = plan.hash_infos;

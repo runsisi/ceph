@@ -185,7 +185,7 @@ void PGBackend::rollforward(
   auto dpp = get_parent()->get_dpp();
   ldpp_dout(dpp, 20) << __func__ << ": entry=" << entry << dendl;
 
-  if (!entry.can_rollback())
+  if (!entry.can_rollback()) // replicated backend
     return;
 
   Trimmer trimmer(entry.soid, this, t);
@@ -200,7 +200,7 @@ void PGBackend::trim(
   const pg_log_entry_t &entry,
   ObjectStore::Transaction *t)
 {
-  if (!entry.can_rollback())
+  if (!entry.can_rollback()) // replicated backend
     return;
 
   Trimmer trimmer(entry.soid, this, t);
