@@ -3536,6 +3536,7 @@ void PG::write_if_dirty(ObjectStore::Transaction& t)
   if (dirty_big_info || dirty_info)
     prepare_write_info(&km);
 
+  // PGLog
   pg_log.write_log_and_missing(t, &km, coll, pgmeta_oid, pool.info.require_rollback());
 
   if (!km.empty())
@@ -3659,10 +3660,12 @@ void PG::append_log(
     }
   }
 
-  auto last = logv.rbegin();
+  auto last = logv.rbegin(); // newest log entry
   if (is_primary() && last != logv.rend()) {
     // PG::projected_log was updated by PrimaryLogPG::issue_repop
-    projected_log.skip_can_rollback_to_to_head();
+    projected_log.skip_can_rollback_to_to_head(); // advance pg_log_t::can_rollback_to and pg_log_t::rollback_info_trimmed_to
+                                                  // to current pg_log_t::head
+    // trim to last->version, i.e., newest version
     projected_log.trim(cct, last->version, nullptr);
   }
 
@@ -5734,8 +5737,8 @@ void PG::share_pg_info()
 }
 
 // called by
-// PG::merge_new_log_entries
-// PrimaryLogPG::do_update_log_missing
+// PG::merge_new_log_entries, which called by PrimaryLogPG::submit_log_entries
+// PrimaryLogPG::do_update_log_missing, which called by PrimaryLogPG::do_request, for MSG_OSD_PG_UPDATE_LOG_MISSING
 bool PG::append_log_entries_update_missing(
   const mempool::osd_pglog::list<pg_log_entry_t> &entries,
   ObjectStore::Transaction &t)
@@ -5774,7 +5777,7 @@ void PG::merge_new_log_entries(
   dout(10) << __func__ << " " << entries << dendl;
   assert(is_primary());
 
-  // call pg_log.append_new_log_entries
+  // which call pg_log.append_new_log_entries
   bool rebuild_missing = append_log_entries_update_missing(entries, t);
 
   for (set<pg_shard_t>::const_iterator i = actingbackfill.begin();
@@ -5794,11 +5797,11 @@ void PG::merge_new_log_entries(
       pinfo.last_backfill,
       info.last_backfill_bitwise,
       entries,
-      true,
-      NULL,
-      pmissing,
-      NULL,
-      this);
+      true,     // maintain_rollback
+      NULL,     // IndexedLog *log
+      pmissing, // missing_type &missing
+      NULL,     // LogEntryHandler *rollbacker
+      this);    // DoutPrefixProvider *dpp
 
     pinfo.last_update = info.last_update;
     pinfo.stats.stats_invalid = pinfo.stats.stats_invalid || invalidate_stats;

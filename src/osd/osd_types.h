@@ -3505,9 +3505,21 @@ public:
     log.clear();
   }
 
+  // called by
+  // PGLog::_write_log_and_missing_wo_missing
+  // PGLog::_write_log_and_missing
   eversion_t get_rollback_info_trimmed_to() const {
     return rollback_info_trimmed_to;
   }
+
+  // called by
+  // PGLog::proc_replica_log
+  // PGLog::rewind_divergent_log
+  // PGLog::merge_log
+  // PGLog::_write_log_and_missing_wo_missing
+  // PGLog::_write_log_and_missing
+  // PGLog::get_can_rollback_to
+  // PGLog::merge_old_entry
   eversion_t get_can_rollback_to() const {
     return can_rollback_to;
   }

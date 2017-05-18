@@ -110,7 +110,7 @@ public:
       rollback_info_trimmed_to_riter;
 
     // called by
-    // IndexedLog::trim_rollback_info_to
+    // IndexedLog::trim_rollback_info_to, which called by PGLog::reset_backfill_claim_log
     // IndexedLog::roll_forward_to
     // IndexedLog::skip_can_rollback_to_to_head
     template <typename F>
@@ -207,6 +207,8 @@ public:
     // called by
     // PGLog::roll_forward_to
     void roll_forward_to(eversion_t to, LogEntryHandler *h) {
+      // advance pg_log_t::can_rollback_to, pg_log_t::rollback_info_trimmed_to
+      // IndexedLog::rollback_info_trimmed_to_riter
       advance_can_rollback_to(
 	to,
 	[&](pg_log_entry_t &entry) {
@@ -216,11 +218,13 @@ public:
 
     // called by
     // IndexedLog::claim_log_and_clear_rollback_info
-    // IndexedLog::clear
+    // IndexedLog::clear, which called by PGLog::clear, which never used
     // IndexedLog::add
     // PGLog::merge_log
-    // PG::append_log
+    // PG::append_log, which called by PrimaryLogPG::log_operation
     void skip_can_rollback_to_to_head() {
+      // advance pg_log_t::can_rollback_to and pg_log_t::rollback_info_trimmed_to
+      // to current pg_log_t::head
       advance_can_rollback_to(head, [&](const pg_log_entry_t &entry) {});
     }
 
@@ -278,7 +282,7 @@ public:
       IndexedLog *target);
 
     // called by
-    // IndexedLog::clear, i.e., below
+    // IndexedLog::clear, i.e., below, i.e., never used
     void zero() {
       // we must have already trimmed the old entries
       assert(rollback_info_trimmed_to == head);
@@ -533,9 +537,9 @@ public:
     }
 
     // called by
-    // append_log_entries_update_missing
-    // PGLog::add, which called by PG::add_log_entry
-    // PrimaryLogPG::issue_repop, for PG::projected_log
+    // IndexedLog::append_log_entries_update_missing
+    // PGLog::add, which called by PG::add_log_entry <- PG::append_log <- PrimaryLogPG::log_operation
+    // PrimaryLogPG::issue_repop, for PG::projected_log, applied = true
     void add(const pg_log_entry_t& e, bool applied = true) {
       if (!applied) {
 	assert(get_can_rollback_to() == head);
@@ -766,11 +770,18 @@ public:
   void roll_forward_to(
     eversion_t roll_forward_to,
     LogEntryHandler *h) {
+    // advance pg_log_t::can_rollback_to, pg_log_t::rollback_info_trimmed_to
+    // IndexedLog::rollback_info_trimmed_to_riter
     log.roll_forward_to(
       roll_forward_to,
       h);
   }
 
+  // called by
+  // PG::activate
+  // PG::append_log
+  // PrimaryLogPG::on_local_recover
+  // PrimaryLogPG::calc_trim_to
   eversion_t get_can_rollback_to() const {
     // pg_log_t::can_rollback_to
     return log.get_can_rollback_to();
@@ -781,6 +792,8 @@ public:
   // PG::append_log
   // PrimaryLogPG::on_removal
   void roll_forward(LogEntryHandler *h) {
+    // advance pg_log_t::can_rollback_to, pg_log_t::rollback_info_trimmed_to
+    // IndexedLog::rollback_info_trimmed_to_riter
     roll_forward_to(
       log.head,
       h);
@@ -1173,9 +1186,9 @@ public:
 		 bool &dirty_info, bool &dirty_big_info);
 
   // called by
-  // PGLog::append_new_log_entries
-  // PGLog::merge_log
-  // PG::merge_new_log_entries
+  // PGLog::append_new_log_entries, maintain_rollback=true, which called by PG::append_log_entries_update_missing
+  // PGLog::merge_log, maintain_rollback=false, which called by PG::merge_log
+  // PG::merge_new_log_entries, maintain_rollback=true, which called by PrimaryLogPG::submit_log_entries
   template <typename missing_type>
   static bool append_log_entries_update_missing(
     const hobject_t &last_backfill,

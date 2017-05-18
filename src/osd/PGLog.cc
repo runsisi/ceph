@@ -633,7 +633,7 @@ void PGLog::_write_log_and_missing_wo_missing(
     ::encode(divergent_priors, (*km)["divergent_priors"]);
   }
 
-  if (require_rollback) {
+  if (require_rollback) { // pg belongs to ec pool
     ::encode(
       log.get_can_rollback_to(),
       (*km)["can_rollback_to"]);
@@ -745,7 +745,7 @@ void PGLog::_write_log_and_missing(
       }
     });
 
-  if (require_rollback) {
+  if (require_rollback) { // pg belongs to ec pool
     ::encode(
       log.get_can_rollback_to(),
       (*km)["can_rollback_to"]);
