@@ -584,6 +584,8 @@ void PoolReplayer::release_leader()
   m_leader_watcher->release_leader();
 }
 
+// called by
+// PoolWatcherListener::handle_update, which called by PoolWatcher<I>::notify_listener
 void PoolReplayer::handle_update(const std::string &mirror_uuid,
 				 ImageIds &&added_image_ids,
 				 ImageIds &&removed_image_ids) {
@@ -594,6 +596,7 @@ void PoolReplayer::handle_update(const std::string &mirror_uuid,
   dout(10) << "mirror_uuid=" << mirror_uuid << ", "
            << "added_count=" << added_image_ids.size() << ", "
            << "removed_count=" << removed_image_ids.size() << dendl;
+
   Mutex::Locker locker(m_lock);
   if (!m_leader_watcher->is_leader()) {
     return;
@@ -647,7 +650,7 @@ void PoolReplayer::handle_update(const std::string &mirror_uuid,
     // for now always send to myself (the leader)
     std::string &instance_id = m_instance_watcher->get_instance_id();
     m_instance_watcher->notify_image_release(instance_id, image_id.global_id,
-                                             mirror_uuid, image_id.id, true,
+                                             mirror_uuid, image_id.id, true, // schedule_delete
                                              gather_ctx->new_sub());
   }
 

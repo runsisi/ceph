@@ -107,6 +107,11 @@ Watcher::~Watcher() {
   assert(m_watch_state != WATCH_STATE_REGISTERED);
 }
 
+// called by
+// ImageCtx::register_watch
+// InstanceWatcher<I>::register_watch
+// LeaderWatcher<I>::register_watch
+// MirrorStatusWatcher<I>::init
 void Watcher::register_watch(Context *on_finish) {
   ldout(m_cct, 10) << dendl;
 

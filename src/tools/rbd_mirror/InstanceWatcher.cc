@@ -429,12 +429,12 @@ void InstanceWatcher<I>::notify_image_acquire(
 }
 
 // called by
-// InstanceWatcher<I>::init
+// PoolReplayer::handle_update
 template <typename I>
 void InstanceWatcher<I>::notify_image_release(
   const std::string &instance_id, const std::string &global_image_id,
   const std::string &peer_mirror_uuid, const std::string &peer_image_id,
-  bool schedule_delete, Context *on_notify_ack) {
+  bool schedule_delete, Context *on_notify_ack) { // schedule_delete should always be true
   dout(20) << "instance_id=" << instance_id << ", global_image_id="
            << global_image_id << dendl;
 
@@ -1130,6 +1130,9 @@ void InstanceWatcher<I>::handle_image_acquire(
   m_work_queue->queue(ctx, 0);
 }
 
+// called by
+// InstanceWatcher<I>::notify_image_release
+// InstanceWatcher<I>::handle_payload(ImageReleasePayload)
 template <typename I>
 void InstanceWatcher<I>::handle_image_release(
   const std::string &global_image_id,  const std::string &peer_mirror_uuid,

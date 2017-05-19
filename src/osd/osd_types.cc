@@ -3769,8 +3769,10 @@ void ObjectModDesc::visit(Visitor *visitor) const
   try {
     while (!bp.end()) {
       DECODE_START(max_required_version, bp);
+
       uint8_t code;
       ::decode(code, bp);
+
       switch (code) {
       case APPEND: {
 	uint64_t size;

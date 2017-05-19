@@ -34,7 +34,7 @@ MirroringWatcher<I>::MirroringWatcher(librados::IoCtx &io_ctx,
 
 // static
 // called by
-// librbd::mirror_mode_set
+// librbd::api::Mirror<I>::mode_set
 template <typename I>
 int MirroringWatcher<I>::notify_mode_updated(librados::IoCtx &io_ctx,
                                               cls::rbd::MirrorMode mirror_mode) {
@@ -80,6 +80,7 @@ int MirroringWatcher<I>::notify_image_updated(
 // DisableRequest<I>::send_notify_mirroring_watcher
 // DisableRequest<I>::send_notify_mirroring_watcher_removed
 // EnableRequest<I>::send_notify_mirroring_watcher
+// MirroringWatcher<I>::notify_image_updated, i.e., above, which never called
 template <typename I>
 void MirroringWatcher<I>::notify_image_updated(
     librados::IoCtx &io_ctx, cls::rbd::MirrorImageState mirror_image_state,
@@ -101,6 +102,8 @@ void MirroringWatcher<I>::notify_image_updated(
 
 }
 
+// called by
+// librbd::Watcher::WatchCtx::handle_notify
 template <typename I>
 void MirroringWatcher<I>::handle_notify(uint64_t notify_id, uint64_t handle,
                                         uint64_t notifier_id, bufferlist &bl) {

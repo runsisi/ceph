@@ -1173,6 +1173,8 @@ void ImageWatcher<I>::handle_error(uint64_t handle, int err) {
   Watcher::handle_error(handle, err);
 }
 
+// called by
+// librbd::Watcher::handle_rewatch
 template <typename I>
 void ImageWatcher<I>::handle_rewatch_complete(int r) {
   CephContext *cct = m_image_ctx.cct;

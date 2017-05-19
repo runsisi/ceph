@@ -7449,6 +7449,7 @@ inline int PrimaryLogPG::_delete_oid(
       && !try_no_whiteout) {
     whiteout = true;
   }
+
   bool legacy;
   if (get_osdmap()->require_osd_release >= CEPH_RELEASE_LUMINOUS) {
     legacy = false;
@@ -7469,10 +7470,12 @@ inline int PrimaryLogPG::_delete_oid(
   } else {
     legacy = false;
   }
+
   dout(20) << __func__ << " " << soid << " whiteout=" << (int)whiteout
 	   << " no_whiteout=" << (int)no_whiteout
 	   << " try_no_whiteout=" << (int)try_no_whiteout
 	   << dendl;
+
   if (!obs.exists || (obs.oi.is_whiteout() && whiteout))
     return -ENOENT;
 
@@ -7534,9 +7537,11 @@ inline int PrimaryLogPG::_delete_oid(
   if (oi.is_cache_pinned()) {
     ctx->delta_stats.num_objects_pinned--;
   }
+
   if ((legacy || snapset.is_legacy()) && soid.is_head()) {
     snapset.head_exists = false;
   }
+
   obs.exists = false;
 
   return 0;
@@ -7830,6 +7835,7 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
 
     // filter trimming/trimmed snaps out of snapcontext
     filter_snapc(snapc.snaps);
+
     dout(10) << " using newer snapc " << snapc << dendl;
   }
 
@@ -7988,6 +7994,7 @@ void PrimaryLogPG::make_writeable(OpContext *ctx)
   } else if (ctx->new_snapset.is_legacy()) {
     ctx->new_snapset.head_exists = ctx->new_obs.exists;
   }
+
   dout(20) << "make_writeable " << soid
 	   << " done, snapset=" << ctx->new_snapset << dendl;
 }
@@ -8333,6 +8340,7 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
 	      ctx->at_version,
 	      ctx->snapset_obc->obs.oi.version,
 	      0, osd_reqid_t(), ctx->mtime, 0));
+
 	  ctx->op_t->remove(snapoid);
 
 	  ctx->at_version.version++;
@@ -8397,6 +8405,7 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
 	       get_osdmap()->get_features(CEPH_ENTITY_TYPE_OSD, nullptr));
 
       ctx->op_t->create(snapoid);
+
       attrs[OI_ATTR].claim(bv);
       attrs[SS_ATTR].claim(bss);
 
@@ -8487,9 +8496,10 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
   // append to log
   // append pg log entry for the target object, previously we have
   // appended a pg log entry for the snapdir object if needed
-  ctx->log.push_back(pg_log_entry_t(log_op_type, soid, ctx->at_version,
-				    ctx->obs->oi.version,
-				    ctx->user_at_version, ctx->reqid,
+  ctx->log.push_back(pg_log_entry_t(log_op_type, soid, ctx->at_version, // eversion_t version
+				    ctx->obs->oi.version,               // eversion_t prior_version
+				    ctx->user_at_version,               // version_t user_version
+				    ctx->reqid,
 				    ctx->mtime, 0));
 
   if (soid.snap < CEPH_NOSNAP) {

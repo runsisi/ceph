@@ -65,7 +65,8 @@ void PGLog::IndexedLog::trim(
 
   while (!log.empty()) {
     pg_log_entry_t &e = *log.begin();
-    if (e.version > s)
+
+    if (e.version > s) // trim entries in [:s]
       break;
 
     generic_dout(20) << "trim " << e << dendl;
@@ -280,9 +281,10 @@ void PGLog::rewind_divergent_log(eversion_t newhead,
     info.last_complete = newhead;
 
   auto divergent = log.rewind_from_head(newhead);
-  if (!divergent.empty()) {
+  if (!divergent.empty()) { // divergent entries in [newhead, oldhead]
     mark_dirty_from(divergent.front().version);
   }
+
   for (auto &&entry: divergent) {
     dout(10) << "rewind_divergent_log future divergent " << entry << dendl;
   }
@@ -290,12 +292,12 @@ void PGLog::rewind_divergent_log(eversion_t newhead,
   info.last_update = newhead;
 
   _merge_divergent_entries(
-    log,
+    log,        // IndexedLog
     divergent,
     info,
     log.get_can_rollback_to(),
     missing,
-    rollbacker,
+    rollbacker, // PGLogEntryHandler instance on stack
     this);
 
   dirty_info = true;

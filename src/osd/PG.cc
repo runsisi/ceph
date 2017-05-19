@@ -598,6 +598,7 @@ void PG::merge_log(
 void PG::rewind_divergent_log(ObjectStore::Transaction& t, eversion_t newhead)
 {
   PGLogEntryHandler rollbacker{this, &t};
+
   pg_log.rewind_divergent_log(
     newhead, info, &rollbacker, dirty_info, dirty_big_info);
 }
@@ -3598,7 +3599,7 @@ void PG::add_log_entry(const pg_log_entry_t& e, bool applied)
     info.last_user_version = e.user_version;
 
   // log mutation
-  pg_log.add(e, applied); // push back of log entry list
+  pg_log.add(e, applied); // push back of log entry list, update pg_log_t::head
 
   dout(10) << "add_log_entry " << e << dendl;
 }
@@ -3613,7 +3614,7 @@ void PG::add_log_entry(const pg_log_entry_t& e, bool applied)
 void PG::append_log(
   const vector<pg_log_entry_t>& logv,
   eversion_t trim_to,           // pg_trim_to
-  eversion_t roll_forward_to,   // ctx->at_version
+  eversion_t roll_forward_to,   // ctx->at_version, i.e., the version right after the log head version
   ObjectStore::Transaction &t,
   bool transaction_applied)
 {
@@ -3643,12 +3644,14 @@ void PG::append_log(
       * out-of-turn since we won't be considered when
       * determining a min possible last_update.
       */
-    pg_log.roll_forward(&handler); // roll forward to log.head
+    // PGBackend::rollforward, do nothing for replicated backend
+    pg_log.roll_forward(&handler); // roll forward to current pg_head_t::head
   }
 
   for (vector<pg_log_entry_t>::const_iterator p = logv.begin();
        p != logv.end();
        ++p) {
+    // push back of log entry list, update pg_log_t::head
     add_log_entry(*p, transaction_applied);
 
     /* We don't want to leave the rollforward artifacts around
@@ -3656,6 +3659,7 @@ void PG::append_log(
      * above */
     if (transaction_applied &&
 	p->soid > info.last_backfill) {
+      // PGBackend::rollforward, do nothing for replicated backend
       pg_log.roll_forward(&handler); // roll forward to log.head
     }
   }
@@ -3670,10 +3674,13 @@ void PG::append_log(
   }
 
   if (transaction_applied && roll_forward_to > pg_log.get_can_rollback_to()) {
+    // advance pg_log_t::can_rollback_to, pg_log_t::rollback_info_trimmed_to
+    // IndexedLog::rollback_info_trimmed_to_riter
     pg_log.roll_forward_to(
       roll_forward_to, // ctx->at_version
-      &handler);
+      &handler); // PGBackend::rollforward, do nothing for replicated backend
 
+    // pg->last_rollback_info_trimmed_to_applied = roll_forward_to
     t.register_on_applied(
       new C_UpdateLastRollbackInfoTrimmedToApplied(
 	this,
@@ -4571,7 +4578,9 @@ void PG::_scan_rollback_obs(
   ThreadPool::TPHandle &handle)
 {
   ObjectStore::Transaction t;
+
   eversion_t trimmed_to = last_rollback_info_trimmed_to_applied;
+
   for (vector<ghobject_t>::const_iterator i = rollback_obs.begin();
        i != rollback_obs.end();
        ++i) {

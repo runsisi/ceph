@@ -169,6 +169,8 @@ void InstanceReplayer<I>::acquire_image(InstanceWatcher<I> *instance_watcher,
   m_threads->work_queue->queue(on_finish, 0);
 }
 
+// called by
+// InstanceWatcher<I>::handle_image_release
 template <typename I>
 void InstanceReplayer<I>::release_image(const std::string &global_image_id,
                                         const std::string &peer_mirror_uuid,

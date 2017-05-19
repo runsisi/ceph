@@ -221,8 +221,7 @@ void ImageDeleter::run() {
 
 // called by
 // ImageReplayer<I>::handle_shut_down
-// Replayer::set_sources
-// Replayer::stop_image_replayer
+// InstanceReplayer<I>::release_image
 void ImageDeleter::schedule_image_delete(RadosRef local_rados,
                                          int64_t local_pool_id,
                                          const std::string& global_image_id) {

@@ -422,7 +422,8 @@ public:
       info.hit_set = *hset_history;
     }
 
-    // call PG::append_log
+    // call PG::append_log, update PG::info.last_update, PG::info.last_user_version
+    // then push back of log entry list, update pg_log_t::head
     append_log(logv, trim_to, roll_forward_to, t, transaction_applied);
   }
 

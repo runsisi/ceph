@@ -52,16 +52,17 @@ struct PGLog : DoutPrefixProvider {
   // struct PGLogEntryHandler
   struct LogEntryHandler {
     virtual void rollback(
-      const pg_log_entry_t &entry) = 0;
+      const pg_log_entry_t &entry) = 0; // PGBackend::rollback
     virtual void rollforward(
-      const pg_log_entry_t &entry) = 0;
+      const pg_log_entry_t &entry) = 0; // PGBackend::rollforward
     virtual void trim(
-      const pg_log_entry_t &entry) = 0;
+      const pg_log_entry_t &entry) = 0; // PGBackend::trim
     virtual void remove(
-      const hobject_t &hoid) = 0;
+      const hobject_t &hoid) = 0;       // PGBackend::remove
     virtual void try_stash(
       const hobject_t &hoid,
-      version_t v) = 0;
+      version_t v) = 0;                 // PGBackend::try_stash
+
     virtual ~LogEntryHandler() {}
   };
 
@@ -582,6 +583,8 @@ public:
       }
 
       if (!applied) {
+        // advance pg_log_t::can_rollback_to and pg_log_t::rollback_info_trimmed_to
+        // to updated pg_log_t::head
 	skip_can_rollback_to_to_head();
       }
     }
@@ -744,7 +747,7 @@ public:
   void add(const pg_log_entry_t& e, bool applied = true) {
     mark_writeout_from(e.version);
 
-    log.add(e, applied); // push back of log entry list
+    log.add(e, applied); // push back of log entry list, update pg_log_t::head
   }
 
   // called by
@@ -882,6 +885,8 @@ public:
 			pg_missing_t& omissing, pg_shard_t from) const;
 
 protected:
+  // called by
+  // PGLog::_merge_divergent_entries
   static void split_by_object(
     mempool::osd_pglog::list<pg_log_entry_t> &entries,
     map<hobject_t, mempool::osd_pglog::list<pg_log_entry_t>> *out_entries) {
@@ -949,6 +954,7 @@ protected:
 	// prior_version correct (unless it is an ERROR entry)
 	assert(i->prior_version == last || i->is_error());
       }
+
       last = i->version;
       if (i->is_error()) {
 	ldpp_dout(dpp, 20) << __func__ << ": ignoring " << *i << dendl;
@@ -965,9 +971,11 @@ protected:
     const eversion_t prior_version = entries.begin()->prior_version;
     const eversion_t first_divergent_update = entries.begin()->version;
     const eversion_t last_divergent_update = entries.rbegin()->version;
+
     const bool object_not_in_store =
       !missing.is_missing(hoid) &&
       entries.rbegin()->is_delete();
+
     ldpp_dout(dpp, 10) << __func__ << ": hoid " << hoid
 		       << " prior_version: " << prior_version
 		       << " first_divergent_update: " << first_divergent_update
@@ -998,6 +1006,7 @@ protected:
 	if (!object_not_in_store) {
 	  rollbacker->remove(hoid);
 	}
+
 	for (auto &&i: entries) {
 	  rollbacker->trim(i);
 	}
@@ -1014,6 +1023,7 @@ protected:
 			 << " prior_version or op type indicates creation,"
 			 << " deleting"
 			 << dendl;
+
       if (missing.is_missing(hoid))
 	missing.rm(missing.get_items().find(hoid));
 
@@ -1021,7 +1031,9 @@ protected:
 	if (!object_not_in_store) {
 	  rollbacker->remove(hoid);
 	}
+
 	for (auto &&i: entries) {
+	  // remove rollback object
 	  rollbacker->trim(i);
 	}
       }
@@ -1038,12 +1050,15 @@ protected:
 	ldpp_dout(dpp, 10) << __func__ << ": hoid " << hoid
 			   << " missing.have is prior_version " << prior_version
 			   << " removing from missing" << dendl;
+
 	missing.rm(missing.get_items().find(hoid));
       } else {
 	ldpp_dout(dpp, 10) << __func__ << ": hoid " << hoid
 			   << " missing.have is " << missing.get_items().at(hoid).have
 			   << ", adjusting" << dendl;
+
 	missing.revise_need(hoid, prior_version);
+
 	if (prior_version <= info.log_tail) {
 	  ldpp_dout(dpp, 10) << __func__ << ": hoid " << hoid
 			     << " prior_version " << prior_version
@@ -1064,6 +1079,7 @@ protected:
 		       << " must be rolled back or recovered,"
 		       << " attempting to rollback"
 		       << dendl;
+
     bool can_rollback = true;
     /// Distinguish between 4) and 5)
     for (list<pg_log_entry_t>::const_reverse_iterator i = entries.rbegin();
@@ -1083,11 +1099,14 @@ protected:
 	   i != entries.rend();
 	   ++i) {
 	assert(i->can_rollback() && i->version > olog_can_rollback_to);
+
 	ldpp_dout(dpp, 10) << __func__ << ": hoid " << hoid
 			   << " rolling back " << *i << dendl;
+
 	if (rollbacker)
 	  rollbacker->rollback(*i);
       }
+
       ldpp_dout(dpp, 10) << __func__ << ": hoid " << hoid
 			 << " rolled back" << dendl;
       return;
@@ -1098,12 +1117,14 @@ protected:
       if (rollbacker) {
 	if (!object_not_in_store)
 	  rollbacker->remove(hoid);
+
 	for (auto &&i: entries) {
 	  rollbacker->trim(i);
 	}
       }
 
       missing.add(hoid, prior_version, eversion_t());
+
       if (prior_version <= info.log_tail) {
 	ldpp_dout(dpp, 10) << __func__ << ": hoid " << hoid
 			   << " prior_version " << prior_version
@@ -1114,9 +1135,9 @@ protected:
   } // static void _merge_object_divergent_entries
 
   // called by
-  // PGLog::proc_replica_log
-  // PGLog::rewind_divergent_log
-  // PGLog::merge_log
+  // PGLog::proc_replica_log, which called by PG::proc_replica_log
+  // PGLog::rewind_divergent_log, which called by PG::rewind_divergent_log/PGLog::merge_log
+  // PGLog::merge_log, which called by PG::merge_log
   /// Merge all entries using above
   template <typename missing_type>
   static void _merge_divergent_entries(
@@ -1129,14 +1150,15 @@ protected:
     const DoutPrefixProvider *dpp        ///< [in] logging provider
     ) {
     map<hobject_t, mempool::osd_pglog::list<pg_log_entry_t> > split;
+    // entries classified by hobject_t
     split_by_object(entries, &split);
     for (map<hobject_t, mempool::osd_pglog::list<pg_log_entry_t>>::iterator i = split.begin();
 	 i != split.end();
 	 ++i) {
       _merge_object_divergent_entries(
 	log,
-	i->first,
-	i->second,
+	i->first,       // hobject_t
+	i->second,      // log entries on this hobject_t
 	oinfo,
 	olog_can_rollback_to,
 	omissing,

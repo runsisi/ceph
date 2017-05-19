@@ -3579,6 +3579,7 @@ public:
 	 */
 	++p; // step forward one entry
 
+	// entries in [p, log.end()] are divergent
 	divergent.splice(divergent.begin(), log, p, log.end());
 	break;
       }

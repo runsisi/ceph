@@ -48,9 +48,22 @@ void PGBackend::rollback(
     const hobject_t &hoid;
     PGBackend *pg;
     ObjectStore::Transaction t;
+
     RollbackVisitor(
       const hobject_t &hoid,
       PGBackend *pg) : hoid(hoid), pg(pg) {}
+
+    /*
+      enum ModID {
+        APPEND = 1,
+        SETATTRS = 2,
+        DELETE = 3,
+        CREATE = 4,
+        UPDATE_SNAPS = 5,
+        TRY_DELETE = 6,
+        ROLLBACK_EXTENTS = 7
+      };
+     */
 
     void append(uint64_t old_size) override {
       ObjectStore::Transaction temp;
@@ -111,29 +124,51 @@ void PGBackend::rollback(
 
   RollbackVisitor vis(entry.soid, this);
   entry.mod_desc.visit(&vis);
+
   t->append(vis.t);
 }
 
+// better name it TrimVisitor
+// created by
+// PGBackend::rollforward
+// PGBackend::trim
 struct Trimmer : public ObjectModDesc::Visitor { // class ObjectModDesc was defined in osd_types.h
   const hobject_t &soid;
   PGBackend *pg;
   ObjectStore::Transaction *t;
+
   Trimmer(
     const hobject_t &soid,
     PGBackend *pg,
     ObjectStore::Transaction *t)
     : soid(soid), pg(pg), t(t) {}
 
+  /*
+    enum ModID {
+      APPEND = 1,
+      SETATTRS = 2,
+      DELETE = 3,
+      CREATE = 4,
+      UPDATE_SNAPS = 5,
+      TRY_DELETE = 6,
+      ROLLBACK_EXTENTS = 7
+    };
+   */
+
   void rmobject(version_t old_version) override {
+    // PGBackend::trim_rollback_object
     pg->trim_rollback_object(
       soid,
       old_version,
       t);
   }
-  // try_rmobject defaults to rmobject
+
+  // ObjectModDesc::Visitor::try_rmobject was default to rmobject
+
   void rollback_extents(
     version_t gen,
     const vector<pair<uint64_t, uint64_t> > &extents) override {
+    // PGBackend::trim_rollback_object
     pg->trim_rollback_object(
       soid,
       gen,
@@ -154,6 +189,8 @@ void PGBackend::rollforward(
     return;
 
   Trimmer trimmer(entry.soid, this, t);
+
+  // rmobject/rollback_extents
   entry.mod_desc.visit(&trimmer);
 }
 
@@ -167,6 +204,8 @@ void PGBackend::trim(
     return;
 
   Trimmer trimmer(entry.soid, this, t);
+
+  // rmobject/rollback_extents
   entry.mod_desc.visit(&trimmer);
 }
 
@@ -179,8 +218,8 @@ void PGBackend::try_stash(
 {
   t->try_rename(
     coll,
-    ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
-    ghobject_t(hoid, v, get_parent()->whoami_shard().shard));
+    ghobject_t(hoid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard), // old
+    ghobject_t(hoid, v, get_parent()->whoami_shard().shard));   // new
 }
 
 // called by
@@ -342,6 +381,8 @@ int PGBackend::objects_get_attrs(
     *out);
 }
 
+// --- for PGBackend::RollbackVisitor -------------------------------------
+
 // called by
 // PGBackend::RollbackVisitor::setattrs
 void PGBackend::rollback_setattrs(
@@ -436,6 +477,10 @@ void PGBackend::rollback_extents(
     ghobject_t(hoid, gen, shard));
 }
 
+// -------------------------------------------------------------------------
+
+// --- for Trimmer visitor -------------------------------------------------
+
 // called by
 // Trimmer::rmobject
 // Trimmer::rollback_extents
@@ -444,9 +489,12 @@ void PGBackend::trim_rollback_object(
   version_t old_version,
   ObjectStore::Transaction *t) {
   assert(!hoid.is_temp());
+
   t->remove(
     coll, ghobject_t(hoid, old_version, get_parent()->whoami_shard().shard));
 }
+
+// -------------------------------------------------------------------------
 
 // static
 // called by
