@@ -313,6 +313,10 @@ void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
   dout(10) << "merge_log " << olog << " from osd." << fromosd
            << " into " << log << dendl;
 
+  // 1. extend on tail
+  // 2. throw divergent entries, i.e., shrink on head
+  // 3. extend on head
+
   // Check preconditions
 
   // If our log is empty, the incoming log needs to have not been trimmed.
@@ -335,18 +339,23 @@ void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
   eversion_t orig_tail = log.tail;
   if (olog.tail < log.tail) {
     dout(10) << "merge_log extending tail to " << olog.tail << dendl;
+
     list<pg_log_entry_t>::iterator from = olog.log.begin();
     list<pg_log_entry_t>::iterator to;
     eversion_t last;
     for (to = from;
 	 to != olog.log.end();
 	 ++to) {
-      if (to->version > log.tail)
+      if (to->version > log.tail) // extend [olog.log.begin(), log.tail]
 	break;
+
       log.index(*to);
+
       dout(15) << *to << dendl;
+
       last = to->version;
     }
+
     mark_dirty_to(last);
 
     // splice into our log.
@@ -354,6 +363,7 @@ void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
 		   olog.log, from, to);
       
     info.log_tail = log.tail = olog.tail;
+
     changed = true;
   }
 
@@ -369,6 +379,7 @@ void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
   // do we have divergent entries to throw out?
   if (olog.head < log.head) {
     rewind_divergent_log(olog.head, info, rollbacker, dirty_info, dirty_big_info);
+
     changed = true;
   }
 
@@ -391,8 +402,10 @@ void PGLog::merge_log(pg_info_t &oinfo, pg_log_t &olog, pg_shard_t fromosd,
 	break;
       }
     }
+
     dout(20) << "merge_log cut point (usually last shared) is "
 	     << lower_bound << dendl;
+
     mark_dirty_from(lower_bound);
 
     auto divergent = log.rewind_from_head(lower_bound);
