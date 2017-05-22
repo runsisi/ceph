@@ -10127,7 +10127,7 @@ void PrimaryLogPG::cancel_flush_ops(bool requeue)
 // PrimaryLogPG::make_writeable
 bool PrimaryLogPG::is_present_clone(hobject_t coid)
 {
-  if (!pool.info.allow_incomplete_clones())
+  if (!pool.info.allow_incomplete_clones()) // cache pool allows incomplete clones
     return true;
 
   if (is_missing_object(coid))

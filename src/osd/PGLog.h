@@ -1136,9 +1136,9 @@ protected:
   } // static void _merge_object_divergent_entries
 
   // called by
-  // PGLog::proc_replica_log, which called by PG::proc_replica_log
+  // PGLog::proc_replica_log, which called by PG::proc_replica_log, with rollbacker = nullptr
   // PGLog::rewind_divergent_log, which called by PG::rewind_divergent_log/PGLog::merge_log
-  // PGLog::merge_log, which called by PG::merge_log
+  // PGLog::merge_log, which called by PG::merge_log <- PG::proc_master_log
   /// Merge all entries using above
   template <typename missing_type>
   static void _merge_divergent_entries(
