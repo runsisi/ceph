@@ -411,6 +411,7 @@ int SetSnapRequest<I>::apply() {
     // snapshot
 
     assert(m_image_ctx.exclusive_lock == nullptr);
+
     int r = m_image_ctx.snap_set(m_snap_namespace, m_snap_name);
     if (r < 0) {
       return r;

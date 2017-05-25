@@ -28,6 +28,7 @@ void UpdateRequest<I>::send() {
   // safe to update in-memory state first without handling rollback since any
   // failures will invalidate the object map
   std::string oid(ObjectMap<>::object_map_name(m_image_ctx.id, m_snap_id));
+
   ldout(cct, 20) << this << " updating object map"
                  << ": ictx=" << &m_image_ctx << ", oid=" << oid << ", ["
 		 << m_start_object_no << "," << m_end_object_no << ") = "
@@ -60,6 +61,7 @@ template <typename I>
 void UpdateRequest<I>::finish_request() {
   RWLock::RLocker snap_locker(m_image_ctx.snap_lock);
   RWLock::WLocker object_map_locker(m_image_ctx.object_map_lock);
+
   ldout(m_image_ctx.cct, 20) << this << " on-disk object map updated"
                              << dendl;
 
@@ -69,6 +71,7 @@ void UpdateRequest<I>::finish_request() {
          object_no < MIN(m_end_object_no, m_object_map.size());
          ++object_no) {
       uint8_t state = m_object_map[object_no];
+
       if (!m_current_state || state == *m_current_state ||
           (*m_current_state == OBJECT_EXISTS && state == OBJECT_EXISTS_CLEAN)) {
         m_object_map[object_no] = m_new_state;

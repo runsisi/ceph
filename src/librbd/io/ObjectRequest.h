@@ -299,9 +299,13 @@ protected:
   virtual void add_write_ops(librados::ObjectWriteOperation *wr,
                              bool set_hints) = 0;
   virtual void guard_write();
+
+  // called by
+  // AbstractObjectWriteRequest::send_post_object_map_update
   virtual bool post_object_map_update() {
     return false;
   }
+
   virtual void send_write();
   virtual void send_write_op();
   virtual void handle_write_guard();
@@ -354,7 +358,7 @@ public:
   ObjectRemoveRequest(ImageCtx *ictx, const std::string &oid,
                       uint64_t object_no, const ::SnapContext &snapc,
 		      const ZTracer::Trace &parent_trace, Context *completion)
-    : AbstractObjectWriteRequest(ictx, oid, object_no, 0, 0, snapc, true,
+    : AbstractObjectWriteRequest(ictx, oid, object_no, 0, 0, snapc, true, // hide_enoent
 				 "remote", parent_trace, completion),
       m_object_state(OBJECT_NONEXISTENT) {
   }
@@ -377,8 +381,10 @@ public:
     return true;
   }
 
+  // called by
+  // AbstractObjectWriteRequest::send_post_object_map_update
   bool post_object_map_update() override {
-    if (m_object_state == OBJECT_EXISTS) {
+    if (m_object_state == OBJECT_EXISTS) { // has parent
       return false;
     }
     return true;
@@ -401,6 +407,10 @@ private:
   uint8_t m_object_state;
 };
 
+// this is not for client I/O, it's trim maintain op only
+// created by
+// librbd::operation::TrimRequest.cc/C_CopyupObject::send, with post_object_map_update=false
+// librbd::operation::TrimRequest<I>::send_clean_boundary, with post_object_map_update=true
 class ObjectTrimRequest : public AbstractObjectWriteRequest {
 public:
   // we'd need to only conditionally specify if a post object map
@@ -409,7 +419,7 @@ public:
   ObjectTrimRequest(ImageCtx *ictx, const std::string &oid, uint64_t object_no,
                     const ::SnapContext &snapc, bool post_object_map_update,
 		    Context *completion)
-    : AbstractObjectWriteRequest(ictx, oid, object_no, 0, 0, snapc, true,
+    : AbstractObjectWriteRequest(ictx, oid, object_no, 0, 0, snapc, true, // hide_enoent
 				 "trim", {}, completion),
       m_post_object_map_update(post_object_map_update) {
   }
@@ -423,6 +433,8 @@ public:
     return true;
   }
 
+  // called by
+  // AbstractObjectWriteRequest::send_post_object_map_update
   bool post_object_map_update() override {
     return m_post_object_map_update;
   }
@@ -468,6 +480,8 @@ protected:
   }
 };
 
+// created by
+// ImageDiscardRequest<I>::create_object_request
 class ObjectZeroRequest : public AbstractObjectWriteRequest {
 public:
   ObjectZeroRequest(ImageCtx *ictx, const std::string &oid, uint64_t object_no,

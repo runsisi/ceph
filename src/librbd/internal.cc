@@ -698,6 +698,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
 		     << " in pool " << info.first.second << dendl;
 	  return r;
 	}
+
 	names.insert(make_pair(info.first.second, name));
       }
     }

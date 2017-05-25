@@ -30,6 +30,8 @@
 namespace librbd {
 namespace io {
 
+// called by
+// ImageDiscardRequest<I>::create_object_request
 template <typename I>
 ObjectRequest<I>*
 ObjectRequest<I>::create_remove(I *ictx, const std::string &oid,
@@ -41,6 +43,8 @@ ObjectRequest<I>::create_remove(I *ictx, const std::string &oid,
                                  snapc, parent_trace, completion);
 }
 
+// called by
+// ImageDiscardRequest<I>::create_object_request
 template <typename I>
 ObjectRequest<I>*
 ObjectRequest<I>::create_truncate(I *ictx, const std::string &oid,
@@ -52,6 +56,9 @@ ObjectRequest<I>::create_truncate(I *ictx, const std::string &oid,
                                    object_off, snapc, parent_trace, completion);
 }
 
+// called by
+// ImageWriteRequest<I>::create_object_request
+// ImageWriteSameRequest<I>::create_object_request
 template <typename I>
 ObjectRequest<I>*
 ObjectRequest<I>::create_write(I *ictx, const std::string &oid,
@@ -65,6 +72,8 @@ ObjectRequest<I>::create_write(I *ictx, const std::string &oid,
 				completion);
 }
 
+// called by
+// ImageDiscardRequest<I>::create_object_request
 template <typename I>
 ObjectRequest<I>*
 ObjectRequest<I>::create_zero(I *ictx, const std::string &oid,
@@ -78,6 +87,8 @@ ObjectRequest<I>::create_zero(I *ictx, const std::string &oid,
 			       completion);
 }
 
+// called by
+// ImageWriteSameRequest<I>::create_object_request
 template <typename I>
 ObjectRequest<I>*
 ObjectRequest<I>::create_writesame(I *ictx, const std::string &oid,
@@ -606,7 +617,7 @@ bool AbstractObjectWriteRequest::send_post_object_map_update() {
   ldout(m_ictx->cct, 20) << dendl;
 
   RWLock::RLocker snap_locker(m_ictx->snap_lock);
-  if (m_ictx->object_map == nullptr || !post_object_map_update()) {
+  if (m_ictx->object_map == nullptr || !post_object_map_update()) { // no need to update object map
     return true;
   }
 
@@ -616,10 +627,12 @@ bool AbstractObjectWriteRequest::send_post_object_map_update() {
   RWLock::WLocker object_map_locker(m_ictx->object_map_lock);
   ldout(m_ictx->cct, 20) << m_oid << " " << m_object_off
                          << "~" << m_object_len << dendl;
+
   m_state = LIBRBD_AIO_WRITE_POST;
 
   if (m_ictx->object_map->aio_update<ObjectRequest>(
-        CEPH_NOSNAP, m_object_no, OBJECT_NONEXISTENT, OBJECT_PENDING,
+        CEPH_NOSNAP, m_object_no, OBJECT_NONEXISTENT, // new state
+        OBJECT_PENDING, // current state
         this->m_trace, this)) {
     return false;
   }

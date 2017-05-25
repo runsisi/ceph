@@ -61,6 +61,8 @@ struct ImageWatcher<I>::C_ProcessPayload : public Context {
   }
 };
 
+// created by
+// ImageCtx::register_watch, which called by librbd::image::OpenRequest<I>::send_register_watch
 template <typename I>
 ImageWatcher<I>::ImageWatcher(I &image_ctx)
   : Watcher(image_ctx.md_ctx, image_ctx.op_work_queue, image_ctx.header_oid),

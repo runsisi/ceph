@@ -103,6 +103,11 @@ private:
   uint64_t m_object_no;
 };
 
+// created by
+// RemoveRequest<I>::trim_image
+// RebuildObjectMapRequest<I>::send_trim_image
+// ResizeRequest<I>::send_trim_image
+// librbd::trim_image
 template <typename I>
 TrimRequest<I>::TrimRequest(I &image_ctx, Context *on_finish,
                             uint64_t original_size, uint64_t new_size,
@@ -382,8 +387,9 @@ void TrimRequest<I>::send_post_copyup() {
       RWLock::WLocker object_map_locker(image_ctx.object_map_lock);
 
       if (image_ctx.object_map->template aio_update<AsyncRequest<I> >(
-            CEPH_NOSNAP, m_copyup_start, m_copyup_end, OBJECT_NONEXISTENT,
-            OBJECT_PENDING, {}, this)) {
+            CEPH_NOSNAP, m_copyup_start, m_copyup_end, OBJECT_NONEXISTENT, // new state
+            OBJECT_PENDING, // current state
+            {}, this)) {
         return;
       }
     }
@@ -414,8 +420,9 @@ void TrimRequest<I>::send_post_remove() {
       RWLock::WLocker object_map_locker(image_ctx.object_map_lock);
 
       if (image_ctx.object_map->template aio_update<AsyncRequest<I> >(
-            CEPH_NOSNAP, m_delete_start, m_num_objects, OBJECT_NONEXISTENT,
-            OBJECT_PENDING, {}, this)) {
+            CEPH_NOSNAP, m_delete_start, m_num_objects, OBJECT_NONEXISTENT, // new state
+            OBJECT_PENDING, // current state
+            {}, this)) {
         return;
       }
     }

@@ -252,6 +252,8 @@ static ostream& _prefix(
   return *_dout << watch->gen_dbg_prefix();
 }
 
+// created by
+// Watch::register_cb
 class HandleWatchTimeout : public CancelableContext {
   WatchRef watch;
 public:
@@ -321,7 +323,7 @@ Watch::Watch(
   PrimaryLogPG *pg,
   OSDService *osd,
   ObjectContextRef obc,
-  uint32_t timeout,
+  uint32_t timeout, // if watch op did not carry it, default cct->_conf->osd_client_watch_timeout, i.e., 30s
   uint64_t cookie,
   entity_name_t entity,
   const entity_addr_t &addr)
@@ -359,7 +361,7 @@ Context *Watch::get_delayed_cb()
 }
 
 // called by
-// Watch::got_ping
+// Watch::got_ping, i.e., reset timer
 // Watch::connect
 // Watch::disconnect
 void Watch::register_cb()
