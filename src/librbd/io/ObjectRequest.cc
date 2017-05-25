@@ -621,6 +621,8 @@ bool AbstractObjectWriteRequest::send_post_object_map_update() {
     return true;
   }
 
+  // object-map disabled or ObjectRemoveRequest/ObjectTrimRequest
+
   // should have been flushed prior to releasing lock
   assert(m_ictx->exclusive_lock->is_lock_owner());
 

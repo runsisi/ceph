@@ -25,6 +25,8 @@ namespace operation {
 
 namespace {
 
+// created by
+// ObjectMapIterateRequest<I>::send_verify_objects
 template <typename I>
 class C_VerifyObjectCallback : public C_AsyncObjectThrottle<I> {
 public:
@@ -90,7 +92,8 @@ private:
 		   << " r="
                    << r << dendl;
 
-    return object_map_action(get_object_state());
+    // handle dismatch from in memory object map and state get from OSD
+    return object_map_action(get_object_state()); // always return true
   }
 
   void send_list_snaps() {
@@ -111,6 +114,7 @@ private:
     comp->release();
   }
 
+  // state get from OSD
   uint8_t get_object_state() {
     I &image_ctx = this->m_image_ctx;
 
@@ -163,7 +167,9 @@ private:
     return it->first;
   }
 
-  bool object_map_action(uint8_t new_state) {
+  // called by
+  // C_VerifyObjectCallback::should_complete
+  bool object_map_action(uint8_t new_state) { // state get from OSD
     I &image_ctx = this->m_image_ctx;
 
     CephContext *cct = image_ctx.cct;
@@ -180,7 +186,7 @@ private:
 
     RWLock::WLocker l(image_ctx.object_map_lock);
 
-    uint8_t state = (*image_ctx.object_map)[m_object_no];
+    uint8_t state = (*image_ctx.object_map)[m_object_no]; // state from in memory object map
 
     ldout(cct, 10) << "C_VerifyObjectCallback::object_map_action"
 		   << " object " << image_ctx.get_object_name(m_object_no)
@@ -192,10 +198,12 @@ private:
 
       assert(m_handle_mismatch);
 
-      // for librbd::Operations<I>::object_map_iterate, this should be
-      // librbd/Operations.cc:needs_invalidate
-      // for librbd::operation::RebuildObjectMapRequest<I>::send_verify_objects, this
-      // should be librbd::operation::update_object_map
+      // m_handle_mismatch:
+      // librbd/Operations.cc:needs_invalidate, for librbd::Operations<I>::object_map_iterate
+      //    return false if from exists -> non-exists
+      // librbd::operation::update_object_map, for
+      //    librbd::operation::RebuildObjectMapRequest<I>::send_verify_objects
+      //    always return false
       r = m_handle_mismatch(image_ctx, m_object_no, state, new_state);
       if (r) {
 	lderr(cct) << "object map error: object "
@@ -219,7 +227,7 @@ private:
 } // anonymous namespace
 
 // called by
-// librbd::Operations<I>::object_map_iterate
+// librbd::Operations<I>::object_map_iterate, which called by Operations<I>::check_object_map
 // librbd::operation::RebuildObjectMapRequest<I>::send_verify_objects
 template <typename I>
 void ObjectMapIterateRequest<I>::send() {
@@ -263,6 +271,8 @@ bool ObjectMapIterateRequest<I>::should_complete(int r) {
   return false;
 }
 
+// called by
+// ObjectMapIterateRequest<I>::send
 template <typename I>
 void ObjectMapIterateRequest<I>::send_verify_objects() {
   assert(m_image_ctx.owner_lock.is_locked());
@@ -284,6 +294,12 @@ void ObjectMapIterateRequest<I>::send_verify_objects() {
 
   m_state = STATE_VERIFY_OBJECTS;
 
+  // m_handle_mismatch:
+  // librbd/Operations.cc:needs_invalidate, for librbd::Operations<I>::object_map_iterate
+  //    return false if from exists -> non-exists
+  // librbd::operation::update_object_map, for
+  //    librbd::operation::RebuildObjectMapRequest<I>::send_verify_objects
+  //    always return false
   typename AsyncObjectThrottle<I>::ContextFactory context_factory(
     boost::lambda::bind(boost::lambda::new_ptr<C_VerifyObjectCallback<I> >(),
 			boost::lambda::_1, &m_image_ctx, snap_id,

@@ -79,6 +79,7 @@ public:
                   const boost::optional<uint8_t> &current_state,
                   const ZTracer::Trace &parent_trace, T *callback_object) {
     assert(start_object_no < end_object_no);
+
     if (snap_id == CEPH_NOSNAP) {
       uint64_t object_no;
       for (object_no = start_object_no; object_no < end_object_no;

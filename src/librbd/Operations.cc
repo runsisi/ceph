@@ -390,10 +390,13 @@ struct C_InvokeAsyncRequest : public Context {
 template <typename I>
 bool needs_invalidate(I& image_ctx, uint64_t object_no,
 		     uint8_t current_state, uint8_t new_state) {
+  // current_state is state from in memory object map, new_state is state get
+  // from OSD
+
   if ( (current_state == OBJECT_EXISTS ||
 	current_state == OBJECT_EXISTS_CLEAN) &&
        (new_state == OBJECT_NONEXISTENT ||
-	new_state == OBJECT_PENDING)) {
+	new_state == OBJECT_PENDING)) { // from exists vs non-exists
 
     // return false means no need to invalidate the object map
 
