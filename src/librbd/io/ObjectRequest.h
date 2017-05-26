@@ -178,6 +178,8 @@ public:
     return "read";
   }
 
+  // called by
+  // AbstractObjectWriteRequest::send_pre_object_map_update
   bool pre_object_map_update(uint8_t *new_state) override {
     return false;
   }
@@ -337,6 +339,8 @@ public:
     return "write";
   }
 
+  // called by
+  // AbstractObjectWriteRequest::send_pre_object_map_update
   bool pre_object_map_update(uint8_t *new_state) override {
     *new_state = OBJECT_EXISTS;
     return true;
@@ -353,6 +357,8 @@ private:
   int m_op_flags;
 };
 
+// created by
+// ImageDiscardRequest<I>::create_object_request
 class ObjectRemoveRequest : public AbstractObjectWriteRequest {
 public:
   ObjectRemoveRequest(ImageCtx *ictx, const std::string &oid,
@@ -370,6 +376,8 @@ public:
     return "remove";
   }
 
+  // called by
+  // AbstractObjectWriteRequest::send_pre_object_map_update
   bool pre_object_map_update(uint8_t *new_state) override {
     if (has_parent()) {
       m_object_state = OBJECT_EXISTS;
@@ -387,6 +395,8 @@ public:
     if (m_object_state == OBJECT_EXISTS) { // has parent
       return false;
     }
+
+    // no parent, need to update state to OBJECT_NONEXISTENT
     return true;
   }
 
@@ -428,6 +438,8 @@ public:
     return "remove (trim)";
   }
 
+  // called by
+  // AbstractObjectWriteRequest::send_pre_object_map_update
   bool pre_object_map_update(uint8_t *new_state) override {
     *new_state = OBJECT_PENDING;
     return true;
@@ -449,6 +461,8 @@ private:
   bool m_post_object_map_update;
 };
 
+// created by
+// ImageDiscardRequest<I>::create_object_request
 class ObjectTruncateRequest : public AbstractObjectWriteRequest {
 public:
   ObjectTruncateRequest(ImageCtx *ictx, const std::string &oid,
@@ -463,6 +477,8 @@ public:
     return "truncate";
   }
 
+  // called by
+  // AbstractObjectWriteRequest::send_pre_object_map_update
   bool pre_object_map_update(uint8_t *new_state) override {
     if (!m_object_exist && !has_parent())
       *new_state = OBJECT_NONEXISTENT;
@@ -497,6 +513,8 @@ public:
     return "zero";
   }
 
+  // called by
+  // AbstractObjectWriteRequest::send_pre_object_map_update
   bool pre_object_map_update(uint8_t *new_state) override {
     *new_state = OBJECT_EXISTS;
     return true;
@@ -529,6 +547,8 @@ public:
     return "writesame";
   }
 
+  // called by
+  // AbstractObjectWriteRequest::send_pre_object_map_update
   bool pre_object_map_update(uint8_t *new_state) override {
     *new_state = OBJECT_EXISTS;
     return true;

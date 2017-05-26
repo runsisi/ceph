@@ -146,7 +146,6 @@ bool ObjectMap<I>::object_may_exist(uint64_t object_no) const
 // ObjectMap<I>::aio_update(..., T *callback_object), for external caller
 // ObjectMap<I>::aio_update(..., Context *on_finish), for
 //      librbd::operation::TrimRequest<I>::send_pre/post_copyup/remove
-
 template <typename I>
 bool ObjectMap<I>::update_required(uint64_t object_no, uint8_t new_state) {
   assert(m_image_ctx.object_map_lock.is_wlocked());

@@ -115,7 +115,7 @@ TrimRequest<I>::TrimRequest(I &image_ctx, Context *on_finish,
   : AsyncRequest<I>(image_ctx, on_finish), m_new_size(new_size),
     m_prog_ctx(prog_ctx)
 {
-  uint64_t period = image_ctx.get_stripe_period();
+  uint64_t period = image_ctx.get_stripe_period(); // stripe_count * (1ull << order);
   uint64_t new_num_periods = ((m_new_size + period - 1) / period);
 
   m_delete_off = MIN(new_num_periods * period, original_size);
@@ -300,6 +300,9 @@ void TrimRequest<I>::send_pre_copyup() {
     return;
   }
 
+  // this is a child image, the overlap area starts beyond m_delete_start,
+  // i.e., [0 --- m_delete_start --- m_copyup_end] and the child image has snapshots
+
   m_copyup_start = m_delete_start;
   m_delete_start = m_copyup_end;
 
@@ -483,7 +486,8 @@ void TrimRequest<I>::send_clean_boundary() {
     io::ObjectRequest<> *req;
     if (p->offset == 0) {
       req = new io::ObjectTrimRequest(&image_ctx, p->oid.name, p->objectno,
-                                      snapc, true, req_comp);
+                                      snapc, true, req_comp); // need to execute post object map update,
+                                                              // i.e., PENDING -> NONEXSISTENT
     } else {
       req = new io::ObjectTruncateRequest(&image_ctx, p->oid.name, p->objectno,
                                           p->offset, snapc, {}, req_comp);
