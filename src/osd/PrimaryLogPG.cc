@@ -5905,6 +5905,8 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	string aname;
 	bp.copy(op.xattr.name_len, aname);
 	tracepoint(osd, do_osd_op_pre_getxattr, soid.oid.name.c_str(), soid.snap.val, aname.c_str());
+
+	// always with a "_" prefix
 	string name = "_" + aname;
 	int r = getattr_maybe_cache(
 	  ctx->obc,
@@ -6577,7 +6579,7 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
       ++ctx->num_write;
       tracepoint(osd, do_osd_op_pre_delete, soid.oid.name.c_str(), soid.snap.val);
       {
-	result = _delete_oid(ctx, false, ctx->ignore_cache);
+	result = _delete_oid(ctx, false, ctx->ignore_cache); // with no_whiteout=false
       }
       break;
 
@@ -6809,6 +6811,8 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	string aname;
 	bp.copy(op.xattr.name_len, aname);
 	tracepoint(osd, do_osd_op_pre_setxattr, soid.oid.name.c_str(), soid.snap.val, aname.c_str());
+
+	// always with a "_" prefix
 	string name = "_" + aname;
 	bufferlist bl;
 	bp.copy(op.xattr.value_len, bl);
@@ -6827,6 +6831,8 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 	  result = -ENOENT;
 	  break;
 	}
+
+	// always with a "_" prefix
 	string name = "_" + aname;
 	t->rmattr(soid, name);
  	ctx->delta_stats.num_wr++;
