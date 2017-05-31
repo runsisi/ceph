@@ -5911,11 +5911,13 @@ void PG::fulfill_log(
 void PG::check_full_transition(OSDMapRef lastmap, OSDMapRef osdmap)
 {
   bool changed = false;
+
   if (osdmap->test_flag(CEPH_OSDMAP_FULL) &&
       !lastmap->test_flag(CEPH_OSDMAP_FULL)) {
     dout(10) << " cluster was marked full in " << osdmap->get_epoch() << dendl;
     changed = true;
   }
+
   const pg_pool_t *pi = osdmap->get_pg_pool(info.pgid.pool());
   assert(pi);
   if (pi->has_flag(pg_pool_t::FLAG_FULL)) {
@@ -5925,6 +5927,7 @@ void PG::check_full_transition(OSDMapRef lastmap, OSDMapRef osdmap)
       changed = true;
     }
   }
+
   if (changed) {
     info.history.last_epoch_marked_full = osdmap->get_epoch();
     dirty_info = true;

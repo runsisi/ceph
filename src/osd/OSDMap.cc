@@ -1133,6 +1133,8 @@ int OSDMap::calc_num_osds()
   return num_osd;
 }
 
+// called by
+// OSDMonitor::encode_pending
 void OSDMap::count_full_nearfull_osds(int *full, int *backfill, int *nearfull) const
 {
   *full = 0;
@@ -1140,11 +1142,11 @@ void OSDMap::count_full_nearfull_osds(int *full, int *backfill, int *nearfull) c
   *nearfull = 0;
   for (int i = 0; i < max_osd; ++i) {
     if (exists(i) && is_up(i) && is_in(i)) {
-      if (osd_state[i] & CEPH_OSD_FULL)
+      if (osd_state[i] & CEPH_OSD_FULL) // was set by OSD::send_full_update
 	++(*full);
-      else if (osd_state[i] & CEPH_OSD_BACKFILLFULL)
+      else if (osd_state[i] & CEPH_OSD_BACKFILLFULL) // was set by OSD::send_full_update
 	++(*backfill);
-      else if (osd_state[i] & CEPH_OSD_NEARFULL)
+      else if (osd_state[i] & CEPH_OSD_NEARFULL) // was set by OSD::send_full_update
 	++(*nearfull);
     }
   }

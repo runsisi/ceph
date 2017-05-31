@@ -2378,7 +2378,6 @@ void PGMap::dump_filtered_pg_stats(ostream& ss, set<pg_t>& pgs) const
 }
 
 
-
 // Only called with a single bit set in "what"
 static void note_stuck_detail(
   int what,

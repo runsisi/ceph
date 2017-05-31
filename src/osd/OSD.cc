@@ -826,6 +826,8 @@ void OSDService::promote_throttle_recalibrate()
 
 // -------------------------------------
 
+// called by
+// OSDService::check_full_status
 float OSDService::get_failsafe_full_ratio()
 {
   float full_ratio = cct->_conf->osd_failsafe_full_ratio;
@@ -833,6 +835,8 @@ float OSDService::get_failsafe_full_ratio()
   return full_ratio;
 }
 
+// called by
+// OSDService::update_osd_stat
 void OSDService::check_full_status(float ratio)
 {
   Mutex::Locker l(full_status_lock);
@@ -848,6 +852,7 @@ void OSDService::check_full_status(float ratio)
     cur_state = NONE;
     return;
   }
+
   float nearfull_ratio = osdmap->get_nearfull_ratio();
   float backfillfull_ratio = std::max(osdmap->get_backfillfull_ratio(), nearfull_ratio);
   float full_ratio = std::max(osdmap->get_full_ratio(), backfillfull_ratio);
@@ -899,6 +904,7 @@ void OSDService::check_full_status(float ratio)
   if (cur_state != new_state) {
     dout(10) << __func__ << " " << get_full_state_name(cur_state)
 	     << " -> " << get_full_state_name(new_state) << dendl;
+
     if (new_state == FAILSAFE) {
       clog->error() << "failsafe engaged, dropping updates, now "
 		    << (int)roundf(ratio * 100) << "% full";
@@ -906,6 +912,7 @@ void OSDService::check_full_status(float ratio)
       clog->error() << "failsafe disengaged, no longer dropping updates, now "
 		    << (int)roundf(ratio * 100) << "% full";
     }
+
     cur_state = new_state;
   }
 }
@@ -913,6 +920,7 @@ void OSDService::check_full_status(float ratio)
 bool OSDService::need_fullness_update()
 {
   OSDMapRef osdmap = get_osdmap();
+
   s_names cur = NONE;
   if (osdmap->exists(whoami)) {
     if (osdmap->get_state(whoami) & CEPH_OSD_FULL) {
@@ -923,6 +931,7 @@ bool OSDService::need_fullness_update()
       cur = NEARFULL;
     }
   }
+
   s_names want = NONE;
   if (is_full())
     want = FULL;
@@ -930,9 +939,12 @@ bool OSDService::need_fullness_update()
     want = BACKFILLFULL;
   else if (is_nearfull())
     want = NEARFULL;
+
   return want != cur;
 }
 
+// called by
+// OSDService::check_xxx_full
 bool OSDService::_check_full(s_names type, ostream &ss) const
 {
   Mutex::Locker l(full_status_lock);
@@ -971,6 +983,7 @@ bool OSDService::check_nearfull(ostream &ss) const
   return _check_full(NEARFULL, ss);
 }
 
+// never used
 bool OSDService::is_failsafe_full() const
 {
   Mutex::Locker l(full_status_lock);
@@ -983,10 +996,6 @@ bool OSDService::is_full() const
   return cur_state >= FULL;
 }
 
-// called by
-// PG::RecoveryState::RepNotRecovering::react(const RequestBackfillPrio)
-// PG::RecoveryState::RepWaitBackfillReserved::react(const RemoteBackfillReserved)
-// PrimaryLogPG::do_scan, for MOSDPGScan::OP_SCAN_GET_DIGEST
 bool OSDService::is_backfillfull() const
 {
   Mutex::Locker l(full_status_lock);
@@ -999,6 +1008,8 @@ bool OSDService::is_nearfull() const
   return cur_state >= NEARFULL;
 }
 
+// called by
+// TestOpsSocketHook::test_ops, for "injectfull"
 void OSDService::set_injectfull(s_names type, int64_t count)
 {
   Mutex::Locker l(full_status_lock);
@@ -6172,21 +6183,28 @@ void OSD::_preboot(epoch_t oldest, epoch_t newest)
     osdmap_subscribe(oldest - 1, true);
 }
 
+// called by
+// OSD::tick_without_osd_lock
+// OSD::ms_handle_connect
+// OSD::_preboot
 void OSD::send_full_update()
 {
   if (!service.need_fullness_update())
     return;
+
   unsigned state = 0;
-  if (service.is_full()) {
+  if (service.is_full()) { // cur_state >= FULL, was set by OSDService::check_full_status
     state = CEPH_OSD_FULL;
-  } else if (service.is_backfillfull()) {
+  } else if (service.is_backfillfull()) { // cur_state >= BACKFILLFULL, was set by OSDService::check_full_status
     state = CEPH_OSD_BACKFILLFULL;
-  } else if (service.is_nearfull()) {
+  } else if (service.is_nearfull()) { // cur_state >= NEARFULL, was set by OSDService::check_full_status
     state = CEPH_OSD_NEARFULL;
   }
+
   set<string> s;
   OSDMap::calc_state_set(state, s);
   dout(10) << __func__ << " want state " << s << dendl;
+
   monc->send_mon_message(new MOSDFull(osdmap->get_epoch(), state));
 }
 

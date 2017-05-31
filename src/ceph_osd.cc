@@ -359,6 +359,7 @@ int main(int argc, const char **argv)
       exit(1);
     }
   }
+
   if (flushjournal) {
     common_init_finish(g_ceph_context);
     int err = store->mount();
@@ -376,6 +377,7 @@ flushjournal_out:
     delete store;
     exit(err < 0 ? 1 : 0);
   }
+
   if (dump_journal) {
     common_init_finish(g_ceph_context);
     int err = store->dump_journal(cout);

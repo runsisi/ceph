@@ -7437,7 +7437,8 @@ int PrimaryLogPG::_verify_no_head_clones(const hobject_t& soid,
 }
 
 // called by
-// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_CACHE_EVICT, CEPH_OSD_OP_DELETE
+// PrimaryLogPG::do_osd_ops, for CEPH_OSD_OP_CACHE_EVICT, with no_whiteout=true, all other callers =false
+//      CEPH_OSD_OP_DELETE
 // PrimaryLogPG::_rollback_to
 // PrimaryLogPG::agent_maybe_evict
 inline int PrimaryLogPG::_delete_oid(

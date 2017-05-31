@@ -229,7 +229,7 @@ void OSDMonitor::create_initial()
     derr << __func__ << " mon_debug_no_require_luminous=true" << dendl;
   } else {
     newmap.require_osd_release = CEPH_RELEASE_LUMINOUS;
-    newmap.full_ratio = g_conf->mon_osd_full_ratio;
+    newmap.full_ratio = g_conf->mon_osd_full_ratio; // 0.95
     if (newmap.full_ratio > 1.0) newmap.full_ratio /= 100;
     newmap.backfillfull_ratio = g_conf->mon_osd_backfillfull_ratio;
     if (newmap.backfillfull_ratio > 1.0) newmap.backfillfull_ratio /= 100;
@@ -1017,6 +1017,7 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
       if (full > 0) {
 	if (!tmp.test_flag(CEPH_OSDMAP_FULL)) {
 	  dout(10) << __func__ << " setting full flag" << dendl;
+
 	  add_flag(CEPH_OSDMAP_FULL);
 	  remove_flag(CEPH_OSDMAP_NEARFULL);
 	}
