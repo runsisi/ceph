@@ -233,16 +233,19 @@ uint64_t PerfCounters::get(int idx) const
   return data.u64;
 }
 
-void PerfCounters::tinc(int idx, utime_t amt, uint32_t avgcount)
+void PerfCounters::tinc(int idx, utime_t amt, uint32_t avgcount) // avgcount default to 1
 {
   if (!m_cct->_conf->perf)
     return;
 
   assert(idx > m_lower_bound);
   assert(idx < m_upper_bound);
+
   perf_counter_data_any_d& data(m_data[idx - m_lower_bound - 1]);
+
   if (!(data.type & PERFCOUNTER_TIME))
     return;
+
   if (data.type & PERFCOUNTER_LONGRUNAVG) {
     data.avgcount++;
     data.u64 += amt.to_nsec();

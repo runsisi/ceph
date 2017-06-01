@@ -2793,6 +2793,7 @@ static CephContext *rados_create_cct(const char * const clustername,
 extern "C" int rados_create(rados_t *pcluster, const char * const id)
 {
   CephInitParameters iparams(CEPH_ENTITY_TYPE_CLIENT);
+
   if (id) {
     iparams.name.set(CEPH_ENTITY_TYPE_CLIENT, id);
   }

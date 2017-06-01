@@ -66,6 +66,7 @@ DaemonStateCollection DaemonStateIndex::get_by_type(uint8_t type) const
   return result;
 }
 
+// std::map<DaemonKey, DaemonStatePtr>
 DaemonStateCollection DaemonStateIndex::get_by_server(const std::string &hostname) const
 {
   Mutex::Locker l(lock);
@@ -88,6 +89,7 @@ DaemonStatePtr DaemonStateIndex::get(const DaemonKey &key)
 {
   Mutex::Locker l(lock);
 
+  // std::map<DaemonKey, DaemonStatePtr>
   return all.at(key);
 }
 
@@ -132,6 +134,7 @@ void DaemonPerfCounters::update(MMgrReport *report)
 
     declared_types.insert(t.path);
   }
+
   // Remove any old types
   for (const auto &t : report->undeclare_types) {
     declared_types.erase(t);
@@ -161,6 +164,7 @@ void DaemonPerfCounters::update(MMgrReport *report)
   DECODE_FINISH(p);
 }
 
+// never used
 uint64_t PerfCounterInstance::get_current() const
 {
   return buffer.front().v;

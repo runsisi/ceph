@@ -135,7 +135,8 @@ void global_pre_init(std::vector < const char * > *alt_def_args,
   g_conf->complain_about_parse_errors(g_ceph_context);
 }
 
-// called by all daemons and utils
+// called by
+// all daemons and tools
 boost::intrusive_ptr<CephContext>
 global_init(std::vector < const char * > *alt_def_args,
 	    std::vector < const char* >& args,

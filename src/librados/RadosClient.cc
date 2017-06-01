@@ -328,7 +328,7 @@ int librados::RadosClient::connect()
   monclient.sub_want("mgrmap", 0, 0);
   monclient.renew_subs();
 
-  mgrclient.init();
+  mgrclient.init(); // timer.init();
 
   objecter->set_client_incarnation(0);
   objecter->start();

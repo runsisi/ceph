@@ -23,7 +23,12 @@
 #define _STR(x) #x
 #define STRINGIFY(x) _STR(x)
 
-// called by global_pre_init, rados_create_cct, Replayer::init_rados, libcephfs.c:ceph_create
+// called by
+// global_pre_init
+// libcephd.cc/cephd_generate_secret_key
+// rados_create_cct
+// PoolReplayer::init_rados
+// libcephfs.cc/ceph_create
 CephContext *common_preinit(const CephInitParameters &iparams,
 			    enum code_environment_t code_env, int flags,
 			    const char *data_dir_option)

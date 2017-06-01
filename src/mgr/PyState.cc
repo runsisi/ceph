@@ -28,6 +28,8 @@
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_mgr
 
+// created by
+// PyModules::init
 PyModules *global_handle = NULL;
 
 
@@ -285,6 +287,7 @@ get_metadata(PyObject *self, PyObject *args)
   char *handle = nullptr;
   char *type_str = NULL;
   char *svc_id = NULL;
+
   if (!PyArg_ParseTuple(args, "sss:get_metadata", &handle, &type_str, &svc_id)) {
     return nullptr;
   }
@@ -348,6 +351,8 @@ get_counter(PyObject *self, PyObject *args)
       handle, svc_type, svc_id, counter_path);
 }
 
+// created by
+// MgrPyModule::MgrPyModule
 PyMethodDef CephStateMethods[] = {
     {"get", ceph_state_get, METH_VARARGS,
      "Get a cluster object"},

@@ -89,6 +89,7 @@ MgrPyModule::MgrPyModule(const std::string &module_name_, const std::string &sys
   Gil gil(pMainThreadState);
 
   pMyThreadState = Py_NewInterpreter();
+
   if (pMyThreadState == nullptr) {
     derr << "Failed to create python sub-interpreter for '" << module_name << '"' << dendl;
   } else {
@@ -99,6 +100,7 @@ MgrPyModule::MgrPyModule(const std::string &module_name_, const std::string &sys
 
     if (g_conf->daemonize) {
       auto py_logger = Py_InitModule("ceph_logger", log_methods);
+
 #if PY_MAJOR_VERSION >= 3
       PySys_SetObject("stderr", py_logger);
       PySys_SetObject("stdout", py_logger);
@@ -107,6 +109,7 @@ MgrPyModule::MgrPyModule(const std::string &module_name_, const std::string &sys
       PySys_SetObject(const_cast<char*>("stdout"), py_logger);
 #endif
     }
+
     // Populate python namespace with callable hooks
     Py_InitModule("ceph_state", CephStateMethods);
 

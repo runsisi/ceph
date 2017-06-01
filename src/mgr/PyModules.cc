@@ -119,13 +119,17 @@ PyObject *PyModules::list_servers_python()
   return f.get();
 }
 
+// called by
+// PyState.cc/get_metadata
 PyObject *PyModules::get_metadata_python(std::string const &handle,
     entity_type_t svc_type, const std::string &svc_id)
 {
   // daemon_state was initialized by Mgr::load_all_metadata
   auto metadata = daemon_state.get(DaemonKey(svc_type, svc_id));
+
   PyFormatter f;
   f.dump_string("hostname", metadata->hostname);
+
   for (const auto &i : metadata->metadata) {
     f.dump_string(i.first.c_str(), i.second);
   }
@@ -343,7 +347,7 @@ std::string PyModules::get_site_packages()
 int PyModules::init()
 {
   Mutex::Locker locker(lock);
-  Mgr::init
+
   global_handle = this;
   // namespace in config-key prefixed by "mgr/"
   config_prefix = std::string(g_conf->name.get_type_str()) + "/";
@@ -361,6 +365,7 @@ int PyModules::init()
   // Configure sys.path to include mgr_module_path
   std::string sys_path = std::string(Py_GetPath()) + ":" + get_site_packages()
                          + ":" + g_conf->mgr_module_path;
+
   dout(10) << "Computed sys.path '" << sys_path << "'" << dendl;
 
   // Drop the GIL and remember the main thread state (current
@@ -376,6 +381,7 @@ int PyModules::init()
     });
   for (const auto& module_name : ls) {
     dout(1) << "Loading python module '" << module_name << "'" << dendl;
+
     auto mod = std::unique_ptr<MgrPyModule>(new MgrPyModule(module_name, sys_path, pMainThreadState));
     int r = mod->load();
     if (r != 0) {
@@ -429,6 +435,7 @@ void PyModules::start()
   Mutex::Locker l(lock);
 
   dout(1) << "Creating threads for " << modules.size() << " modules" << dendl;
+
   for (auto& i : modules) {
     auto thread = new ServeThread(i.second.get());
     serve_threads[i.first].reset(thread);
@@ -437,7 +444,9 @@ void PyModules::start()
   for (auto &i : serve_threads) {
     std::ostringstream thread_name;
     thread_name << "mgr." << i.first;
+
     dout(4) << "Starting thread for " << i.first << dendl;
+
     i.second->create(thread_name.str().c_str());
   }
 }
@@ -627,6 +636,8 @@ void PyModules::log(const std::string &handle,
 #define dout_prefix *_dout << "mgr " << __func__ << " "
 }
 
+// called by
+// PyState.cc/get_counter
 PyObject* PyModules::get_counter_python(
     const std::string &handle,
     entity_type_t svc_type,
