@@ -51,8 +51,12 @@ int Image<I>::list_images(librados::IoCtx& io_ctx, ImageNameToIds *images) {
 
 template <typename I>
 int Image<I>::list_children(I *ictx, const ParentSpec &parent_spec,
-                            PoolImageIds *pool_image_ids)
+                            PoolImageIds *pool_image_ids) // std::map<PoolSpec, ImageIds>
 {
+  // typedef std::pair<int64_t, std::string> PoolSpec;
+  // typedef std::set<std::string> ImageIds;
+  // typedef std::map<PoolSpec, ImageIds> PoolImageIds;
+
   CephContext *cct = ictx->cct;
   int r = ictx->state->refresh_if_required();
   if (r < 0) {

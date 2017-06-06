@@ -672,7 +672,10 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     ldout(cct, 20) << "children list " << ictx->name << dendl;
 
     RWLock::RLocker l(ictx->snap_lock);
+
     ParentSpec parent_spec(ictx->md_ctx.get_id(), ictx->id, ictx->snap_id);
+
+    // map<PoolSpec, ImageIds>
     map< pair<int64_t, string>, set<string> > image_info;
 
     int r = api::Image<>::list_children(ictx, parent_spec, &image_info);
@@ -683,14 +686,14 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     Rados rados(ictx->md_ctx);
     for ( auto &info : image_info){
       IoCtx ioctx;
-      r = rados.ioctx_create2(info.first.first, ioctx);
+      r = rados.ioctx_create2(info.first.first, ioctx); // pool_id
       if (r < 0) {
         lderr(cct) << "Error accessing child image pool " << info.first.second
                    << dendl;
         return r;
       }
 
-      for (auto &id_it : info.second) {
+      for (auto &id_it : info.second) { // iterate set<image_id>
 	string name;
 	r = cls_client::dir_get_name(&ioctx, RBD_DIRECTORY, id_it, &name);
 	if (r < 0) {
