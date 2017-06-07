@@ -18,6 +18,7 @@ namespace po = boost::program_options;
 
 int do_list_children(librbd::Image &image, Formatter *f)
 {
+  // <pool name, image name>
   std::set<std::pair<std::string, std::string> > children;
   int r;
 

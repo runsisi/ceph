@@ -666,7 +666,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     return 0;
   }
 
-  int list_children(ImageCtx *ictx, set<pair<string, string> >& names)
+  int list_children(ImageCtx *ictx, set<pair<string, string> >& names) // <pool name, image name>
   {
     CephContext *cct = ictx->cct;
     ldout(cct, 20) << "children list " << ictx->name << dendl;
@@ -702,6 +702,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
 	  return r;
 	}
 
+	// <pool name, image name>
 	names.insert(make_pair(info.first.second, name));
       }
     }
@@ -1104,6 +1105,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
       if (parent_spec.pool_id == -1)
 	return -ENOENT;
     }
+
     if (parent_pool_name) {
       Rados rados(ictx->md_ctx);
       r = rados.pool_reverse_lookup(parent_spec.pool_id,
@@ -1130,6 +1132,7 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
       RWLock::RLocker snap_locker(ictx->parent->snap_lock);
       *parent_name = ictx->parent->name;
     }
+
     if (parent_id) {
       *parent_id = ictx->parent->id;
     }
@@ -1502,6 +1505,9 @@ int validate_pool(IoCtx &io_ctx, CephContext *cct) {
     return 0;
   }
 
+  // called by
+  // RBD::trash_get
+  // rbd_trash_get
   int trash_get(IoCtx &io_ctx, const std::string &id,
                 trash_image_info_t *info) {
     CephContext *cct((CephContext *)io_ctx.cct());

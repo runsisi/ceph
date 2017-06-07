@@ -95,7 +95,7 @@ int Image<I>::list_children(I *ictx, const ParentSpec &parent_spec,
     }
 
     IoCtx ioctx;
-    r = rados.ioctx_create2(it->first, ioctx);
+    r = rados.ioctx_create2(it->first, ioctx); // pool_id
     if (r == -ENOENT) {
       ldout(cct, 1) << "pool " << it->second << " no longer exists" << dendl;
       continue;
@@ -113,6 +113,8 @@ int Image<I>::list_children(I *ictx, const ParentSpec &parent_spec,
       	   << dendl;
       return r;
     }
+
+    // children can spread in multiple pools
     pool_image_ids->insert({*it, image_ids});
   }
 

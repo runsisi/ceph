@@ -1083,7 +1083,7 @@ namespace librbd {
   int Image::parent_info(string *parent_pool_name, string *parent_name,
 			 string *parent_snap_name)
   {
-    return parent_info2(parent_pool_name, parent_name, nullptr,
+    return parent_info2(parent_pool_name, parent_name, nullptr, // parent_id
                         parent_snap_name);
   }
 
@@ -3298,7 +3298,7 @@ extern "C" ssize_t rbd_list_children(rbd_image_t image, char *pools,
 {
   librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
   tracepoint(librbd, list_children_enter, ictx, ictx->name.c_str(), ictx->snap_name.c_str(), ictx->read_only);
-  set<pair<string, string> > image_set;
+  set<pair<string, string> > image_set; // <pool name, image name>
 
   int r = librbd::list_children(ictx, image_set);
   if (r < 0) { // -ENOENT can never be returned
