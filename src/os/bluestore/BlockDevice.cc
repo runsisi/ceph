@@ -58,6 +58,7 @@ BlockDevice *BlockDevice::create(CephContext* cct, const string& path,
 				 aio_callback_t cb, void *cbpriv)
 {
   string type = "kernel";
+
   char buf[PATH_MAX + 1];
   int r = ::readlink(path.c_str(), buf, sizeof(buf) - 1);
   if (r >= 0) {

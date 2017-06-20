@@ -427,6 +427,7 @@ void Mirror::update_pool_replayers(const PoolPeers &pool_peers)
     // the replayer, i.e., set Replayer::m_stopping, and wait its thread to stop
     if (it->second->is_blacklisted()) {
       derr << "removing blacklisted pool replayer for " << peer << dendl;
+
       // TODO: make async
       it = m_pool_replayers.erase(it);
     } else if (pool_peer_it == pool_peers.end() ||
@@ -458,6 +459,7 @@ void Mirror::update_pool_replayers(const PoolPeers &pool_peers)
       PoolPeer pool_peer(kv.first, peer);
       if (m_pool_replayers.find(pool_peer) == m_pool_replayers.end()) {
         dout(20) << "starting pool replayer for " << peer << dendl;
+
         unique_ptr<PoolReplayer> pool_replayer(new PoolReplayer(
 	  m_threads, m_image_deleter, kv.first, peer, m_args));
 

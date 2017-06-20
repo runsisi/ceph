@@ -22,6 +22,8 @@ namespace mirror {
 using librbd::util::create_async_context_callback;
 using librbd::util::create_context_callback;
 
+// created by
+// PoolReplayer::init
 template <typename I>
 InstanceReplayer<I>::InstanceReplayer(
     Threads<I> *threads, std::shared_ptr<ImageDeleter> image_deleter,
@@ -129,6 +131,8 @@ void InstanceReplayer<I>::release_all(Context *on_finish) {
   gather_ctx->activate();
 }
 
+// called by
+// InstanceWatcher<I>::handle_image_acquire
 template <typename I>
 void InstanceReplayer<I>::acquire_image(InstanceWatcher<I> *instance_watcher,
                                         const std::string &global_image_id,

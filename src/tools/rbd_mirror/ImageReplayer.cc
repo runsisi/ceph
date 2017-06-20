@@ -276,7 +276,7 @@ void ImageReplayer<I>::RemoteJournalerListener::handle_update(
 }
 
 // created by
-// Replayer::set_sources
+// InstanceReplayer<I>::acquire_image
 template <typename I>
 ImageReplayer<I>::ImageReplayer(Threads<librbd::ImageCtx> *threads,
                                 shared_ptr<ImageDeleter> image_deleter,

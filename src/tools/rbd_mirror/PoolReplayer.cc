@@ -211,7 +211,7 @@ private:
 } // anonymous namespace
 
 // created by
-// Mirror::update_replayers for each <pool, peer> pair
+// Mirror::update_pool_replayers for each <pool, peer> pair
 PoolReplayer::PoolReplayer(Threads<librbd::ImageCtx> *threads,
 			   std::shared_ptr<ImageDeleter> image_deleter,
 			   int64_t local_pool_id, const peer_t &peer,
@@ -272,7 +272,7 @@ bool PoolReplayer::is_leader() const {
 }
 
 // called by
-// Mirror::update_replayers to start a new Replayer instance
+// Mirror::update_pool_replayers to start a new PoolReplayer instance
 int PoolReplayer::init()
 {
   dout(20) << "replaying for " << m_peer << dendl;

@@ -85,10 +85,10 @@ Journaler::Journaler(librados::IoCtx &header_ioctx,
 }
 
 // created by
-// Journal<I>::create_journaler, i.e., member of Journal
-// librbd::journal::CreateRequest<I>::create_journal
-// librbd::journal::RemoveRequest<I>::stat_journal
-// ImageReplayer<I>::start
+// Journal<I>::create_journaler
+// librbd::journal::CreateRequest<I>::create_journal, threads fields root from ImageCtx
+// librbd::journal::RemoveRequest<I>::stat_journal, threads fields root from ImageCtx
+// ImageReplayer<I>::bootstrap, the threads fields root from Mirror::Mirror
 Journaler::Journaler(ContextWQ *work_queue, SafeTimer *timer,
                      Mutex *timer_lock, librados::IoCtx &header_ioctx,
 		     const std::string &journal_id,

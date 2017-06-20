@@ -33,6 +33,8 @@
 #undef dout_prefix
 #define dout_prefix *_dout << "bdev(" << this << " " << path << ") "
 
+// created by
+// BlockDevice::create
 KernelDevice::KernelDevice(CephContext* cct, aio_callback_t cb, void *cbpriv)
   : BlockDevice(cct),
     fd_direct(-1),
@@ -40,7 +42,7 @@ KernelDevice::KernelDevice(CephContext* cct, aio_callback_t cb, void *cbpriv)
     size(0), block_size(0),
     fs(NULL), aio(false), dio(false),
     debug_lock("KernelDevice::debug_lock"),
-    aio_queue(cct->_conf->bdev_aio_max_queue_depth), // default 32
+    aio_queue(cct->_conf->bdev_aio_max_queue_depth), // default 1024
     aio_callback(cb),
     aio_callback_priv(cbpriv),
     aio_stop(false),
@@ -350,7 +352,7 @@ void KernelDevice::_aio_thread()
     dout(40) << __func__ << " polling" << dendl;
     int max = cct->_conf->bdev_aio_reap_max;
     aio_t *aio[max];
-    int r = aio_queue.get_next_completed(cct->_conf->bdev_aio_poll_ms,
+    int r = aio_queue.get_next_completed(cct->_conf->bdev_aio_poll_ms, // 250
 					 aio, max);
     if (r < 0) {
       derr << __func__ << " got " << cpp_strerror(r) << dendl;
@@ -361,7 +363,9 @@ void KernelDevice::_aio_thread()
 
       for (int i = 0; i < r; ++i) {
 	IOContext *ioc = static_cast<IOContext*>(aio[i]->priv);
+
 	_aio_log_finish(ioc, aio[i]->offset, aio[i]->length);
+
 	if (aio[i]->queue_item.is_linked()) {
 	  std::lock_guard<std::mutex> l(debug_queue_lock);
 	  debug_aio_unlink(*aio[i]);
@@ -636,8 +640,10 @@ int KernelDevice::aio_write(
 #ifdef HAVE_LIBAIO
   if (aio && dio && !buffered) {
     ioc->pending_aios.push_back(aio_t(ioc, fd_direct));
+
     ++ioc->num_pending;
     aio_t& aio = ioc->pending_aios.back();
+
     if (cct->_conf->bdev_inject_crash &&
 	rand() % cct->_conf->bdev_inject_crash == 0) {
       derr << __func__ << " bdev_inject_crash: dropping io 0x" << std::hex
@@ -656,6 +662,7 @@ int KernelDevice::aio_write(
       aio.bl.claim_append(bl);
       aio.pwritev(off, len);
     }
+
     dout(5) << __func__ << " 0x" << std::hex << off << "~" << len
 	    << std::dec << " aio " << &aio << dendl;
   } else
