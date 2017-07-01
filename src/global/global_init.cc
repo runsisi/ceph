@@ -61,6 +61,10 @@ static const char* c_str_or_null(const std::string &str)
   return str.c_str();
 }
 
+// called by
+// global_init
+// global_init_prefork
+// global_init_postfork_start
 static int chown_path(const std::string &pathname, const uid_t owner, const gid_t group,
 		      const std::string &uid_str, const std::string &gid_str)
 {

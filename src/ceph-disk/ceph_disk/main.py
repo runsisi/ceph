@@ -1876,6 +1876,7 @@ class DevicePartitionCrypt(DevicePartition):
 
     def map(self):
         self.setup_crypt()
+
         self.dev = _dmcrypt_map(
             rawdev=self.rawdev,
             key=self.osd_dm_key,
