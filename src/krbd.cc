@@ -249,6 +249,8 @@ static int wait_for_udev_add(struct udev_monitor *mon, const char *pool,
   return 0;
 }
 
+// called by
+// map_image
 static int do_map(struct udev *udev, const char *pool, const char *image,
                   const char *snap, const string& buf, string *pname)
 {
@@ -288,6 +290,8 @@ out_mon:
   return r;
 }
 
+// called by
+// krbd_map
 static int map_image(struct krbd_ctx *ctx, const char *pool, const char *image,
                      const char *snap, const char *options, string *pname)
 {
@@ -781,6 +785,8 @@ extern "C" void krbd_destroy(struct krbd_ctx *ctx)
   delete ctx;
 }
 
+// called by
+// rbd/action/Kernel.cc/do_kernel_map
 extern "C" int krbd_map(struct krbd_ctx *ctx, const char *pool,
                         const char *image, const char *snap,
                         const char *options, char **pdevnode)
