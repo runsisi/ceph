@@ -1939,20 +1939,22 @@ ceph_object_layout OSDMap::make_object_layout(
 void OSDMap::_remove_nonexistent_osds(const pg_pool_t& pool,
 				      vector<int>& osds) const
 {
-  if (pool.can_shift_osds()) {
+  if (pool.can_shift_osds()) { // replicated
     unsigned removed = 0;
     for (unsigned i = 0; i < osds.size(); i++) {
       if (!exists(osds[i])) {
 	removed++;
 	continue;
       }
+
       if (removed) {
 	osds[i - removed] = osds[i];
       }
     }
+
     if (removed)
       osds.resize(osds.size() - removed);
-  } else {
+  } else { // ec
     for (auto& osd : osds) {
       if (!exists(osd))
 	osd = CRUSH_ITEM_NONE;
@@ -2039,16 +2041,18 @@ void OSDMap::_apply_upmap(const pg_pool_t& pi, pg_t raw_pg, vector<int> *raw) co
 void OSDMap::_raw_to_up_osds(const pg_pool_t& pool, const vector<int>& raw,
                              vector<int> *up) const
 {
-  if (pool.can_shift_osds()) {
+  if (pool.can_shift_osds()) { // replicated
     // shift left
     up->clear();
     up->reserve(raw.size());
+
     for (unsigned i=0; i<raw.size(); i++) {
       if (!exists(raw[i]) || is_down(raw[i]))
 	continue;
+
       up->push_back(raw[i]);
     }
-  } else {
+  } else { // ec
     // set down/dne devices to NONE
     up->resize(raw.size());
     for (int i = raw.size() - 1; i >= 0; --i) {
@@ -2206,6 +2210,8 @@ void OSDMap::_pg_to_up_acting_osds(
   if (_acting.empty() || up || up_primary) {
     _pg_to_raw_osds(*pool, pg, &raw, &pps);
     _apply_upmap(*pool, pg, &raw);
+
+    // filter out down or non-exists osds
     _raw_to_up_osds(*pool, raw, &_up);
     _up_primary = _pick_primary(_up);
     _apply_primary_affinity(pps, *pool, &_up, &_up_primary);
