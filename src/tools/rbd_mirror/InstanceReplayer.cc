@@ -320,6 +320,8 @@ void InstanceReplayer<I>::start_image_replayer(
   image_replayer->start(nullptr, false);
 }
 
+// called by
+// InstanceReplayer<I>::schedule_image_state_check_task
 template <typename I>
 void InstanceReplayer<I>::queue_start_image_replayers() {
   dout(20) << dendl;
@@ -476,6 +478,8 @@ void InstanceReplayer<I>::cancel_image_state_check_task() {
   m_image_state_check_task = nullptr;
 }
 
+// called by
+// InstanceReplayer<I>::init
 template <typename I>
 void InstanceReplayer<I>::schedule_image_state_check_task() {
   assert(m_threads->timer_lock.is_locked());

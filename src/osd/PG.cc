@@ -6136,9 +6136,11 @@ void PG::start_peering_interval(
   pg_shard_t old_up_primary = up_primary;
   bool was_old_primary = is_primary();
 
+  // save old acting, up
   acting.swap(oldacting);
   up.swap(oldup);
 
+  // set new acting, actingset, up, upset, up_primary, primary(i.e., acting_primary)
   init_primary_up_acting(
     newup,
     newacting,

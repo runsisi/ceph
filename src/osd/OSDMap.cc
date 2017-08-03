@@ -1962,6 +1962,11 @@ void OSDMap::_remove_nonexistent_osds(const pg_pool_t& pool,
   }
 }
 
+// called by
+// OSDMap::pg_to_raw_osds
+// OSDMap::pg_to_raw_up
+// OSDMap::_pg_to_up_acting_osds
+// OSDMap::try_pg_upmap
 void OSDMap::_pg_to_raw_osds(
   const pg_pool_t& pool, pg_t pg,
   vector<int> *osds,
@@ -1992,9 +1997,13 @@ int OSDMap::_pick_primary(const vector<int>& osds) const
   return -1;
 }
 
+// called by
+// OSDMap::pg_to_raw_up
+// OSDMap::_pg_to_up_acting_osds
 void OSDMap::_apply_upmap(const pg_pool_t& pi, pg_t raw_pg, vector<int> *raw) const
 {
   pg_t pg = pi.raw_pg_to_pg(raw_pg);
+
   auto p = pg_upmap.find(pg);
   if (p != pg_upmap.end()) {
     // make sure targets aren't marked out
@@ -2004,6 +2013,7 @@ void OSDMap::_apply_upmap(const pg_pool_t& pi, pg_t raw_pg, vector<int> *raw) co
 	return;
       }
     }
+
     *raw = vector<int>(p->second.begin(), p->second.end());
     // continue to check and apply pg_upmap_items if any
   }
@@ -2037,6 +2047,9 @@ void OSDMap::_apply_upmap(const pg_pool_t& pi, pg_t raw_pg, vector<int> *raw) co
   }
 }
 
+// called by
+// OSDMap::pg_to_raw_up
+// OSDMap::_pg_to_up_acting_osds
 // pg -> (up osd list)
 void OSDMap::_raw_to_up_osds(const pg_pool_t& pool, const vector<int>& raw,
                              vector<int> *up) const
@@ -2120,16 +2133,19 @@ void OSDMap::_apply_primary_affinity(ps_t seed,
   }
 }
 
+// called by
+// OSDMap::_pg_to_up_acting_osds
 void OSDMap::_get_temp_osds(const pg_pool_t& pool, pg_t pg,
                             vector<int> *temp_pg, int *temp_primary) const
 {
   pg = pool.raw_pg_to_pg(pg);
+
   const auto p = pg_temp->find(pg);
   temp_pg->clear();
   if (p != pg_temp->end()) {
     for (unsigned i=0; i<p->second.size(); i++) {
       if (!exists(p->second[i]) || is_down(p->second[i])) {
-	if (pool.can_shift_osds()) {
+	if (pool.can_shift_osds()) { // replicated pool
 	  continue;
 	} else {
 	  temp_pg->push_back(CRUSH_ITEM_NONE);
@@ -2139,6 +2155,7 @@ void OSDMap::_get_temp_osds(const pg_pool_t& pool, pg_t pg,
       }
     }
   }
+
   const auto &pp = primary_temp->find(pg);
   *temp_primary = -1;
   if (pp != primary_temp->end()) {
@@ -2173,15 +2190,23 @@ void OSDMap::pg_to_raw_up(pg_t pg, vector<int> *up, int *primary) const
     up->clear();
     return;
   }
+
   vector<int> raw;
   ps_t pps;
   _pg_to_raw_osds(*pool, pg, &raw, &pps);
   _apply_upmap(*pool, pg, &raw);
+
   _raw_to_up_osds(*pool, raw, up);
+
   *primary = _pick_primary(raw);
   _apply_primary_affinity(pps, *pool, up, primary);
 }
 
+// called by
+// OSDMap::pg_to_acting_osds
+// OSDMap::pg_to_up_acting_osds
+// OSDMap::get_pg_acting_primary
+// OSDMap::is_up_acting_osd_shard
 void OSDMap::_pg_to_up_acting_osds(
   const pg_t& pg, vector<int> *up, int *up_primary,
   vector<int> *acting, int *acting_primary,
@@ -2200,22 +2225,33 @@ void OSDMap::_pg_to_up_acting_osds(
       *acting_primary = -1;
     return;
   }
+
   vector<int> raw;
   vector<int> _up;
   vector<int> _acting;
   int _up_primary;
   int _acting_primary;
   ps_t pps;
+
+  // set from OSDMap::pg_temp and OSDMap::primary_temp
+  // non-exists or down osds has been removed
   _get_temp_osds(*pool, pg, &_acting, &_acting_primary);
+
   if (_acting.empty() || up || up_primary) {
+    // non-exists osds have been removed, NOTE: osd weight was considered in crush calc
     _pg_to_raw_osds(*pool, pg, &raw, &pps);
+
     _apply_upmap(*pool, pg, &raw);
 
-    // filter out down or non-exists osds
+    // remove non-exists or down osds
     _raw_to_up_osds(*pool, raw, &_up);
+
     _up_primary = _pick_primary(_up);
+
     _apply_primary_affinity(pps, *pool, &_up, &_up_primary);
-    if (_acting.empty()) {
+
+    if (_acting.empty()) { // if no temp or all temp are non-exists or down,
+                           // then need to set acting from up
       _acting = _up;
       if (_acting_primary == -1) {
         _acting_primary = _up_primary;
@@ -2228,6 +2264,8 @@ void OSDMap::_pg_to_up_acting_osds(
       *up_primary = _up_primary;
   }
 
+  // acting can be set explicitly set by pg temp, if pg temp is not available
+  // then set by up, which comes from crush and up map
   if (acting)
     acting->swap(_acting);
   if (acting_primary)
@@ -3929,6 +3967,8 @@ int OSDMap::clean_pg_upmaps(
   return changed;
 }
 
+// called by
+// OSDMap::calc_pg_upmaps
 bool OSDMap::try_pg_upmap(
   CephContext *cct,
   pg_t pg,                       ///< pg to potentially remap
@@ -3945,7 +3985,7 @@ bool OSDMap::try_pg_upmap(
   if (rule < 0)
     return false;
 
-  // get original mapping
+  // get original mapping, non-exists osds have been removed, NOTE: osd weight was considered in crush calc
   _pg_to_raw_osds(*pool, pg, orig, NULL);
 
   // make sure there is something there to remap
@@ -3974,6 +4014,8 @@ bool OSDMap::try_pg_upmap(
   return true;
 }
 
+// called by
+// osdmaptool.cc/main
 int OSDMap::calc_pg_upmaps(
   CephContext *cct,
   float max_deviation_ratio,

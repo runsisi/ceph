@@ -2773,6 +2773,7 @@ protected:
     const vector<int> &newacting,
     int new_up_primary,
     int new_acting_primary) {
+    // set acting, actingset
     actingset.clear();
     acting = newacting;
     for (uint8_t i = 0; i < acting.size(); ++i) {
@@ -2782,6 +2783,8 @@ protected:
 	    acting[i],
 	    pool.info.is_erasure() ? shard_id_t(i) : shard_id_t::NO_SHARD));
     }
+
+    // set up, upset
     upset.clear();
     up = newup;
     for (uint8_t i = 0; i < up.size(); ++i) {
@@ -2796,6 +2799,8 @@ protected:
       primary = pg_shard_t(new_acting_primary, shard_id_t::NO_SHARD);
       return;
     }
+
+    // ec pool
     up_primary = pg_shard_t();
     primary = pg_shard_t();
     for (uint8_t i = 0; i < up.size(); ++i) {
