@@ -2169,11 +2169,13 @@ class PrepareFilestore(Prepare):
             PrepareJournal.parser(),
         ]
 
+    # called by
+    # Prepare.prepare <- Prepare.main
     def _prepare(self):
         if self.data.args.dmcrypt:
             self.lockbox.prepare()
 
-        # PrepareFilestoreData.prepare
+        # call PrepareData.prepare
         self.data.prepare(self.journal)
 
 
@@ -2214,6 +2216,8 @@ class PrepareBluestore(Prepare):
             PrepareBluestoreBlockWAL.parser(),
         ]
 
+    # called by
+    # Prepare.prepare <- Prepare.main
     def _prepare(self):
         if self.data.args.dmcrypt:
             self.lockbox.prepare()
@@ -2223,6 +2227,8 @@ class PrepareBluestore(Prepare):
         if getattr(self.data.args, 'block.wal'):
             to_prepare_list.append(self.blockwal)
         to_prepare_list.append(self.block)
+        
+        # call PrepareData.prepare
         self.data.prepare(*to_prepare_list)
 
 
@@ -2954,6 +2960,9 @@ class Lockbox(object):
         self.populate()
 
 
+# derived by
+# PrepareFilestoreData
+# PrepareBluestoreData
 class PrepareData(object):
 
     FILE = 1
@@ -3242,6 +3251,8 @@ class PrepareFilestoreData(PrepareData):
     def get_space_size(self):
         return 0  # get as much space as possible
 
+    # called by
+    # PrepareData.prepare
     def prepare_device(self, *to_prepare_list):
         super(PrepareFilestoreData, self).prepare_device(*to_prepare_list)
         
@@ -3271,6 +3282,8 @@ class PrepareBluestoreData(PrepareData):
     def get_space_size(self):
         return 100  # MB
 
+    # called by
+    # PrepareData.prepare
     def prepare_device(self, *to_prepare_list):
         super(PrepareBluestoreData, self).prepare_device(*to_prepare_list)
 

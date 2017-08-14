@@ -2158,9 +2158,9 @@ void OSDMap::_get_temp_osds(const pg_pool_t& pool, pg_t pg,
 
   const auto &pp = primary_temp->find(pg);
   *temp_primary = -1;
-  if (pp != primary_temp->end()) {
+  if (pp != primary_temp->end()) { // primary_temp has been set
     *temp_primary = pp->second;
-  } else if (!temp_pg->empty()) { // apply pg_temp's primary
+  } else if (!temp_pg->empty()) { // else apply pg_temp's primary
     for (unsigned i = 0; i < temp_pg->size(); ++i) {
       if ((*temp_pg)[i] != CRUSH_ITEM_NONE) {
 	*temp_primary = (*temp_pg)[i];
@@ -2233,8 +2233,8 @@ void OSDMap::_pg_to_up_acting_osds(
   int _acting_primary;
   ps_t pps;
 
-  // set from OSDMap::pg_temp and OSDMap::primary_temp
-  // non-exists or down osds has been removed
+  // to get acting and acting_primary from OSDMap::pg_temp and OSDMap::primary_temp
+  // NOTE: non-exists or down osds have been removed
   _get_temp_osds(*pool, pg, &_acting, &_acting_primary);
 
   if (_acting.empty() || up || up_primary) {
@@ -2243,15 +2243,14 @@ void OSDMap::_pg_to_up_acting_osds(
 
     _apply_upmap(*pool, pg, &raw);
 
-    // remove non-exists or down osds
+    // remove non-exists(which have been rmeoved by crush calc though) or down osds,
     _raw_to_up_osds(*pool, raw, &_up);
 
     _up_primary = _pick_primary(_up);
 
     _apply_primary_affinity(pps, *pool, &_up, &_up_primary);
 
-    if (_acting.empty()) { // if no temp or all temp are non-exists or down,
-                           // then need to set acting from up
+    if (_acting.empty()) { // no pg temp available, set acting from up
       _acting = _up;
       if (_acting_primary == -1) {
         _acting_primary = _up_primary;
