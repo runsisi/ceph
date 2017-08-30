@@ -2221,7 +2221,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
   if (write_ordered && !(m->get_source().is_mds() ||
 			 m->has_flag(CEPH_OSD_FLAG_FULL_TRY) ||
 			 m->has_flag(CEPH_OSD_FLAG_FULL_FORCE)) &&
-      info.history.last_epoch_marked_full > m->get_map_epoch()) {
+      info.history.last_epoch_marked_full > m->get_map_epoch()) { // set by PG::check_full_transition
     dout(10) << __func__ << " discarding op sent before full " << m << " "
 	     << *m << dendl;
 
@@ -8954,6 +8954,9 @@ void PrimaryLogPG::finish_ctx(OpContext *ctx, int log_op_type)
   }
 }
 
+// called by
+// ECBackend::try_reads_to_commit
+// ReplicatedBackend::submit_transaction
 void PrimaryLogPG::apply_stats(
   const hobject_t &soid,
   const object_stat_sum_t &delta_stats) {
@@ -11141,7 +11144,7 @@ void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
   // 3. call ObjectStore to queue the local txn
   pgbackend->submit_transaction(
     soid,
-    ctx->delta_stats,
+    ctx->delta_stats,   // will be summed by PrimaryLogPG::apply_stats
     ctx->at_version,
     std::move(ctx->op_t),
     pg_trim_to, // calc by PrimaryLogPG::calc_trim_to, which called by PrimaryLogPG::calc_trim_to

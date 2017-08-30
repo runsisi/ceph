@@ -729,6 +729,9 @@ void CephContext::put() {
   }
 }
 
+// called by
+// common_init.cc/common_init_finish
+// libcephd.cc/cephd_generate_secret_key
 void CephContext::init_crypto()
 {
   if (!_crypto_inited) {

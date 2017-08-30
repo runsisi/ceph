@@ -2602,8 +2602,8 @@ void Objecter::_op_submit(Op *op, shunique_lock& sul, ceph_tid_t *ptid)
 
     _maybe_request_map();
   } else if (op->respects_full() &&
-	     (_osdmap_full_flag() ||
-	      _osdmap_pool_full(op->target.base_oloc.pool))) {
+	     (_osdmap_full_flag() ||    // set by OSDMonitor::encode_pending, osd full
+	      _osdmap_pool_full(op->target.base_oloc.pool))) { // set by OSDMonitor::update_pools_status, pool quota full
     ldout(cct, 0) << " FULL, paused modify " << op << " tid "
 		  << op->tid << dendl;
 
@@ -2887,6 +2887,7 @@ bool Objecter::_osdmap_has_pool_full() const
 
 bool Objecter::_osdmap_pool_full(const pg_pool_t &p) const
 {
+  // set by OSDMonitor::update_pools_status
   return p.has_flag(pg_pool_t::FLAG_FULL) && honor_osdmap_full;
 }
 

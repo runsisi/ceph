@@ -845,7 +845,7 @@ float OSDService::get_failsafe_full_ratio()
 }
 
 // called by
-// OSDService::update_osd_stat
+// OSDService::update_osd_stat, which called by OSD::heartbeat
 void OSDService::check_full_status(float ratio)
 {
   Mutex::Locker l(full_status_lock);
@@ -1050,6 +1050,8 @@ osd_stat_t OSDService::set_osd_stat(const struct store_statfs_t &stbuf,
   }
 }
 
+// called by
+// OSD::heartbeat
 void OSDService::update_osd_stat(vector<int>& hb_peers)
 {
   // load osd stats first
@@ -1063,7 +1065,9 @@ void OSDService::update_osd_stat(vector<int>& hb_peers)
   auto new_stat = set_osd_stat(stbuf, hb_peers, osd->get_num_pgs());
   dout(20) << "update_osd_stat " << new_stat << dendl;
   assert(new_stat.kb);
+
   float ratio = ((float)new_stat.kb_used) / ((float)new_stat.kb);
+
   check_full_status(ratio);
 }
 
@@ -10794,6 +10798,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
   assert(sdata);
   // peek at spg_t
   sdata->sdata_op_ordering_lock.Lock();
+
   if (sdata->pqueue->empty()) {
     sdata->sdata_lock.Lock();
     if (!sdata->stop_waiting) {
@@ -10821,6 +10826,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
     sdata->sdata_op_ordering_lock.Unlock();
     return;    // OSD shutdown, discard.
   }
+
   PGRef pg;
   uint64_t requeue_seq;
   const auto token = item.get_ordering_token();
@@ -10832,18 +10838,23 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
     slot.to_process.push_back(std::move(item));
     // note the requeue seq now...
     requeue_seq = slot.requeue_seq;
+
     if (slot.waiting_for_pg) {
       // save ourselves a bit of effort
       dout(20) << __func__ << slot.to_process.back()
 	       << " queued, waiting_for_pg" << dendl;
+
       sdata->sdata_op_ordering_lock.Unlock();
       return;
     }
+
     pg = slot.pg;
     dout(20) << __func__ << " " << slot.to_process.back()
 	     << " queued" << dendl;
+
     ++slot.num_running;
   }
+
   sdata->sdata_op_ordering_lock.Unlock();
 
   osd->service.maybe_inject_dispatch_delay();
@@ -10863,6 +10874,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
 
   auto q = sdata->pg_slots.find(token);
   assert(q != sdata->pg_slots.end());
+
   auto& slot = q->second;
   --slot.num_running;
 
@@ -10876,6 +10888,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
     sdata->sdata_op_ordering_lock.Unlock();
     return;
   }
+
   if (requeue_seq != slot.requeue_seq) {
     dout(20) << __func__ << " " << token
 	     << " requeue_seq " << slot.requeue_seq << " > our "
@@ -10947,9 +10960,11 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
 	return;
       }
     }
+
     sdata->sdata_op_ordering_lock.Unlock();
     return;
   }
+
   sdata->sdata_op_ordering_lock.Unlock();
 
 

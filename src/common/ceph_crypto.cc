@@ -44,9 +44,12 @@ static uint32_t crypto_refs = 0;
 static NSSInitContext *crypto_context = NULL;
 static pid_t crypto_init_pid = 0;
 
+// called by
+// CephContext::init_crypto, which called by common_init_finish
 void ceph::crypto::init(CephContext *cct)
 {
   pid_t pid = getpid();
+
   pthread_mutex_lock(&crypto_init_mutex);
   if (crypto_init_pid != pid) {
     if (crypto_init_pid > 0) {
@@ -64,10 +67,12 @@ void ceph::crypto::init(CephContext *cct)
     if (cct->_conf->nss_db_path.empty()) {
       flags |= (NSS_INIT_NOCERTDB | NSS_INIT_NOMODDB);
     }
+
     crypto_context = NSS_InitContext(cct->_conf->nss_db_path.c_str(), "", "",
                                      SECMOD_DB, &init_params, flags);
   }
   pthread_mutex_unlock(&crypto_init_mutex);
+
   assert(crypto_context != NULL);
 }
 
@@ -75,6 +80,7 @@ void ceph::crypto::shutdown(bool shared)
 {
   pthread_mutex_lock(&crypto_init_mutex);
   assert(crypto_refs > 0);
+
   if (--crypto_refs == 0) {
     NSS_ShutdownContext(crypto_context);
     if (!shared) {

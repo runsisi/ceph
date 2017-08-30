@@ -2221,11 +2221,14 @@ class PrepareBluestore(Prepare):
     def _prepare(self):
         if self.data.args.dmcrypt:
             self.lockbox.prepare()
+        
         to_prepare_list = []
         if getattr(self.data.args, 'block.db'):
             to_prepare_list.append(self.blockdb)
         if getattr(self.data.args, 'block.wal'):
             to_prepare_list.append(self.blockwal)
+
+        # db, wal, block
         to_prepare_list.append(self.block)
         
         # call PrepareData.prepare
@@ -3289,6 +3292,7 @@ class PrepareBluestoreData(PrepareData):
 
         self.set_data_partition()
 
+        # db, wal, block
         for to_prepare in to_prepare_list:
             to_prepare.prepare()
 

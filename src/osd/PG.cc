@@ -5988,6 +5988,7 @@ void PG::check_full_transition(OSDMapRef lastmap, OSDMapRef osdmap)
   }
 
   if (changed) {
+    // will be used by PrimaryLogPG::do_op
     info.history.last_epoch_marked_full = osdmap->get_epoch();
     dirty_info = true;
   }

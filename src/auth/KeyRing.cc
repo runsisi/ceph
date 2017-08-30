@@ -167,6 +167,14 @@ void KeyRing::encode_formatted(string label, Formatter *f, bufferlist& bl)
 
 void KeyRing::decode_plaintext(bufferlist::iterator& bli)
 {
+  /*
+~ # cat /etc/ceph/ceph.client.admin.keyring
+[client.admin]
+        key = AQBe4aBZAAAAABAA7TrWxpnV4UxmHrm+FLRqeg==
+        caps mds = "allow *"
+        caps mgr = "allow *"
+        caps mon = "allow *"
+   */
   int ret;
   bufferlist bl;
   bli.copy_all(bl);
@@ -195,6 +203,7 @@ void KeyRing::decode_plaintext(bufferlist::iterator& bli)
 	 l != s->second.lines.end(); ++l) {
       if (l->key.empty())
         continue;
+
       string k(l->key);
       std::replace(k.begin(), k.end(), '_', ' ');
       ret = set_modifier(k.c_str(), l->val.c_str(), ename, caps);
