@@ -383,6 +383,7 @@ void intrusive_ptr_release(CephContext* cct)
   cct->put();
 }
 
+// never used
 void global_print_banner(void)
 {
   output_ceph_version();
