@@ -410,7 +410,8 @@ void ManagedLock<I>::execute_next_action() {
 
   switch (get_active_action()) { // the first action on the fifo queue
   case ACTION_ACQUIRE_LOCK:
-  case ACTION_TRY_LOCK:
+  case ACTION_TRY_LOCK:         // see ManagedLock<I>::is_action_acquire_lock which
+                                // called by ExclusiveLock<I>::post_acquire_lock_handler
     send_acquire_lock();
     break;
   case ACTION_REACQUIRE_LOCK:
@@ -548,10 +549,13 @@ void ManagedLock<I>::handle_post_acquire_lock(int r) {
   if (r < 0 && m_post_next_state == STATE_LOCKED) {
     // release_lock without calling pre and post handlers
     revert_to_unlock_state(r);
-  } else if (r != -ECANCELED) {
+  } else if (r != -ECANCELED) { // see ExclusiveLock<I>::post_acquire_lock_handler
     // fail the lock request
     complete_active_action(m_post_next_state, r);
   }
+
+  // we were called by ManagedLock<I>::acquire_lock, we can only return
+  // only after the lock has been acquired
 }
 
 template <typename I>
