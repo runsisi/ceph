@@ -4766,6 +4766,65 @@ def unset_suppress(path):
         raise Error('failed to unsuppress', e)
 
 
+def is_osd_mounted(cluster, osd_id):
+    target_path = STATEDIR + '/osd/{cluster}-{osd_id}'.format(
+        cluster=cluster, 
+        osd_id=osd_id)
+
+    with open(PROCDIR + '/mounts', 'rb') as proc_mounts:
+        for line in proc_mounts:
+            fields = line.split()
+            if len(fields) < 3:
+                continue
+            _mounted_dev = fields[0]
+            path = fields[1]
+            if os.path.isabs(_mounted_dev):
+                mounted_dev = os.path.realpath(_mounted_dev)
+                if path == target_path:
+                    return _bytes2str(mounted_dev)
+    return None
+
+
+def get_cluster_and_osd_id(dev):
+    clean_mount = False
+    path = is_mounted(dev)
+    try:
+        fstype = detect_fstype(dev=dev)
+    except (subprocess.CalledProcessError,
+            TruncatedLineError,
+            TooManyLinesError) as e:
+        raise FilesystemTypeError(
+            'device {dev}'.format(dev=dev),
+            e,
+        )
+
+    if not path:
+        path = mount(dev=dev, fstype=fstype, options='nouuid')
+        clean_mount = True
+
+    try:
+        ceph_fsid = read_one_line(path, 'ceph_fsid')
+        if ceph_fsid is None:
+            raise Error('No cluster uuid assigned.')
+        LOG.debug('Cluster uuid is %s', ceph_fsid)
+
+        cluster = find_cluster_by_uuid(ceph_fsid)
+        if cluster is None:
+            raise Error('No cluster conf found in ' + SYSCONFDIR +
+                        ' with fsid %s' % ceph_fsid)
+        LOG.debug('Cluster name is %s', cluster)
+
+        osd_id = get_osd_id(path)
+
+    finally:
+        if clean_mount:
+            unmount(path)
+            if os.path.exists(path):
+                os.rmdir(path)
+
+    return (cluster, osd_id)
+
+
 def main_suppress(args):
     set_suppress(args.path)
 
@@ -4812,6 +4871,27 @@ def main_trigger(args):
         command_check_call(['chown', 'ceph:ceph', args.dev])
     parttype = get_partition_type(args.dev)
     partid = get_partition_uuid(args.dev)
+
+    osd_id = -1
+    dev = None
+    for ptype in ['regular',]:
+        if parttype in PTYPE[ptype]['osd']['ready']:
+            (cluster, osd_id) = get_cluster_and_osd_id(args.dev)
+            if not osd_id:
+                break
+            dev = is_osd_mounted(cluster, osd_id)
+            if dev and dev != args.dev: # means driver name change disk 
+                data_dir = STATEDIR + '/osd/{cluster}-{osd_id}'.format(
+                    cluster=cluster,
+                    osd_id=osd_id)
+                command_check_call(['mount',
+                                    args.dev,
+                                    '-o', 'nouuid',
+                                    data_dir])
+
+                stop_daemon(cluster, osd_id)
+                command_check_call(['umount', args.dev])
+                command_check_call(['umount', dev])
 
     LOG.info('trigger {dev} parttype {parttype} uuid {partid}'.format(
         dev=args.dev,
