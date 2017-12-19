@@ -245,7 +245,7 @@ Requires:      librados2 = %{_epoch_prefix}%{version}-%{release}
 Requires:      libcephfs2 = %{_epoch_prefix}%{version}-%{release}
 Requires:      librgw2 = %{_epoch_prefix}%{version}-%{release}
 %if 0%{with selinux}
-Requires:      ceph-selinux = %{_epoch_prefix}%{version}-%{release}
+#Requires:      ceph-selinux = %{_epoch_prefix}%{version}-%{release}
 %endif
 Requires:      python
 #Requires:      python-requests
@@ -391,7 +391,7 @@ Group:		System/Filesystems
 %endif
 Requires:	ceph-common = %{_epoch_prefix}%{version}-%{release}
 %if 0%{with selinux}
-Requires:	ceph-selinux = %{_epoch_prefix}%{version}-%{release}
+#Requires:	ceph-selinux = %{_epoch_prefix}%{version}-%{release}
 %endif
 Requires:	librados2 = %{_epoch_prefix}%{version}-%{release}
 Requires:	librgw2 = %{_epoch_prefix}%{version}-%{release}
