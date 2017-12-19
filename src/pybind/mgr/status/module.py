@@ -4,8 +4,8 @@ High level status display commands
 """
 
 from collections import defaultdict
-from prettytable import PrettyTable
-import prettytable
+from ceph_prettytable import PrettyTable
+import ceph_prettytable as prettytable
 import fnmatch
 import errno
 

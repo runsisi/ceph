@@ -18,7 +18,7 @@ import time
 from collections import OrderedDict
 from fcntl import ioctl
 from fnmatch import fnmatch
-from prettytable import PrettyTable, HEADER
+from ceph_prettytable import PrettyTable, HEADER
 from signal import signal, SIGWINCH
 from termios import TIOCGWINSZ
 
