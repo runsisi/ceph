@@ -862,6 +862,7 @@ cmake .. \
     -DWITH_RADOSGW_BEAST_FRONTEND=OFF \
 %endif
     -DWITH_STATIC_LIBSTDCXX=ON \
+    -DWITH_LEVELDB=OFF \
     -DBOOST_J=%{_smp_ncpus}
 
 make %{?_smp_mflags}
