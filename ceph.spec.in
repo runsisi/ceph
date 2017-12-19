@@ -310,10 +310,10 @@ Group:		System/Filesystems
 Requires:	ceph-base = %{_epoch_prefix}%{version}-%{release}
 # For ceph-rest-api
 %if 0%{?fedora} || 0%{?rhel}
-Requires:      python-flask
+#Requires:      python-flask
 %endif
 %if 0%{?suse_version}
-Requires:      python-Flask
+#Requires:      python-Flask
 %endif
 %description mon
 ceph-mon is the cluster monitor daemon for the Ceph distributed file
