@@ -1,0 +1,5 @@
+CherryPy==13.1.0
+Jinja2==2.10
+pecan==1.2.1
+pyOpenSSL==17.5.0
+Werkzeug==0.13

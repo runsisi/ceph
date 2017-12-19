@@ -219,7 +219,8 @@ int PyModule::load(PyThreadState *pMainThreadState)
       }
 
       // Configure sys.path to include mgr_module_path
-      std::string sys_path = std::string(Py_GetPath()) + ":" + get_site_packages()
+      std::string sys_path = g_conf->get_val<std::string>("pydeps_path") + ":" +
+                             std::string(Py_GetPath()) + ":" + get_site_packages()
                              + ":" + g_conf->get_val<std::string>("mgr_module_path");
       dout(10) << "Computed sys.path '" << sys_path << "'" << dendl;
 

@@ -4247,6 +4247,10 @@ std::vector<Option> get_global_options() {
     .set_default("")
     .set_description(""),
 
+    Option("pydeps_path", Option::TYPE_STR, Option::LEVEL_ADVANCED)
+    .set_default(CEPH_PKGLIBDIR "/pydeps/packages")
+    .set_description("Filesystem path to Python dependency packages."),
+
     Option("mgr_module_path", Option::TYPE_STR, Option::LEVEL_ADVANCED)
     .set_default(CEPH_PKGLIBDIR "/mgr")
     .add_service("mgr")
