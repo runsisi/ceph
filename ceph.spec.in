@@ -248,7 +248,7 @@ Requires:      librgw2 = %{_epoch_prefix}%{version}-%{release}
 Requires:      ceph-selinux = %{_epoch_prefix}%{version}-%{release}
 %endif
 Requires:      python
-Requires:      python-requests
+#Requires:      python-requests
 Requires:      python-setuptools
 Requires:      grep
 Requires:      xfsprogs
@@ -282,7 +282,7 @@ Requires:	python-prettytable
 %if 0%{?suse_version}
 Requires:	python-PrettyTable
 %endif
-Requires:	python-requests
+#Requires:	python-requests
 %{?systemd_requires}
 %if 0%{?suse_version}
 Requires(pre):	pwdutils
