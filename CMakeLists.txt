@@ -280,7 +280,6 @@ if(WITH_LEVELDB)
   find_file(HAVE_LEVELDB_FILTER_POLICY leveldb/filter_policy.h PATHS ${LEVELDB_INCLUDE_DIR})
 endif(WITH_LEVELDB)
 
-#find_package(snappy REQUIRED)
 include(Buildsnappy)
 build_snappy()
 
