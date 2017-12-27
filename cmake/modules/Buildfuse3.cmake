@@ -1,0 +1,79 @@
+# This module builds fuse.
+#
+# It sets the following variables:
+#
+# FUSE_INCLUDE_DIR - the fuse include directories
+# FUSE_LIBRARY - link it to use fuse
+# FUSE_INCLUDE_DIRS - the fuse include directories
+# FUSE_LIBRARIES - link it to use fuse
+
+function(do_build_fuse)
+  set(patch_command
+    patch -p1 < ${CMAKE_SOURCE_DIR}/third-patch/libfuse.pdiff)
+  set(configure_command
+    meson --prefix=<INSTALL_DIR> --libdir=lib <SOURCE_DIR> <SOURCE_DIR>/build
+    COMMAND meson configure -Ddefault_library=static <SOURCE_DIR>/build)
+  set(build_command
+    ninja-build -C <SOURCE_DIR>/build)
+  set(install_command
+    ninja-build -C <SOURCE_DIR>/build install)
+
+  set(fuse_root_dir "${CMAKE_BINARY_DIR}/libfuse")
+
+  if(EXISTS "${PROJECT_SOURCE_DIR}/src/libfuse/meson.build")
+    message(STATUS "fuse already in src")
+    set(source_dir
+      SOURCE_DIR "${PROJECT_SOURCE_DIR}/src/libfuse")
+  else()
+    message(STATUS "libfuse will be downloaded...")
+
+    set(fuse_version 3.2.1)
+    set(fuse_md5 5dc79e3b7e0afbd6f8c5c335405227d1)
+    set(fuse_url
+      https://github.com/libfuse/libfuse/releases/download/fuse-${fuse_version}/fuse-${fuse_version}.tar.xz)
+    set(source_dir
+      URL ${fuse_url}
+      URL_MD5 ${fuse_md5})
+    if(CMAKE_VERSION VERSION_GREATER 3.0)
+      list(APPEND source_dir DOWNLOAD_NO_PROGRESS 1)
+    endif()
+  endif()
+
+  include(ExternalProject)
+  ExternalProject_Add(fuse-ext
+    PREFIX "${fuse_root_dir}"
+    ${source_dir}
+    BUILD_IN_SOURCE 1
+    PATCH_COMMAND ${patch_command}
+    CONFIGURE_COMMAND CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER} ${configure_command}
+    BUILD_COMMAND CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER} ${build_command}
+    INSTALL_COMMAND ${install_command})
+
+  # force fuse make to be called on each time
+  ExternalProject_Add_Step(fuse-ext forcebuild
+    DEPENDEES configure
+    DEPENDERS build
+    COMMAND "true"
+    ALWAYS 1)
+endfunction()
+
+macro(build_fuse)
+  do_build_fuse()
+
+  ExternalProject_Get_Property(fuse-ext install_dir)
+
+  set(FUSE_INCLUDE_DIRS ${install_dir}/include/fuse3)
+  set(FUSE_INCLUDE_DIR ${install_dir}/include/fuse3)
+  file(MAKE_DIRECTORY ${FUSE_INCLUDE_DIR})
+
+  add_library(fuse STATIC IMPORTED)
+  add_dependencies(fuse fuse-ext)
+
+  set_target_properties(fuse PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${FUSE_INCLUDE_DIR}"
+    IMPORTED_LINK_INTERFACE_LANGUAGES "C"
+    IMPORTED_LOCATION "${install_dir}/lib/libfuse3.a")
+
+  set(FUSE_LIBRARY fuse pthread dl)
+  set(FUSE_LIBRARIES fuse pthread dl)
+endmacro()

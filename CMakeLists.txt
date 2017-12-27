@@ -219,8 +219,9 @@ endif(${WITH_OPENLDAP})
 
 option(WITH_FUSE "Fuse is here" ON)
 if(${WITH_FUSE})
-find_package(fuse)
-set(HAVE_LIBFUSE ${FUSE_FOUND})
+include(Buildfuse2)
+build_fuse()
+set(HAVE_LIBFUSE 1)
 endif(${WITH_FUSE})
 
 option(WITH_XFS "XFS is here" ON)

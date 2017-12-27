@@ -26,7 +26,7 @@ function(do_build_gperftools)
     set(gperftools_version 2.6.3)
     set(gperftools_md5 d65c5e58931be568aac1621f2d8ad8d0)
     set(gperftools_url
-      https://github.com/gperftools/gperftools/archive/gperftools-${gperftools_version}.tar.gz)
+      https://github.com/gperftools/gperftools/releases/download/gperftools-${gperftools_version}/gperftools-${gperftools_version}.tar.gz)
     set(source_dir
       URL ${gperftools_url}
       URL_MD5 ${gperftools_md5})

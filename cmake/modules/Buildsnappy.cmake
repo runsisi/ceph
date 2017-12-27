@@ -11,11 +11,14 @@ function(do_build_snappy)
   list(APPEND SNAPPY_CMAKE_ARGS -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER})
   list(APPEND SNAPPY_CMAKE_ARGS -DCMAKE_AR=${CMAKE_AR})
   list(APPEND SNAPPY_CMAKE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE})
+  list(APPEND SNAPPY_CMAKE_ARGS -DSNAPPY_BUILD_TESTS=OFF)
+  list(APPEND SNAPPY_CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>)
+  list(APPEND SNAPPY_CMAKE_ARGS -DCMAKE_INSTALL_LIBDIR=lib)
 
   set(build_command
-    $(MAKE) snappy
+    $(MAKE) snappy)
   set(install_command
-    "true")
+    $(MAKE) install)
 
   set(snappy_root_dir "${CMAKE_BINARY_DIR}/snappy")
 
@@ -29,7 +32,7 @@ function(do_build_snappy)
     set(snappy_version 1.1.7)
     set(snappy_md5 ee9086291c9ae8deb4dac5e0b85bf54a)
     set(snappy_url
-      https://github.com/google/snappy/archive/${snappy_version}.tar.gz
+      https://github.com/google/snappy/archive/${snappy_version}.tar.gz)
     set(source_dir
       URL ${snappy_url}
       URL_MD5 ${snappy_md5})
@@ -69,7 +72,7 @@ macro(build_snappy)
   set_target_properties(snappy PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${SNAPPY_INCLUDE_DIR}"
     IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
-    IMPORTED_LOCATION "${install_dir}/lib/snappy.a")
+    IMPORTED_LOCATION "${install_dir}/lib/libsnappy.a")
 
   set(SNAPPY_LIBRARY snappy)
   set(SNAPPY_LIBRARIES snappy)

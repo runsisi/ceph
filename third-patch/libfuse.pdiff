@@ -1,0 +1,25 @@
+diff --git a/example/meson.build b/example/meson.build
+index 673982c..536a70b 100644
+--- a/example/meson.build
++++ b/example/meson.build
+@@ -22,6 +22,7 @@ foreach ex : examples
+     executable(ex, ex + '.c',
+                include_directories: include_dirs,
+                link_with: [ libfuse ],
++               dependencies: thread_dep,
+                install: false)
+ endforeach
+ 
+diff --git a/util/install_helper.sh b/util/install_helper.sh
+index 63b79ee..eb80f8c 100755
+--- a/util/install_helper.sh
++++ b/util/install_helper.sh
+@@ -6,6 +6,8 @@
+ 
+ set -e
+ 
++exit 0
++
+ sysconfdir="$1"
+ bindir="$2"
+ udevrulesdir="$3"

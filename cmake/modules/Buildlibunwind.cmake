@@ -25,7 +25,7 @@ function(do_build_libunwind)
     set(libunwind_version 1.2.1)
     set(libunwind_md5 06ba9e60d92fd6f55cd9dadb084df19e)
     set(libunwind_url
-      https://github.com/libunwind/libunwind/archive/v${libunwind_version}.tar.gz)
+      https://github.com/libunwind/libunwind/releases/download/v${libunwind_version}/libunwind-${libunwind_version}.tar.gz)
     set(source_dir
       URL ${libunwind_url}
       URL_MD5 ${libunwind_md5})
