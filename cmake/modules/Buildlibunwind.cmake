@@ -9,9 +9,10 @@ function(do_build_libunwind)
   set(configure_command
     <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --with-pic --disable-minidebuginfo)
   set(build_command
-    $(MAKE))
+    $(MAKE)
+    COMMAND $(MAKE) install)
   set(install_command
-    $(MAKE) install)
+    "true")
 
   set(libunwind_root_dir "${CMAKE_BINARY_DIR}/libunwind")
 

@@ -16,9 +16,10 @@ function(do_build_snappy)
   list(APPEND SNAPPY_CMAKE_ARGS -DCMAKE_INSTALL_LIBDIR=lib)
 
   set(build_command
-    $(MAKE) snappy)
+    $(MAKE) snappy
+    COMMAND $(MAKE) install)
   set(install_command
-    $(MAKE) install)
+    "true")
 
   set(snappy_root_dir "${CMAKE_BINARY_DIR}/snappy")
 

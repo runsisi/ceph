@@ -9,29 +9,28 @@
 
 function(do_build_fuse)
   set(patch_command
-    patch -p1 < ${CMAKE_SOURCE_DIR}/third-patch/libfuse3.pdiff)
+    patch -p1 < ${CMAKE_SOURCE_DIR}/third-patch/libfuse2.pdiff)
   set(configure_command
-    meson --prefix=<INSTALL_DIR> --libdir=lib <SOURCE_DIR> <SOURCE_DIR>/build
-    COMMAND meson configure -Ddefault_library=static <SOURCE_DIR>/build)
+    <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --with-pic)
   set(build_command
-    ninja-build -C <SOURCE_DIR>/build
-    COMMAND ninja-build -C <SOURCE_DIR>/build install)
+    $(MAKE)
+    COMMAND $(MAKE) install)
   set(install_command
     "true")
 
   set(fuse_root_dir "${CMAKE_BINARY_DIR}/libfuse")
 
-  if(EXISTS "${PROJECT_SOURCE_DIR}/src/libfuse/meson.build")
+  if(EXISTS "${PROJECT_SOURCE_DIR}/src/libfuse/include/fuse.h")
     message(STATUS "fuse already in src")
     set(source_dir
       SOURCE_DIR "${PROJECT_SOURCE_DIR}/src/libfuse")
   else()
     message(STATUS "libfuse will be downloaded...")
 
-    set(fuse_version 3.2.1)
-    set(fuse_md5 5dc79e3b7e0afbd6f8c5c335405227d1)
+    set(fuse_version 2.9.7)
+    set(fuse_md5 9bd4ce8184745fd3d000ca2692adacdb)
     set(fuse_url
-      https://github.com/libfuse/libfuse/releases/download/fuse-${fuse_version}/fuse-${fuse_version}.tar.xz)
+      https://github.com/libfuse/libfuse/releases/download/fuse-${fuse_version}/fuse-${fuse_version}.tar.gz)
     set(source_dir
       URL ${fuse_url}
       URL_MD5 ${fuse_md5})
@@ -63,8 +62,8 @@ macro(build_fuse)
 
   ExternalProject_Get_Property(fuse-ext install_dir)
 
-  set(FUSE_INCLUDE_DIRS ${install_dir}/include/fuse3)
-  set(FUSE_INCLUDE_DIR ${install_dir}/include/fuse3)
+  set(FUSE_INCLUDE_DIRS ${install_dir}/include/fuse)
+  set(FUSE_INCLUDE_DIR ${install_dir}/include/fuse)
   file(MAKE_DIRECTORY ${FUSE_INCLUDE_DIR})
 
   add_library(fuse STATIC IMPORTED)
@@ -73,7 +72,7 @@ macro(build_fuse)
   set_target_properties(fuse PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${FUSE_INCLUDE_DIR}"
     IMPORTED_LINK_INTERFACE_LANGUAGES "C"
-    IMPORTED_LOCATION "${install_dir}/lib/libfuse3.a")
+    IMPORTED_LOCATION "${install_dir}/lib/libfuse.a")
 
   set(FUSE_LIBRARY fuse pthread dl)
   set(FUSE_LIBRARIES fuse pthread dl)

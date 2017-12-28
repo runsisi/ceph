@@ -1,0 +1,30 @@
+diff -uNr fuse-2.9.7/util/Makefile.in fuse-2.9.7.modified/util/Makefile.in
+--- fuse-2.9.7/util/Makefile.in	2016-06-21 03:52:51.000000000 +0800
++++ fuse-2.9.7.modified/util/Makefile.in	2017-12-28 14:51:09.867166949 +0800
+@@ -722,26 +722,10 @@
+ 	@cp $(top_srcdir)/lib/mount_util.c .
+ 
+ install-exec-hook:
+-	-chmod u+s $(DESTDIR)$(bindir)/fusermount
+-	@if test ! -e $(DESTDIR)/dev/fuse; then \
+-		$(MKDIR_P) $(DESTDIR)/dev; \
+-		echo "mknod $(DESTDIR)/dev/fuse -m 0666 c 10 229 || true"; \
+-		mknod $(DESTDIR)/dev/fuse -m 0666 c 10 229 || true; \
+-	fi
+ 
+ install-exec-local:
+-	$(MKDIR_P) $(DESTDIR)$(MOUNT_FUSE_PATH)
+-	$(INSTALL_PROGRAM) $(builddir)/mount.fuse $(DESTDIR)$(MOUNT_FUSE_PATH)/mount.fuse
+-	$(MKDIR_P) $(DESTDIR)$(INIT_D_PATH)
+-	$(INSTALL_SCRIPT) $(srcdir)/init_script $(DESTDIR)$(INIT_D_PATH)/fuse
+-	@if test -x /usr/sbin/update-rc.d; then \
+-		echo "/usr/sbin/update-rc.d fuse start 34 S . start 41 0 6 . || true"; \
+-		/usr/sbin/update-rc.d fuse start 34 S . start 41 0 6 . || true; \
+-	fi
+ 
+ install-data-local:
+-	$(MKDIR_P) $(DESTDIR)$(UDEV_RULES_PATH)
+-	$(INSTALL_DATA) $(srcdir)/udev.rules $(DESTDIR)$(UDEV_RULES_PATH)/99-fuse.rules
+ 
+ uninstall-local:
+ 	rm -f $(DESTDIR)$(MOUNT_FUSE_PATH)/mount.fuse

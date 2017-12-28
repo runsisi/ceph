@@ -10,9 +10,10 @@ function(do_build_gperftools)
     CPPFLAGS=-I${LIBUNWIND_INCLUDE_DIR}
     <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --with-pic --with-tcmalloc-pagesize=64)
   set(build_command
-    $(MAKE))
+    $(MAKE)
+    COMMAND $(MAKE) install)
   set(install_command
-    $(MAKE) install)
+    "true")
 
   set(gperftools_root_dir "${CMAKE_BINARY_DIR}/gperftools")
 
