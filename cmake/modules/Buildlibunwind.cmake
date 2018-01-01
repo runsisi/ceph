@@ -10,7 +10,7 @@ function(do_build_libunwind)
     <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --with-pic --disable-minidebuginfo)
   set(build_command
     $(MAKE)
-    COMMAND $(MAKE) install)
+    COMMAND env -i $(MAKE) install)
   set(install_command
     "true")
 

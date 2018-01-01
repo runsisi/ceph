@@ -14,7 +14,7 @@ function(do_build_fuse)
     <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --with-pic)
   set(build_command
     $(MAKE)
-    COMMAND $(MAKE) install)
+    COMMAND env -i $(MAKE) install)
   set(install_command
     "true")
 

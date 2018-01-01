@@ -15,7 +15,7 @@ function(do_build_fuse)
     COMMAND meson configure -Ddefault_library=static <SOURCE_DIR>/build)
   set(build_command
     ninja-build -C <SOURCE_DIR>/build
-    COMMAND ninja-build -C <SOURCE_DIR>/build install)
+    COMMAND env -i ninja-build -C <SOURCE_DIR>/build install)
   set(install_command
     "true")
 

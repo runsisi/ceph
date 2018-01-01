@@ -11,7 +11,7 @@ function(do_build_gperftools)
     <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --with-pic --with-tcmalloc-pagesize=64)
   set(build_command
     $(MAKE)
-    COMMAND $(MAKE) install)
+    COMMAND env -i $(MAKE) install)
   set(install_command
     "true")
 

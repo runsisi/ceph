@@ -17,7 +17,7 @@ function(do_build_snappy)
 
   set(build_command
     $(MAKE) snappy
-    COMMAND $(MAKE) install)
+    COMMAND env -i $(MAKE) install)
   set(install_command
     "true")
 
