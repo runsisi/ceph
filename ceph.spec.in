@@ -893,6 +893,7 @@ cmake .. \
 %endif
     -DWITH_STATIC_LIBSTDCXX=ON \
     -DWITH_LEVELDB=OFF \
+    -DWITH_RDMA=OFF \
     -DWITH_STATIC_LIBSTDCXX=ON \
     -DBOOST_J=%{_smp_ncpus}
 
