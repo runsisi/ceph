@@ -281,7 +281,7 @@ if(WITH_LEVELDB)
   find_file(HAVE_LEVELDB_FILTER_POLICY leveldb/filter_policy.h PATHS ${LEVELDB_INCLUDE_DIR})
 endif(WITH_LEVELDB)
 
-include(Buildsnappy)
+include(BuildsnappyAutotools)
 build_snappy()
 
 option(WITH_LZ4 "LZ4 compression support" OFF)
