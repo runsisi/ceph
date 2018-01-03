@@ -2,12 +2,13 @@
 #
 # It sets the following variables:
 #
-# GPERFTOOLS_INCLUDE_DIR - the tcmalloc include directories
+# GPERFTOOLS_INCLUDE_DIRS - the tcmalloc include directories
+# GPERFTOOLS_TCMALLOC_LIBRARIES - link it to use tcmalloc
 # GPERFTOOLS_TCMALLOC_LIBRARY - link it to use tcmalloc
 
 function(do_build_gperftools)
   set(configure_command
-    CPPFLAGS=-I${LIBUNWIND_INCLUDE_DIR}
+    CPPFLAGS=-I${LIBUNWIND_INCLUDE_DIRS}
     <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --with-pic --with-tcmalloc-pagesize=64)
   set(build_command
     $(MAKE)
@@ -64,16 +65,17 @@ macro(build_gperftools)
 
   ExternalProject_Get_Property(gperftools-ext install_dir)
 
-  set(GPERFTOOLS_INCLUDE_DIR ${install_dir}/include)
-  file(MAKE_DIRECTORY ${GPERFTOOLS_INCLUDE_DIR})
+  set(GPERFTOOLS_INCLUDE_DIRS ${install_dir}/include)
+  file(MAKE_DIRECTORY ${GPERFTOOLS_INCLUDE_DIRS})
 
   add_library(gperftools_tcmalloc STATIC IMPORTED)
   add_dependencies(gperftools_tcmalloc gperftools-ext)
 
   set_target_properties(gperftools_tcmalloc PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${GPERFTOOLS_INCLUDE_DIR}"
+    INTERFACE_INCLUDE_DIRECTORIES "${GPERFTOOLS_INCLUDE_DIRS}"
     IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
     IMPORTED_LOCATION "${install_dir}/lib/libtcmalloc.a")
 
-  set(GPERFTOOLS_TCMALLOC_LIBRARY gperftools_tcmalloc ${LIBUNWIND_LIBRARY})
+  set(GPERFTOOLS_TCMALLOC_LIBRARIES gperftools_tcmalloc ${LIBUNWIND_LIBRARIES})
+  set(GPERFTOOLS_TCMALLOC_LIBRARY ${GPERFTOOLS_TCMALLOC_LIBRARIES})
 endmacro()

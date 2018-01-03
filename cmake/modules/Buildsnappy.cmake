@@ -2,8 +2,7 @@
 #
 # It sets the following variables:
 #
-# SNAPPY_INCLUDE_DIR - the snappy include directories
-# SNAPPY_LIBRARY - link it to use snappy
+# SNAPPY_INCLUDE_DIRS - the snappy include directories
 # SNAPPY_LIBRARIES - link it to use snappy
 
 function(do_build_snappy)
@@ -64,17 +63,16 @@ macro(build_snappy)
 
   ExternalProject_Get_Property(snappy-ext install_dir)
 
-  set(SNAPPY_INCLUDE_DIR ${install_dir}/include)
-  file(MAKE_DIRECTORY ${SNAPPY_INCLUDE_DIR})
+  set(SNAPPY_INCLUDE_DIRS ${install_dir}/include)
+  file(MAKE_DIRECTORY ${SNAPPY_INCLUDE_DIRS})
 
   add_library(snappy STATIC IMPORTED)
   add_dependencies(snappy snappy-ext)
 
   set_target_properties(snappy PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${SNAPPY_INCLUDE_DIR}"
+    INTERFACE_INCLUDE_DIRECTORIES "${SNAPPY_INCLUDE_DIRS}"
     IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
     IMPORTED_LOCATION "${install_dir}/lib/libsnappy.a")
 
-  set(SNAPPY_LIBRARY snappy)
   set(SNAPPY_LIBRARIES snappy)
 endmacro()

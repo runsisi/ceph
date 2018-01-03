@@ -2,8 +2,8 @@
 #
 # It sets the following variables:
 #
-# LIBUNWIND_INCLUDE_DIR - the libunwind include directories
-# LIBUNWIND_LIBRARY - link it to use libunwind
+# LIBUNWIND_INCLUDE_DIRS - the libunwind include directories
+# LIBUNWIND_LIBRARIES - link it to use libunwind
 
 function(do_build_libunwind)
   set(configure_command
@@ -57,16 +57,16 @@ macro(build_libunwind)
 
   ExternalProject_Get_Property(libunwind-ext install_dir)
 
-  set(LIBUNWIND_INCLUDE_DIR ${install_dir}/include)
-  file(MAKE_DIRECTORY ${LIBUNWIND_INCLUDE_DIR})
+  set(LIBUNWIND_INCLUDE_DIRS ${install_dir}/include)
+  file(MAKE_DIRECTORY ${LIBUNWIND_INCLUDE_DIRS})
 
   add_library(libunwind STATIC IMPORTED)
   add_dependencies(libunwind libunwind-ext)
 
   set_target_properties(libunwind PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${LIBUNWIND_INCLUDE_DIR}"
+    INTERFACE_INCLUDE_DIRECTORIES "${LIBUNWIND_INCLUDE_DIRS}"
     IMPORTED_LINK_INTERFACE_LANGUAGES "C"
     IMPORTED_LOCATION "${install_dir}/lib/libunwind.a")
 
-  set(LIBUNWIND_LIBRARY libunwind)
+  set(LIBUNWIND_LIBRARIES libunwind)
 endmacro()

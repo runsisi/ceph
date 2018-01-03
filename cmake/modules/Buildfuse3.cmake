@@ -2,8 +2,6 @@
 #
 # It sets the following variables:
 #
-# FUSE_INCLUDE_DIR - the fuse include directories
-# FUSE_LIBRARY - link it to use fuse
 # FUSE_INCLUDE_DIRS - the fuse include directories
 # FUSE_LIBRARIES - link it to use fuse
 
@@ -64,17 +62,15 @@ macro(build_fuse)
   ExternalProject_Get_Property(fuse-ext install_dir)
 
   set(FUSE_INCLUDE_DIRS ${install_dir}/include/fuse3)
-  set(FUSE_INCLUDE_DIR ${install_dir}/include/fuse3)
-  file(MAKE_DIRECTORY ${FUSE_INCLUDE_DIR})
+  file(MAKE_DIRECTORY ${FUSE_INCLUDE_DIRS})
 
   add_library(fuse STATIC IMPORTED)
   add_dependencies(fuse fuse-ext)
 
   set_target_properties(fuse PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${FUSE_INCLUDE_DIR}"
+    INTERFACE_INCLUDE_DIRECTORIES "${FUSE_INCLUDE_DIRS}"
     IMPORTED_LINK_INTERFACE_LANGUAGES "C"
     IMPORTED_LOCATION "${install_dir}/lib/libfuse3.a")
 
-  set(FUSE_LIBRARY fuse pthread dl)
   set(FUSE_LIBRARIES fuse pthread dl)
 endmacro()
