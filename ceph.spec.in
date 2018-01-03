@@ -14,6 +14,8 @@
 #
 # Please submit bugfixes or comments via http://tracker.ceph.com/
 #
+%bcond_without pydeps
+%bcond_without system_pip
 %bcond_without ocf
 %bcond_without cephfs_java
 %if 0%{?suse_version}
@@ -328,30 +330,49 @@ Group:          System/Filesystems
 %endif
 Requires:       ceph-base = %{_epoch_prefix}%{version}-%{release}
 %if 0%{?fedora} || 0%{?rhel}
-#Requires:       python-cherrypy
-#Requires:       python-werkzeug
-#Requires:       pyOpenSSL
+%if 0%{without pydeps}
+Requires:       python-cherrypy
+Requires:       python-werkzeug
+Requires:       pyOpenSSL
+%endif
 %endif
 %if 0%{?suse_version}
-#Requires: 	python-CherryPy
-#Requires:       python-Werkzeug
-#Requires:       python-pyOpenSSL
+%if 0%{without pydeps}
+Requires: 	python-CherryPy
+Requires:       python-Werkzeug
+Requires:       python-pyOpenSSL
 %endif
-#Requires:       python-pecan
+%endif
+%if 0%{without pydeps}
+Requires:       python-pecan
+%else
 Requires:       ceph-pydeps = %{_epoch_prefix}%{version}-%{release}
+%endif
 %description mgr
 ceph-mgr enables python modules that provide services (such as the REST
 module derived from Calamari) and expose CLI hooks.  ceph-mgr gathers
 the cluster maps, the daemon metadata, and performance counters, and
 exposes all these to the python modules.
 
+%if 0%{with pydeps}
 %package pydeps
 Summary:        Python dependency packages
 %if 0%{?suse_version}
 Group:          System/Filesystems
 %endif
+%if 0%{?fedora} || 0%{?rhel}
+%if 0%{with system_pip}
+Requires:       python2-pip
+%endif
+%endif
+%if 0%{?suse_version}
+%if 0%{with system_pip}
+Requires:       python2-pip
+%endif
+%endif
 %description pydeps
 This package contains Python dependency packages.
+%endif
 
 %package fuse
 Summary:	Ceph fuse-based client
@@ -939,12 +960,16 @@ mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/bootstrap-rgw
 mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/bootstrap-mgr
 mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/bootstrap-rbd
 
+%if 0%{with pydeps}
 # pydeps
 pip wheel -w whl -r src/pydeps/requirements.txt
 install -m 0644 -D src/pydeps/requirements.txt %{buildroot}%{_libdir}/ceph/pydeps/requirements.txt
 cp -a whl %{buildroot}%{_libdir}/ceph/pydeps
+%if 0%{without system_pip}
 wget http://10.118.202.17/release/zstor-utils/zstor-pip
 install -m 0755 -D zstor-pip %{buildroot}%{_bindir}/zstor-pip
+%endif
+%endif
 
 %if 0%{?suse_version}
 # create __pycache__ directories and their contents
@@ -960,6 +985,11 @@ rm -rf %{buildroot}
 %files
 
 %files base
+%if 0%{with pydeps}
+%if 0%{without system_pip}
+%{_bindir}/zstor-pip
+%endif
+%endif
 %{_bindir}/crushtool
 %{_bindir}/monmaptool
 %{_bindir}/osdmaptool
@@ -1270,14 +1300,18 @@ if [ $FIRST_ARG -ge 1 ] ; then
   fi
 fi
 
+%if 0%{with pydeps}
 %files pydeps
 %dir %{_libdir}/ceph/pydeps
 %{_libdir}/ceph/pydeps/requirements.txt
 %{_libdir}/ceph/pydeps/whl
-%{_bindir}/zstor-pip
 
 %post pydeps
+%if 0%{without system_pip}
 %{_bindir}/zstor-pip install --upgrade --use-wheel --no-index --find-links=%{_libdir}/ceph/pydeps/whl -r %{_libdir}/ceph/pydeps/requirements.txt --target %{_libdir}/ceph/pydeps/packages
+%else
+pip install --upgrade --use-wheel --no-index --find-links=%{_libdir}/ceph/pydeps/whl -r %{_libdir}/ceph/pydeps/requirements.txt --target %{_libdir}/ceph/pydeps/packages
+%endif
 
 %preun pydeps
 case "$1" in
@@ -1291,6 +1325,7 @@ case "$1" in
     :
     ;;
 esac
+%endif
 
 %files mon
 %{_bindir}/ceph-mon
