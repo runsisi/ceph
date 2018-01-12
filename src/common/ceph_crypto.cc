@@ -40,9 +40,8 @@ void ceph::crypto::init(CephContext *cct)
   pid_t pid = getpid();
   pthread_mutex_lock(&crypto_init_mutex);
   if (crypto_init_pid != pid) {
-    if (crypto_init_pid > 0) {
-      SECMOD_RestartModules(PR_FALSE);
-    }
+    SECMOD_RestartModules(PR_FALSE);
+
     crypto_init_pid = pid;
   }
 
