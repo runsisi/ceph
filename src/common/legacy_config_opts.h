@@ -1136,6 +1136,8 @@ OPTION(bluestore_clone_cow, OPT_BOOL)  // do copy-on-write for clones
 OPTION(bluestore_default_buffered_read, OPT_BOOL)
 OPTION(bluestore_default_buffered_write, OPT_BOOL)
 OPTION(bluestore_skip_zero_write, OPT_BOOL)
+OPTION(bluestore_prefetch_blob, OPT_BOOL)
+OPTION(bluestore_prefetch_blob_max_io_size, OPT_U64)
 OPTION(bluestore_debug_misc, OPT_BOOL)
 OPTION(bluestore_debug_no_reuse_blocks, OPT_BOOL)
 OPTION(bluestore_debug_small_allocations, OPT_INT)

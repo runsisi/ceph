@@ -1397,6 +1397,55 @@ void BlueStore::BufferSpace::finish_write(Cache* cache, uint64_t seq)
   cache->_audit("finish_write end");
 }
 
+void BlueStore::BufferSpace::did_read(Cache* cache, uint32_t offset, bufferlist& bl) {
+  std::lock_guard<std::recursive_mutex> l(cache->lock);
+
+  uint32_t pos =  offset;
+  uint32_t end_off = offset + bl.length();
+  bool change = false;
+  ldout(cache->cct, 20) << __func__ << " buffer " << offset << "~" << bl.length() << dendl;
+
+  for (auto &it : writing_map) {
+    Buffer *b = it.second;
+    if (pos >= end_off || b->offset >= end_off) {
+      break;
+    }
+
+    ldout(cache->cct, 20) << __func__ << " writing " << pos
+             << "~" << b->offset << "~" << b->length << dendl;
+
+    if (pos >= b->offset +  b->length) {
+      continue;
+    }
+
+    if (pos < b->offset) {
+      bufferlist part;
+      part.substr_of(bl, pos - offset,b->offset - pos);
+      Buffer *overwriting = new Buffer(this, Buffer::STATE_CLEAN, 0, pos, part);
+      ldout(cache->cct, 20) << __func__ << " buffer split " << pos << "~" << part.length() << dendl;
+      overwriting->cache_private = _discard(cache, pos, part.length());
+      _add_buffer(cache, overwriting, 1, nullptr);
+    }
+    change = true;
+    pos =  b->offset +  b->length;
+  }
+  if (!change) {
+    Buffer *b = new Buffer(this, Buffer::STATE_CLEAN, 0, offset, bl);
+    ldout(cache->cct, 20) << __func__ << " buffer no change " << offset << "~" << bl.length() << dendl;
+    b->cache_private = _discard(cache, offset, bl.length());
+    _add_buffer(cache, b, 1, nullptr);
+  } else {
+    if (pos < end_off) {
+      bufferlist part;
+      part.substr_of(bl, pos - offset, end_off - pos);
+      Buffer *overwriting = new Buffer(this, Buffer::STATE_CLEAN, 0, pos, part);
+      ldout(cache->cct, 20) << __func__ << " buffer split " << pos << "~" << part.length() << dendl;
+      overwriting->cache_private = _discard(cache, pos, part.length());
+      _add_buffer(cache, overwriting, 1, nullptr);
+    }
+  }
+}
+
 void BlueStore::BufferSpace::split(Cache* cache, size_t pos, BlueStore::BufferSpace &r)
 {
   std::lock_guard<std::recursive_mutex> lk(cache->lock);
@@ -3676,9 +3725,10 @@ BlueStore::BlueStore(CephContext *cct, const string& path)
 		       cct->_conf->bluestore_throttle_bytes +
 		       cct->_conf->bluestore_throttle_deferred_bytes),
     deferred_finisher(cct, "defered_finisher", "dfin"),
-    io_pattern_pedicator(
+    io_pattern_pedicator(this,
       cct->_conf->get_val<uint64_t>("bluestore_sequential_io_proposed_bytes"),
-      cct->_conf->get_val<uint64_t>("bluestore_defer_aggressive_batch_ops")),
+      cct->_conf->get_val<uint64_t>("bluestore_defer_aggressive_batch_ops"),
+      cct->_conf->get_val<uint64_t>("bluestore_prefetch_blob_max_io_size")),
     kv_sync_thread(this),
     kv_finalize_thread(this),
     mempool_thread(this)
@@ -3687,6 +3737,7 @@ BlueStore::BlueStore(CephContext *cct, const string& path)
   cct->_conf->add_observer(this);
   set_cache_shards(1);
   skip_zero_write = cct->_conf->bluestore_skip_zero_write;
+  do_prefetch_blob = cct->_conf->bluestore_prefetch_blob;
 }
 
 BlueStore::BlueStore(CephContext *cct,
@@ -3699,9 +3750,10 @@ BlueStore::BlueStore(CephContext *cct,
 		       cct->_conf->bluestore_throttle_bytes +
 		       cct->_conf->bluestore_throttle_deferred_bytes),
     deferred_finisher(cct, "defered_finisher", "dfin"),
-    io_pattern_pedicator(
+    io_pattern_pedicator(this,
       cct->_conf->get_val<uint64_t>("bluestore_sequential_io_proposed_bytes"),
-      cct->_conf->get_val<uint64_t>("bluestore_defer_aggressive_batch_ops")),
+      cct->_conf->get_val<uint64_t>("bluestore_defer_aggressive_batch_ops"),
+      cct->_conf->get_val<uint64_t>("bluestore_prefetch_blob_max_io_size")),
     kv_sync_thread(this),
     kv_finalize_thread(this),
     min_alloc_size(_min_alloc_size),
@@ -3712,6 +3764,7 @@ BlueStore::BlueStore(CephContext *cct,
   cct->_conf->add_observer(this);
   set_cache_shards(1);
   skip_zero_write = cct->_conf->bluestore_skip_zero_write;
+  do_prefetch_blob = cct->_conf->bluestore_prefetch_blob;
 }
 
 BlueStore::~BlueStore()
@@ -3765,6 +3818,8 @@ const char **BlueStore::get_tracked_conf_keys() const
     "bluestore_sequential_io_proposed_bytes",
     "bluestore_defer_aggressive_batch_ops",
     "bluestore_skip_zero_write",
+    "bluestore_prefetch_blob",
+    "bluestore_prefetch_blob_max_io_size",
     NULL
   };
   return KEYS;
@@ -3805,10 +3860,12 @@ void BlueStore::handle_conf_change(const struct md_config_t *conf,
     }
   }
   if (changed.count("bluestore_sequential_io_proposed_bytes") ||
-      changed.count("bluestore_defer_aggressive_batch_ops")) {
+      changed.count("bluestore_defer_aggressive_batch_ops") ||
+      changed.count("bluestore_prefetch_blob_max_io_size")) {
     io_pattern_pedicator.handle_conf_change(
       cct->_conf->get_val<uint64_t>("bluestore_sequential_io_proposed_bytes"),
-      cct->_conf->get_val<uint64_t>("bluestore_defer_aggressive_batch_ops"));
+      cct->_conf->get_val<uint64_t>("bluestore_defer_aggressive_batch_ops"),
+      cct->_conf->get_val<uint64_t>("bluestore_prefetch_blob_max_io_size"));
   }
   if (changed.count("bluestore_throttle_cost_per_io") ||
       changed.count("bluestore_throttle_cost_per_io_hdd") ||
@@ -3828,6 +3885,9 @@ void BlueStore::handle_conf_change(const struct md_config_t *conf,
   }
   if (changed.count("bluestore_skip_zero_write")) {
     skip_zero_write = conf->bluestore_skip_zero_write;
+  }
+  if (changed.count("bluestore_prefetch_blob")) {
+    do_prefetch_blob = conf->bluestore_prefetch_blob ;
   }
 }
 
@@ -6713,6 +6773,8 @@ int BlueStore::_do_read(
 {
   FUNCTRACE();
   int r = 0;
+  spg_t pgid;
+  bool do_prefetch = false;
 
   dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
            << " size 0x" << o->onode.size << " (" << std::dec
@@ -6721,6 +6783,13 @@ int BlueStore::_do_read(
 
   if (offset >= o->onode.size) {
     return r;
+  }
+  // decide to prefetch blob
+  if (c->cid.is_pg(&pgid)) {
+    do_prefetch = do_prefetch_blob &&
+           io_pattern_pedicator.read_maybe_contiguous(pgid, offset, length);
+    dout(20) << __func__ << " do prefetch blob "
+           << (do_prefetch ? "true" : "false") << dendl;
   }
 
   // generally, don't buffer anything, unless the client explicitly requests
@@ -6811,22 +6880,33 @@ int BlueStore::_do_read(
   start = ceph_clock_now(); // for the sake of simplicity 
                                     // measure the whole block below.
                                     // The error isn't that much...
-  vector<bufferlist> compressed_blob_bls;
+  vector<bufferlist> blob_bl;
   IOContext ioc(cct, NULL, true); // allow EIO
+
   for (auto& p : blobs2read) {
     const BlobRef& bptr = p.first;
     dout(20) << __func__ << "  blob " << *bptr << std::hex
 	     << " need " << p.second << std::dec << dendl;
-    if (bptr->get_blob().is_compressed()) {
+    bool really_do_prefetch = do_prefetch && bptr->get_blob().can_prefetch_blob();
+    if (bptr->get_blob().is_compressed() || really_do_prefetch) {
       // read the whole thing
-      if (compressed_blob_bls.empty()) {
+      if (blob_bl.empty()) {
 	// ensure we avoid any reallocation on subsequent blobs
-	compressed_blob_bls.reserve(blobs2read.size());
+	blob_bl.reserve(blobs2read.size());
       }
-      compressed_blob_bls.push_back(bufferlist());
-      bufferlist& bl = compressed_blob_bls.back();
+      blob_bl.push_back(bufferlist());
+      bufferlist& bl = blob_bl.back();
+      uint64_t r_off = 0;
+      uint64_t r_len = bptr->get_blob().get_ondisk_length();
+      if (!bptr->get_blob().is_compressed()) {
+        r_off = bptr->get_blob().get_boff();
+        r_len = r_len - r_off;
+      }
+      if (buffered) {
+        bptr->shared_blob->bc.remember_writing(bptr->shared_blob->get_cache());
+      }
       r = bptr->get_blob().map(
-	0, bptr->get_blob().get_ondisk_length(),
+	r_off, r_len,
 	[&](uint64_t offset, uint64_t length) {
 	  int r;
 	  // use aio if there are more regions to read than those in this blob
@@ -6910,30 +6990,36 @@ int BlueStore::_do_read(
   logger->tinc(l_bluestore_read_wait_aio_lat, ceph_clock_now() - start);
 
   // enumerate and decompress desired blobs
-  auto p = compressed_blob_bls.begin();
+  auto p = blob_bl.begin();
   blobs2read_t::iterator b2r_it = blobs2read.begin();
   while (b2r_it != blobs2read.end()) {
     const BlobRef& bptr = b2r_it->first;
+    bool really_do_prefetch = do_prefetch && bptr->get_blob().can_prefetch_blob();
     dout(20) << __func__ << "  blob " << *bptr << std::hex
 	     << " need 0x" << b2r_it->second << std::dec << dendl;
-    if (bptr->get_blob().is_compressed()) {
-      assert(p != compressed_blob_bls.end());
-      bufferlist& compressed_bl = *p++;
-      if (_verify_csum(o, &bptr->get_blob(), 0, compressed_bl,
+    if (bptr->get_blob().is_compressed() || really_do_prefetch) {
+      assert(p != blob_bl.end());
+      bufferlist& bl = *p++;
+      uint64_t r_off = bptr->get_blob().is_compressed() ? 0 : bptr->get_blob().get_boff();
+      if (_verify_csum(o, &bptr->get_blob(), r_off, bl,
 		       b2r_it->second.front().logical_offset) < 0) {
 	return -EIO;
       }
       bufferlist raw_bl;
-      r = _decompress(compressed_bl, &raw_bl);
-      if (r < 0)
-	return r;
+      if (bptr->get_blob().is_compressed()) {
+        r = _decompress(bl, &raw_bl);
+        if (r < 0) {
+          return r;
+        }
+      }
       if (buffered) {
-	bptr->shared_blob->bc.did_read(bptr->shared_blob->get_cache(), 0,
-				       raw_bl);
+	bptr->shared_blob->bc.did_read(bptr->shared_blob->get_cache(), r_off,
+				       bptr->get_blob().is_compressed() ? raw_bl : bl);
       }
       for (auto& i : b2r_it->second) {
 	ready_regions[i.logical_offset].substr_of(
-	  raw_bl, i.blob_xoffset, i.length);
+	   bptr->get_blob().is_compressed() ? raw_bl : bl,
+	   (i.blob_xoffset - r_off), i.length);
       }
     } else {
       for (auto& reg : b2r_it->second) {

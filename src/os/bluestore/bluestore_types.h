@@ -786,6 +786,26 @@ public:
     return len;
   }
 
+  uint32_t get_boff() const {
+    assert(extents.size() > 0);
+    auto &p = extents.front();
+    if (p.offset == bluestore_pextent_t::INVALID_OFFSET) {
+      return p.length;
+    }
+    return 0;
+  }
+
+  uint32_t can_prefetch_blob() const {
+    // when prefetch blob, only allow first extent to be invalid.
+    assert(extents.size() > 0);
+    for (auto iter = extents.begin() + 1; iter != extents.end(); iter++) {
+       if (!iter->is_valid()) {
+         return false;
+       }
+    }
+    return true;
+  }
+
   uint32_t get_logical_length() const {
     return logical_length;
   }

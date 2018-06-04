@@ -3927,6 +3927,16 @@ std::vector<Option> get_global_options() {
     .set_safe()
     .set_description(""),
 
+    Option("bluestore_prefetch_blob", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
+    .set_default(true)
+    .set_safe()
+    .set_description(""),
+
+    Option("bluestore_prefetch_blob_max_io_size", Option::TYPE_UINT, Option::LEVEL_ADVANCED)
+    .set_default(65536)
+    .set_safe()
+    .set_description("Max io size prefer to prefetch blob for sequencial read"),
+
     Option("bluestore_debug_misc", Option::TYPE_BOOL, Option::LEVEL_DEV)
     .set_default(false)
     .set_description(""),

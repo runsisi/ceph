@@ -250,6 +250,7 @@ public:
     mempool::bluestore_cache_other::map<uint32_t, std::unique_ptr<Buffer>>
       buffer_map;
 
+    map<uint32_t, Buffer*> writing_map; /// remember writing buffers when read, sorted by offset
     // we use a bare intrusive list here instead of std::map because
     // it uses less memory and we expect this to be very small (very
     // few IOs in flight to the same Blob at the same time).
@@ -264,7 +265,7 @@ public:
       cache->_audit("_add_buffer start");
       buffer_map[b->offset].reset(b);
       if (b->is_writing()) {
-	b->data.reassign_to_mempool(mempool::mempool_bluestore_writing);
+        b->data.reassign_to_mempool(mempool::mempool_bluestore_writing);
         if (writing.empty() || writing.rbegin()->seq <= b->seq) {
           writing.push_back(*b);
         } else {
@@ -279,11 +280,12 @@ public:
           writing.insert(it, *b);
         }
       } else {
-	b->data.reassign_to_mempool(mempool::mempool_bluestore_cache_data);
-	cache->_add_buffer(b, level, near);
+        b->data.reassign_to_mempool(mempool::mempool_bluestore_cache_data);
+        cache->_add_buffer(b, level, near);
       }
       cache->_audit("_add_buffer end");
     }
+
     void _rm_buffer(Cache* cache, Buffer *b) {
       _rm_buffer(cache, buffer_map.find(b->offset));
     }
@@ -330,11 +332,16 @@ public:
       _add_buffer(cache, b, (flags & Buffer::FLAG_NOCACHE) ? 0 : 1, nullptr);
     }
     void finish_write(Cache* cache, uint64_t seq);
-    void did_read(Cache* cache, uint32_t offset, bufferlist& bl) {
+    void did_read(Cache* cache, uint32_t offset, bufferlist& bl);
+    void remember_writing(Cache* cache) {
       std::lock_guard<std::recursive_mutex> l(cache->lock);
-      Buffer *b = new Buffer(this, Buffer::STATE_CLEAN, 0, offset, bl);
-      b->cache_private = _discard(cache, offset, bl.length());
-      _add_buffer(cache, b, 1, nullptr);
+      //writing in order by offset
+      writing_map.clear();
+      auto p = writing.begin();
+      while (p != writing.end()) {
+        writing_map[p->offset] = &*p;
+        ++p;
+      }
     }
 
     void read(Cache* cache, uint32_t offset, uint32_t length,
@@ -1810,8 +1817,10 @@ public:
   };
 
   struct IoPatternPredicator {
+    BlueStore *store;
     uint64_t sequential_io_proposed_bytes = 0;
     uint64_t defer_aggressive_batch_ops = 0;
+    uint64_t pefetch_blob_max_io_size = 0;
     struct IoMeter {
       uint64_t last_end = 0;
       uint64_t contiguous_bytes = 0;
@@ -1843,13 +1852,19 @@ public:
         return contiguous_bytes;
       }
     };
+    map<spg_t, IoMeter> read_meter;
     map<spg_t, IoMeter> write_meter;
+    std::mutex rlock;
     std::mutex wlock;
 
-    explicit IoPatternPredicator(uint64_t sequential_io_proposed_bytes,
-                               uint64_t defer_aggressive_batch_ops)
-      : sequential_io_proposed_bytes(sequential_io_proposed_bytes),
-        defer_aggressive_batch_ops(defer_aggressive_batch_ops){}
+    explicit IoPatternPredicator(BlueStore *store,
+                               uint64_t sequential_io_proposed_bytes,
+                               uint64_t defer_aggressive_batch_ops,
+                               uint64_t pefetch_blob_max_io_size)
+      : store(store),
+        sequential_io_proposed_bytes(sequential_io_proposed_bytes),
+        defer_aggressive_batch_ops(defer_aggressive_batch_ops),
+        pefetch_blob_max_io_size(pefetch_blob_max_io_size){}
 
     bool write_maybe_contiguous(const spg_t &pg,
                           uint64_t offset,
@@ -1877,12 +1892,38 @@ public:
         return false;
       }
     }
+
+    bool read_maybe_contiguous(const spg_t &pg,
+                          uint64_t offset,
+                          uint64_t length) {
+      std::unique_lock<std::mutex> rl(rlock);
+      if (length > pefetch_blob_max_io_size ||
+           length >= store->max_blob_size.load()) {
+        return false;
+      }
+
+      auto it = read_meter.find(pg);
+      if (it == read_meter.end()) {
+        read_meter[pg] = IoMeter(offset, length);
+        return false;
+      }
+      if (it->second.maybe_contiguous(offset, length) &&
+           it->second.get_contiguous_bytes() >= sequential_io_proposed_bytes) {
+        return true;
+      } else {
+        return false;
+      }
+    }
+
     void handle_conf_change(
       uint64_t new_sequential_io_proposed_bytes,
-      uint64_t new_defer_aggressive_batch_ops) {
+      uint64_t new_defer_aggressive_batch_ops,
+      uint64_t new_pefetch_blob_max_io_size) {
+      std::unique_lock<std::mutex> rl(rlock);
       std::unique_lock<std::mutex> wl(wlock);
       sequential_io_proposed_bytes = new_sequential_io_proposed_bytes;
       defer_aggressive_batch_ops = new_defer_aggressive_batch_ops;
+      pefetch_blob_max_io_size = new_pefetch_blob_max_io_size;
     }
   };
 
@@ -1997,6 +2038,8 @@ private:
   std::atomic<uint64_t> comp_max_blob_size = {0};
 
   std::atomic<uint64_t> max_blob_size = {0};  ///< maximum blob size
+
+  std::atomic<bool> do_prefetch_blob;
 
   uint64_t kv_ios = 0;
   uint64_t kv_throttle_costs = 0;
