@@ -3670,7 +3670,7 @@ def find_cluster_by_uuid(_uuid):
     if not os.path.exists(SYSCONFDIR):
         return None
     for conf_file in os.listdir(SYSCONFDIR):
-        if not conf_file.endswith('.conf'):
+        if conf_file != 'ceph.conf':
             continue
         cluster = conf_file[:-5]
         try:
