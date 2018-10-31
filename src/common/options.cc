@@ -1570,7 +1570,7 @@ std::vector<Option> get_global_options() {
     .add_see_also("mon_lease"),
 
     Option("mon_clock_drift_allowed", Option::TYPE_FLOAT, Option::LEVEL_ADVANCED)
-    .set_default(.050)
+    .set_default(1.0)
     .add_service("mon")
     .set_description("allowed clock drift (in seconds) between mons before issuing a health warning"),
 
