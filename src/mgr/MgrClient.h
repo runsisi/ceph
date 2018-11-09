@@ -49,6 +49,8 @@ class MgrCommand : public CommandOp
 
   explicit MgrCommand(ceph_tid_t t) : CommandOp(t) {}
   MgrCommand() : CommandOp() {}
+
+  Context *ontimeout;
 };
 
 class MgrClient : public Dispatcher
@@ -118,6 +120,7 @@ public:
   bool handle_mgr_configure(MMgrConfigure *m);
   bool handle_mgr_close(MMgrClose *m);
   bool handle_command_reply(MCommandReply *m);
+  int _cancel_mgr_command(uint64_t tid, int r);
 
   void set_perf_metric_query_cb(
     std::function<void(const std::map<OSDPerfMetricQuery,

@@ -431,6 +431,21 @@ int MgrClient::start_command(const vector<string>& cmd, const bufferlist& inbl,
   op.outs = outs;
   op.on_finish = onfinish;
 
+  if (cct->_conf.get_val<double>("rados_mgr_op_timeout") > 0) {
+    class C_CancelMgrCommand : public Context
+    {
+      uint64_t tid;
+      MgrClient *mgrc;
+      public:
+      C_CancelMgrCommand(uint64_t tid, MgrClient *mgrc) : tid(tid), mgrc(mgrc) {}
+      void finish(int r) override {
+        mgrc->_cancel_mgr_command(tid, -ETIMEDOUT);
+      }
+    };
+    op.ontimeout = new C_CancelMgrCommand(op.tid, this);
+    timer.add_event_after(cct->_conf.get_val<double>("rados_mgr_op_timeout"), op.ontimeout);
+  }
+
   if (session && session->con) {
     // Leaving fsid argument null because it isn't used.
     auto m = op.get_message({});
@@ -438,6 +453,20 @@ int MgrClient::start_command(const vector<string>& cmd, const bufferlist& inbl,
   } else {
     ldout(cct, 5) << "no mgr session (no running mgr daemon?), waiting" << dendl;
   }
+  return 0;
+}
+
+int MgrClient::_cancel_mgr_command(uint64_t tid, int r)
+{
+  assert(lock.is_locked_by_me());
+  if (!command_table.exists(tid)) {
+    return -ENOENT;
+  }
+  auto &op = command_table.get_command(tid);
+  if (op.on_finish) {
+    op.on_finish->complete(r);
+  }
+  command_table.erase(tid);
   return 0;
 }
 
