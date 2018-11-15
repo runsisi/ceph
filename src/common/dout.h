@@ -30,6 +30,7 @@
 #include "common/likely.h"
 #include "common/Clock.h"
 #include "log/Log.h"
+#include "common/ratelimit.h"
 #endif
 
 extern void dout_emergency(const char * const str);
@@ -157,6 +158,8 @@ struct is_dynamic<dynamic_marker_t<T>> : public std::true_type {};
   }(cct);								\
 									\
   if (should_gather) {							\
+    static DEFINE_RATELIMIT_STATE(__rs);                                \
+    if (v < 1 && ratelimit_check(&__rs)) { break; }                     \
     ceph::logging::MutableEntry _dout_e(v, sub);                        \
     static_assert(std::is_convertible<decltype(&*cct), 			\
 				      CephContext* >::value,		\
