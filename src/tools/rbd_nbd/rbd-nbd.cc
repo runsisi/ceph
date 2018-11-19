@@ -1142,6 +1142,7 @@ static int do_map(int argc, const char *argv[], Config *cfg)
                          CODE_ENVIRONMENT_DAEMON,
                          CINIT_FLAG_UNPRIVILEGED_DAEMON_DEFAULTS);
   g_ceph_context->_conf.set_val_or_die("pid_file", "");
+  g_ceph_context->_conf.set_val_or_die("rbd_blacklist_on_break_lock", "true");
 
   if (global_init_prefork(g_ceph_context) >= 0) {
     std::string err;
