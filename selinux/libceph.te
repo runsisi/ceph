@@ -1,0 +1,37 @@
+policy_module(libceph, 1.0.0)
+
+optional {
+require {
+    type virtd_t;
+    type var_run_t;
+}
+
+manage_sock_files_pattern(virtd_t, var_run_t, var_run_t)
+}
+
+optional {
+require {
+    type virtd_t;
+    type ceph_var_run_t;
+}
+
+manage_sock_files_pattern(virtd_t, ceph_var_run_t, ceph_var_run_t)
+}
+
+optional {
+require {
+    type svirt_t;
+    type var_run_t;
+}
+
+manage_sock_files_pattern(svirt_t, var_run_t, var_run_t)
+}
+
+optional {
+require {
+    type svirt_t;
+    type ceph_var_run_t;
+}
+
+manage_sock_files_pattern(svirt_t, ceph_var_run_t, ceph_var_run_t)
+}

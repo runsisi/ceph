@@ -288,6 +288,11 @@ Requires:	python-requests
 %if 0%{?suse_version}
 Requires(pre):	pwdutils
 %endif
+%if 0%{with selinux}
+Requires: policycoreutils
+Requires(post): selinux-policy-base >= %{_selinux_policy_version}, policycoreutils
+Requires(postun): policycoreutils
+%endif # with selinux
 %description -n ceph-common
 Common utilities to mount and interact with a ceph storage cluster.
 Comprised of files that are common to Ceph clients and servers.
@@ -1108,6 +1113,9 @@ fi
 %{_udevrulesdir}/50-rbd.rules
 %attr(3770,ceph,ceph) %dir %{_localstatedir}/log/ceph/
 %attr(750,ceph,ceph) %dir %{_localstatedir}/lib/ceph/
+%if 0%{with selinux}
+%attr(0600,root,root) %{_datadir}/selinux/packages/libceph.pp
+%endif # with selinux
 
 %pre common
 CEPH_GROUP_ID=167
@@ -1137,12 +1145,20 @@ exit 0
 
 %post common
 %tmpfiles_create %{_tmpfilesdir}/ceph-common.conf
+%if 0%{with selinux}
+# Install the policy
+/usr/sbin/semodule -i %{_datadir}/selinux/packages/libceph.pp
+%endif # with selinux
 
 %postun common
 # Package removal cleanup
 if [ "$1" -eq "0" ] ; then
     rm -rf %{_localstatedir}/log/ceph
     rm -rf %{_sysconfdir}/ceph
+    %if 0%{with selinux}
+    # Remove the module
+    /usr/sbin/semodule -n -r libceph > /dev/null 2>&1
+    %endif # with selinux
 fi
 
 %files mds
