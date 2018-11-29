@@ -698,16 +698,17 @@ include_directories(SYSTEM ${PROJECT_BINARY_DIR}/include)
 
 find_package(Threads REQUIRED)
 
+option(WITH_LIBCEPH_SELINUX "build libceph SELinux policy" OFF)
 
 option(WITH_SELINUX "build SELinux policy" OFF)
-if(WITH_SELINUX)
+if(WITH_SELINUX OR WITH_LIBCEPH_SELINUX)
   find_file(SELINUX_MAKEFILE selinux/devel/Makefile
     PATH /usr/share)
   if(NOT SELINUX_MAKEFILE)
     message(FATAL_ERROR "Can't find selinux's Makefile")
   endif()
   add_subdirectory(selinux)
-endif(WITH_SELINUX)
+endif(WITH_SELINUX OR WITH_LIBCEPH_SELINUX)
 
 # enables testing and creates Make check command
 add_custom_target(tests

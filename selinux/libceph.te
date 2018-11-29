@@ -1,0 +1,88 @@
+policy_module(libceph, 1.0.0)
+
+# refpolicy/policy/support/obj_perm_sets.spt
+# https://github.com/SELinuxProject/refpolicy/blob/RELEASE_2_20190609/policy/support/obj_perm_sets.spt
+
+### /var/run/ceph
+
+optional {
+require {
+    type virtd_t;
+    type var_run_t;
+}
+
+allow virtd_t var_run_t:dir rw_dir_perms;
+allow virtd_t var_run_t:sock_file manage_sock_file_perms;
+}
+
+optional {
+require {
+    type virtd_t;
+    type ceph_var_run_t;
+}
+
+allow virtd_t ceph_var_run_t:dir rw_dir_perms;
+allow virtd_t ceph_var_run_t:sock_file manage_sock_file_perms;
+}
+
+optional {
+require {
+    type svirt_t;
+    type var_run_t;
+}
+
+allow svirt_t var_run_t:dir rw_dir_perms;
+allow svirt_t var_run_t:sock_file manage_sock_file_perms;
+}
+
+optional {
+require {
+    type svirt_t;
+    type ceph_var_run_t;
+}
+
+allow svirt_t ceph_var_run_t:dir rw_dir_perms;
+allow svirt_t ceph_var_run_t:sock_file manage_sock_file_perms;
+}
+
+### /var/log/ceph
+
+optional {
+require {
+    type virtd_t;
+    type var_log_t;
+}
+
+allow virtd_t var_log_t:dir rw_dir_perms;
+allow virtd_t var_log_t:file manage_file_perms;
+}
+
+optional {
+require {
+    type virtd_t;
+    type ceph_var_log_t;
+}
+
+allow virtd_t ceph_var_log_t:dir rw_dir_perms;
+allow virtd_t ceph_var_log_t:file manage_file_perms;
+}
+
+optional {
+require {
+    type svirt_t;
+    type var_log_t;
+}
+
+allow svirt_t var_log_t:dir rw_dir_perms;
+allow svirt_t var_log_t:file manage_file_perms;
+}
+
+optional {
+require {
+    type svirt_t;
+    type ceph_var_log_t;
+}
+
+allow svirt_t ceph_var_log_t:dir rw_dir_perms;
+allow svirt_t ceph_var_log_t:file manage_file_perms;
+}
