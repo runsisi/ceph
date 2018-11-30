@@ -3790,6 +3790,11 @@ def main_activate(args):
                     not is_mpath(args.path)):
                 raise Error('%s is not a multipath block device' %
                             args.path)
+
+            # clear the stale mount path before activate 
+	    if not args.dmcrypt:
+                clean_stale_mount(args.path)
+
             (cluster, osd_id) = mount_activate(
                 dev=args.path,
                 activate_key_template=args.activate_key_template,
@@ -4766,25 +4771,6 @@ def unset_suppress(path):
         raise Error('failed to unsuppress', e)
 
 
-def is_osd_mounted(cluster, osd_id):
-    target_path = STATEDIR + '/osd/{cluster}-{osd_id}'.format(
-        cluster=cluster, 
-        osd_id=osd_id)
-
-    with open(PROCDIR + '/mounts', 'rb') as proc_mounts:
-        for line in proc_mounts:
-            fields = line.split()
-            if len(fields) < 3:
-                continue
-            _mounted_dev = fields[0]
-            path = fields[1]
-            if os.path.isabs(_mounted_dev):
-                mounted_dev = os.path.realpath(_mounted_dev)
-                if path == target_path:
-                    return _bytes2str(mounted_dev)
-    return None
-
-
 def get_cluster_and_osd_id(dev):
     clean_mount = False
     path = is_mounted(dev)
@@ -4823,6 +4809,89 @@ def get_cluster_and_osd_id(dev):
                 os.rmdir(path)
 
     return (cluster, osd_id)
+
+
+def get_stale_mount_list(osd_mount_path):
+    stale_dev_list = []
+
+    # loop to check each line in file mounts
+    with open(PROCDIR + '/mounts', 'rb') as proc_mounts:
+        lines = proc_mounts.readlines()
+        for i in range(1, len(lines) + 1):
+            line = lines[-i]
+            fields = line.split()
+            mount_dev = fields[0]
+            mount_path_to_scan = fields[1]
+
+            # ignore this line if format not correct
+            if len(fields) < 3:
+                continue
+            if not os.path.isabs(mount_dev):
+                continue
+
+            # ignore this line if mount path is not matched
+            if mount_path_to_scan != osd_mount_path:
+                continue
+
+            # if the dev exist, don't do the clean action in case of data damage, just return null list
+            if os.path.exists(mount_dev):
+                stale_dev_list = []
+                break
+
+            # this line is a stale mount, add the dev into return list 
+            stale_dev_list.append(mount_dev)
+            
+    return stale_dev_list
+    
+
+def clean_mounts(mount_dev_list):
+    for mount_dev in mount_dev_list:
+        command_check_call(['umount', '-l', mount_dev])
+        LOG.info("clean mount: " + str(mount_dev))
+    
+
+'''
+this function is called to remove stale mount when disk name changed in
+some scenarios such as disk's unplug and plug
+'''
+def clean_stale_mount(dev):
+    osd_dev = os.path.realpath(dev)
+
+    # get osd information
+    (cluster, osd_id) = get_cluster_and_osd_id(osd_dev)
+    if not osd_id:
+        return 
+  
+    # generate osd_mount_path according to osd information
+    osd_mount_path = STATEDIR + '/osd/{cluster}-{osd_id}'.format(
+                             cluster=cluster, 
+                             osd_id=osd_id)
+
+    # get the stale mount list
+    stale_dev_list = get_stale_mount_list(osd_mount_path)
+
+    # don't do the following clean action if the stale list is null
+    if len(stale_dev_list) == 0:
+        return
+
+    # try to remove XFS mount point before umount stale path. This is because if not invoke 
+    # the xfs_io manually, the sys call of umount will be hanged sometimes(maybe XFS bug?)
+    try:
+        command_check_call(['xfs_io',
+                            '-x',
+                            '-c',
+                            'shutdown',
+                            osd_mount_path])
+    except:
+        LOG.info("failed to remove xfs mount before clean stale mount, path: " + str(osd_mount_path))
+        
+    # clean stale mounts lazily
+    clean_mounts(stale_dev_list)
+
+    # stop daemon so that the stale mounts can be really released
+    command_check_call(['mount', osd_dev, '-o', 'nouuid', osd_mount_path])
+    stop_daemon(cluster, osd_id)
+    command_check_call(['umount', osd_dev])
 
 
 def main_suppress(args):
@@ -4871,27 +4940,6 @@ def main_trigger(args):
         command_check_call(['chown', 'ceph:ceph', args.dev])
     parttype = get_partition_type(args.dev)
     partid = get_partition_uuid(args.dev)
-
-    osd_id = -1
-    dev = None
-    for ptype in ['regular',]:
-        if parttype in PTYPE[ptype]['osd']['ready']:
-            (cluster, osd_id) = get_cluster_and_osd_id(args.dev)
-            if not osd_id:
-                break
-            dev = is_osd_mounted(cluster, osd_id)
-            if dev and dev != args.dev: # means driver name change disk 
-                data_dir = STATEDIR + '/osd/{cluster}-{osd_id}'.format(
-                    cluster=cluster,
-                    osd_id=osd_id)
-                command_check_call(['mount',
-                                    args.dev,
-                                    '-o', 'nouuid',
-                                    data_dir])
-
-                stop_daemon(cluster, osd_id)
-                command_check_call(['umount', args.dev])
-                command_check_call(['umount', dev])
 
     LOG.info('trigger {dev} parttype {parttype} uuid {partid}'.format(
         dev=args.dev,
