@@ -305,9 +305,9 @@ void Monitor::do_admin_command(std::string_view command, const cmdmap_t& cmdmap,
                     command == "ops" ||
                     command == "sessions");
 
-  (read_only ? audit_clog->debug() : audit_clog->info())
+  dout(ceph::dout::need_dynamic(read_only ? 5 : 0))
     << "from='admin socket' entity='admin socket' "
-    << "cmd='" << command << "' args=" << args << ": dispatch";
+    << "cmd='" << command << "' args=" << args << ": dispatch" << dendl;
 
   if (command == "mon_status") {
     get_mon_status(f.get(), ss);
@@ -377,19 +377,19 @@ void Monitor::do_admin_command(std::string_view command, const cmdmap_t& cmdmap,
   } else {
     ceph_abort_msg("bad AdminSocket command binding");
   }
-  (read_only ? audit_clog->debug() : audit_clog->info())
+  dout(ceph::dout::need_dynamic(read_only ? 5 : 0))
     << "from='admin socket' "
     << "entity='admin socket' "
     << "cmd=" << command << " "
-    << "args=" << args << ": finished";
+    << "args=" << args << ": finished" << dendl;
   return;
 
 abort:
-  (read_only ? audit_clog->debug() : audit_clog->info())
+  dout(ceph::dout::need_dynamic(read_only ? 5 : 0))
     << "from='admin socket' "
     << "entity='admin socket' "
     << "cmd=" << command << " "
-    << "args=" << args << ": aborted";
+    << "args=" << args << ": aborted" << dendl;
 }
 
 void Monitor::handle_signal(int signum)
@@ -3215,7 +3215,7 @@ void Monitor::handle_command(MonOpRequestRef op)
   string module;
   string err;
 
-  dout(0) << "handle_command " << *m << dendl;
+  dout(5) << "handle_command " << *m << dendl;
 
   string format;
   cmd_getval(g_ceph_context, cmdmap, "format", format, string("plain"));
@@ -3305,7 +3305,7 @@ void Monitor::handle_command(MonOpRequestRef op)
            << "' service='" << service << "'" << dendl;
 
   bool cmd_is_rw =
-    (mon_cmd->requires_perm('w') || mon_cmd->requires_perm('x'));
+    (mon_cmd->requires_perm('w'));
 
   // validate user's permissions for requested command
   map<string,string> param_str_map;
@@ -3321,10 +3321,10 @@ void Monitor::handle_command(MonOpRequestRef op)
     return;
   }
 
-  (cmd_is_rw ? audit_clog->info() : audit_clog->debug())
+  dout(ceph::dout::need_dynamic(cmd_is_rw ? 0 :5))
       << "from='" << session->name << " " << session->addrs << "' "
       << "entity='" << session->entity_name << "' "
-      << "cmd=" << m->cmd << ": dispatch";
+      << "cmd=" << m->cmd << ": dispatch" << dendl;
 
   if (mon_cmd->is_mgr()) {
     const auto& hdr = m->get_header();

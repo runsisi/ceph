@@ -760,7 +760,7 @@ public:
     if (r == 0) {
       dout(4) << __func__ << " success" << dendl;
     } else {
-      derr << __func__ << " " << cpp_strerror(r) << " " << rs << dendl;
+      dout(0) << __func__ << " " << cpp_strerror(r) << " " << rs << dendl;
     }
     if (con) {
       MCommandReply *reply = new MCommandReply(r, rs);
@@ -886,6 +886,7 @@ bool DaemonServer::_handle_command(
 
   bool is_allowed = false;
   ModuleCommand py_command;
+  bool cmd_is_rw = false;
   if (!mgr_cmd) {
     // Resolve the command to the name of the module that will
     // handle it (if the command exists)
@@ -906,6 +907,7 @@ bool DaemonServer::_handle_command(
     // validate user's permissions for requested command
     is_allowed = _allowed_command(session, mgr_cmd->module, "",
       prefix, cmdctx->cmdmap,  param_str_map, mgr_cmd);
+    cmd_is_rw = (mgr_cmd->requires_perm('w'));
   }
 
   if (!is_allowed) {
@@ -914,10 +916,10 @@ bool DaemonServer::_handle_command(
       return true;
   }
 
-  audit_clog->debug()
+  dout(ceph::dout::need_dynamic(cmd_is_rw ? 0 :5))
     << "from='" << session->inst << "' "
     << "entity='" << session->entity_name << "' "
-    << "cmd=" << m->cmd << ": dispatch";
+    << "cmd=" << m->cmd << ": dispatch" << dendl;
 
   // ----------------
   // service map commands
