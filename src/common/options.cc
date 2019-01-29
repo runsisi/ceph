@@ -1088,6 +1088,14 @@ std::vector<Option> get_global_options() {
     .set_default(900)
     .set_description("Time before an idle connection is closed (seconds)"),
 
+    Option("ms_tcp_timeout", Option::TYPE_INT, Option::LEVEL_ADVANCED)
+    .set_default(10000)
+    .set_description(""),
+
+    Option("ms_tcp_syn_retries", Option::TYPE_INT, Option::LEVEL_ADVANCED)
+    .set_default(3)
+    .set_description(""),
+
     Option("ms_pq_max_tokens_per_priority", Option::TYPE_UINT, Option::LEVEL_DEV)
     .set_default(16777216)
     .set_description(""),

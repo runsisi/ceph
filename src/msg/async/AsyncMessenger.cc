@@ -169,6 +169,7 @@ void Processor::accept()
   opts.nodelay = msgr->cct->_conf->ms_tcp_nodelay;
   opts.rcbuf_size = msgr->cct->_conf->ms_tcp_rcvbuf;
   opts.priority = msgr->get_socket_priority();
+  opts.tcp_user_timeout = msgr->cct->_conf->ms_tcp_timeout;
 
   for (auto& listen_socket : listen_sockets) {
     ldout(msgr->cct, 10) << __func__ << " listen_fd=" << listen_socket.fd()

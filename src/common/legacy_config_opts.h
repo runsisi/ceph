@@ -198,6 +198,8 @@ OPTION(mon_data, OPT_STR)
 OPTION(mon_initial_members, OPT_STR)    // list of initial cluster mon ids; if specified, need majority to form initial quorum and create new cluster
 OPTION(mon_compact_on_start, OPT_BOOL)  // compact leveldb on ceph-mon start
 OPTION(mon_compact_on_bootstrap, OPT_BOOL)  // trigger leveldb compaction on bootstrap
+OPTION(ms_tcp_syn_retries, OPT_INT)
+OPTION(ms_tcp_timeout, OPT_INT)
 OPTION(mon_compact_on_trim, OPT_BOOL)       // compact (a prefix) when we trim old states
 OPTION(mon_osd_cache_size, OPT_INT)  // the size of osdmaps cache, not to rely on underlying store's cache
 

@@ -116,6 +116,27 @@ int NetHandler::set_socket_options(int sd, bool nodelay, int size)
   return -r;
 }
 
+int NetHandler::set_socket_timeout(int sd, int timeout, int syn_tries)
+{
+  int r = 0;
+  if (timeout) {
+    r = ::setsockopt(sd, IPPROTO_TCP, TCP_USER_TIMEOUT, (char*)&timeout, sizeof(timeout));
+    if (r < 0) {
+      r = errno;
+      ldout(cct, 0) << "couldn't set TCP_USER_TIMEOUT=" << timeout << ": " << cpp_strerror(r) << dendl;
+    }
+  }
+
+  if (syn_tries) {
+    r = ::setsockopt(sd, IPPROTO_TCP, TCP_SYNCNT, (char*)&syn_tries, sizeof(syn_tries));
+    if (r < 0) {
+      r = errno;
+      ldout(cct, 0) << "couldn't set TCP_SYNCNT=" << syn_tries << ": " << cpp_strerror(r) << dendl;
+    }
+  }
+  return -r;
+}
+
 void NetHandler::set_priority(int sd, int prio, int domain)
 {
 #ifdef SO_PRIORITY
@@ -174,6 +195,7 @@ int NetHandler::generic_connect(const entity_addr_t& addr, const entity_addr_t &
   }
 
   set_socket_options(s, cct->_conf->ms_tcp_nodelay, cct->_conf->ms_tcp_rcvbuf);
+  set_socket_timeout(s, cct->_conf->ms_tcp_timeout, cct->_conf->ms_tcp_syn_retries);
 
   {
     entity_addr_t addr = bind_addr;
