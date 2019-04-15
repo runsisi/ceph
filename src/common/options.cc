@@ -3928,7 +3928,7 @@ std::vector<Option> get_global_options() {
     .set_description(""),
 
     Option("bluestore_prefetch_blob", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
-    .set_default(true)
+    .set_default(false)
     .set_safe()
     .set_description(""),
 
