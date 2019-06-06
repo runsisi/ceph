@@ -5887,11 +5887,14 @@ int status_update_state(cls_method_context_t hctx, bufferlist *in, bufferlist *o
     return r;
   }
 
-  // idle / mapped state must query periodically, because nobody will
-  // update the state from mapped to idle if the image is closed abruptly
-  if ((image.state & mask) == state) {
-    vals.erase(STATUS_VERSION_KEY);
-  }
+  // only the cases below will call this function to update the image's state:
+  // 1. close image
+  // 2. move image to trash
+  // 3. restore image from trash
+
+  // other cases will be handled separately:
+  // 1. periodical usage update updates to the 'MAPPED' state
+  // 2. if the image was closed abruptly then manual intervention is needed
 
   image.state &= ~mask;
   image.state |= state;
@@ -5936,6 +5939,9 @@ int status_update_used(cls_method_context_t hctx, bufferlist *in, bufferlist *ou
     return r;
   }
 
+  uint64_t cur_state = cls::rbd::STATUS_IMAGE_STATE_MAPPED;
+  uint64_t prev_state = image.state & cls::rbd::STATUS_IMAGE_STATE_MASK;
+
   image.state &= ~cls::rbd::STATUS_IMAGE_STATE_MASK;
   image.state |= cls::rbd::STATUS_IMAGE_STATE_MAPPED;
   image.last_update = ceph_clock_now();
@@ -5948,7 +5954,31 @@ int status_update_used(cls_method_context_t hctx, bufferlist *in, bufferlist *ou
 
   bufferlist image_bl;
   ::encode(image, image_bl);
-  r = cls_cxx_map_set_val(hctx, image_key, &image_bl);
+
+  std::map<std::string, bufferlist> vals;
+
+  vals[image_key] = image_bl;
+
+  //
+  // update version if image state changed (trash state not included)
+  //
+  if (cur_state != prev_state) {
+    uint64_t version = 0;
+    int r = read_key(hctx, STATUS_VERSION_KEY, &version);
+    if (r < 0 && r != -ENOENT) {
+      CLS_ERR("Could not read status version off disk: %s",
+              cpp_strerror(r).c_str());
+      return r;
+    }
+
+    version++;
+    bufferlist version_bl;
+    ::encode(version, version_bl);
+
+    vals[STATUS_VERSION_KEY] = version_bl;
+  }
+
+  r = cls_cxx_map_set_vals(hctx, &vals);
   if (r < 0) {
     CLS_ERR("error updating status image used size: %s", cpp_strerror(r).c_str());
     return r;
