@@ -290,6 +290,9 @@ int DiffIterate<I>::execute() {
     return -EINVAL;
   }
 
+  utime_t start = ceph_clock_now();
+  utime_t latency;
+
   int r;
   bool fast_diff_enabled = false;
   BitVector<2> object_diff_state;
@@ -305,6 +308,10 @@ int DiffIterate<I>::execute() {
       }
     }
   }
+
+  latency = ceph_clock_now() - start;
+  lderr(cct) << "----> diff_object_map latency -- sec:" << latency.sec()
+             << ", usec: " << latency.usec() << dendl;
 
   // we must list snaps via the head, not end snap
   head_ctx.snap_set_read(CEPH_SNAPDIR);
@@ -339,6 +346,8 @@ int DiffIterate<I>::execute() {
   uint64_t period = m_image_ctx.get_stripe_period();
   uint64_t off = m_offset;
   uint64_t left = m_length;
+
+  latency = ceph_clock_now();
 
   while (left > 0) {
     uint64_t period_off = off - (off % period);
@@ -387,6 +396,10 @@ int DiffIterate<I>::execute() {
     left -= read_len;
     off += read_len;
   }
+
+  latency = ceph_clock_now() - start;
+  lderr(cct) << "----> calc usage latency -- sec:" << latency.sec()
+             << ", usec: " << latency.usec() << dendl;
 
   r = diff_context.throttle.wait_for_ret();
   if (r < 0) {
