@@ -291,9 +291,11 @@ struct C_InvalidateCache : public Context {
 
     trace_endpoint.copy_name(pname);
     perf_start(pname);
-    perf_report_start();
 
-    status_update_start();
+    if (!m_report_disabled) {
+      perf_report_start();
+      status_update_start();
+    }
 
     if (cache) {
       Mutex::Locker l(cache_lock);
@@ -462,6 +464,11 @@ struct C_InvalidateCache : public Context {
 
   void ImageCtx::send_report() {
     assert(report_timer_lock->is_locked());
+
+    if (m_report_disabled) {
+      return;
+    }
+
     op_stat_t report;
 
     bufferlist inbl;
@@ -513,6 +520,11 @@ struct C_InvalidateCache : public Context {
     *rpdata = cur_stat;
   }
 
+  void ImageCtx::disable_report() {
+    // w/o lock should be ok
+    m_report_disabled = true;
+  }
+
   void ImageCtx::status_update_start() {
     ldout(cct, 5) << "initializing status update..." << dendl;
 
@@ -548,6 +560,10 @@ struct C_InvalidateCache : public Context {
 
   void ImageCtx::status_update() {
     assert(m_status_update_timer_lock.is_locked_by_me());
+
+    if (m_report_disabled) {
+      return;
+    }
 
     ldout(cct, 10) << "status updating..." << dendl;
 

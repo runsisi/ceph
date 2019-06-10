@@ -221,6 +221,7 @@ namespace librbd {
     Mutex m_status_update_timer_lock;
     Context *m_status_update_callback = nullptr;
     bool m_status_update_started = false;
+    bool m_report_disabled = false;
 
     static bool _filter_metadata_confs(const string &prefix, std::map<string, bool> &configs,
                                        const map<string, bufferlist> &pairs, map<string, bufferlist> *res);
@@ -252,6 +253,8 @@ namespace librbd {
     void perf_report_stop();
     void send_report();
     void get_report_data(op_stat_t *rpdata);
+
+    void disable_report();
 
     void status_update_start();
     void status_update_stop();

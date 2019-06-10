@@ -514,6 +514,7 @@ public:
   int qos_spec_del();
 
   int status_get_usage(status_usage_t *usage);
+  void disable_report();
 
 private:
   friend class RBD;

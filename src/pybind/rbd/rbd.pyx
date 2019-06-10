@@ -433,6 +433,7 @@ cdef extern from "rbd/librbd.h" nogil:
                                rbd_status_usage_t *usages, size_t *size)
     void rbd_status_list_usages_cleanup(rbd_status_usage_t *usages, size_t size)
     int rbd_status_get_usage(rbd_image_t image, rbd_status_usage_t *usage)
+    void rbd_disable_report(rbd_image_t image)
 
 RBD_FEATURE_LAYERING = _RBD_FEATURE_LAYERING
 RBD_FEATURE_STRIPINGV2 = _RBD_FEATURE_STRIPINGV2
@@ -3120,6 +3121,13 @@ written." % (self.name, ret, length))
             'Capacity'      : usage.size,
             'UsedCapacity'  : usage.used,
             }
+
+    def disable_report(self):
+        """
+        Disable image stats and status state report.
+        """
+        with nogil:
+            rbd_disable_report(self.image)
 
 
 cdef class LockOwnerIterator(object):

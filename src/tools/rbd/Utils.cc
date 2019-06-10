@@ -905,6 +905,8 @@ int open_image(librados::IoCtx &io_ctx, const std::string &image_name,
     return r;
   }
   if (!bench) {
+    image->disable_report();
+
     // disable qos
     image->qos_set_enabled(false);
     image->qos_set_default();
@@ -928,6 +930,8 @@ int open_image_by_id(librados::IoCtx &io_ctx, const std::string &image_id,
     return r;
   }
   if (!bench) {
+    image->disable_report();
+
     // disable qos
     image->qos_set_enabled(false);
     image->qos_set_default();

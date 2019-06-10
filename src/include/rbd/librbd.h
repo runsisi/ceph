@@ -930,6 +930,7 @@ CEPH_RBD_API void rbd_status_list_usages_cleanup(rbd_status_usage_t *usages,
     size_t size);
 CEPH_RBD_API int rbd_status_get_usage(rbd_image_t image,
     rbd_status_usage_t *usage);
+CEPH_RBD_API void rbd_disable_report(rbd_image_t image);
 
 #ifdef __cplusplus
 }

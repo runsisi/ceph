@@ -42,6 +42,8 @@ RemoveRequest<I>::RemoveRequest(IoCtx &ioctx, const std::string &image_name,
 
   m_image_ctx = I::create((m_image_id.empty() ? m_image_name : std::string()),
                           m_image_id, nullptr, m_ioctx, false);
+
+  m_image_ctx->disable_report();
 }
 
 template<typename I>

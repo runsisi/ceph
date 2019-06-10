@@ -1964,6 +1964,12 @@ namespace librbd {
     return librbd::api::Image<>::status_get_usage(ictx, usage);
   }
 
+  void Image::disable_report()
+  {
+    ImageCtx *ictx = (ImageCtx *)ctx;
+    ictx->disable_report();
+  }
+
 } // namespace librbd
 
 extern "C" void rbd_version(int *major, int *minor, int *extra)
@@ -4501,4 +4507,11 @@ extern "C" int rbd_status_get_usage(rbd_image_t image,
   c_usage->size = cpp_usage.size;
   c_usage->used = cpp_usage.used;
   return 0;
+}
+
+extern "C" void rbd_disable_report(rbd_image_t image)
+{
+  librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
+
+  ictx->disable_report();
 }
