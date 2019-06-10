@@ -310,7 +310,7 @@ int DiffIterate<I>::execute() {
   }
 
   latency = ceph_clock_now() - start;
-  lderr(cct) << "----> diff_object_map latency -- sec:" << latency.sec()
+  lderr(cct) << "----> DiffIterate::diff_object_map latency -- sec:" << latency.sec()
              << ", usec: " << latency.usec() << dendl;
 
   // we must list snaps via the head, not end snap
@@ -347,7 +347,7 @@ int DiffIterate<I>::execute() {
   uint64_t off = m_offset;
   uint64_t left = m_length;
 
-  latency = ceph_clock_now();
+  start = ceph_clock_now();
 
   while (left > 0) {
     uint64_t period_off = off - (off % period);
@@ -398,7 +398,7 @@ int DiffIterate<I>::execute() {
   }
 
   latency = ceph_clock_now() - start;
-  lderr(cct) << "----> calc usage latency -- sec:" << latency.sec()
+  lderr(cct) << "----> DiffIterate::calc usage latency -- sec:" << latency.sec()
              << ", usec: " << latency.usec() << dendl;
 
   r = diff_context.throttle.wait_for_ret();

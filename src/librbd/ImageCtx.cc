@@ -573,15 +573,17 @@ struct C_InvalidateCache : public Context {
     }
 
     latency = ceph_clock_now() - start;
-    lderr(cct) << "----> get object map latency -- sec:" << latency.sec()
+    lderr(cct) << "----> ImageCtx::get object map latency -- sec:" << latency.sec()
                << ", usec: " << latency.usec() << dendl;
 
+    start = ceph_clock_now();
+
     if (r == 0) {
-      ObjectMap<>::ObjectMap::calculate_usage(*this, om, &used, nullptr);
+      ObjectMap<>::ObjectMap::calculate_usage2(*this, om, &used, nullptr);
     }
 
     latency = ceph_clock_now() - start;
-    lderr(cct) << "----> calc usage latency -- sec:" << latency.sec()
+    lderr(cct) << "----> ImageCtx::calc usage latency -- sec:" << latency.sec()
                << ", usec: " << latency.usec() << dendl;
 
     if (!is_paused_by_qos()) {

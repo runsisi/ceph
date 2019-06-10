@@ -105,6 +105,10 @@ public:
   int get_object_map(BitVector<2>* om);
   static void calculate_usage(ImageCtxT& ictx, BitVector<2>& om,
       uint64_t *used, uint64_t *dirty);
+  static int diff_object_map(ImageCtxT& ictx, BitVector<2>& om,
+      BitVector<2>* object_diff_state)
+  static void calculate_usage2(ImageCtxT& ictx, BitVector<2>& om,
+      uint64_t *used, uint64_t *dirty);
 
 private:
   struct UpdateOperation {

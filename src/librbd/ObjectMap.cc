@@ -447,6 +447,111 @@ void ObjectMap<I>::calculate_usage(I& ictx, BitVector<2>& om,
   }
 }
 
+enum ObjectDiffState {
+  OBJECT_DIFF_STATE_NONE    = 0,
+  OBJECT_DIFF_STATE_UPDATED = 1,
+  OBJECT_DIFF_STATE_HOLE    = 2
+};
+
+template <typename I>
+int ObjectMap<I>::diff_object_map(I& ictx, BitVector<2>& object_map,
+    BitVector<2>* object_diff_state) {
+  CephContext* cct = ictx.cct;
+
+  object_diff_state->clear();
+
+  uint64_t current_size = ictx.size;
+
+  uint64_t num_objs = Striper::get_num_objects(ictx.layout,
+                                               current_size);
+  object_diff_state->resize(object_map.size());
+
+  auto it = object_map.begin();
+  auto diff_it = object_diff_state->begin();
+  uint64_t i = 0;
+
+  auto end_it = object_map.end();
+  for (; it != end_it; ++it,++diff_it, ++i) {
+    ldout(cct, 20) << __func__ << ": object state: " << i << " "
+                   << "->" << static_cast<uint32_t>(*it) << dendl;
+    if (*it == OBJECT_NONEXISTENT) {
+      *diff_it = OBJECT_DIFF_STATE_NONE;
+    } else {
+      *diff_it = OBJECT_DIFF_STATE_UPDATED;
+    }
+  }
+
+  ldout(cct, 20) << "diff_object_map: computed resize diffs" << dendl;
+
+  return 0;
+}
+
+template <typename I>
+void ObjectMap<I>::calculate_usage2(I& ictx, BitVector<2>& om,
+    uint64_t *used, uint64_t *dirty) {
+  assert(used || dirty);
+
+  CephContext* cct = ictx.cct;
+  ldout(cct, 5) << dendl;
+
+  uint64_t r_used = 0, r_dirty = 0;
+
+  uint64_t period = ictx.get_stripe_period();
+  uint64_t off = 0;
+  uint64_t left = ictx.size;
+
+  utime_t start = ceph_clock_now();
+  utime_t latency;
+
+  BitVector<2> object_diff_state;
+
+  ObjectMap<I>::diff_object_map(ictx, om, &object_diff_state);
+
+  latency = ceph_clock_now() - start;
+  lderr(cct) << "----> ObjectMap::diff_object_map latency -- sec:" << latency.sec()
+             << ", usec: " << latency.usec() << dendl;
+
+  start = ceph_clock_now();
+
+  while (left > 0) {
+    uint64_t period_off = off - (off % period);
+    uint64_t read_len = min(period_off + period - off, left);
+
+    // map to extents
+    map<object_t,vector<ObjectExtent> > object_extents;
+    Striper::file_to_extents(cct, ictx.format_string,
+                             &ictx.layout, off, read_len, 0,
+                             object_extents, 0);
+
+    // get snap info for each object
+    for (map<object_t,vector<ObjectExtent> >::iterator p =
+           object_extents.begin();
+         p != object_extents.end(); ++p) {
+      ldout(cct, 20) << "object " << p->first << dendl;
+
+      const uint64_t object_no = p->second.front().objectno;
+      uint8_t state = object_diff_state[object_no];
+      if (state != OBJECT_DIFF_STATE_NONE) {
+        bool updated = (state == OBJECT_DIFF_STATE_UPDATED);
+        for (std::vector<ObjectExtent>::iterator q = p->second.begin();
+             q != p->second.end(); ++q) {
+          if (updated) {
+            r_used += q->length;
+            r_dirty += q->length;
+          }
+        }
+      }
+    }
+
+    left -= read_len;
+    off += read_len;
+  }
+
+  latency = ceph_clock_now() - start;
+  lderr(cct) << "----> ObjectMap::calc usage latency -- sec:" << latency.sec()
+             << ", usec: " << latency.usec() << dendl;
+}
+
 } // namespace librbd
 
 template class librbd::ObjectMap<librbd::ImageCtx>;
