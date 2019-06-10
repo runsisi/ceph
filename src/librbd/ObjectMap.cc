@@ -398,6 +398,19 @@ void ObjectMap<I>::calculate_usage(I& ictx, BitVector<2>& om,
   CephContext* cct = ictx.cct;
   ldout(cct, 5) << dendl;
 
+  // allocate a continuous memory to speedup the calculation
+  BitVector<2> object_state;
+  object_state.clear();
+  object_state.resize(om.size());
+
+  auto it = om.begin();
+  auto end_it = om.end();
+  auto state_it = object_state.begin();
+  for (; it != end_it; ++it,++state_it) {
+    // do not remove the cast!!!
+    *state_it = static_cast<uint8_t>(*it);
+  }
+
   uint64_t r_used = 0, r_dirty = 0;
 
   uint64_t period = ictx.get_stripe_period();
@@ -420,13 +433,14 @@ void ObjectMap<I>::calculate_usage(I& ictx, BitVector<2>& om,
       ldout(cct, 20) << "object " << p->first << dendl;
 
       const uint64_t object_no = p->second.front().objectno;
-      if (om[object_no] == OBJECT_EXISTS) {
+      uint8_t state = object_state[object_no];
+      if (state == OBJECT_EXISTS) {
         for (std::vector<ObjectExtent>::iterator q = p->second.begin();
              q != p->second.end(); ++q) {
           r_used += q->length;
           r_dirty += q->length;
         }
-      } else if (om[object_no] == OBJECT_EXISTS_CLEAN) {
+      } else if (state == OBJECT_EXISTS_CLEAN) {
         for (std::vector<ObjectExtent>::iterator q = p->second.begin();
              q != p->second.end(); ++q) {
           r_used += q->length;
