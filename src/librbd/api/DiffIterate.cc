@@ -358,8 +358,9 @@ int DiffIterate<I>::execute() {
 
       if (fast_diff_enabled) {
         const uint64_t object_no = p->second.front().objectno;
-        if (object_diff_state[object_no] != OBJECT_DIFF_STATE_NONE) {
-          bool updated = (object_diff_state[object_no] ==
+        uint8_t state = object_diff_state[object_no];
+        if (state != OBJECT_DIFF_STATE_NONE) {
+          bool updated = (state ==
                             OBJECT_DIFF_STATE_UPDATED);
           for (std::vector<ObjectExtent>::iterator q = p->second.begin();
                q != p->second.end(); ++q) {
