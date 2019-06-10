@@ -558,6 +558,9 @@ struct C_InvalidateCache : public Context {
 
     m_status_update_started = true;
 
+    utime_t start = ceph_clock_now();
+    utime_t latency;
+
     uint64_t used = std::numeric_limits<uint64_t>::max();
     BitVector<2> om;
     int r = -1;
@@ -569,9 +572,18 @@ struct C_InvalidateCache : public Context {
       }
     }
 
+    latency = ceph_clock_now() - start;
+    lderr(cct) << "----> get object map latency -- sec:" << latency.sec()
+               << ", usec: " << latency.usec() << dendl;
+
     if (r == 0) {
       ObjectMap<>::ObjectMap::calculate_usage(*this, om, &used, nullptr);
     }
+
+    latency = ceph_clock_now() - start;
+    lderr(cct) << "----> calc usage latency -- sec:" << latency.sec()
+               << ", usec: " << latency.usec() << dendl;
+
     if (!is_paused_by_qos()) {
       librados::ObjectWriteOperation op;
       cls_client::status_update_used(&op, id, used);
