@@ -324,6 +324,7 @@ struct MockImageCtx {
   bool blkin_trace_all;
   bool enable_alloc_hint;
   bool qos_enabled;
+  uint64_t m_report_disabled_flags = 0;
 };
 
 } // namespace librbd

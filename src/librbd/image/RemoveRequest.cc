@@ -42,6 +42,9 @@ RemoveRequest<I>::RemoveRequest(IoCtx &ioctx, const std::string &image_name,
 
   m_image_ctx = I::create((m_image_id.empty() ? m_image_name : std::string()),
                           m_image_id, nullptr, m_ioctx, false);
+
+  uint64_t flags = RBD_REPORT_DISABLED_F_STATUS | RBD_REPORT_DISABLED_F_STATS;
+  m_image_ctx->m_report_disabled_flags = flags;
 }
 
 template<typename I>

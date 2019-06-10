@@ -291,9 +291,14 @@ struct C_InvalidateCache : public Context {
 
     trace_endpoint.copy_name(pname);
     perf_start(pname);
-    perf_report_start();
 
-    status_update_start();
+    if (!(m_report_disabled_flags & RBD_REPORT_DISABLED_F_STATS)) {
+      perf_report_start();
+    }
+
+    if (!(m_report_disabled_flags & RBD_REPORT_DISABLED_F_STATUS)) {
+      status_update_start();
+    }
 
     if (cache) {
       Mutex::Locker l(cache_lock);

@@ -323,6 +323,59 @@ namespace librbd {
     return 0;
   }
 
+  int RBD::open_with_report_disabled(IoCtx& io_ctx, Image& image, const char *name,
+                                     const char *snap_name, uint64_t flags)
+  {
+    ImageCtx *ictx = new ImageCtx(name, "", snap_name, io_ctx, false);
+    ictx->m_report_disabled_flags = flags;
+    TracepointProvider::initialize<tracepoint_traits>(get_cct(io_ctx));
+    tracepoint(librbd, open_image_enter, ictx, ictx->name.c_str(), ictx->id.c_str(), ictx->snap_name.c_str(), ictx->read_only);
+
+    if (image.ctx != NULL) {
+      reinterpret_cast<ImageCtx*>(image.ctx)->state->close();
+      image.ctx = NULL;
+    }
+
+    int r = ictx->state->open(false);
+    if (r < 0) {
+      tracepoint(librbd, open_image_exit, r);
+      return r;
+    }
+
+    ictx->qos_set_enabled();
+    ictx->qos_set_quota();
+    image.ctx = (image_ctx_t) ictx;
+    tracepoint(librbd, open_image_exit, 0);
+    return 0;
+  }
+
+  int RBD::open_by_id_with_report_disabled(IoCtx& io_ctx, Image& image, const char *id,
+                                           const char *snap_name, uint64_t flags)
+  {
+    ImageCtx *ictx = new ImageCtx("", id, snap_name, io_ctx, false);
+    ictx->m_report_disabled_flags = flags;
+    TracepointProvider::initialize<tracepoint_traits>(get_cct(io_ctx));
+    tracepoint(librbd, open_image_by_id_enter, ictx, ictx->id.c_str(),
+               ictx->snap_name.c_str(), ictx->read_only);
+
+    if (image.ctx != nullptr) {
+      reinterpret_cast<ImageCtx*>(image.ctx)->state->close();
+      image.ctx = nullptr;
+    }
+
+    int r = ictx->state->open(false);
+    if (r < 0) {
+      tracepoint(librbd, open_image_by_id_exit, r);
+      return r;
+    }
+
+    ictx->qos_set_enabled();
+    ictx->qos_set_quota();
+    image.ctx = (image_ctx_t) ictx;
+    tracepoint(librbd, open_image_by_id_exit, 0);
+    return 0;
+  }
+
   int RBD::aio_open(IoCtx& io_ctx, Image& image, const char *name,
 		    const char *snap_name, RBD::AioCompletion *c)
   {

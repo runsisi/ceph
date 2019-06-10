@@ -896,7 +896,12 @@ int open_image(librados::IoCtx &io_ctx, const std::string &image_name,
   if (read_only) {
     r = rbd.open_read_only(io_ctx, *image, image_name.c_str(), NULL);
   } else {
-    r = rbd.open(io_ctx, *image, image_name.c_str());
+    uint64_t flags = 0;
+    if (!bench) {
+      flags = RBD_REPORT_DISABLED_F_STATUS | RBD_REPORT_DISABLED_F_STATS;
+    }
+    r = rbd.open_with_report_disabled(io_ctx, *image, image_name.c_str(),
+        NULL, flags);
   }
 
   if (r < 0) {
@@ -919,7 +924,12 @@ int open_image_by_id(librados::IoCtx &io_ctx, const std::string &image_id,
   if (read_only) {
     r = rbd.open_by_id_read_only(io_ctx, *image, image_id.c_str(), NULL);
   } else {
-    r = rbd.open_by_id(io_ctx, *image, image_id.c_str());
+    uint64_t flags = 0;
+    if (!bench) {
+      flags = RBD_REPORT_DISABLED_F_STATUS | RBD_REPORT_DISABLED_F_STATS;
+    }
+    r = rbd.open_by_id_with_report_disabled(io_ctx, *image, image_id.c_str(),
+        NULL, flags);
   }
 
   if (r < 0) {

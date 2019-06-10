@@ -172,6 +172,8 @@ public:
   int open(IoCtx& io_ctx, Image& image, const char *name, const char *snapname);
   int open_by_id(IoCtx& io_ctx, Image& image, const char *id);
   int open_by_id(IoCtx& io_ctx, Image& image, const char *id, const char *snapname);
+  int open_with_report_disabled(IoCtx& io_ctx, Image& image, const char *name, const char *snapname, uint64_t flags);
+  int open_by_id_with_report_disabled(IoCtx& io_ctx, Image& image, const char *id, const char *snapname, uint64_t flags);
   int aio_open(IoCtx& io_ctx, Image& image, const char *name,
 	       const char *snapname, RBD::AioCompletion *c);
   int aio_open_by_id(IoCtx& io_ctx, Image& image, const char *id,

@@ -193,6 +193,11 @@ typedef enum {
 } rbd_status_image_state_t;
 
 typedef enum {
+  RBD_REPORT_DISABLED_F_STATS           = 1 << 0,
+  RBD_REPORT_DISABLED_F_STATUS          = 1 << 1,
+} rbd_report_disabled_flag_t;
+
+typedef enum {
   RBD_STATUS_SNAPSHOT_NAMESPACE_TYPE_USER      = 0,
   RBD_STATUS_SNAPSHOT_NAMESPACE_TYPE_GROUP     = 1
 } rbd_status_snapshot_namespace_type_t;
