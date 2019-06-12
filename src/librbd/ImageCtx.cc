@@ -292,11 +292,7 @@ struct C_InvalidateCache : public Context {
     trace_endpoint.copy_name(pname);
     perf_start(pname);
 
-    bool disabled = cct->_conf->get_val<bool>("rbd_report_disabled");
-    if (disabled) {
-      disable_report();
-    }
-    if (!m_report_disabled) {
+    if (!report_disabled) {
       perf_report_start();
       status_update_start();
     }
@@ -469,7 +465,7 @@ struct C_InvalidateCache : public Context {
   void ImageCtx::send_report() {
     assert(report_timer_lock->is_locked());
 
-    if (m_report_disabled) {
+    if (report_disabled) {
       return;
     }
 
@@ -526,7 +522,7 @@ struct C_InvalidateCache : public Context {
 
   void ImageCtx::disable_report() {
     // w/o lock should be ok
-    m_report_disabled = true;
+    report_disabled = true;
   }
 
   void ImageCtx::status_update_start() {
@@ -536,7 +532,7 @@ struct C_InvalidateCache : public Context {
       return;
     }
 
-    double interval = cct->_conf->get_val<double>("rbd_status_update_interval");
+    double interval = status_update_interval;
     if (interval < 0) {
       return;
     }
@@ -544,7 +540,7 @@ struct C_InvalidateCache : public Context {
     m_status_update_timer = new SafeTimer(cct, m_status_update_timer_lock, true);
     m_status_update_timer->init();
 
-    double delay = cct->_conf->get_val<double>("rbd_status_update_delay");
+    double delay = status_update_delay;
     delay += random() % (int)(delay + 1);
 
     Mutex::Locker timer_locker(m_status_update_timer_lock);
@@ -560,13 +556,13 @@ struct C_InvalidateCache : public Context {
       m_status_update_timer->cancel_event(m_status_update_callback);
     }
     m_status_update_callback = nullptr;
-    m_report_disabled = true;
+    report_disabled = true;
   }
 
   void ImageCtx::status_update() {
     assert(m_status_update_timer_lock.is_locked_by_me());
 
-    if (m_report_disabled) {
+    if (report_disabled) {
       return;
     }
 
@@ -590,7 +586,7 @@ struct C_InvalidateCache : public Context {
     }
 
     // if we are closing, stop it now
-    if (m_report_disabled) {
+    if (report_disabled) {
       return;
     }
 
@@ -605,9 +601,8 @@ struct C_InvalidateCache : public Context {
       comp->release();
     }
 
-    double delay = cct->_conf->get_val<double>("rbd_status_update_delay");
-    double interval = cct->_conf->get_val<double>("rbd_status_update_interval");
-    interval += random() % (int)(delay + 1);
+    double interval = status_update_interval;
+    interval += random() % (int)(interval / 2 + 1);
 
     m_status_update_callback = new FunctionContext([this](int r){
       this->status_update();
@@ -1226,7 +1221,10 @@ struct C_InvalidateCache : public Context {
         "rbd_client_qos_reservation", false)(
         "rbd_client_qos_weight", false)(
         "rbd_client_qos_limit", false)(
-        "rbd_client_qos_bandwidth", false);
+        "rbd_client_qos_bandwidth", false)(
+        "rbd_report_disabled", false)(
+        "rbd_status_update_interval", false)(
+        "rbd_status_update_delay", false);
 
     md_config_t local_config_t;
     std::map<std::string, bufferlist> res;
@@ -1300,6 +1298,9 @@ struct C_InvalidateCache : public Context {
     ASSIGN_OPTION(client_qos_weight, int64_t);
     ASSIGN_OPTION(client_qos_limit, int64_t);
     ASSIGN_OPTION(client_qos_bandwidth, int64_t);
+    ASSIGN_OPTION(report_disabled, bool);
+    ASSIGN_OPTION(status_update_interval, double);
+    ASSIGN_OPTION(status_update_delay, double);
 
   }
 

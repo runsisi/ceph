@@ -5268,8 +5268,9 @@ int status_list_images(cls_method_context_t hctx, bufferlist *in, bufferlist *ou
   }
 
   CephContext *cct = cls_cct();
-  double idle_threshold = cct->_conf->get_val<double>("rbd_status_update_interval")
-      + 2 * cct->_conf->get_val<double>("rbd_status_update_delay");
+  double max_interval = cct->_conf->get_val<double>("rbd_status_max_update_interval");
+  double interval = cct->_conf->get_val<double>("rbd_status_update_interval");
+  double idle_threshold = max_interval + interval * 2;
   auto latest = ceph_clock_now();
   latest -= idle_threshold;
 
@@ -5390,8 +5391,9 @@ int status_list_usages(cls_method_context_t hctx, bufferlist *in, bufferlist *ou
   }
 
   CephContext *cct = cls_cct();
-  double idle_threshold = cct->_conf->get_val<double>("rbd_status_update_interval")
-      + 2 * cct->_conf->get_val<double>("rbd_status_update_delay");
+  double max_interval = cct->_conf->get_val<double>("rbd_status_max_update_interval");
+  double interval = cct->_conf->get_val<double>("rbd_status_update_interval");
+  double idle_threshold = max_interval + interval * 2;
   auto latest = ceph_clock_now();
   latest -= idle_threshold;
 
@@ -6268,8 +6270,9 @@ int status_get_usage(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 
   if (snapshot_id == CEPH_NOSNAP) {
     CephContext *cct = cls_cct();
-    double idle_threshold = cct->_conf->get_val<double>("rbd_status_update_interval")
-        + 2 * cct->_conf->get_val<double>("rbd_status_update_delay");
+    double max_interval = cct->_conf->get_val<double>("rbd_status_max_update_interval");
+    double interval = cct->_conf->get_val<double>("rbd_status_update_interval");
+    double idle_threshold = max_interval + interval * 2;
     auto latest = ceph_clock_now();
     latest -= idle_threshold;
 
