@@ -310,6 +310,108 @@ int execute_remove(const po::variables_map &vm) {
   return 0;
 }
 
+static int do_metadata_set2(librbd::Image& image, const char *key,
+                          const char *value)
+{
+  int r = image.metadata_set_wo_lock(key, value);
+  if (r < 0) {
+    std::cerr << "failed to set metadata " << key << " of image : "
+              << cpp_strerror(r) << std::endl;
+  }
+  return r;
+}
+
+static int do_metadata_remove2(librbd::Image& image, const char *key)
+{
+  int r = image.metadata_remove_wo_lock(key);
+  if (r == -ENOENT) {
+      std::cerr << "rbd: no existing metadata key " << key << " of image : "
+                << cpp_strerror(r) << std::endl;
+  } else if(r < 0) {
+      std::cerr << "failed to remove metadata " << key << " of image : "
+                << cpp_strerror(r) << std::endl;
+  }
+  return r;
+}
+
+int execute_set2(const po::variables_map &vm) {
+  size_t arg_index = 0;
+  std::string pool_name;
+  std::string image_name;
+  std::string snap_name;
+  int r = utils::get_pool_image_snapshot_names(
+    vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
+    &snap_name, utils::SNAPSHOT_PRESENCE_NONE, utils::SPEC_VALIDATION_NONE);
+  if (r < 0) {
+    return r;
+  }
+
+  std::string key;
+  r = get_key(vm, &key);
+  if (r < 0) {
+    return r;
+  }
+
+  std::string value = utils::get_positional_argument(vm, 2);
+  if (value.empty()) {
+    std::cerr << "rbd: metadata value was not specified" << std::endl;
+    return -EINVAL;
+  }
+
+  librados::Rados rados;
+  librados::IoCtx io_ctx;
+  librbd::Image image;
+  r = utils::init_and_open_image(pool_name, image_name, "", "", false,
+                                 &rados, &io_ctx, &image);
+  if (r < 0) {
+    return r;
+  }
+
+  r = do_metadata_set2(image, key.c_str(), value.c_str());
+  if (r < 0) {
+    std::cerr << "rbd: setting metadata failed: " << cpp_strerror(r)
+              << std::endl;
+    return r;
+  }
+  return 0;
+}
+
+int execute_remove2(const po::variables_map &vm) {
+  size_t arg_index = 0;
+  std::string pool_name;
+  std::string image_name;
+  std::string snap_name;
+  int r = utils::get_pool_image_snapshot_names(
+    vm, at::ARGUMENT_MODIFIER_NONE, &arg_index, &pool_name, &image_name,
+    &snap_name, utils::SNAPSHOT_PRESENCE_NONE, utils::SPEC_VALIDATION_NONE);
+  if (r < 0) {
+    return r;
+  }
+
+  std::string key;
+  r = get_key(vm, &key);
+  if (r < 0) {
+    return r;
+  }
+
+  librados::Rados rados;
+  librados::IoCtx io_ctx;
+  librbd::Image image;
+  r = utils::init_and_open_image(pool_name, image_name, "", "", false,
+                                 &rados, &io_ctx, &image);
+  if (r < 0) {
+    return r;
+  }
+
+  r = do_metadata_remove2(image, key.c_str());
+  if (r < 0) {
+    std::cerr << "rbd: removing metadata failed: " << cpp_strerror(r)
+              << std::endl;
+    return r;
+  }
+  return 0;
+}
+
 Shell::Action action_list(
   {"image-meta", "list"}, {}, "Image metadata list keys with values.", "",
   &get_list_arguments, &execute_list);
@@ -324,6 +426,13 @@ Shell::Action action_remove(
   {"image-meta", "remove"}, {},
   "Image metadata remove the key and value associated.", "",
   &get_remove_arguments, &execute_remove);
+Shell::Action action_set2(
+  {"image-meta", "set2"}, {}, "Image metadata set key with value (w/o exclusive lock).", "",
+  &get_set_arguments, &execute_set2);
+Shell::Action action_remove2(
+  {"image-meta", "remove2"}, {},
+  "Image metadata remove the key and value associated (w/o exclusive lock).", "",
+  &get_remove_arguments, &execute_remove2);
 
 } // namespace image_meta
 } // namespace action

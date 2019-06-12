@@ -103,6 +103,9 @@ public:
   int metadata_remove(const std::string &key);
   void execute_metadata_remove(const std::string &key, Context *on_finish);
 
+  int metadata_set_wo_lock(const std::string &key, const std::string &value);
+  int metadata_remove_wo_lock(const std::string &key);
+
   int prepare_image_update(bool request_lock);
 
 private:

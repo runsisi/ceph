@@ -1598,6 +1598,40 @@ void Operations<I>::execute_metadata_remove(const std::string &key,
 }
 
 template <typename I>
+int Operations<I>::metadata_set_wo_lock(const std::string &key,
+                                        const std::string &value) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 5) << this << " " << __func__ << ": key=" << key << ", value="
+                << value << dendl;
+
+  C_SaferCond metadata_ctx;
+  {
+    RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
+
+    execute_metadata_set(key, value, &metadata_ctx);
+  }
+
+  int r = metadata_ctx.wait();
+  return r;
+}
+
+template <typename I>
+int Operations<I>::metadata_remove_wo_lock(const std::string &key) {
+  CephContext *cct = m_image_ctx.cct;
+  ldout(cct, 5) << this << " " << __func__ << ": key=" << key << dendl;
+
+  C_SaferCond metadata_ctx;
+  {
+    RWLock::RLocker owner_lock(m_image_ctx.owner_lock);
+
+    execute_metadata_remove(key, &metadata_ctx);
+  }
+
+  int r = metadata_ctx.wait();
+  return r;
+}
+
+template <typename I>
 int Operations<I>::prepare_image_update(bool request_lock) {
   assert(m_image_ctx.owner_lock.is_locked() &&
          !m_image_ctx.owner_lock.is_wlocked());

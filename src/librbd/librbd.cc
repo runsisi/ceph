@@ -1797,6 +1797,24 @@ namespace librbd {
     return r;
   }
 
+  int Image::metadata_set_wo_lock(const std::string &key, const std::string &value)
+  {
+    ImageCtx *ictx = (ImageCtx *)ctx;
+    tracepoint(librbd, metadata_set_enter, ictx, key.c_str(), value.c_str());
+    int r = ictx->operations->metadata_set_wo_lock(key, value);
+    tracepoint(librbd, metadata_set_exit, r);
+    return r;
+  }
+
+  int Image::metadata_remove_wo_lock(const std::string &key)
+  {
+    ImageCtx *ictx = (ImageCtx *)ctx;
+    tracepoint(librbd, metadata_remove_enter, ictx, key.c_str());
+    int r = ictx->operations->metadata_remove_wo_lock(key);
+    tracepoint(librbd, metadata_remove_exit, r);
+    return r;
+  }
+
   int Image::metadata_list(const std::string &start, uint64_t max, map<string, bufferlist> *pairs)
   {
     ImageCtx *ictx = (ImageCtx *)ctx;
