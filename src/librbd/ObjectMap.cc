@@ -415,7 +415,7 @@ void ObjectMap<I>::calculate_usage(I& ictx, BitVector<2>& om,
 
   latency = ceph_clock_now() - start;
   ldout(cct, 10) << "initialize object state latency: "
-                << latency.sec() << "s"
+                << latency.sec() << "s/"
                 << latency.usec() << "us" << dendl;
   start = ceph_clock_now();
 
@@ -462,10 +462,10 @@ void ObjectMap<I>::calculate_usage(I& ictx, BitVector<2>& om,
 
   latency = ceph_clock_now() - start;
   ldout(cct, 10) << "calc usage latency: "
-                << latency.sec() << "s"
+                << latency.sec() << "s/"
                 << latency.usec() << "us" << dendl;
 
-  ldout(cct, 10) << "used: " << r_used << "dirty: " << r_dirty << dendl;
+  ldout(cct, 10) << "used: " << r_used << ", dirty: " << r_dirty << dendl;
 
   if (used) {
     *used = r_used;

@@ -91,10 +91,6 @@ void CloseRequest<I>::send_status_update_shutdown() {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
-  if (m_image_ctx->m_status_update_timer) {
-    m_image_ctx->status_update_stop();
-  }
-
   librados::ObjectWriteOperation op;
   cls_client::status_update_state(&op, m_image_ctx->id,
       static_cast<uint64_t>(cls::rbd::STATUS_IMAGE_STATE_IDLE),

@@ -560,6 +560,7 @@ struct C_InvalidateCache : public Context {
       m_status_update_timer->cancel_event(m_status_update_callback);
     }
     m_status_update_callback = nullptr;
+    m_report_disabled = true;
   }
 
   void ImageCtx::status_update() {
@@ -587,6 +588,12 @@ struct C_InvalidateCache : public Context {
     if (r == 0) {
       ObjectMap<>::ObjectMap::calculate_usage(*this, om, &used, nullptr);
     }
+
+    // if we are closing, stop it now
+    if (m_report_disabled) {
+      return;
+    }
+
     if (!is_paused_by_qos()) {
       librados::ObjectWriteOperation op;
       cls_client::status_update_used(&op, id, used);
