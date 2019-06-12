@@ -292,6 +292,10 @@ struct C_InvalidateCache : public Context {
     trace_endpoint.copy_name(pname);
     perf_start(pname);
 
+    bool disabled = cct->_conf->get_val<bool>("rbd_report_disabled");
+    if (disabled) {
+      disable_report();
+    }
     if (!m_report_disabled) {
       perf_report_start();
       status_update_start();

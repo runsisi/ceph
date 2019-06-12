@@ -6176,6 +6176,10 @@ static std::vector<Option> get_rbd_options() {
     .set_default(5.0)
     .set_description(""),
 
+    Option("rbd_report_disabled", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
+    .set_default(false)
+    .set_description("true if rbd image report should be disabled"),
+
     Option("rbd_status_update_delay", Option::TYPE_FLOAT, Option::LEVEL_ADVANCED)
     .set_default(10.0)
     .set_description("delay a few seconds for the first update"),
