@@ -396,7 +396,9 @@ void ObjectMap<I>::calculate_usage(I& ictx, BitVector<2>& om,
   assert(used || dirty);
 
   CephContext* cct = ictx.cct;
-  ldout(cct, 5) << dendl;
+
+  utime_t start = ceph_clock_now();
+  utime_t latency;
 
   // allocate a continuous memory to speedup the calculation
   BitVector<2> object_state;
@@ -410,6 +412,12 @@ void ObjectMap<I>::calculate_usage(I& ictx, BitVector<2>& om,
     // do not remove the cast!!!
     *state_it = static_cast<uint8_t>(*it);
   }
+
+  latency = ceph_clock_now() - start;
+  ldout(cct, 10) << "initialize object state latency: "
+                << latency.sec() << "s"
+                << latency.usec() << "us" << dendl;
+  start = ceph_clock_now();
 
   uint64_t r_used = 0, r_dirty = 0;
 
@@ -451,6 +459,13 @@ void ObjectMap<I>::calculate_usage(I& ictx, BitVector<2>& om,
     left -= read_len;
     off += read_len;
   }
+
+  latency = ceph_clock_now() - start;
+  ldout(cct, 10) << "calc usage latency: "
+                << latency.sec() << "s"
+                << latency.usec() << "us" << dendl;
+
+  ldout(cct, 10) << "used: " << r_used << "dirty: " << r_dirty << dendl;
 
   if (used) {
     *used = r_used;
