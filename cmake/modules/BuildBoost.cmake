@@ -89,13 +89,7 @@ function(do_build_boost version)
     set(boost_md5 b2dfbd6c717be4a7bb2d88018eaccf75)
     string(REPLACE "." "_" boost_version_underscore ${boost_version} )
     set(boost_url 
-      https://dl.bintray.com/boostorg/release/${boost_version}/source/boost_${boost_version_underscore}.tar.bz2)
-    if(CMAKE_VERSION VERSION_GREATER 3.7)
-      set(boost_url
-        "${boost_url} http://downloads.sourceforge.net/project/boost/boost/${boost_version}/boost_${boost_version_underscore}.tar.bz2")
-      set(boost_url
-        "${boost_url} https://download.ceph.com/qa/boost_${boost_version_underscore}.tar.bz2")
-    endif()
+      http://192.168.5.4/qa/boost_${boost_version_underscore}.tar.bz2)
     set(source_dir
       URL ${boost_url}
       URL_MD5 ${boost_md5})
