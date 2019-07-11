@@ -60,6 +60,7 @@ extern "C" {
 typedef void *rbd_snap_t;
 typedef void *rbd_image_t;
 typedef void *rbd_image_options_t;
+typedef void *rbd_pool_stats_t;
 
 typedef void *rbd_completion_t;
 typedef void (*rbd_callback_t)(rbd_completion_t cb, void *arg);
@@ -189,6 +190,17 @@ typedef struct {
   time_t deletion_time;
   time_t deferment_end_time;
 } rbd_trash_image_info_t;
+
+typedef enum {
+  RBD_POOL_STAT_OPTION_IMAGES,
+  RBD_POOL_STAT_OPTION_IMAGE_PROVISIONED_BYTES,
+  RBD_POOL_STAT_OPTION_IMAGE_MAX_PROVISIONED_BYTES,
+  RBD_POOL_STAT_OPTION_IMAGE_SNAPSHOTS,
+  RBD_POOL_STAT_OPTION_TRASH_IMAGES,
+  RBD_POOL_STAT_OPTION_TRASH_PROVISIONED_BYTES,
+  RBD_POOL_STAT_OPTION_TRASH_MAX_PROVISIONED_BYTES,
+  RBD_POOL_STAT_OPTION_TRASH_SNAPSHOTS
+} rbd_pool_stat_option_t;
 
 CEPH_RBD_API void rbd_image_options_create(rbd_image_options_t* opts);
 CEPH_RBD_API void rbd_image_options_destroy(rbd_image_options_t opts);
@@ -859,6 +871,10 @@ CEPH_RBD_API int rbd_qos_get(rbd_image_t image,
                                 int *reservation, int *weight, int *limit, int *bandwidth,
                                 int *metaflag);
 CEPH_RBD_API int rbd_qos_del(rbd_image_t image, int flag);
+
+CEPH_RBD_API void rbd_pool_stats_create(rbd_pool_stats_t *stats);
+CEPH_RBD_API void rbd_pool_stats_destroy(rbd_pool_stats_t stats);
+CEPH_RBD_API int rbd_pool_stats_get(rados_ioctx_t io, rbd_pool_stats_t stats);
 
 #ifdef __cplusplus
 }

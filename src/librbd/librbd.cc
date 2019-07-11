@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include "librbd/api/zPool.h"
 
 #ifdef WITH_LTTNG
 #define TRACEPOINT_DEFINE
@@ -245,6 +246,17 @@ namespace librbd {
     librbd_progress_fn_t m_fn;
     void *m_data;
   };
+
+  /*
+   * Pool stats
+   */
+  PoolStats::PoolStats() {
+    rbd_pool_stats_create(&pool_stats);
+  }
+
+  PoolStats::~PoolStats() {
+    rbd_pool_stats_destroy(pool_stats);
+  }
 
   /*
     RBD
@@ -720,6 +732,12 @@ namespace librbd {
     librbd::io::AioCompletion *c = (librbd::io::AioCompletion *)pc;
     c->release();
     delete this;
+  }
+
+  int RBD::pool_stats_get(IoCtx& io_ctx, PoolStats* stats) {
+    auto pool_stat_options =
+      reinterpret_cast<librbd::api::zPool<>::StatOptions*>(stats->pool_stats);
+    return librbd::api::zPool<>::get_stats(io_ctx, pool_stat_options);
   }
 
   /*
@@ -2479,6 +2497,17 @@ extern "C" int rbd_trash_restore(rados_ioctx_t p, const char *id,
   int r = librbd::trash_restore(io_ctx, id, name);
   tracepoint(librbd, trash_undelete_exit, r);
   return r;
+}
+
+extern "C" void rbd_pool_stats_create(rbd_pool_stats_t *stats) {
+  *stats = reinterpret_cast<rbd_pool_stats_t>(
+    new librbd::api::zPool<>::StatOptions{});
+}
+
+extern "C" void rbd_pool_stats_destroy(rbd_pool_stats_t stats) {
+  auto pool_stat_options =
+    reinterpret_cast<librbd::api::zPool<>::StatOptions*>(stats);
+  delete pool_stat_options;
 }
 
 extern "C" int rbd_copy(rbd_image_t image, rados_ioctx_t dest_p,
@@ -4294,5 +4323,15 @@ extern "C" int rbd_qos_del(rbd_image_t image, int flag)
 {
   librbd::ImageCtx *ictx = (librbd::ImageCtx *)image;
   return librbd::qos_spec_del(ictx, flag);
+}
+
+extern "C" int rbd_pool_stats_get(
+    rados_ioctx_t io, rbd_pool_stats_t pool_stats) {
+  librados::IoCtx io_ctx;
+  librados::IoCtx::from_rados_ioctx_t(io, io_ctx);
+
+  auto pool_stat_options =
+    reinterpret_cast<librbd::api::zPool<>::StatOptions*>(pool_stats);
+  return librbd::api::zPool<>::get_stats(io_ctx, pool_stat_options);
 }
 

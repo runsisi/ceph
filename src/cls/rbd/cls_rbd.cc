@@ -5131,6 +5131,327 @@ int trash_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   return r;
 }
 
+int z_size_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+{
+  uint64_t snap_id;
+  auto iter = in->begin();
+  try {
+    decode(snap_id, iter);
+  } catch (const buffer::error &err) {
+    return -EINVAL;
+  }
+
+  CLS_LOG(20, "z_size_get snap_id=%llu", (unsigned long long)snap_id);
+
+  uint8_t order = 0;
+  uint64_t size = 0;
+  int r = read_key(hctx, "order", &order);
+  if (r < 0) {
+    CLS_ERR("failed to read the order off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
+  uint64_t features = 0;
+  uint64_t flags = 0;
+  if (snap_id == CEPH_NOSNAP) {
+    r = read_key(hctx, "size", &size);
+    if (r < 0) {
+      CLS_ERR("failed to read the image's size off of disk: %s", cpp_strerror(r).c_str());
+      return r;
+    }
+    r = read_key(hctx, "features", &features);
+    if (r < 0) {
+      CLS_ERR("failed to read features off disk: %s", cpp_strerror(r).c_str());
+      return r;
+    }
+    r = read_key(hctx, "flags", &flags);
+    if (r < 0 && r != -ENOENT) {
+      CLS_ERR("failed to read the order off of disk: %s", cpp_strerror(r).c_str());
+      return r;
+    }
+  } else {
+    cls_rbd_snap snap;
+    string snapshot_key;
+    key_from_snap_id(snap_id, &snapshot_key);
+    int r = read_key(hctx, snapshot_key, &snap);
+    if (r < 0) {
+      return r;
+    }
+
+    size = snap.image_size;
+    features = snap.features;
+    flags = snap.flags;
+  }
+
+  ::encode(order, *out);
+  ::encode(size, *out);
+
+  uint64_t stripe_unit = 0;
+  uint64_t stripe_count = 0;
+  r = read_key(hctx, "stripe_unit", &stripe_unit);
+  if (r == -ENOENT) {
+    stripe_unit = 1ull << order;
+    r = 0;
+  }
+  if (r < 0) {
+    return r;
+  }
+  r = read_key(hctx, "stripe_count", &stripe_count);
+  if (r == -ENOENT) {
+    // default to 1
+    stripe_count = 1;
+    r = 0;
+  }
+  if (r < 0) {
+    return r;
+  }
+
+  ::encode(stripe_unit, *out);
+  ::encode(stripe_count, *out);
+
+  ::encode(features, *out);
+  ::encode(flags, *out);
+  return 0;
+}
+
+int z_image_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+{
+  CLS_LOG(20, "z_image_get");
+
+  uint8_t order = 0;
+  uint64_t size = 0;
+  int r = read_key(hctx, "order", &order);
+  if (r < 0) {
+    CLS_ERR("failed to read the order off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+  r = read_key(hctx, "size", &size);
+  if (r < 0) {
+    CLS_ERR("failed to read the image's size off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
+  ::encode(order, *out);
+  ::encode(size, *out);
+
+  uint64_t features = 0;
+  uint64_t flags = 0;
+  r = read_key(hctx, "features", &features);
+  if (r < 0) {
+    CLS_ERR("failed to read features off disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+  r = read_key(hctx, "flags", &flags);
+  if (r < 0 && r != -ENOENT) {
+    CLS_ERR("failed to read the order off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
+  uint64_t stripe_unit = 0;
+  uint64_t stripe_count = 0;
+  r = read_key(hctx, "stripe_unit", &stripe_unit);
+  if (r == -ENOENT) {
+    stripe_unit = 1ull << order;
+    r = 0;
+  }
+  if (r < 0) {
+    return r;
+  }
+  r = read_key(hctx, "stripe_count", &stripe_count);
+  if (r == -ENOENT) {
+    // default to 1
+    stripe_count = 1;
+    r = 0;
+  }
+  if (r < 0) {
+    return r;
+  }
+
+  ::encode(stripe_unit, *out);
+  ::encode(stripe_count, *out);
+
+  ::encode(features, *out);
+  ::encode(flags, *out);
+
+  // snap context
+  {
+    int r;
+    int max_read = RBD_MAX_KEYS_READ;
+    vector<snapid_t> snap_ids;
+    string last_read = RBD_SNAP_KEY_PREFIX;
+    bool more;
+
+    do {
+      set<string> keys;
+      r = cls_cxx_map_get_keys(hctx, last_read, max_read, &keys, &more);
+      if (r < 0) {
+        return r;
+      }
+
+      for (set<string>::const_iterator it = keys.begin();
+           it != keys.end(); ++it) {
+        if ((*it).find(RBD_SNAP_KEY_PREFIX) != 0) {
+          break;
+        }
+        snapid_t snap_id = snap_id_from_key(*it);
+        snap_ids.push_back(snap_id);
+      }
+      if (!keys.empty()) {
+        last_read = *(keys.rbegin());
+      }
+    } while (more);
+
+    uint64_t snap_seq;
+    r = read_key(hctx, "snap_seq", &snap_seq);
+    if (r < 0) {
+      CLS_ERR("could not read the image's snap_seq off disk: %s", cpp_strerror(r).c_str());
+      return r;
+    }
+
+    // snap_ids must be descending in a snap context
+    std::reverse(snap_ids.begin(), snap_ids.end());
+
+    ::encode(snap_seq, *out);
+    ::encode(snap_ids, *out);
+  }
+
+  // parent
+  {
+    cls_rbd_parent parent;
+    int r = read_key(hctx, "parent", &parent);
+    if (r < 0 && r != -ENOENT) {
+      return r;
+    }
+
+    ::encode(parent.pool, *out);
+    ::encode(parent.id, *out);
+    ::encode(parent.snapid, *out);
+    ::encode(parent.overlap, *out);
+  }
+
+  // create timestamp
+  {
+    utime_t timestamp;
+    bufferlist bl;
+    int r = cls_cxx_map_get_val(hctx, "create_timestamp", &bl);
+    if (r < 0) {
+      if (r != -ENOENT) {
+        CLS_ERR("error reading create_timestamp: %s", cpp_strerror(r).c_str());
+        return r;
+      }
+    } else {
+      try {
+        bufferlist::iterator it = bl.begin();
+        ::decode(timestamp, it);
+      } catch (const buffer::error &err) {
+        CLS_ERR("could not decode create_timestamp");
+        return -EIO;
+      }
+    }
+
+    ::encode(timestamp, *out);
+  }
+
+  // data pool
+  {
+    int64_t data_pool_id = -1;
+    int r = read_key(hctx, "data_pool_id", &data_pool_id);
+    if (r == -ENOENT) {
+      data_pool_id = -1;
+    } else if (r < 0) {
+      CLS_ERR("error reading image data pool id: %s", cpp_strerror(r).c_str());
+      return r;
+    }
+
+    ::encode(data_pool_id, *out);
+  }
+  return 0;
+}
+
+int z_snap_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+{
+  uint64_t snap_id;
+
+  auto iter = in->begin();
+  try {
+    decode(snap_id, iter);
+  } catch (const buffer::error &err) {
+    return -EINVAL;
+  }
+
+  CLS_LOG(20, "z_snap_get snap_id=%llu", (unsigned long long)snap_id);
+
+  if (snap_id == CEPH_NOSNAP) {
+    return -EINVAL;
+  }
+
+  cls_rbd_snap snap;
+  string snapshot_key;
+  key_from_snap_id(snap_id, &snapshot_key);
+  int r = read_key(hctx, snapshot_key, &snap);
+  if (r < 0) {
+    return r;
+  }
+
+  cls::rbd::z_SnapshotInfo snapshot_info(snap.id,
+      snap.snapshot_namespace.snapshot_namespace,
+      snap.name, snap.image_size,
+      snap.features, snap.flags, snap.protection_status,
+      snap.timestamp);
+  encode(snapshot_info, *out);
+  return 0;
+}
+
+int z_child_list(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+{
+  string start_after;
+  uint64_t max_return;
+
+  try {
+    bufferlist::iterator iter = in->begin();
+    ::decode(start_after, iter);
+    ::decode(max_return, iter);
+  } catch (const buffer::error &err) {
+    return -EINVAL;
+  }
+
+  CLS_LOG(20, "z_child_list");
+
+  map<string, std::set<string>> data;
+  string last_read = start_after;
+  bool more = true;
+
+  while (data.size() < max_return) {
+    map<string, bufferlist> raw_data;
+    int max_read = std::min<int32_t>(RBD_MAX_KEYS_READ,
+        max_return - data.size());
+    int r = cls_cxx_map_get_vals(hctx, last_read, "",
+        max_read, &raw_data, &more);
+    if (r < 0) {
+      CLS_ERR("failed to read the vals off of disk: %s",
+          cpp_strerror(r).c_str());
+      return r;
+    }
+    if (raw_data.empty()) {
+      break;
+    }
+
+    map<string, bufferlist>::iterator it = raw_data.begin();
+    for (; it != raw_data.end(); ++it) {
+      ::decode(data[it->first], it->second);
+    }
+
+    if (!more) {
+      break;
+    }
+
+    last_read = raw_data.rbegin()->first;
+  }
+
+  ::encode(data, *out);
+  return 0;
+}
+
 CLS_INIT(rbd)
 {
   CLS_LOG(20, "Loaded rbd class!");
@@ -5226,6 +5547,11 @@ CLS_INIT(rbd)
   cls_method_handle_t h_trash_remove;
   cls_method_handle_t h_trash_list;
   cls_method_handle_t h_trash_get;
+
+  cls_method_handle_t h_z_size_get;
+  cls_method_handle_t h_z_image_get;
+  cls_method_handle_t h_z_snap_get;
+  cls_method_handle_t h_z_child_list;
 
   cls_register("rbd", &h_class);
   cls_register_cxx_method(h_class, "create",
@@ -5508,6 +5834,19 @@ CLS_INIT(rbd)
   cls_register_cxx_method(h_class, "trash_get",
                           CLS_METHOD_RD,
                           trash_get, &h_trash_get);
+
+  cls_register_cxx_method(h_class, "z_size_get",
+                          CLS_METHOD_RD,
+                          z_size_get, &h_z_size_get);
+  cls_register_cxx_method(h_class, "z_image_get",
+                          CLS_METHOD_RD,
+                          z_image_get, &h_z_image_get);
+  cls_register_cxx_method(h_class, "z_snap_get",
+                          CLS_METHOD_RD,
+                          z_snap_get, &h_z_snap_get);
+  cls_register_cxx_method(h_class, "z_child_list",
+                          CLS_METHOD_RD,
+                          z_child_list, &h_z_child_list);
 
   return;
 }

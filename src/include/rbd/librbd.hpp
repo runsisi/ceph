@@ -30,6 +30,7 @@ namespace librbd {
 
   class Image;
   class ImageOptions;
+  class PoolStats;
   typedef void *image_ctx_t;
   typedef void *completion_t;
   typedef void (*callback_t)(completion_t cb, void *arg);
@@ -38,6 +39,42 @@ namespace librbd {
     std::string id;
     std::string name;
   } image_spec_t;
+
+  typedef struct {
+    int64_t pool_id;
+    std::string image_id;
+    uint64_t snap_id;
+  } z_parent_t;
+
+  typedef struct {
+    int64_t pool_id;
+    std::string image_id;
+  } z_child_t;
+
+  typedef struct {
+    int64_t qos_iops;
+    int64_t qos_bps;
+  } z_qos_t;
+
+  typedef struct {
+    std::string id;
+    std::string name;
+    uint8_t order;
+    uint64_t size;
+    uint64_t features;
+    std::vector<uint64_t> snaps;
+    z_parent_t parent;
+    time_t timestamp;
+    std::vector<std::string> watchers;
+    z_qos_t qos;
+  } z_image_t;
+
+  typedef struct {
+    uint64_t id;
+    std::string name;
+    uint64_t size;
+    time_t timestamp;
+  } z_snapshot_t;
 
   typedef struct {
     uint64_t id;
@@ -185,6 +222,8 @@ public:
   int mirror_image_status_summary(IoCtx& io_ctx,
       std::map<mirror_image_status_state_t, int> *states);
 
+  int pool_stats_get(IoCtx& io_ctx, PoolStats *pool_stats);
+
 private:
   /* We don't allow assignment or copying */
   RBD(const RBD& rhs);
@@ -212,6 +251,22 @@ private:
   friend class Image;
 
   rbd_image_options_t opts;
+};
+
+class CEPH_RBD_API PoolStats {
+public:
+  PoolStats();
+  ~PoolStats();
+
+  PoolStats(const PoolStats&) = delete;
+  PoolStats& operator=(const PoolStats&) = delete;
+
+  int add(rbd_pool_stat_option_t option, uint64_t* opt_val);
+
+private:
+  friend class RBD;
+
+  rbd_pool_stats_t pool_stats;
 };
 
 class CEPH_RBD_API UpdateWatchCtx {

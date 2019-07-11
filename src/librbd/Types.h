@@ -5,6 +5,8 @@
 #define LIBRBD_TYPES_H
 
 #include "include/types.h"
+#include "include/rados/rados_types.hpp"
+#include "common/snap_types.h"
 #include "cls/rbd/cls_rbd_types.h"
 #include <string>
 
@@ -76,6 +78,11 @@ struct ParentSpec {
   bool operator!=(const ParentSpec &other) {
     return !(*this == other);
   }
+  bool operator<(const ParentSpec &other) const {
+    return ((pool_id < other.pool_id) ||
+            (image_id < other.image_id) ||
+            (snap_id < other.snap_id));
+  }
 };
 
 /// Full information about an image's parent.
@@ -110,6 +117,65 @@ struct SnapInfo {
       parent(_parent), protection_status(_protection_status), flags(_flags),
       timestamp(_timestamp) {
   }
+};
+
+struct z_SizeInfo {
+  std::string image_id;
+  snapid_t snap_id;
+  uint8_t order = 0;
+  uint64_t size = 0;
+  uint64_t stripe_unit = 0;
+  uint64_t stripe_count = 0;
+  uint64_t features = 0;
+  uint64_t flags = 0;
+};
+
+struct z_ImageInfo {
+  std::string id;
+  std::string name;
+  uint8_t order = 0;
+  uint64_t size = 0;
+  uint64_t stripe_unit = 0;
+  uint64_t stripe_count = 0;
+  uint64_t features = 0;
+  uint64_t flags = 0;
+  SnapContext snapc;
+  ParentInfo parent;
+  utime_t timestamp;
+  int64_t data_pool_id = -1;
+  std::list<obj_watch_t> watchers;
+  std::map<std::string, std::string> kvs;
+};
+
+// do not default initialize the fields
+// https://stackoverflow.com/questions/37776823/could-not-convert-from-brace-enclosed-initializer-list-to-struct
+struct z_SnapInfo {
+  snapid_t id;
+  std::string name;
+  cls::rbd::SnapshotNamespace snap_namespace;
+  uint64_t size;
+  uint64_t features;
+  uint64_t flags;
+  uint8_t protection_status;
+  utime_t timestamp;
+};
+
+struct z_ImageInfo_v2 {
+  std::string id;
+  std::string name;
+  uint8_t order = 0;
+  uint64_t size = 0;
+  uint64_t stripe_unit = 0;
+  uint64_t stripe_count = 0;
+  uint64_t features = 0;
+  uint64_t flags = 0;
+  SnapContext snapc;
+  ParentInfo parent;
+  utime_t timestamp;
+  int64_t data_pool_id = -1;
+  std::list<obj_watch_t> watchers;
+  std::map<std::string, std::string> kvs;
+  std::map<snapid_t, z_SnapInfo> snaps;
 };
 
 } // namespace librbd

@@ -29,6 +29,7 @@ set(rbd_srcs
   action/Qos.cc
   action/ObjectMap.cc
   action/Pool.cc
+  action/Pool2.cc
   action/Remove.cc
   action/Rename.cc
   action/Resize.cc

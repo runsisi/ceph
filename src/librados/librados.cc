@@ -369,6 +369,12 @@ void librados::ObjectReadOperation::list_watchers(
   o->list_watchers(out_watchers, prval);
 }
 
+void librados::ObjectReadOperation::list_watchers()
+{
+  ::ObjectOperation *o = &impl->o;
+  o->list_watchers();
+}
+
 void librados::ObjectReadOperation::list_snaps(
   snap_set_t *out_snaps,
   int *prval)

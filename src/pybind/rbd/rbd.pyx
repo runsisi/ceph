@@ -80,6 +80,7 @@ cdef extern from "rbd/librbd.h" nogil:
     ctypedef void* rados_ioctx_t
     ctypedef void* rbd_image_t
     ctypedef void* rbd_image_options_t
+    ctypedef void* rbd_pool_stats_t
     ctypedef void *rbd_completion_t
 
     ctypedef struct rbd_image_info_t:
@@ -371,6 +372,10 @@ cdef extern from "rbd/librbd.h" nogil:
                     int *metaflag)
     int rbd_qos_del(rbd_image_t image, int flag)
 
+    void rbd_pool_stats_create(rbd_pool_stats_t *stats)
+    void rbd_pool_stats_destroy(rbd_pool_stats_t stats)
+    int rbd_pool_stats_get(rados_ioctx_t io, rbd_pool_stats_t stats)
+
 RBD_FEATURE_LAYERING = _RBD_FEATURE_LAYERING
 RBD_FEATURE_STRIPINGV2 = _RBD_FEATURE_STRIPINGV2
 RBD_FEATURE_EXCLUSIVE_LOCK = _RBD_FEATURE_EXCLUSIVE_LOCK
@@ -414,6 +419,7 @@ RBD_IMAGE_OPTION_ORDER = _RBD_IMAGE_OPTION_ORDER
 RBD_IMAGE_OPTION_STRIPE_UNIT = _RBD_IMAGE_OPTION_STRIPE_UNIT
 RBD_IMAGE_OPTION_STRIPE_COUNT = _RBD_IMAGE_OPTION_STRIPE_COUNT
 RBD_IMAGE_OPTION_DATA_POOL = _RBD_IMAGE_OPTION_DATA_POOL
+
 
 class Error(Exception):
     pass
@@ -1231,6 +1237,47 @@ class RBD(object):
         finally:
             free(states)
             free(counts)
+
+    def pool_stats_get(self, ioctx):
+        """
+        Return RBD pool stats
+
+        :param ioctx: determines which RADOS pool
+        :type ioctx: :class:`rados.Ioctx`
+        :returns: dict - contains the following keys:
+
+            * ``image_count`` (int) - image count
+
+            * ``image_provisioned_bytes`` (int) - image total HEAD provisioned bytes
+
+            * ``image_max_provisioned_bytes`` (int) - image total max provisioned bytes
+
+            * ``image_snap_count`` (int) - image snap count
+
+            * ``trash_count`` (int) - trash image count
+
+            * ``trash_provisioned_bytes`` (int) - trash total HEAD provisioned bytes
+
+            * ``trash_max_provisioned_bytes`` (int) - trash total max provisioned bytes
+
+            * ``trash_snap_count`` (int) - trash snap count
+
+        """
+        cdef:
+            rados_ioctx_t _ioctx = convert_ioctx(ioctx)
+            rbd_pool_stats_t _stats
+
+        rbd_pool_stats_create(&_stats)
+        try:
+            with nogil:
+                ret = rbd_pool_stats_get(_ioctx, _stats)
+            if ret != 0:
+                raise make_ex(ret, 'error retrieving pool stats')
+        else:
+            return {}
+        finally:
+            rbd_pool_stats_destroy(_stats)
+
 
 cdef class MirrorPeerIterator(object):
     """
