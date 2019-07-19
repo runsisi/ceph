@@ -7357,7 +7357,7 @@ static std::vector<Option> get_rbd_options() {
     .set_description("create a blkin trace for all RBD requests"),
 
     Option("rbd_validate_pool", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
-    .set_default(true)
+    .set_default(false)
     .set_description("validate empty pools for RBD compatibility"),
 
     Option("rbd_validate_names", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
