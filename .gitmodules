@@ -52,3 +52,9 @@
 [submodule "src/rapidjson"]
 	path = src/rapidjson
 	url = https://github.com/ceph/rapidjson
+[submodule "src/pybind11"]
+	path = src/pybind11
+	url = https://github.com/pybind/pybind11.git
+[submodule "src/pybind/rbdx/pybind11"]
+	path = src/pybind/rbdx/pybind11
+	url = https://github.com/pybind/pybind11.git

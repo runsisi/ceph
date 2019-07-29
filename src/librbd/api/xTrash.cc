@@ -1,7 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "librbd/api/zTrash.h"
+#include "librbd/api/xTrash.h"
 #include "include/rados/librados.hpp"
 #include "common/dout.h"
 #include "common/errno.h"
@@ -9,13 +9,13 @@
 
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zTrash: " << __func__ << ": "
+#define dout_prefix *_dout << "librbd::api::xTrash: " << __func__ << ": "
 
 namespace librbd {
 namespace api {
 
 template <typename I>
-int zTrash<I>::list(librados::IoCtx &io_ctx,
+int xTrash<I>::list(librados::IoCtx &io_ctx,
     std::map<std::string, trash_image_info_t> *trashes) {
   CephContext *cct((CephContext *)io_ctx.cct());
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
@@ -60,4 +60,4 @@ int zTrash<I>::list(librados::IoCtx &io_ctx,
 } // namespace api
 } // namespace librbd
 
-template class librbd::api::zTrash<librbd::ImageCtx>;
+template class librbd::api::xTrash<librbd::ImageCtx>;

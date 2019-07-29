@@ -2123,7 +2123,7 @@ namespace librbd {
       return trash_get_finish(&it, trash_spec);
     }
 
-    int z_metadata_list_finish(bufferlist::iterator *it,
+    int x_metadata_list_finish(bufferlist::iterator *it,
         std::map<std::string, std::string> *kvs)
     {
       assert(kvs);
@@ -2141,14 +2141,14 @@ namespace librbd {
       return 0;
     }
 
-    void z_size_get_start(librados::ObjectReadOperation *op,
+    void x_size_get_start(librados::ObjectReadOperation *op,
         snapid_t snap_id) {
       bufferlist snap_bl;
       ::encode(snap_id, snap_bl);
-      op->exec("rbd", "z_size_get", snap_bl);
+      op->exec("rbd", "x_size_get", snap_bl);
     }
 
-    int z_size_get_finish(bufferlist::iterator *it,
+    int x_size_get_finish(bufferlist::iterator *it,
         uint8_t *order, uint64_t *size,
         uint64_t *stripe_unit, uint64_t *stripe_count,
         uint64_t *features, uint64_t *flags) {
@@ -2172,12 +2172,12 @@ namespace librbd {
       return 0;
     }
 
-    void z_snapc_get_start(librados::ObjectReadOperation *op) {
+    void x_snapc_get_start(librados::ObjectReadOperation *op) {
       bufferlist empty_bl;
       op->exec("rbd", "get_snapcontext", empty_bl);
     }
 
-    int z_snapc_get_finish(bufferlist::iterator *it,
+    int x_snapc_get_finish(bufferlist::iterator *it,
         ::SnapContext *snapc) {
       assert(snapc);
 
@@ -2189,13 +2189,13 @@ namespace librbd {
       return 0;
     }
 
-    void z_image_get_start(librados::ObjectReadOperation *op) {
+    void x_image_get_start(librados::ObjectReadOperation *op) {
       bufferlist empty_bl;
-      op->exec("rbd", "z_image_get", empty_bl);
+      op->exec("rbd", "x_image_get", empty_bl);
       op->list_watchers();
     }
 
-    int z_image_get_finish(bufferlist::iterator *it,
+    int x_image_get_finish(bufferlist::iterator *it,
         uint8_t *order,
         uint64_t *size,
         uint64_t *stripe_unit,
@@ -2219,7 +2219,7 @@ namespace librbd {
       assert(watchers);
 
       try {
-        // z_image_get
+        // x_image_get
         ::decode(*order, *it);
         ::decode(*size, *it);
         ::decode(*stripe_unit, *it);
@@ -2253,15 +2253,15 @@ namespace librbd {
       return 0;
     }
 
-    void z_snap_get_start(librados::ObjectReadOperation *op,
+    void x_snap_get_start(librados::ObjectReadOperation *op,
         snapid_t snap_id) {
       bufferlist bl;
       encode(snap_id, bl);
-      op->exec("rbd", "z_snap_get", bl);
+      op->exec("rbd", "x_snap_get", bl);
     }
 
-    int z_snap_get_finish(bufferlist::iterator* it,
-        cls::rbd::z_SnapshotInfo* snap_info) {
+    int x_snap_get_finish(bufferlist::iterator* it,
+        cls::rbd::x_SnapshotInfo* snap_info) {
       try {
         decode(*snap_info, *it);
       } catch (const buffer::error &err) {
@@ -2270,17 +2270,17 @@ namespace librbd {
       return 0;
     }
 
-    void z_child_list_start(librados::ObjectReadOperation *op,
+    void x_child_list_start(librados::ObjectReadOperation *op,
         const std::string &start, uint64_t max_return)
     {
       bufferlist in_bl;
       ::encode(start, in_bl);
       ::encode(max_return, in_bl);
 
-      op->exec("rbd", "z_child_list", in_bl);
+      op->exec("rbd", "x_child_list", in_bl);
     }
 
-    int z_child_list_finish(bufferlist::iterator *it,
+    int x_child_list_finish(bufferlist::iterator *it,
         map<string, set<string>> *images)
     {
       try {
@@ -2291,12 +2291,12 @@ namespace librbd {
       return 0;
     }
 
-    int z_child_list(librados::IoCtx *ioctx,
+    int x_child_list(librados::IoCtx *ioctx,
         const std::string &start, uint64_t max_return,
         map<string, set<string>> *images)
     {
       librados::ObjectReadOperation op;
-      z_child_list_start(&op, start, max_return);
+      x_child_list_start(&op, start, max_return);
 
       bufferlist out_bl;
       int r = ioctx->operate(RBD_CHILDREN, &op, &out_bl);
@@ -2305,7 +2305,7 @@ namespace librbd {
       }
 
       bufferlist::iterator iter = out_bl.begin();
-      return z_child_list_finish(&iter, images);
+      return x_child_list_finish(&iter, images);
     }
 
   } // namespace cls_client

@@ -1,7 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "librbd/api/zImage.h"
+#include "librbd/api/xImage.h"
 #include "include/rados/librados.hpp"
 #include "common/dout.h"
 #include "common/errno.h"
@@ -10,7 +10,7 @@
 #include "librbd/Utils.h"
 #include "librbd/ObjectMap.h"
 #include "cls/rbd/cls_rbd_client.h"
-#include "librbd/api/zTrash.h"
+#include "librbd/api/xTrash.h"
 
 #define dout_subsys ceph_subsys_rbd
 
@@ -20,7 +20,7 @@ const std::string RBD_QOS_PREFIX = "conf_rbd_client_qos_";
 const uint64_t MAX_METADATA_ITEMS = 128;
 
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zImage::SizeRequest: " \
+#define dout_prefix *_dout << "librbd::api::xImage::SizeRequest: " \
                            << __func__ << " " << this << ": " \
                            << "(id=" << m_image_id << "): "
 
@@ -49,7 +49,7 @@ public:
   SizeRequest(librados::IoCtx &io_ctx, Context *on_finish,
       const std::string &image_id,
       snapid_t snap_id,
-      librbd::z_SizeInfo *size_info)
+      librbd::xSizeInfo *size_info)
     : m_cct(reinterpret_cast<CephContext*>(io_ctx.cct())),
       m_io_ctx(io_ctx), m_on_finish(on_finish),
       m_image_id(image_id),
@@ -81,13 +81,13 @@ private:
   snapid_t m_snap_id;
 
   // [out]
-  librbd::z_SizeInfo *m_size_info;
+  librbd::xSizeInfo *m_size_info;
 
   void get_head() {
     ldout(m_cct, 10) << dendl;
 
     librados::ObjectReadOperation op;
-    librbd::cls_client::z_size_get_start(&op, m_snap_id);
+    librbd::cls_client::x_size_get_start(&op, m_snap_id);
 
     m_out_bl.clear();
     auto aio_comp = librbd::util::create_rados_callback<SizeRequest<I>,
@@ -119,7 +119,7 @@ private:
     auto flags = &m_size_info->flags;
 
     auto it = m_out_bl.begin();
-    r = librbd::cls_client::z_size_get_finish(&it, order, size,
+    r = librbd::cls_client::x_size_get_finish(&it, order, size,
         stripe_unit, stripe_count, features, flags);
     if (r < 0) {
       lderr(m_cct) << "failed to decode image size: "
@@ -134,7 +134,7 @@ private:
 };
 
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zImage::InfoRequest: " \
+#define dout_prefix *_dout << "librbd::api::xImage::InfoRequest: " \
                            << __func__ << " " << this << ": " \
                            << "(id=" << m_image_id << "): "
 
@@ -143,7 +143,7 @@ class InfoRequest {
 public:
   InfoRequest(librados::IoCtx &io_ctx, Context *on_finish,
       const std::string &image_id,
-      librbd::z_ImageInfo *image_info)
+      librbd::xImageInfo *image_info)
     : m_cct(reinterpret_cast<CephContext*>(io_ctx.cct())),
       m_io_ctx(io_ctx), m_on_finish(on_finish),
       m_image_id(image_id),
@@ -172,13 +172,13 @@ private:
   const std::string m_image_id;
 
   // [out]
-  librbd::z_ImageInfo *m_image_info;
+  librbd::xImageInfo *m_image_info;
 
   void get_head() {
     ldout(m_cct, 10) << dendl;
 
     librados::ObjectReadOperation op;
-    librbd::cls_client::z_image_get_start(&op);
+    librbd::cls_client::x_image_get_start(&op);
     librbd::cls_client::metadata_list_start(&op, RBD_QOS_PREFIX,
         MAX_METADATA_ITEMS);
 
@@ -218,7 +218,7 @@ private:
     auto kvs = &m_image_info->kvs;
 
     auto it = m_out_bl.begin();
-    r = librbd::cls_client::z_image_get_finish(&it, order, size,
+    r = librbd::cls_client::x_image_get_finish(&it, order, size,
         stripe_unit, stripe_count,
         features, flags,
         snapc, parent, timestamp,
@@ -231,7 +231,7 @@ private:
       finish(r);
       return;
     }
-    r = librbd::cls_client::z_metadata_list_finish(&it, kvs);
+    r = librbd::cls_client::x_metadata_list_finish(&it, kvs);
     if (r < 0) {
       lderr(m_cct) << "failed to decode image qos kvs: "
                    << cpp_strerror(r)
@@ -245,7 +245,7 @@ private:
 };
 
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zImage::InfoRequest_v2: " \
+#define dout_prefix *_dout << "librbd::api::xImage::InfoRequest_v2: " \
                            << __func__ << " " << this << ": " \
                            << "(id=" << m_image_id << "): "
 
@@ -254,7 +254,7 @@ class InfoRequest_v2 {
 public:
   InfoRequest_v2(librados::IoCtx &io_ctx, Context *on_finish,
       const std::string &image_id,
-      librbd::z_ImageInfo_v2 *image_info)
+      librbd::xImageInfo_v2 *image_info)
     : m_cct(reinterpret_cast<CephContext*>(io_ctx.cct())),
       m_io_ctx(io_ctx), m_on_finish(on_finish),
       m_image_id(image_id),
@@ -283,13 +283,13 @@ private:
   const std::string m_image_id;
 
   // [out]
-  librbd::z_ImageInfo_v2 *m_image_info;
+  librbd::xImageInfo_v2 *m_image_info;
 
   void get_head() {
     ldout(m_cct, 10) << dendl;
 
     librados::ObjectReadOperation op;
-    librbd::cls_client::z_image_get_start(&op);
+    librbd::cls_client::x_image_get_start(&op);
     librbd::cls_client::metadata_list_start(&op, RBD_QOS_PREFIX,
         MAX_METADATA_ITEMS);
 
@@ -329,7 +329,7 @@ private:
     auto kvs = &m_image_info->kvs;
 
     auto it = m_out_bl.begin();
-    r = librbd::cls_client::z_image_get_finish(&it, order, size,
+    r = librbd::cls_client::x_image_get_finish(&it, order, size,
         stripe_unit, stripe_count,
         features, flags,
         snapc, parent, timestamp,
@@ -342,7 +342,7 @@ private:
       finish(r);
       return;
     }
-    r = librbd::cls_client::z_metadata_list_finish(&it, kvs);
+    r = librbd::cls_client::x_metadata_list_finish(&it, kvs);
     if (r < 0) {
       lderr(m_cct) << "failed to decode image qos kvs: "
                    << cpp_strerror(r)
@@ -369,7 +369,7 @@ private:
     ldout(m_cct, 10) << dendl;
     librados::ObjectReadOperation op;
     for (auto snap_id : m_image_info->snapc.snaps) {
-      librbd::cls_client::z_snap_get_start(&op, snap_id);
+      librbd::cls_client::x_snap_get_start(&op, snap_id);
     }
 
     m_out_bl.clear();
@@ -399,13 +399,13 @@ private:
 
     auto it = m_out_bl.begin();
     for (auto snap_id : m_image_info->snapc.snaps) {
-      cls::rbd::z_SnapshotInfo cls_snap_info;
-      r = librbd::cls_client::z_snap_get_finish(&it, &cls_snap_info);
+      cls::rbd::x_SnapshotInfo cls_snap_info;
+      r = librbd::cls_client::x_snap_get_finish(&it, &cls_snap_info);
       if (r < 0) {
         break;
       }
 
-      librbd::z_SnapInfo snap = {
+      librbd::xSnapInfo snap = {
         .id = snap_id,
         .name = cls_snap_info.name,
         .snap_namespace = cls_snap_info.snapshot_namespace.snapshot_namespace,
@@ -432,7 +432,7 @@ private:
 };
 
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zImage::DuRequest: " \
+#define dout_prefix *_dout << "librbd::api::xImage::DuRequest: " \
                            << __func__ << " " << this << ": " \
                            << "(id=" << m_image_id << "): "
 
@@ -475,14 +475,14 @@ private:
   snapid_t m_snap_id;
 
   // [out]
-  librbd::z_SizeInfo m_size_info;
+  librbd::xSizeInfo m_size_info;
   uint64_t *m_du;
 
   void get_size() {
     ldout(m_cct, 10) << dendl;
 
     librados::ObjectReadOperation op;
-    librbd::cls_client::z_size_get_start(&op, m_snap_id);
+    librbd::cls_client::x_size_get_start(&op, m_snap_id);
 
     m_out_bl.clear();
     auto aio_comp = librbd::util::create_rados_callback<DuRequest<I>,
@@ -514,7 +514,7 @@ private:
     auto flags = &m_size_info.flags;
 
     auto it = m_out_bl.begin();
-    r = librbd::cls_client::z_size_get_finish(&it, order, size,
+    r = librbd::cls_client::x_size_get_finish(&it, order, size,
         stripe_unit, stripe_count, features, flags);
     if (r < 0) {
       lderr(m_cct) << "failed to decode image size: "
@@ -580,7 +580,7 @@ private:
 };
 
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zImage::DuRequest_v2: " \
+#define dout_prefix *_dout << "librbd::api::xImage::DuRequest_v2: " \
                            << __func__ << " " << this << ": " \
                            << "(id=" << m_image_id << "): "
 
@@ -630,7 +630,7 @@ private:
     ldout(m_cct, 10) << dendl;
 
     librados::ObjectReadOperation op;
-    librbd::cls_client::z_snapc_get_start(&op);
+    librbd::cls_client::x_snapc_get_start(&op);
 
     m_out_bl.clear();
     auto aio_comp = librbd::util::create_rados_callback<DuRequest_v2<I>,
@@ -657,7 +657,7 @@ private:
     auto snapc = &m_snapc;
 
     auto it = m_out_bl.begin();
-    r = librbd::cls_client::z_snapc_get_finish(&it, snapc);
+    r = librbd::cls_client::x_snapc_get_finish(&it, snapc);
     if (r < 0) {
       lderr(m_cct) << "failed to decode image snapc: "
                    << cpp_strerror(r)
@@ -712,7 +712,7 @@ private:
 };
 
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zImage::ThrottledInfoRequest: " \
+#define dout_prefix *_dout << "librbd::api::xImage::ThrottledInfoRequest: " \
                            << __func__ << " " << this << ": " \
                            << "(id=" << m_image_id << ", name=" \
                            << m_image_name << "): "
@@ -722,7 +722,7 @@ class ThrottledInfoRequest {
 public:
   ThrottledInfoRequest(librados::IoCtx &io_ctx, SimpleThrottle &throttle,
       const std::string &image_id, const std::string &image_name,
-      librbd::z_ImageInfo *image_info, int *r)
+      librbd::xImageInfo *image_info, int *r)
     : m_cct(reinterpret_cast<CephContext*>(io_ctx.cct())),
       m_throttle(throttle),
       m_image_id(image_id), m_image_name(image_name),
@@ -766,7 +766,7 @@ private:
 };
 
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zImage::ThrottledInfoRequest_v2: " \
+#define dout_prefix *_dout << "librbd::api::xImage::ThrottledInfoRequest_v2: " \
                            << __func__ << " " << this << ": " \
                            << "(id=" << m_image_id << ", name=" \
                            << m_image_name << "): "
@@ -776,7 +776,7 @@ class ThrottledInfoRequest_v2 {
 public:
   ThrottledInfoRequest_v2(librados::IoCtx &io_ctx, SimpleThrottle &throttle,
       const std::string &image_id, const std::string &image_name,
-      librbd::z_ImageInfo_v2 *image_info, int *r)
+      librbd::xImageInfo_v2 *image_info, int *r)
     : m_cct(reinterpret_cast<CephContext*>(io_ctx.cct())),
       m_throttle(throttle),
       m_image_id(image_id), m_image_name(image_name),
@@ -820,7 +820,7 @@ private:
 };
 
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zImage::ThrottledDuRequest: " \
+#define dout_prefix *_dout << "librbd::api::xImage::ThrottledDuRequest: " \
                            << __func__ << " " << this << ": " \
                            << "(id=" << m_image_id << ", name=" \
                            << m_image_name << "): "
@@ -871,7 +871,7 @@ private:
 };
 
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zImage::ThrottledDuRequest_v2: " \
+#define dout_prefix *_dout << "librbd::api::xImage::ThrottledDuRequest_v2: " \
                            << __func__ << " " << this << ": " \
                            << "(id=" << m_image_id << ", name=" \
                            << m_image_name << "): "
@@ -925,14 +925,14 @@ private:
 
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zImage: " << __func__ << ": "
+#define dout_prefix *_dout << "librbd::api::xImage: " << __func__ << ": "
 
 namespace librbd {
 namespace api {
 
 template <typename I>
-int zImage<I>::get_size(librados::IoCtx &io_ctx,
-    const std::string &id, snapid_t snap_id, z_SizeInfo *info) {
+int xImage<I>::get_size(librados::IoCtx &io_ctx,
+    const std::string &id, snapid_t snap_id, xSizeInfo *info) {
   CephContext *cct = (CephContext *)io_ctx.cct();
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
 
@@ -946,8 +946,8 @@ int zImage<I>::get_size(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::get_info(librados::IoCtx &io_ctx,
-    const std::string &id, z_ImageInfo *info) {
+int xImage<I>::get_info(librados::IoCtx &io_ctx,
+    const std::string &id, xImageInfo *info) {
   CephContext *cct = (CephContext *)io_ctx.cct();
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
 
@@ -969,8 +969,8 @@ int zImage<I>::get_info(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::get_info_v2(librados::IoCtx &io_ctx,
-    const std::string &id, z_ImageInfo_v2 *info) {
+int xImage<I>::get_info_v2(librados::IoCtx &io_ctx,
+    const std::string &id, xImageInfo_v2 *info) {
   CephContext *cct = (CephContext *)io_ctx.cct();
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
 
@@ -992,7 +992,7 @@ int zImage<I>::get_info_v2(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::get_du(librados::IoCtx &io_ctx,
+int xImage<I>::get_du(librados::IoCtx &io_ctx,
     const std::string &image_id, snapid_t snap_id,
     uint64_t *du) {
   CephContext *cct = (CephContext *)io_ctx.cct();
@@ -1016,7 +1016,7 @@ int zImage<I>::get_du(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::get_du_v2(librados::IoCtx &io_ctx,
+int xImage<I>::get_du_v2(librados::IoCtx &io_ctx,
     const std::string &image_id,
     std::map<snapid_t, uint64_t> *dus) {
   CephContext *cct = (CephContext *)io_ctx.cct();
@@ -1040,7 +1040,7 @@ int zImage<I>::get_du_v2(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::get_du_sync(librados::IoCtx &io_ctx,
+int xImage<I>::get_du_sync(librados::IoCtx &io_ctx,
     const std::string &image_id, snapid_t snap_id,
     uint64_t *du) {
   CephContext *cct = (CephContext *)io_ctx.cct();
@@ -1048,8 +1048,8 @@ int zImage<I>::get_du_sync(librados::IoCtx &io_ctx,
 
   utime_t latency = ceph_clock_now();
 
-  z_SizeInfo info;
-  int r = zImage<I>::get_size(io_ctx, image_id, snap_id, &info);
+  xSizeInfo info;
+  int r = xImage<I>::get_size(io_ctx, image_id, snap_id, &info);
   if (r < 0) {
     lderr(cct) << "failed to get size: " << image_id << "@" << snap_id << ", "
                << cpp_strerror(r)
@@ -1084,7 +1084,7 @@ int zImage<I>::get_du_sync(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::list(librados::IoCtx &io_ctx,
+int xImage<I>::list(librados::IoCtx &io_ctx,
     std::map<std::string, std::string> *images) {
   CephContext *cct = (CephContext *)io_ctx.cct();
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
@@ -1128,8 +1128,8 @@ int zImage<I>::list(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::list_info(librados::IoCtx &io_ctx,
-    std::map<std::string, std::pair<z_ImageInfo, int>> *infos) {
+int xImage<I>::list_info(librados::IoCtx &io_ctx,
+    std::map<std::string, std::pair<xImageInfo, int>> *infos) {
   CephContext *cct = (CephContext *)io_ctx.cct();
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
 
@@ -1137,7 +1137,7 @@ int zImage<I>::list_info(librados::IoCtx &io_ctx,
 
   // map<id, name>
   std::map<std::string, std::string> images;
-  int r = zImage<I>::list(io_ctx, &images);
+  int r = xImage<I>::list(io_ctx, &images);
   if (r < 0) {
     return r;
   }
@@ -1181,9 +1181,9 @@ int zImage<I>::list_info(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::list_info(librados::IoCtx &io_ctx,
+int xImage<I>::list_info(librados::IoCtx &io_ctx,
     const std::map<std::string, std::string> &images,
-    std::map<std::string, std::pair<z_ImageInfo, int>> *infos) {
+    std::map<std::string, std::pair<xImageInfo, int>> *infos) {
   CephContext *cct = (CephContext *)io_ctx.cct();
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
 
@@ -1216,8 +1216,8 @@ int zImage<I>::list_info(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::list_info_v2(librados::IoCtx &io_ctx,
-    std::map<std::string, std::pair<z_ImageInfo_v2, int>> *infos) {
+int xImage<I>::list_info_v2(librados::IoCtx &io_ctx,
+    std::map<std::string, std::pair<xImageInfo_v2, int>> *infos) {
   CephContext *cct = (CephContext *)io_ctx.cct();
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
 
@@ -1225,7 +1225,7 @@ int zImage<I>::list_info_v2(librados::IoCtx &io_ctx,
 
   // map<id, name>
   std::map<std::string, std::string> images;
-  int r = zImage<I>::list(io_ctx, &images);
+  int r = xImage<I>::list(io_ctx, &images);
   if (r < 0) {
     return r;
   }
@@ -1269,9 +1269,9 @@ int zImage<I>::list_info_v2(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::list_info_v2(librados::IoCtx &io_ctx,
+int xImage<I>::list_info_v2(librados::IoCtx &io_ctx,
     const std::map<std::string, std::string> &images,
-    std::map<std::string, std::pair<z_ImageInfo_v2, int>> *infos) {
+    std::map<std::string, std::pair<xImageInfo_v2, int>> *infos) {
   CephContext *cct = (CephContext *)io_ctx.cct();
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
 
@@ -1304,7 +1304,7 @@ int zImage<I>::list_info_v2(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::list_du(librados::IoCtx &io_ctx,
+int xImage<I>::list_du(librados::IoCtx &io_ctx,
     std::map<std::string, std::pair<uint64_t, int>> *dus) {
   CephContext *cct = (CephContext *)io_ctx.cct();
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
@@ -1313,7 +1313,7 @@ int zImage<I>::list_du(librados::IoCtx &io_ctx,
 
   // map<id, name>
   std::map<std::string, std::string> images;
-  int r = zImage<I>::list(io_ctx, &images);
+  int r = xImage<I>::list(io_ctx, &images);
   if (r < 0) {
     return r;
   }
@@ -1357,7 +1357,7 @@ int zImage<I>::list_du(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::list_du(librados::IoCtx &io_ctx,
+int xImage<I>::list_du(librados::IoCtx &io_ctx,
     const std::map<std::string, std::string> &images,
     std::map<std::string, std::pair<uint64_t, int>> *dus) {
   CephContext *cct = (CephContext *)io_ctx.cct();
@@ -1392,7 +1392,7 @@ int zImage<I>::list_du(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::list_du_v2(librados::IoCtx &io_ctx,
+int xImage<I>::list_du_v2(librados::IoCtx &io_ctx,
     std::map<std::string, std::pair<std::map<snapid_t, uint64_t>, int>> *dus) {
   CephContext *cct = (CephContext *)io_ctx.cct();
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
@@ -1401,7 +1401,7 @@ int zImage<I>::list_du_v2(librados::IoCtx &io_ctx,
 
   // map<id, name>
   std::map<std::string, std::string> images;
-  int r = zImage<I>::list(io_ctx, &images);
+  int r = xImage<I>::list(io_ctx, &images);
   if (r < 0) {
     return r;
   }
@@ -1445,7 +1445,7 @@ int zImage<I>::list_du_v2(librados::IoCtx &io_ctx,
 }
 
 template <typename I>
-int zImage<I>::list_du_v2(librados::IoCtx &io_ctx,
+int xImage<I>::list_du_v2(librados::IoCtx &io_ctx,
     const std::map<std::string, std::string> &images,
     std::map<std::string, std::pair<std::map<snapid_t, uint64_t>, int>> *dus) {
   CephContext *cct = (CephContext *)io_ctx.cct();
@@ -1482,4 +1482,4 @@ int zImage<I>::list_du_v2(librados::IoCtx &io_ctx,
 } // namespace api
 } // namespace librbd
 
-template class librbd::api::zImage<librbd::ImageCtx>;
+template class librbd::api::xImage<librbd::ImageCtx>;

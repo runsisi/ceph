@@ -1,14 +1,12 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#ifndef LIBRBD_API_zCHILD_H
-#define LIBRBD_API_zCHILD_H
+#ifndef LIBRBD_API_xTRASH_H
+#define LIBRBD_API_xTRASH_H
 
 #include "include/rados/librados.hpp"
 #include "include/rbd/librbd.hpp"
-#include "librbd/Types.h"
 #include <map>
-#include <set>
 
 namespace librados { struct IoCtx; }
 
@@ -19,16 +17,16 @@ struct ImageCtx;
 namespace api {
 
 template <typename ImageCtxT = librbd::ImageCtx>
-struct zChild {
+struct xTrash {
 
   static int list(librados::IoCtx &io_ctx,
-      std::map<ParentSpec, std::set<std::string>> *children);
+      std::map<std::string, trash_image_info_t> *trashes);
 
 };
 
 } // namespace api
 } // namespace librbd
 
-extern template class librbd::api::zChild<librbd::ImageCtx>;
+extern template class librbd::api::xTrash<librbd::ImageCtx>;
 
-#endif // LIBRBD_API_zCHILD_H
+#endif // LIBRBD_API_xTRASH_H

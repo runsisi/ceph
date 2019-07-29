@@ -448,7 +448,7 @@ void TrashImageSpec::dump(Formatter *f) const {
   f->dump_unsigned("deferment_end_time", deferment_end_time);
 }
 
-void z_SnapshotInfo::encode(bufferlist& bl) const {
+void x_SnapshotInfo::encode(bufferlist& bl) const {
   ENCODE_START(1, 1, bl);
   ::encode(id, bl);
   ::encode(snapshot_namespace, bl);
@@ -461,7 +461,7 @@ void z_SnapshotInfo::encode(bufferlist& bl) const {
   ENCODE_FINISH(bl);
 }
 
-void z_SnapshotInfo::decode(bufferlist::iterator& it) {
+void x_SnapshotInfo::decode(bufferlist::iterator& it) {
   DECODE_START(1, it);
   ::decode(id, it);
   ::decode(snapshot_namespace, it);
@@ -474,7 +474,7 @@ void z_SnapshotInfo::decode(bufferlist::iterator& it) {
   DECODE_FINISH(it);
 }
 
-void z_SnapshotInfo::dump(Formatter *f) const {
+void x_SnapshotInfo::dump(Formatter *f) const {
   f->dump_unsigned("id", id);
   f->open_object_section("namespace");
   snapshot_namespace.dump(f);
@@ -487,8 +487,8 @@ void z_SnapshotInfo::dump(Formatter *f) const {
   f->dump_stream("timestamp") << timestamp;
 }
 
-void z_SnapshotInfo::generate_test_instances(std::list<z_SnapshotInfo*> &o) {
-  o.push_back(new z_SnapshotInfo(1ULL,
+void x_SnapshotInfo::generate_test_instances(std::list<x_SnapshotInfo*> &o) {
+  o.push_back(new x_SnapshotInfo(1ULL,
       UserSnapshotNamespace{}, "snap1",
       123, 128, 0, RBD_PROTECTION_STATUS_UNPROTECTED,
       {123456, 0}));

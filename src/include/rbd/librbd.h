@@ -872,10 +872,6 @@ CEPH_RBD_API int rbd_qos_get(rbd_image_t image,
                                 int *metaflag);
 CEPH_RBD_API int rbd_qos_del(rbd_image_t image, int flag);
 
-CEPH_RBD_API void rbd_pool_stats_create(rbd_pool_stats_t *stats);
-CEPH_RBD_API void rbd_pool_stats_destroy(rbd_pool_stats_t stats);
-CEPH_RBD_API int rbd_pool_stats_get(rados_ioctx_t io, rbd_pool_stats_t stats);
-
 #ifdef __cplusplus
 }
 #endif

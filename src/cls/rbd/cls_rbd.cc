@@ -5131,7 +5131,7 @@ int trash_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   return r;
 }
 
-int z_size_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+int x_size_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 {
   uint64_t snap_id;
   auto iter = in->begin();
@@ -5141,7 +5141,7 @@ int z_size_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return -EINVAL;
   }
 
-  CLS_LOG(20, "z_size_get snap_id=%llu", (unsigned long long)snap_id);
+  CLS_LOG(20, "x_size_get snap_id=%llu", (unsigned long long)snap_id);
 
   uint8_t order = 0;
   uint64_t size = 0;
@@ -5214,9 +5214,9 @@ int z_size_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   return 0;
 }
 
-int z_image_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+int x_image_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 {
-  CLS_LOG(20, "z_image_get");
+  CLS_LOG(20, "x_image_get");
 
   uint8_t order = 0;
   uint64_t size = 0;
@@ -5368,7 +5368,7 @@ int z_image_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   return 0;
 }
 
-int z_snap_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+int x_snap_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 {
   uint64_t snap_id;
 
@@ -5379,7 +5379,7 @@ int z_snap_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return -EINVAL;
   }
 
-  CLS_LOG(20, "z_snap_get snap_id=%llu", (unsigned long long)snap_id);
+  CLS_LOG(20, "x_snap_get snap_id=%llu", (unsigned long long)snap_id);
 
   if (snap_id == CEPH_NOSNAP) {
     return -EINVAL;
@@ -5393,7 +5393,7 @@ int z_snap_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return r;
   }
 
-  cls::rbd::z_SnapshotInfo snapshot_info(snap.id,
+  cls::rbd::x_SnapshotInfo snapshot_info(snap.id,
       snap.snapshot_namespace.snapshot_namespace,
       snap.name, snap.image_size,
       snap.features, snap.flags, snap.protection_status,
@@ -5402,7 +5402,7 @@ int z_snap_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   return 0;
 }
 
-int z_child_list(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+int x_child_list(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 {
   string start_after;
   uint64_t max_return;
@@ -5415,7 +5415,7 @@ int z_child_list(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return -EINVAL;
   }
 
-  CLS_LOG(20, "z_child_list");
+  CLS_LOG(20, "x_child_list");
 
   map<string, std::set<string>> data;
   string last_read = start_after;
@@ -5548,10 +5548,10 @@ CLS_INIT(rbd)
   cls_method_handle_t h_trash_list;
   cls_method_handle_t h_trash_get;
 
-  cls_method_handle_t h_z_size_get;
-  cls_method_handle_t h_z_image_get;
-  cls_method_handle_t h_z_snap_get;
-  cls_method_handle_t h_z_child_list;
+  cls_method_handle_t h_x_size_get;
+  cls_method_handle_t h_x_image_get;
+  cls_method_handle_t h_x_snap_get;
+  cls_method_handle_t h_x_child_list;
 
   cls_register("rbd", &h_class);
   cls_register_cxx_method(h_class, "create",
@@ -5835,18 +5835,18 @@ CLS_INIT(rbd)
                           CLS_METHOD_RD,
                           trash_get, &h_trash_get);
 
-  cls_register_cxx_method(h_class, "z_size_get",
+  cls_register_cxx_method(h_class, "x_size_get",
                           CLS_METHOD_RD,
-                          z_size_get, &h_z_size_get);
-  cls_register_cxx_method(h_class, "z_image_get",
+                          x_size_get, &h_x_size_get);
+  cls_register_cxx_method(h_class, "x_image_get",
                           CLS_METHOD_RD,
-                          z_image_get, &h_z_image_get);
-  cls_register_cxx_method(h_class, "z_snap_get",
+                          x_image_get, &h_x_image_get);
+  cls_register_cxx_method(h_class, "x_snap_get",
                           CLS_METHOD_RD,
-                          z_snap_get, &h_z_snap_get);
-  cls_register_cxx_method(h_class, "z_child_list",
+                          x_snap_get, &h_x_snap_get);
+  cls_register_cxx_method(h_class, "x_child_list",
                           CLS_METHOD_RD,
-                          z_child_list, &h_z_child_list);
+                          x_child_list, &h_x_child_list);
 
   return;
 }

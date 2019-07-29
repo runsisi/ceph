@@ -30,7 +30,6 @@ namespace librbd {
 
   class Image;
   class ImageOptions;
-  class PoolStats;
   typedef void *image_ctx_t;
   typedef void *completion_t;
   typedef void (*callback_t)(completion_t cb, void *arg);
@@ -44,17 +43,17 @@ namespace librbd {
     int64_t pool_id;
     std::string image_id;
     uint64_t snap_id;
-  } z_parent_t;
+  } x_parent_t;
 
   typedef struct {
     int64_t pool_id;
     std::string image_id;
-  } z_child_t;
+  } x_child_t;
 
   typedef struct {
     int64_t qos_iops;
     int64_t qos_bps;
-  } z_qos_t;
+  } x_qos_t;
 
   typedef struct {
     std::string id;
@@ -63,18 +62,18 @@ namespace librbd {
     uint64_t size;
     uint64_t features;
     std::vector<uint64_t> snaps;
-    z_parent_t parent;
+    x_parent_t parent;
     time_t timestamp;
     std::vector<std::string> watchers;
-    z_qos_t qos;
-  } z_image_t;
+    x_qos_t qos;
+  } x_image_t;
 
   typedef struct {
     uint64_t id;
     std::string name;
     uint64_t size;
     time_t timestamp;
-  } z_snapshot_t;
+  } x_snapshot_t;
 
   typedef struct {
     uint64_t id;
@@ -222,7 +221,60 @@ public:
   int mirror_image_status_summary(IoCtx& io_ctx,
       std::map<mirror_image_status_state_t, int> *states);
 
-  int pool_stats_get(IoCtx& io_ctx, PoolStats *pool_stats);
+  int pool_stats_get(IoCtx& io_ctx);
+
+  //
+  // xImage
+  //
+  int x_get_size(librados::IoCtx &io_ctx,
+      const std::string &id, snapid_t snap_id, xSizeInfo *info);
+  int x_get_info(librados::IoCtx &io_ctx,
+      const std::string &id, xImageInfo *info);
+  int x_get_info_v2(librados::IoCtx &io_ctx,
+      const std::string &id, xImageInfo_v2 *info);
+  int x_get_du(librados::IoCtx &io_ctx,
+      const std::string &image_id, snapid_t snap_id,
+      uint64_t *du);
+  int x_get_du_v2(librados::IoCtx &io_ctx,
+      const std::string &image_id,
+      std::map<snapid_t, uint64_t> *dus);
+  int x_get_du_sync(librados::IoCtx &io_ctx,
+      const std::string &image_id, snapid_t snap_id,
+      uint64_t *du);
+  int x_list(librados::IoCtx &io_ctx,
+      std::map<std::string, std::string> *images);
+  int x_list_info(librados::IoCtx &io_ctx,
+      std::map<std::string, std::pair<xImageInfo, int>> *infos);
+  int x_list_info(librados::IoCtx &io_ctx,
+      const std::map<std::string, std::string> &images,
+      std::map<std::string, std::pair<xImageInfo, int>> *infos);
+  int x_list_info_v2(librados::IoCtx &io_ctx,
+      std::map<std::string, std::pair<xImageInfo_v2, int>> *infos);
+  int x_list_info_v2(librados::IoCtx &io_ctx,
+      const std::map<std::string, std::string> &images,
+      std::map<std::string, std::pair<xImageInfo_v2, int>> *infos);
+  int x_list_du(librados::IoCtx &io_ctx,
+      std::map<std::string, std::pair<uint64_t, int>> *dus);
+  int x_list_du(librados::IoCtx &io_ctx,
+      const std::map<std::string, std::string> &images,
+      std::map<std::string, std::pair<uint64_t, int>> *dus);
+  int x_list_du_v2(librados::IoCtx &io_ctx,
+      std::map<std::string, std::pair<std::map<snapid_t, uint64_t>, int>> *dus);
+  int x_list_du_v2(librados::IoCtx &io_ctx,
+      const std::map<std::string, std::string> &images,
+      std::map<std::string, std::pair<std::map<snapid_t, uint64_t>, int>> *dus);
+
+  //
+  // xChild
+  //
+  int x_child_list(librados::IoCtx &io_ctx,
+      std::map<ParentSpec, std::set<std::string>> *children);
+
+  //
+  // xTrash
+  //
+  int x_trash_list(librados::IoCtx &io_ctx,
+      std::map<std::string, trash_image_info_t> *trashes);
 
 private:
   /* We don't allow assignment or copying */
@@ -251,22 +303,6 @@ private:
   friend class Image;
 
   rbd_image_options_t opts;
-};
-
-class CEPH_RBD_API PoolStats {
-public:
-  PoolStats();
-  ~PoolStats();
-
-  PoolStats(const PoolStats&) = delete;
-  PoolStats& operator=(const PoolStats&) = delete;
-
-  int add(rbd_pool_stat_option_t option, uint64_t* opt_val);
-
-private:
-  friend class RBD;
-
-  rbd_pool_stats_t pool_stats;
 };
 
 class CEPH_RBD_API UpdateWatchCtx {

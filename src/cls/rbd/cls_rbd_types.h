@@ -323,7 +323,7 @@ struct TrashImageSpec {
 };
 WRITE_CLASS_ENCODER(TrashImageSpec);
 
-struct z_SnapshotInfo {
+struct x_SnapshotInfo {
   snapid_t id = CEPH_NOSNAP;
   cls::rbd::SnapshotNamespaceOnDisk snapshot_namespace = {UserSnapshotNamespace{}};
   std::string name;
@@ -333,9 +333,9 @@ struct z_SnapshotInfo {
   uint8_t protection_status = RBD_PROTECTION_STATUS_UNPROTECTED;
   utime_t timestamp;
 
-  z_SnapshotInfo() {
+  x_SnapshotInfo() {
   }
-  z_SnapshotInfo(snapid_t id,
+  x_SnapshotInfo(snapid_t id,
       const cls::rbd::SnapshotNamespace& snapshot_namespace,
       const std::string& name, uint64_t image_size,
       uint64_t features, uint64_t flags, uint8_t protection_status,
@@ -350,9 +350,9 @@ struct z_SnapshotInfo {
   void decode(bufferlist::iterator& it);
   void dump(Formatter *f) const;
 
-  static void generate_test_instances(std::list<z_SnapshotInfo*> &o);
+  static void generate_test_instances(std::list<x_SnapshotInfo*> &o);
 };
-WRITE_CLASS_ENCODER(z_SnapshotInfo);
+WRITE_CLASS_ENCODER(x_SnapshotInfo);
 
 } // namespace rbd
 } // namespace cls

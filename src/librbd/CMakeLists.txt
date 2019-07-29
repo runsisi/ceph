@@ -24,10 +24,10 @@ set(librbd_internal_srcs
   api/DiffIterate.cc
   api/Image.cc
   api/Mirror.cc
-  api/zChild.cc
-  api/zImage.cc
-  api/zPool.cc
-  api/zTrash.cc
+  api/xChild.cc
+  api/xImage.cc
+  api/xPool.cc
+  api/xTrash.cc
   cache/ImageWriteback.cc
   cache/PassthroughImageCache.cc
   exclusive_lock/AutomaticPolicy.cc

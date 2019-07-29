@@ -119,7 +119,7 @@ struct SnapInfo {
   }
 };
 
-struct z_SizeInfo {
+struct xSizeInfo {
   std::string image_id;
   snapid_t snap_id;
   uint8_t order = 0;
@@ -130,7 +130,7 @@ struct z_SizeInfo {
   uint64_t flags = 0;
 };
 
-struct z_ImageInfo {
+struct xImageInfo {
   std::string id;
   std::string name;
   uint8_t order = 0;
@@ -149,7 +149,7 @@ struct z_ImageInfo {
 
 // do not default initialize the fields
 // https://stackoverflow.com/questions/37776823/could-not-convert-from-brace-enclosed-initializer-list-to-struct
-struct z_SnapInfo {
+struct xSnapInfo {
   snapid_t id;
   std::string name;
   cls::rbd::SnapshotNamespace snap_namespace;
@@ -160,7 +160,7 @@ struct z_SnapInfo {
   utime_t timestamp;
 };
 
-struct z_ImageInfo_v2 {
+struct xImageInfo_v2 {
   std::string id;
   std::string name;
   uint8_t order = 0;
@@ -175,7 +175,7 @@ struct z_ImageInfo_v2 {
   int64_t data_pool_id = -1;
   std::list<obj_watch_t> watchers;
   std::map<std::string, std::string> kvs;
-  std::map<snapid_t, z_SnapInfo> snaps;
+  std::map<snapid_t, xSnapInfo> snaps;
 };
 
 } // namespace librbd

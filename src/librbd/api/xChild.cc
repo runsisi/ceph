@@ -1,7 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include "librbd/api/zChild.h"
+#include "librbd/api/xChild.h"
 #include "include/rados/librados.hpp"
 #include "common/dout.h"
 #include "common/errno.h"
@@ -9,7 +9,7 @@
 
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::zChild: " << __func__ << ": "
+#define dout_prefix *_dout << "librbd::api::xChild: " << __func__ << ": "
 
 namespace librbd {
 namespace api {
@@ -37,7 +37,7 @@ namespace {
 }
 
 template <typename I>
-int zChild<I>::list(librados::IoCtx &io_ctx,
+int xChild<I>::list(librados::IoCtx &io_ctx,
     std::map<ParentSpec, std::set<std::string>> *children) {
   CephContext *cct((CephContext *)io_ctx.cct());
   ldout(cct, 20) << "io_ctx=" << &io_ctx << dendl;
@@ -47,7 +47,7 @@ int zChild<I>::list(librados::IoCtx &io_ctx,
   std::string last_read = "";
   do {
     map<std::string, std::set<std::string>> page;
-    int r = cls_client::z_child_list(&io_ctx,
+    int r = cls_client::x_child_list(&io_ctx,
         last_read, max_read, &page);
     if (r < 0 && r != -ENOENT) {
       lderr(cct) << "error listing rbd child entries: " << cpp_strerror(r)
@@ -77,4 +77,4 @@ int zChild<I>::list(librados::IoCtx &io_ctx,
 } // namespace api
 } // namespace librbd
 
-template class librbd::api::zChild<librbd::ImageCtx>;
+template class librbd::api::xChild<librbd::ImageCtx>;

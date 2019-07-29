@@ -18,12 +18,17 @@ foreach(python_version ${py_vers})
   find_package(Cython REQUIRED)
 
   add_subdirectory(rados rados${PYTHON_VERSION})
+  add_subdirectory(radosx radosx${PYTHON_VERSION})
   add_custom_target(cython${PYTHON_VERSION}_modules ALL
-    DEPENDS cython${PYTHON_VERSION}_rados)
+    DEPENDS cython${PYTHON_VERSION}_rados
+    cython${PYTHON_VERSION}_radosx)
 
   if(WITH_RBD)
     add_subdirectory(rbd rbd${PYTHON_VERSION})
     add_dependencies(cython${PYTHON_VERSION}_modules cython${PYTHON_VERSION}_rbd)
+
+    add_subdirectory(rbdx rbdx${PYTHON_VERSION})
+    add_dependencies(cython${PYTHON_VERSION}_modules cython${PYTHON_VERSION}_rbdx)
   endif()
   if(WITH_CEPHFS)
     add_subdirectory(cephfs cephfs${PYTHON_VERSION})

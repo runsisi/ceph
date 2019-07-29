@@ -48,9 +48,8 @@ int execute_stats(const po::variables_map &vm) {
   }
 
   librbd::RBD rbd;
-  librbd::PoolStats pool_stats;
   for (int i = 0; i < count; i++) {
-    r = rbd.pool_stats_get(io_ctx, &pool_stats);
+    r = rbd.pool_stats_get(io_ctx);
     if (r < 0) {
       std::cerr << "rbd: failed to query pool stats: " << cpp_strerror(r)
                 << std::endl;
