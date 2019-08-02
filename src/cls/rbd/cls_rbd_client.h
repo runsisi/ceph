@@ -10,6 +10,7 @@
 #include "common/snap_types.h"
 #include "include/types.h"
 #include "librbd/Types.h"
+#include "include/rados/rados_types.h"
 
 class Context;
 namespace librados {
@@ -431,6 +432,41 @@ namespace librbd {
                          cls::rbd::TrashImageSpec *trash_spec);
     int trash_get(librados::IoCtx *ioctx, const std::string &id,
                   cls::rbd::TrashImageSpec *trash_spec);
+
+    int x_metadata_list_finish(bufferlist::iterator *it,
+        std::map<std::string, std::string> *kvs);
+    void x_size_get_start(librados::ObjectReadOperation *op,
+        snapid_t snap_id);
+    int x_size_get_finish(bufferlist::iterator *it,
+        uint8_t *order, uint64_t *size,
+        uint64_t *stripe_unit, uint64_t *stripe_count,
+        uint64_t *features, uint64_t *flags);
+    void x_snapc_get_start(librados::ObjectReadOperation *op);
+    int x_snapc_get_finish(bufferlist::iterator *it,
+        ::SnapContext *snapc);
+    void x_image_get_start(librados::ObjectReadOperation *op);
+    int x_image_get_finish(bufferlist::iterator *it,
+        uint8_t *order,
+        uint64_t *size,
+        uint64_t *stripe_unit,
+        uint64_t *stripe_count,
+        uint64_t *features,
+        uint64_t *flags,
+        ::SnapContext *snapc, ParentInfo *parent,
+        utime_t *timestamp,
+        int64_t *data_pool_id,
+        std::vector<obj_watch_t> *watchers);
+    void x_snap_get_start(librados::ObjectReadOperation* op,
+        snapid_t snap_id);
+    int x_snap_get_finish(bufferlist::iterator* it,
+        cls::rbd::xclsSnapInfo* snap_info);
+    void x_child_list_start(librados::ObjectReadOperation *op,
+        const std::string &start, uint64_t max_return);
+    int x_child_list_finish(bufferlist::iterator *it,
+        map<string, set<string>> *images);
+    int x_child_list(librados::IoCtx *ioctx,
+        const std::string &start, uint64_t max_return,
+        map<string, set<string>> *images);
 
   } // namespace cls_client
 } // namespace librbd
