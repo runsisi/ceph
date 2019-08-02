@@ -1050,6 +1050,10 @@ struct ObjectOperation {
     }
   }
 
+  void list_watchers() {
+    (void)add_op(CEPH_OSD_OP_LIST_WATCHERS);
+  }
+
   void list_snaps(librados::snap_set_t *out, int *prval) {
     (void)add_op(CEPH_OSD_OP_LIST_SNAPS);
     if (prval || out) {

@@ -24,6 +24,9 @@ set(librbd_internal_srcs
   api/DiffIterate.cc
   api/Image.cc
   api/Mirror.cc
+  api/xChild.cc
+  api/xImage.cc
+  api/xTrash.cc
   cache/ImageWriteback.cc
   cache/PassthroughImageCache.cc
   exclusive_lock/AutomaticPolicy.cc
@@ -103,7 +106,7 @@ set(librbd_internal_srcs
   watcher/RewatchRequest.cc
   ${CMAKE_SOURCE_DIR}/src/common/ContextCompletion.cc)
 
-add_library(rbd_api STATIC librbd.cc)
+add_library(rbd_api STATIC librbd.cc librbdx.cc)
 add_library(rbd_internal STATIC
   ${librbd_internal_srcs}
   $<TARGET_OBJECTS:rados_snap_set_diff_obj>)
@@ -112,7 +115,7 @@ if(WITH_LTTNG)
 endif()
 
 add_library(librbd ${CEPH_SHARED}
-  librbd.cc)
+  librbd.cc librbdx.cc)
 
 target_link_libraries(librbd LINK_PRIVATE 
   rbd_internal

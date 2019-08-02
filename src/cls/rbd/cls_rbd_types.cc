@@ -448,5 +448,51 @@ void TrashImageSpec::dump(Formatter *f) const {
   f->dump_unsigned("deferment_end_time", deferment_end_time);
 }
 
+void xclsSnapInfo::encode(bufferlist& bl) const {
+  ENCODE_START(1, 1, bl);
+  ::encode(id, bl);
+  ::encode(snapshot_namespace, bl);
+  ::encode(name, bl);
+  ::encode(image_size, bl);
+  ::encode(features, bl);
+  ::encode(flags, bl);
+  ::encode(protection_status, bl);
+  ::encode(timestamp, bl);
+  ENCODE_FINISH(bl);
+}
+
+void xclsSnapInfo::decode(bufferlist::iterator& it) {
+  DECODE_START(1, it);
+  ::decode(id, it);
+  ::decode(snapshot_namespace, it);
+  ::decode(name, it);
+  ::decode(image_size, it);
+  ::decode(features, it);
+  ::decode(flags, it);
+  ::decode(protection_status, it);
+  ::decode(timestamp, it);
+  DECODE_FINISH(it);
+}
+
+void xclsSnapInfo::dump(Formatter *f) const {
+  f->dump_unsigned("id", id);
+  f->open_object_section("namespace");
+  snapshot_namespace.dump(f);
+  f->close_section();
+  f->dump_string("name", name);
+  f->dump_unsigned("image_size", image_size);
+  f->dump_unsigned("features", features);
+  f->dump_unsigned("flags", flags);
+  f->dump_unsigned("protection_status", protection_status);
+  f->dump_stream("timestamp") << timestamp;
+}
+
+void xclsSnapInfo::generate_test_instances(std::list<xclsSnapInfo*> &o) {
+  o.push_back(new xclsSnapInfo(1ULL,
+      UserSnapshotNamespace{}, "snap1",
+      123, 128, 0, RBD_PROTECTION_STATUS_UNPROTECTED,
+      {123456, 0}));
+}
+
 } // namespace rbd
 } // namespace cls

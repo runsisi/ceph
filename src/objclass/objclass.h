@@ -153,6 +153,10 @@ extern int cls_cxx_map_update(cls_method_context_t hctx, bufferlist *inbl);
 extern int cls_cxx_list_watchers(cls_method_context_t hctx,
 				 obj_list_watch_response_t *watchers);
 
+extern int cls_cxx_map_get_vals(cls_method_context_t hctx,
+                                const std::set<std::string> &keys,
+                                std::map<std::string, ceph::bufferlist> *vals);
+
 /* utility functions */
 extern int cls_gen_random_bytes(char *buf, int size);
 extern int cls_gen_rand_base64(char *dest, int size); /* size should be the required string size + 1 */
