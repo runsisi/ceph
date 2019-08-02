@@ -58,3 +58,6 @@
 [submodule "src/c-ares"]
 	path = src/c-ares
 	url = https://github.com/ceph/c-ares.git
+[submodule "src/pybind11"]
+	path = src/pybind11
+	url = https://github.com/pybind/pybind11.git
