@@ -55,3 +55,6 @@
 [submodule "src/pybind11"]
 	path = src/pybind11
 	url = https://github.com/pybind/pybind11.git
+[submodule "src/json"]
+	path = src/json
+	url = https://github.com/nlohmann/json.git
