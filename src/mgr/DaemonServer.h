@@ -60,6 +60,8 @@ protected:
   Messenger *msgr;
   MonClient *monc;
   Finisher  &finisher;
+  // rbdx commands may block
+  Finisher rbdx_finisher;
   DaemonStateIndex &daemon_state;
   ClusterState &cluster_state;
   PyModuleRegistry &py_modules;

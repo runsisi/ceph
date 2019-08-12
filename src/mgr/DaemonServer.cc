@@ -68,6 +68,7 @@ DaemonServer::DaemonServer(MonClient *monc_,
       msgr(nullptr),
       monc(monc_),
       finisher(finisher_),
+      rbdx_finisher(g_ceph_context, "rbdx", "rbdx-fin"),
       daemon_state(daemon_state_),
       cluster_state(cluster_state_),
       py_modules(py_modules_),
@@ -155,6 +156,8 @@ int DaemonServer::init(uint64_t gid, entity_addr_t client_addr)
     derr << "error registering admin socket command dump_cluster_state: "
          << cpp_strerror(ret) << dendl;
   }
+
+  rbdx_finisher.start();
 
   return 0;
 }
@@ -369,6 +372,10 @@ void DaemonServer::shutdown()
     delete m_daemon_hook;
     m_daemon_hook = nullptr;
   }
+
+  rbdx_finisher.wait_for_empty();
+  rbdx_finisher.stop();
+
   dout(10) << "done" << dendl;
 }
 
@@ -1637,6 +1644,20 @@ bool DaemonServer::handle_command(MCommand *m)
     cmdctx->reply(-EINVAL, ss);
     return true;
   } else {
+    if (prefix == "rbdx list-name" ||
+        prefix == "rbdx list-info" ||
+        prefix == "rbdx list-du") {
+      dout(4) << "enqueue rbdx finisher" << dendl;
+      rbdx_finisher.queue(new FunctionContext([cmdctx, handler](int r_) {
+        std::stringstream ds;
+        std::stringstream ss;
+        int r = handler->handle_command(cmdctx->cmdmap, &ds, &ss);
+        cmdctx->odata.append(ds);
+        cmdctx->reply(r, ss);
+      }));
+      return true;
+    }
+
     // Okay, now we have a handler to call, but we must not call it
     // in this thread, because the python handlers can do anything,
     // including blocking, and including calling back into mgr.
