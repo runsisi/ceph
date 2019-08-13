@@ -1533,10 +1533,14 @@ fi
 %files -n python-rados
 %{python_sitearch}/rados.so
 %{python_sitearch}/rados-*.egg-info
+%{python_sitearch}/radosx.so
+%{python_sitearch}/radosx-*.egg-info
 
 %files -n python%{python3_pkgversion}-rados
 %{python3_sitearch}/rados.cpython*.so
 %{python3_sitearch}/rados-*.egg-info
+%{python3_sitearch}/radosx.cpython*.so
+%{python3_sitearch}/radosx-*.egg-info
 
 %files -n libradosstriper1
 %{_libdir}/libradosstriper.so.*
@@ -1595,10 +1599,14 @@ fi
 %files -n python-rbd
 %{python_sitearch}/rbd.so
 %{python_sitearch}/rbd-*.egg-info
+%{python_sitearch}/rbdx.so
+%{python_sitearch}/rbdx-*.egg-info
 
 %files -n python%{python3_pkgversion}-rbd
 %{python3_sitearch}/rbd.cpython*.so
 %{python3_sitearch}/rbd-*.egg-info
+%{python3_sitearch}/rbdx.cpython*.so
+%{python3_sitearch}/rbdx-*.egg-info
 
 %files -n libcephfs2
 %{_libdir}/libcephfs.so.*
