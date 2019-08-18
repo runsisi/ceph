@@ -13,7 +13,6 @@ import traceback
 
 import functools
 from timeit import default_timer as perf_timer
-from __builtin__ import True
 
 try:
     import queue
@@ -41,24 +40,21 @@ ACTION_LIST_INFO = 'list info'
 LIST_NAME_TICKS = 7
 LIST_CHILD_TICKS = 11
 
-LIST_INFO_INCOMPLETE_TICKS = 3  # info incomplete, v2
-LIST_INFO_COMPLETE_TICKS = 13  # stable, v1
-LIST_INFO_SYNC_TICKS = 2  # stable, sync, v2
+LIST_INFO_INCOMPLETE_TICKS = 5  # info incomplete, v1
+LIST_INFO_SYNC_TICKS = 13  # stable, sync, v1
 
-LIST_DU_ACTIVE_TICKS = 5  # active, stable, v3
-LIST_DU_INACTIVE_INCOMPLETE_TICKS = 17  # active, du incomplete, v3
-LIST_DU_SYNC_TICKS = 19  # inactive, du incomplete, v3
+LIST_DU_ACTIVE_TICKS = 17  # active, stable, v2
+LIST_DU_INACTIVE_INCOMPLETE_TICKS = 19  # inactive, du incomplete, v2
+LIST_DU_SYNC_TICKS = 53  # stable, sync, v2
 
 LIST_INFO_INCOMPLETE_BATCH = 100
-LIST_INFO_COMPLETE_BATCH = 20
-LIST_INFO_SYNC_BATCH = 2
+LIST_INFO_SYNC_BATCH = 50
 
 LIST_DU_ACTIVE_BATCH = 20
-LIST_DU_INACTIVE_INCOMPLETE_BATCH = 50
-LIST_DU_SYNC_BATCH = 5
+LIST_DU_INACTIVE_INCOMPLETE_BATCH = 100
+LIST_DU_SYNC_BATCH = 10
 
-FILTER_LAST_INFO_UPDATE_TICKS = 6
-FILTER_LAST_INFO_V2_UPDATE_TICKS = 8
+FILTER_LAST_INFO_UPDATE_TICKS = 10
 FILTER_LAST_DU_UPDATE_TICKS = 300
 
 PRUNE_TICKS = 7
@@ -134,23 +130,9 @@ class Scheduler(object):
         def _next_tick_task(self, cur_task):
 
             def is_info_complete(image):
-                # means info v2+ complete
-                if image.get('watchers') is None or \
-                        image.get('snaps') is None:
-                    # the second condition is not needed actually, since we
-                    # always fill the complete image info
+                if image.get('watchers') is None:
                     return False
 
-                snaps = image['snaps']
-                for _, snap in six.iteritems(snaps):
-                    if snap.get('name') is None:
-                        return False
-
-                snapc = image['snapc']
-                snapc_ids = sorted(snapc['snaps'])
-                snaps_ids = sorted(list(snaps.keys()))
-                if snapc_ids != snaps_ids:
-                    return False
                 return True
 
             def is_active(image):
@@ -195,15 +177,6 @@ class Scheduler(object):
 
                 return filter
 
-            def filter_info_v2_last_update(now, ticks):
-
-                def filter(image):
-                    if now < image.get('info_v2_update', 0) or \
-                        now - image.get('info_v2_update', 0) > ticks:
-                        return True
-
-                return filter
-
             def filter_du_last_update(now, ticks):
 
                 def filter(image):
@@ -216,7 +189,7 @@ class Scheduler(object):
             if cur_task is None:
                 # the initial start, populate the basic image data
                 task_private = {
-                    'v': 2,
+                    'v': 1,
                 }
                 task = Task(self.pool, ACTION_LIST_INFO, PRIO_H)
                 task.private = task_private
@@ -242,56 +215,19 @@ class Scheduler(object):
                         filter_info_incomplete_images,
                     ]
                 )
-#                 if self.info_incomplete_snapshot is None:
-#                     self.info_incomplete_snapshot = self._snapshot_images(
-#                         filter=filter_info_incomplete_images
-#                     )
+
                 if not self.info_incomplete_snapshot:
                     return None
 
                 # sort
                 self.info_incomplete_snapshot = sorted(
                     six.iteritems(self.info_incomplete_snapshot),
-                    key=lambda x: x[1].get('info_v2_update', 0)
+                    key=lambda x: x[1].get('info_update', 0)
                 )
 
                 batch = self.info_incomplete_snapshot[
                     0:LIST_INFO_INCOMPLETE_BATCH
                     ]
-
-                task_private = {
-                    'v': 2,
-                    'batch': batch,
-                }
-                task = Task(self.pool, ACTION_LIST_INFO, PRIO_M)
-                task.private = task_private
-                return task
-
-            if self.ticks % LIST_INFO_COMPLETE_TICKS == 0:
-
-                self.info_complete_snapshot = self._snapshot_images(
-                    filters=[
-                        filter_info_complete_images,
-                        filter_info_last_update(self.now, FILTER_LAST_INFO_UPDATE_TICKS),
-                        filter_info_v2_last_update(self.now, FILTER_LAST_INFO_V2_UPDATE_TICKS),
-                    ]
-                )
-#                 if self.info_complete_snapshot is None:
-#                     self.info_complete_snapshot = self._snapshot_images(
-#                         filter=filter_info_complete_images
-#                     )
-                if not self.info_complete_snapshot:
-                    return None
-
-                # sort
-                self.info_complete_snapshot = sorted(
-                    six.iteritems(self.info_complete_snapshot),
-                    key=lambda x: x[1].get('info_update', 0)
-                )
-
-                batch = self.info_complete_snapshot[
-                    0:LIST_INFO_COMPLETE_BATCH
-                ]
 
                 task_private = {
                     'v': 1,
@@ -305,20 +241,17 @@ class Scheduler(object):
 
                 self.info_sync_snapshot = self._snapshot_images(
                     filters=[
-                        filter_info_v2_last_update(self.now, FILTER_LAST_INFO_V2_UPDATE_TICKS),
+                        filter_info_last_update(self.now, FILTER_LAST_INFO_UPDATE_TICKS),
                     ]
                 )
-#                 if self.info_sync_snapshot is None:
-#                     self.info_sync_snapshot = self._snapshot_images(
-#                         filter=filter_info_complete_images
-#                     )
+
                 if not self.info_sync_snapshot:
                     return None
 
                 # sort
                 self.info_sync_snapshot = sorted(
                     six.iteritems(self.info_sync_snapshot),
-                    key=lambda x: x[1].get('info_v2_update', 0)
+                    key=lambda x: x[1].get('info_update', 0)
                 )
 
                 batch = self.info_sync_snapshot[
@@ -326,7 +259,7 @@ class Scheduler(object):
                 ]
 
                 task_private = {
-                    'v': 2,
+                    'v': 1,
                     'batch': batch,
                 }
                 task = Task(self.pool, ACTION_LIST_INFO, PRIO_M)
@@ -341,10 +274,7 @@ class Scheduler(object):
                         filter_du_last_update(self.now, FILTER_LAST_DU_UPDATE_TICKS),
                     ]
                 )
-#                 if self.du_active_snapshot is None:
-#                     self.du_active_snapshot = self._snapshot_images(
-#                         filter=filter_active_du_complete_images
-#                     )
+
                 if not self.du_active_snapshot:
                     return None
 
@@ -359,7 +289,7 @@ class Scheduler(object):
                 ]
 
                 task_private = {
-                    'v': 3,
+                    'v': 2,
                     'batch': batch,
                 }
                 task = Task(self.pool, ACTION_LIST_INFO, PRIO_L)
@@ -373,10 +303,6 @@ class Scheduler(object):
                         filter_du_inactive_incomplete_images,
                     ]
                 )
-#                 if self.du_inactive_incomplete_snapshot is None:
-#                     self.du_inactive_incomplete_snapshot = self._snapshot_images(
-#                         filter=filter_active_du_incomplete_images
-#                     )
 
                 if not self.du_inactive_incomplete_snapshot:
                     return None
@@ -392,7 +318,7 @@ class Scheduler(object):
                 ]
 
                 task_private = {
-                    'v': 3,
+                    'v': 2,
                     'batch': batch,
                 }
                 task = Task(self.pool, ACTION_LIST_INFO, PRIO_L)
@@ -406,10 +332,7 @@ class Scheduler(object):
                         filter_du_last_update(self.now, FILTER_LAST_DU_UPDATE_TICKS),
                     ]
                 )
-#                 if self.du_sync_snapshot is None:
-#                     self.du_sync_snapshot = self._snapshot_images(
-#                         filter=filter_inactive_du_incomplete_images
-#                     )
+
                 if not self.du_sync_snapshot:
                     return None
 
@@ -424,7 +347,7 @@ class Scheduler(object):
                 ]
 
                 task_private = {
-                    'v': 3,
+                    'v': 2,
                     'batch': batch,
                 }
                 task = Task(self.pool, ACTION_LIST_INFO, PRIO_L)
@@ -540,8 +463,6 @@ class Module(MgrModule):
         {
             "cmd": "rbdx list-info "
                    "name=pool_id,type=CephInt,req=true "
-                   "name=v2,type=CephChoices,strings=--v2,req=false "
-                   "name=v3,type=CephChoices,strings=--v3,req=false "
                    "name=refresh,type=CephChoices,strings=--refresh,req=false",
             "desc": "List image infos",
             "perm": "r"
@@ -647,9 +568,8 @@ class Module(MgrModule):
         if r < 0:
             return None, r
 
-        # std::map<image id, <image info, r>>
+        # std::map<image id, std::pair<image info, r>>
         l = rbdx.Map_string_2_pair_image_info_t_int()
-        
         if batch is not None:
             images = rbdx.Vector_string()
             for k, _ in batch:
@@ -662,6 +582,21 @@ class Module(MgrModule):
 
     @time_logging
     def _update_info(self, pool, l):
+
+        def pythonify_snap(snap):
+            return {
+                'id': snap.id,
+                'name': snap.name,
+                'snap_ns_type': int(snap.snap_ns_type),
+                'size': snap.size,
+                'features': snap.features,
+                'flags': snap.flags,
+                'protection_status': int(snap.protection_status),
+                'timestamp': {
+                    'tv_sec': snap.timestamp.tv_sec,
+                    'tv_nsec': snap.timestamp.tv_nsec,
+                },
+            }
 
         def pythonify(info):
             return {
@@ -676,6 +611,9 @@ class Module(MgrModule):
                 'snapc': {
                     'seq': info.snapc.seq,
                     'snaps': [s for s in info.snapc.snaps],
+                },
+                'snaps': {
+                    k: pythonify_snap(v) for k, v in info.snaps.items()
                 },
                 'parent': {
                     'spec': {
@@ -710,6 +648,9 @@ class Module(MgrModule):
                 'seq': info.snapc.seq,
                 'snaps': [s for s in info.snapc.snaps],
             }
+            image['snaps'] = {
+                k: pythonify_snap(v) for k, v in info.snaps.items()
+            }
             image['parent'] = {
                 'spec': {
                     'pool_id': info.parent.spec.pool_id,
@@ -730,7 +671,10 @@ class Module(MgrModule):
             }
 
         with self.lock:
-            images = self.data.get(pool, {})
+            if self.data.get(pool) is None:
+                self.data[pool] = {}
+
+            images = self.data[pool]
             for k, v in l.items():
                 info, r = v
                 if r < 0:
@@ -766,7 +710,7 @@ class Module(MgrModule):
 
     @time_logging
     def _update_info_v2(self, pool, l):
-
+        
         def pythonify_snap(snap):
             return {
                 'id': snap.id,
@@ -780,6 +724,7 @@ class Module(MgrModule):
                     'tv_sec': snap.timestamp.tv_sec,
                     'tv_nsec': snap.timestamp.tv_nsec,
                 },
+                'du': snap.du,
             }
 
         def pythonify(info):
@@ -795,138 +740,9 @@ class Module(MgrModule):
                 'snapc': {
                     'seq': info.snapc.seq,
                     'snaps': [s for s in info.snapc.snaps],
-                },
-                'parent': {
-                    'spec': {
-                        'pool_id': info.parent.spec.pool_id,
-                        'image_id': info.parent.spec.image_id,
-                        'snap_id': info.parent.spec.snap_id,
-                    },
-                    'overlap': info.parent.overlap,
-                },
-                'timestamp': {
-                    'tv_sec': info.timestamp.tv_sec,
-                    'tv_nsec': info.timestamp.tv_nsec,
-                },
-                'data_pool_id': info.data_pool_id,
-                'watchers': [w for w in info.watchers],
-                'qos': {
-                    'iops': info.qos.iops,
-                    'bps': info.qos.bps,
                 },
                 'snaps': {
                     k: pythonify_snap(v) for k, v in info.snaps.items()
-                },
-            }
-            
-        def update_snap(snap, sinfo):
-            snap['id'] = sinfo.id
-            snap['name'] = sinfo.name
-            snap['snap_ns_type'] = int(sinfo.snap_ns_type)
-            snap['size'] = sinfo.size
-            snap['features'] = sinfo.features
-            snap['flags'] = sinfo.flags
-            snap['protection_status'] = int(sinfo.protection_status)
-            snap['timestamp'] = {
-                'tv_sec': sinfo.timestamp.tv_sec,
-                'tv_nsec': sinfo.timestamp.tv_nsec,
-            }
-
-        def update(image, info):
-            image['id'] = info.id
-            image['name'] = info.name if info.name else image.get('name')
-            image['order'] = info.order
-            image['size'] = info.size
-            image['stripe_unit'] = info.stripe_unit
-            image['stripe_count'] = info.stripe_count
-            image['features'] = info.features
-            image['flags'] = info.flags
-            image['snapc'] = {
-                'seq': info.snapc.seq,
-                'snaps': [s for s in info.snapc.snaps],
-            }
-            image['parent'] = {
-                'spec': {
-                    'pool_id': info.parent.spec.pool_id,
-                    'image_id': info.parent.spec.image_id,
-                    'snap_id': info.parent.spec.snap_id,
-                },
-                'overlap': info.parent.overlap,
-            }
-            image['timestamp'] = {
-                'tv_sec': info.timestamp.tv_sec,
-                'tv_nsec': info.timestamp.tv_nsec,
-            }
-            image['data_pool_id'] = info.data_pool_id
-            image['watchers'] = [w for w in info.watchers]
-            image['qos'] = {
-                'iops': info.qos.iops,
-                'bps': info.qos.bps,
-            }
-            old = image.get('snaps', {})
-            snaps = {}
-            for k, v in info.snaps.items():
-                snaps[k] = old.get(k)
-                if snaps[k] is None:
-                    snaps[k] = pythonify_snap(v)
-                else:
-                    update_snap(snaps[k], v)
-            image['snaps'] = snaps
-
-        with self.lock:
-            if self.data.get(pool) is None:
-                self.data[pool] = {}
-
-            images = self.data[pool]
-            for k, v in l.items():
-                info, r = v
-                if r < 0:
-                    continue
-
-                if images.get(k) is None:
-                    images[k] = pythonify(info)
-                else:
-                    update(images[k], info)
-
-                images[k]['info_v2_update'] = self.ticks
-
-            self.data[pool] = images
-
-    @time_logging
-    def _list_info_v3(self, pool, batch=None):
-        ioctx = radosx.IoCtx()
-        r = self.radosx.ioctx_create2(pool, ioctx)
-        if r < 0:
-            return None, r
-
-        # std::map<image id, std::pair<image info v3, r>>
-        l = rbdx.Map_string_2_pair_image_info_v3_t_int()
-        if batch is not None:
-            images = rbdx.Vector_string()
-            for k, _ in batch:
-                # std::vector<image id>
-                images.append(k)
-            r = self.rbdx.list_info_v3(ioctx, images, l)
-        else:
-            r = self.rbdx.list_info_v3(ioctx, l)
-        return l, r
-
-    @time_logging
-    def _update_info_v3(self, pool, l):
-
-        def pythonify(info):
-            return {
-                'id': info.id,
-                'name': info.name,
-                'order': info.order,
-                'size': info.size,
-                'stripe_unit': info.stripe_unit,
-                'stripe_count': info.stripe_count,
-                'features': info.features,
-                'flags': info.flags,
-                'snapc': {
-                    'seq': info.snapc.seq,
-                    'snaps': [s for s in info.snapc.snaps],
                 },
                 'parent': {
                     'spec': {
@@ -961,6 +777,9 @@ class Module(MgrModule):
             image['snapc'] = {
                 'seq': info.snapc.seq,
                 'snaps': [s for s in info.snapc.snaps],
+            }
+            image['snaps'] = {
+                k: pythonify_snap(v) for k, v in info.snaps.items()
             }
             image['parent'] = {
                 'spec': {
@@ -997,7 +816,7 @@ class Module(MgrModule):
                 else:
                     update(images[k], info)
 
-                images[k]['info_v2_update'] = self.ticks
+                images[k]['info_update'] = self.ticks
                 images[k]['du_update'] = self.ticks
 
             self.data[pool] = images
@@ -1067,19 +886,15 @@ class Module(MgrModule):
                 batch = task_private.get('batch')
                 if v == 1:
                     l, r = self._list_info(pool, batch=batch)
-                elif v == 2:
-                    l, r = self._list_info_v2(pool, batch=batch)
                 else:
-                    l, r = self._list_info_v3(pool, batch=batch)
+                    l, r = self._list_info_v2(pool, batch=batch)
                 if r < 0:
                     task.r = r
                 else:
                     if v == 1:
                         self._update_info(pool, l)
-                    elif v == 2:
-                        self._update_info_v2(pool, l)
                     else:
-                        self._update_info_v3(pool, l)
+                        self._update_info_v2(pool, l)
 
             task.done = True
             if task.event is not None:
@@ -1219,6 +1034,9 @@ class Module(MgrModule):
                     'seq': image['snapc']['seq'],
                     'snaps': [s for s in image['snapc']['snaps']],
                 } if image.get('snapc') is not None else None,
+                'snaps': {
+                    k: extract_snap(v) for k, v in six.iteritems(image['snaps'])
+                } if image.get('snaps') is not None else None,
                 'parent': {
                     'spec': {
                         'pool_id': image['parent']['spec']['pool_id'],
@@ -1242,10 +1060,6 @@ class Module(MgrModule):
                 'du': image.get('du'),
             }
 
-            if v == 2:
-                info['snaps'] = {
-                    k: extract_snap(v) for k, v in six.iteritems(image['snaps'])
-                } if image.get('snaps') is not None else None
             return info
 
         with self.lock:
@@ -1306,11 +1120,9 @@ class Module(MgrModule):
             if prefix == 'rbdx list-info' or prefix == 'rbdx list-du':
                 pool_id = cmd['pool_id']
                 refresh = True if 'refresh' in cmd else False
-                v = 2 if 'v2' in cmd else 1
-                v = 3 if 'v3' in cmd else v
 
                 if prefix == 'rbdx list-du':
-                    v = 3
+                    v = 2
 
                 pools = self._get_pools()
 
