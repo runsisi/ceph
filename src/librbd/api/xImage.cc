@@ -16,7 +16,7 @@
 
 namespace {
 
-const std::string RBD_QOS_PREFIX = "conf_rbd_client_qos_";
+const std::string RBD_QOS_PREFIX = "conf_rbd_";
 const uint64_t MAX_METADATA_ITEMS = 128;
 
 uint64_t calc_du(uint64_t snap_id, BitVector<2>& object_map,
