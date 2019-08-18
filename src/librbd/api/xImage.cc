@@ -859,6 +859,134 @@ private:
 };
 
 #undef dout_prefix
+#define dout_prefix *_dout << "librbd::api::xImage::InfoRequest_v6: " \
+                           << __func__ << " " << this << ": " \
+                           << "(id=" << m_image_id << "): "
+
+template <typename I>
+class InfoRequest_v6 {
+public:
+  InfoRequest_v6(librados::IoCtx& ioctx, Context* on_finish,
+      const std::string& image_id,
+      librbd::xImageInfo_v2* info)
+    : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
+      m_io_ctx(ioctx), m_on_finish(on_finish),
+      m_image_id(image_id),
+      m_info(info) {
+    // NOTE: image name is not set
+    m_info->id = m_image_id;
+  }
+
+  void send() {
+    get_head();
+  }
+
+private:
+  void finish(int r) {
+    m_on_finish->complete(r);
+    delete this;
+  }
+
+private:
+  CephContext* m_cct;
+  librados::IoCtx& m_io_ctx;
+  Context* m_on_finish;
+  bufferlist m_out_bl;
+  std::map<snapid_t, cls::rbd::xSnapInfo> m_cls_snaps;
+
+  // [in]
+  const std::string m_image_id;
+
+  // [out]
+  librbd::xImageInfo_v2* m_info;
+
+  void get_head() {
+    ldout(m_cct, 10) << dendl;
+
+    librados::ObjectReadOperation op;
+    librbd::cls_client::x_image_get_start_v2(&op);
+    librbd::cls_client::metadata_list_start(&op, RBD_QOS_PREFIX,
+        MAX_METADATA_ITEMS);
+
+    using klass = InfoRequest<I>;
+    auto comp = librbd::util::create_rados_callback<klass,
+        &klass::handle_get_head>(this);
+    m_out_bl.clear();
+    int r = m_io_ctx.aio_operate(librbd::util::header_name(m_image_id),
+        comp, &op, &m_out_bl);
+    ceph_assert(r == 0);
+    comp->release();
+  }
+
+  void handle_get_head(int r) {
+    ldout(m_cct, 10) << "r=" << r << dendl;
+
+    if (r < 0) {
+      if (r != -ENOENT) {
+        lderr(m_cct) << "failed to get image head: "
+                     << cpp_strerror(r)
+                     << dendl;
+      }
+      finish(r);
+      return;
+    }
+
+    auto order = &m_info->order;
+    auto size = &m_info->size;
+    auto stripe_unit = &m_info->stripe_unit;
+    auto stripe_count = &m_info->stripe_count;
+    auto features = &m_info->features;
+    auto flags = &m_info->flags;
+    auto snapc = &m_info->snapc;
+    auto parent = &m_info->parent;
+    auto timestamp = &m_info->timestamp;
+    auto data_pool_id = &m_info->data_pool_id;
+    auto watchers = &m_info->watchers;
+    auto kvs = &m_info->kvs;
+
+    auto it = m_out_bl.begin();
+    r = librbd::cls_client::x_image_get_finish_v2(&it, order, size,
+        stripe_unit, stripe_count,
+        features, flags,
+        snapc, &m_cls_snaps,
+        parent, timestamp,
+        data_pool_id,
+        watchers);
+    if (r < 0) {
+      lderr(m_cct) << "failed to decode image metadata: "
+                   << cpp_strerror(r)
+                   << dendl;
+      finish(r);
+      return;
+    }
+    r = librbd::cls_client::x_metadata_list_finish(&it, kvs);
+    if (r < 0) {
+      lderr(m_cct) << "failed to decode image qos kvs: "
+                   << cpp_strerror(r)
+                   << dendl;
+      finish(r);
+      return;
+    }
+
+    auto& snaps = m_info->snaps;
+    for (auto& it : m_cls_snaps) {
+      snaps.emplace(it.first, {
+          .id = it.second.id,
+          .name = it.second.name,
+          .snap_ns_type = it.second.snapshot_namespace.get_namespace_type(),
+          .size = it.second.image_size,
+          .features = it.second.features,
+          .flags = it.second.flags,
+          .protection_status = it.second.protection_status,
+          .timestamp = it.second.timestamp,
+      });
+    }
+
+    finish(0);
+  }
+};
+
+#undef dout_prefix
 #define dout_prefix *_dout << "librbd::api::xImage::InfoRequest_v2: " \
                            << __func__ << " " << this << ": " \
                            << "(id=" << m_image_id << "): "

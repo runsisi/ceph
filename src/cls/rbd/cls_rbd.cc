@@ -5414,6 +5414,183 @@ int x_image_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   return 0;
 }
 
+int x_image_get_v2(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
+{
+  CLS_LOG(20, "x_image_get_v2");
+
+  std::set<std::string> keys;
+  keys.insert("order");
+  keys.insert("size");
+  keys.insert("features");
+  keys.insert("flags");
+  keys.insert("stripe_unit");
+  keys.insert("stripe_count");
+  keys.insert("snap_seq");
+  keys.insert("parent");
+  keys.insert("create_timestamp");
+  keys.insert("data_pool_id");
+
+  std::map<std::string, bufferlist> vals;
+  int r = cls_cxx_map_get_vals(hctx, keys, &vals);
+  if (r < 0) {
+    CLS_ERR("failed to read keys off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
+  uint8_t order = 0;
+  uint64_t size = 0;
+  r = x_get_val(vals, "order", &order);
+  if (r < 0) {
+    CLS_ERR("failed to read the order off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+  r = x_get_val(vals, "size", &size);
+  if (r < 0) {
+    CLS_ERR("failed to read the size off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
+  ::encode(order, *out);
+  ::encode(size, *out);
+
+  uint64_t features = 0;
+  uint64_t flags = 0;
+  r = x_get_val(vals, "features", &features);
+  if (r < 0) {
+    CLS_ERR("failed to read the features off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+  r = x_get_val(vals, "flags", &flags);
+  if (r < 0 && r != -ENOENT) {
+    CLS_ERR("failed to read the flags off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
+  uint64_t stripe_unit = 0;
+  uint64_t stripe_count = 0;
+  r = x_get_val(vals, "stripe_unit", &stripe_unit);
+  if (r == -ENOENT) {
+    stripe_unit = 1ull << order;
+    r = 0;
+  }
+  if (r < 0) {
+    return r;
+  }
+  r = x_get_val(vals, "stripe_count", &stripe_count);
+  if (r == -ENOENT) {
+    // default to 1
+    stripe_count = 1;
+    r = 0;
+  }
+  if (r < 0) {
+    return r;
+  }
+
+  ::encode(stripe_unit, *out);
+  ::encode(stripe_count, *out);
+
+  ::encode(features, *out);
+  ::encode(flags, *out);
+
+  // snap context and snaps
+  {
+    std::map<snapid_t, cls::rbd::xclsSnapInfo> snaps;
+    vector<snapid_t> snap_ids;
+
+    int r = 0;
+    int max_read = RBD_MAX_KEYS_READ;
+    std::string last_read = RBD_SNAP_KEY_PREFIX;
+    bool more = true;
+
+    while (more) {
+      std::map<std::string, bufferlist> vals;
+      r = cls_cxx_map_get_vals(hctx, last_read, RBD_SNAP_KEY_PREFIX,
+          max_read, &vals, &more);
+      if (r < 0) {
+        CLS_ERR("error reading snaps: %s", cpp_strerror(r).c_str());
+        return r;
+      }
+
+      for (auto& it : vals) {
+        try {
+          auto bl_it = it.second.begin();
+
+          cls_rbd_snap snap;
+          ::decode(snap, bl_it);
+
+          snaps->emplace(snap.id, {snap.id,
+              snap.snapshot_namespace.snapshot_namespace,
+              snap.name, snap.image_size,
+              snap.features, snap.flags, snap.protection_status,
+              snap.timestamp});
+          snap_ids.push_back(snap.id);
+        } catch (const buffer::error &err) {
+          CLS_ERR("could not decode snap '%s'", it.first.c_str());
+          return -EIO;
+        }
+      }
+
+      if (!vals.empty()) {
+        last_read = vals.rbegin()->first;
+      }
+    }
+
+    uint64_t snap_seq;
+    r = x_get_val(vals, "snap_seq", &snap_seq);
+    if (r < 0) {
+      CLS_ERR("could not read the image's snap_seq off disk: %s", cpp_strerror(r).c_str());
+      return r;
+    }
+
+    // snap_ids must be descending in a snap context
+    std::reverse(snap_ids.begin(), snap_ids.end());
+
+    ::encode(snap_seq, *out);
+    ::encode(snap_ids, *out);
+    ::encode(snaps, *out);
+  }
+
+  // parent
+  {
+    cls_rbd_parent parent;
+    int r = x_get_val(vals, "parent", &parent);
+    if (r < 0 && r != -ENOENT) {
+      return r;
+    }
+
+    ::encode(parent.pool, *out);
+    ::encode(parent.id, *out);
+    ::encode(parent.snapid, *out);
+    ::encode(parent.overlap, *out);
+  }
+
+  // create timestamp
+  {
+    utime_t timestamp;
+    r = x_get_val(vals, "create_timestamp", &timestamp);
+    if (r < 0) {
+      return r;
+    }
+
+    ::encode(timestamp, *out);
+  }
+
+  // data pool
+  {
+    int64_t data_pool_id = -1;
+    int r = x_get_val(vals, "data_pool_id", &data_pool_id);
+    if (r == -ENOENT) {
+      data_pool_id = -1;
+    } else if (r < 0) {
+      CLS_ERR("error reading image data pool id: %s", cpp_strerror(r).c_str());
+      return r;
+    }
+
+    ::encode(data_pool_id, *out);
+  }
+  return 0;
+}
+
 int x_snap_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 {
   uint64_t snap_id;
@@ -5596,6 +5773,7 @@ CLS_INIT(rbd)
 
   cls_method_handle_t h_x_size_get;
   cls_method_handle_t h_x_image_get;
+  cls_method_handle_t h_x_image_get_v2;
   cls_method_handle_t h_x_snap_get;
   cls_method_handle_t h_x_child_list;
 
@@ -5887,6 +6065,9 @@ CLS_INIT(rbd)
   cls_register_cxx_method(h_class, "x_image_get",
                           CLS_METHOD_RD,
                           x_image_get, &h_x_image_get);
+  cls_register_cxx_method(h_class, "x_image_get_v2",
+                          CLS_METHOD_RD,
+                          x_image_get_v2, &h_x_image_get_v2);
   cls_register_cxx_method(h_class, "x_snap_get",
                           CLS_METHOD_RD,
                           x_snap_get, &h_x_snap_get);

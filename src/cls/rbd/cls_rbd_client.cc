@@ -2203,7 +2203,8 @@ namespace librbd {
         uint64_t *stripe_count,
         uint64_t *features,
         uint64_t *flags,
-        ::SnapContext *snapc, ParentInfo *parent,
+        ::SnapContext *snapc,
+        ParentInfo *parent,
         utime_t *timestamp,
         int64_t *data_pool_id,
         std::vector<obj_watch_t> *watchers) {
@@ -2228,6 +2229,74 @@ namespace librbd {
         ::decode(*features, *it);
         ::decode(*flags, *it);
         ::decode(*snapc, *it);
+        ::decode(parent->spec.pool_id, *it);
+        ::decode(parent->spec.image_id, *it);
+        ::decode(parent->spec.snap_id, *it);
+        ::decode(parent->overlap, *it);
+        ::decode(*timestamp, *it);
+        ::decode(*data_pool_id, *it);
+        // list_watchers
+        obj_list_watch_response_t resp;
+        ::decode(resp, *it);
+        for (list<watch_item_t>::iterator i = resp.entries.begin() ;
+             i != resp.entries.end() ; ++i) {
+          obj_watch_t ow;
+          ostringstream sa;
+          sa << i->addr;
+          strncpy(ow.addr, sa.str().c_str(), 256);
+          ow.watcher_id = i->name.num();
+          ow.cookie = i->cookie;
+          ow.timeout_seconds = i->timeout_seconds;
+          watchers->push_back(ow);
+        }
+      } catch (const buffer::error &err) {
+        return -EBADMSG;
+      }
+      return 0;
+    }
+
+    void x_image_get_start_v2(librados::ObjectReadOperation *op) {
+      bufferlist empty_bl;
+      op->exec("rbd", "x_image_get_v2", empty_bl);
+      op->list_watchers();
+    }
+
+    int x_image_get_finish_v2(bufferlist::iterator *it,
+        uint8_t *order,
+        uint64_t *size,
+        uint64_t *stripe_unit,
+        uint64_t *stripe_count,
+        uint64_t *features,
+        uint64_t *flags,
+        ::SnapContext *snapc,
+        std::map<snapid_t, cls::rbd::xclsSnapInfo> *snaps,
+        ParentInfo *parent,
+        utime_t *timestamp,
+        int64_t *data_pool_id,
+        std::vector<obj_watch_t> *watchers) {
+      assert(order);
+      assert(size);
+      assert(stripe_unit);
+      assert(stripe_count);
+      assert(features);
+      assert(flags);
+      assert(snapc);
+      assert(snaps);
+      assert(parent);
+      assert(timestamp);
+      assert(data_pool_id);
+      assert(watchers);
+
+      try {
+        // x_image_get
+        ::decode(*order, *it);
+        ::decode(*size, *it);
+        ::decode(*stripe_unit, *it);
+        ::decode(*stripe_count, *it);
+        ::decode(*features, *it);
+        ::decode(*flags, *it);
+        ::decode(*snapc, *it);
+        ::decode(*snaps, *it);
         ::decode(parent->spec.pool_id, *it);
         ::decode(parent->spec.image_id, *it);
         ::decode(parent->spec.snap_id, *it);
