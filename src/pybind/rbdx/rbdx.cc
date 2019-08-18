@@ -26,8 +26,6 @@ using Map_string_2_string = std::map<std::string, std::string>;
 using Map_string_2_pair_image_info_t_int = std::map<std::string, std::pair<librbdx::image_info_t, int>>;
 using Map_string_2_pair_image_info_v2_t_int = std::map<std::string, std::pair<librbdx::image_info_v2_t, int>>;
 using Map_string_2_pair_image_info_v3_t_int = std::map<std::string, std::pair<librbdx::image_info_v3_t, int>>;
-using Map_string_2_pair_image_info_v4_t_int = std::map<std::string, std::pair<librbdx::image_info_v4_t, int>>;
-using Map_string_2_pair_image_info_v5_t_int = std::map<std::string, std::pair<librbdx::image_info_v5_t, int>>;
 
 using Map_parent_spec_t_2_vector_string = std::map<librbdx::parent_spec_t, std::vector<std::string>>;
 using Map_string_2_trash_info_t = std::map<std::string, librbdx::trash_info_t>;
@@ -44,8 +42,6 @@ PYBIND11_MAKE_OPAQUE(Map_string_2_string);
 PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_t_int);
 PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_v2_t_int);
 PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_v3_t_int);
-PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_v4_t_int);
-PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_v5_t_int);
 
 PYBIND11_MAKE_OPAQUE(Map_parent_spec_t_2_vector_string);
 PYBIND11_MAKE_OPAQUE(Map_string_2_trash_info_t);
@@ -138,8 +134,6 @@ json json_fmt(const snap_info_v2_t& o);
 json json_fmt(const image_info_t& o);
 json json_fmt(const image_info_v2_t& o);
 json json_fmt(const image_info_v3_t& o);
-json json_fmt(const image_info_v4_t& o);
-json json_fmt(const image_info_v5_t& o);
 json json_fmt(const trash_info_t& o);
 
 template <typename T,
@@ -317,6 +311,7 @@ json json_fmt(const image_info_t& o) {
   j["features"] = json_fmt(o.features);
   j["flags"] = json_fmt(o.flags);
   j["snapc"] = json_fmt(o.snapc);
+  j["snaps"] = json_fmt(o.snaps);
   j["parent"] = json_fmt(o.parent);
   j["timestamp"] = json_fmt(o.timestamp);
   j["data_pool_id"] = json_fmt(o.data_pool_id);
@@ -336,12 +331,13 @@ json json_fmt(const image_info_v2_t& o) {
   j["features"] = json_fmt(o.features);
   j["flags"] = json_fmt(o.flags);
   j["snapc"] = json_fmt(o.snapc);
+  j["snaps"] = json_fmt(o.snaps);
   j["parent"] = json_fmt(o.parent);
   j["timestamp"] = json_fmt(o.timestamp);
   j["data_pool_id"] = json_fmt(o.data_pool_id);
   j["watchers"] = json_fmt(o.watchers);
   j["qos"] = json_fmt(o.qos);
-  j["snaps"] = json_fmt(o.snaps);
+  j["du"] = json_fmt(o.du);
   return std::move(j);
 }
 
@@ -356,54 +352,13 @@ json json_fmt(const image_info_v3_t& o) {
   j["features"] = json_fmt(o.features);
   j["flags"] = json_fmt(o.flags);
   j["snapc"] = json_fmt(o.snapc);
-  j["parent"] = json_fmt(o.parent);
-  j["timestamp"] = json_fmt(o.timestamp);
-  j["data_pool_id"] = json_fmt(o.data_pool_id);
-  j["watchers"] = json_fmt(o.watchers);
-  j["qos"] = json_fmt(o.qos);
-  j["du"] = json_fmt(o.du);
-  return std::move(j);
-}
-
-json json_fmt(const image_info_v4_t& o) {
-  json j = json::object({});
-  j["id"] = json_fmt(o.id);
-  j["name"] = json_fmt(o.name);
-  j["order"] = json_fmt(o.order);
-  j["size"] = json_fmt(o.size);
-  j["stripe_unit"] = json_fmt(o.stripe_unit);
-  j["stripe_count"] = json_fmt(o.stripe_count);
-  j["features"] = json_fmt(o.features);
-  j["flags"] = json_fmt(o.flags);
-  j["snapc"] = json_fmt(o.snapc);
-  j["parent"] = json_fmt(o.parent);
-  j["timestamp"] = json_fmt(o.timestamp);
-  j["data_pool_id"] = json_fmt(o.data_pool_id);
-  j["watchers"] = json_fmt(o.watchers);
-  j["qos"] = json_fmt(o.qos);
-  j["du"] = json_fmt(o.du);
   j["snaps"] = json_fmt(o.snaps);
-  return std::move(j);
-}
-
-json json_fmt(const image_info_v5_t& o) {
-  json j = json::object({});
-  j["id"] = json_fmt(o.id);
-  j["name"] = json_fmt(o.name);
-  j["order"] = json_fmt(o.order);
-  j["size"] = json_fmt(o.size);
-  j["stripe_unit"] = json_fmt(o.stripe_unit);
-  j["stripe_count"] = json_fmt(o.stripe_count);
-  j["features"] = json_fmt(o.features);
-  j["flags"] = json_fmt(o.flags);
-  j["snapc"] = json_fmt(o.snapc);
   j["parent"] = json_fmt(o.parent);
   j["timestamp"] = json_fmt(o.timestamp);
   j["data_pool_id"] = json_fmt(o.data_pool_id);
   j["watchers"] = json_fmt(o.watchers);
   j["qos"] = json_fmt(o.qos);
   j["du"] = json_fmt(o.du);
-  j["snaps"] = json_fmt(o.snaps);
   return std::move(j);
 }
 
@@ -473,18 +428,6 @@ PYBIND11_MODULE(rbdx, m) {
   {
     auto b = py::bind_map<Map_string_2_pair_image_info_v3_t_int>(m, "Map_string_2_pair_image_info_v3_t_int");
     b.def("__repr__", [](const Map_string_2_pair_image_info_v3_t_int& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-  {
-    auto b = py::bind_map<Map_string_2_pair_image_info_v4_t_int>(m, "Map_string_2_pair_image_info_v4_t_int");
-    b.def("__repr__", [](const Map_string_2_pair_image_info_v4_t_int& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-  {
-    auto b = py::bind_map<Map_string_2_pair_image_info_v5_t_int>(m, "Map_string_2_pair_image_info_v5_t_int");
-    b.def("__repr__", [](const Map_string_2_pair_image_info_v5_t_int& self) {
       return json_fmt(self).dump(json_indent);
     });
   }
@@ -654,6 +597,7 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def_readonly("features", &image_info_t::features);
     cls.def_readonly("flags", &image_info_t::flags);
     cls.def_readonly("snapc", &image_info_t::snapc);
+    cls.def_readonly("snaps", &image_info_t::snaps);
     cls.def_readonly("parent", &image_info_t::parent);
     cls.def_readonly("timestamp", &image_info_t::timestamp);
     cls.def_readonly("data_pool_id", &image_info_t::data_pool_id);
@@ -676,12 +620,13 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def_readonly("features", &image_info_v2_t::features);
     cls.def_readonly("flags", &image_info_v2_t::flags);
     cls.def_readonly("snapc", &image_info_v2_t::snapc);
+    cls.def_readonly("snaps", &image_info_v2_t::snaps);
     cls.def_readonly("parent", &image_info_v2_t::parent);
     cls.def_readonly("timestamp", &image_info_v2_t::timestamp);
     cls.def_readonly("data_pool_id", &image_info_v2_t::data_pool_id);
     cls.def_readonly("watchers", &image_info_v2_t::watchers);
     cls.def_readonly("qos", &image_info_v2_t::qos);
-    cls.def_readonly("snaps", &image_info_v2_t::snaps);
+    cls.def_readonly("du", &image_info_v2_t::du);
     cls.def("__repr__", [](const image_info_v2_t& self) {
       return json_fmt(self).dump(json_indent);
     });
@@ -705,55 +650,8 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def_readonly("watchers", &image_info_v3_t::watchers);
     cls.def_readonly("qos", &image_info_v3_t::qos);
     cls.def_readonly("du", &image_info_v3_t::du);
+    cls.def_readonly("snaps", &image_info_v3_t::snaps);
     cls.def("__repr__", [](const image_info_v3_t& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-
-  {
-    py::class_<image_info_v4_t> cls(m, "image_info_v4_t");
-    cls.def(py::init<>());
-    cls.def_readonly("id", &image_info_v4_t::id);
-    cls.def_readonly("name", &image_info_v4_t::name);
-    cls.def_readonly("order", &image_info_v4_t::order);
-    cls.def_readonly("size", &image_info_v4_t::size);
-    cls.def_readonly("stripe_unit", &image_info_v4_t::stripe_unit);
-    cls.def_readonly("stripe_count", &image_info_v4_t::stripe_count);
-    cls.def_readonly("features", &image_info_v4_t::features);
-    cls.def_readonly("flags", &image_info_v4_t::flags);
-    cls.def_readonly("snapc", &image_info_v4_t::snapc);
-    cls.def_readonly("parent", &image_info_v4_t::parent);
-    cls.def_readonly("timestamp", &image_info_v4_t::timestamp);
-    cls.def_readonly("data_pool_id", &image_info_v4_t::data_pool_id);
-    cls.def_readonly("watchers", &image_info_v4_t::watchers);
-    cls.def_readonly("qos", &image_info_v4_t::qos);
-    cls.def_readonly("du", &image_info_v4_t::du);
-    cls.def_readonly("snaps", &image_info_v4_t::snaps);
-    cls.def("__repr__", [](const image_info_v4_t& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-
-  {
-    py::class_<image_info_v5_t> cls(m, "image_info_v5_t");
-    cls.def(py::init<>());
-    cls.def_readonly("id", &image_info_v5_t::id);
-    cls.def_readonly("name", &image_info_v5_t::name);
-    cls.def_readonly("order", &image_info_v5_t::order);
-    cls.def_readonly("size", &image_info_v5_t::size);
-    cls.def_readonly("stripe_unit", &image_info_v5_t::stripe_unit);
-    cls.def_readonly("stripe_count", &image_info_v5_t::stripe_count);
-    cls.def_readonly("features", &image_info_v5_t::features);
-    cls.def_readonly("flags", &image_info_v5_t::flags);
-    cls.def_readonly("snapc", &image_info_v5_t::snapc);
-    cls.def_readonly("parent", &image_info_v5_t::parent);
-    cls.def_readonly("timestamp", &image_info_v5_t::timestamp);
-    cls.def_readonly("data_pool_id", &image_info_v5_t::data_pool_id);
-    cls.def_readonly("watchers", &image_info_v5_t::watchers);
-    cls.def_readonly("qos", &image_info_v5_t::qos);
-    cls.def_readonly("du", &image_info_v5_t::du);
-    cls.def_readonly("snaps", &image_info_v5_t::snaps);
-    cls.def("__repr__", [](const image_info_v5_t& self) {
       return json_fmt(self).dump(json_indent);
     });
   }
@@ -811,16 +709,6 @@ PYBIND11_MODULE(rbdx, m) {
     using list_info_v3_func_t_2 = int (xRBD::*)(librados::IoCtx&,
         const std::vector<std::string>&,
         std::map<std::string, std::pair<image_info_v3_t, int>>*);
-    using list_info_v4_func_t_1 = int (xRBD::*)(librados::IoCtx&,
-        std::map<std::string, std::pair<image_info_v4_t, int>>*);
-    using list_info_v4_func_t_2 = int (xRBD::*)(librados::IoCtx&,
-        const std::vector<std::string>&,
-        std::map<std::string, std::pair<image_info_v4_t, int>>*);
-    using list_info_v5_func_t_1 = int (xRBD::*)(librados::IoCtx&,
-        std::map<std::string, std::pair<image_info_v5_t, int>>*);
-    using list_info_v5_func_t_2 = int (xRBD::*)(librados::IoCtx&,
-        const std::vector<std::string>&,
-        std::map<std::string, std::pair<image_info_v5_t, int>>*);
 
     py::class_<xRBD> cls(m, "xRBD");
     cls.def(py::init<>());
@@ -846,8 +734,6 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def("get_info", &xRBD::get_info);
     cls.def("get_info_v2", &xRBD::get_info_v2);
     cls.def("get_info_v3", &xRBD::get_info_v3);
-    cls.def("get_info_v4", &xRBD::get_info_v4);
-    cls.def("get_info_v5", &xRBD::get_info_v5);
 
     cls.def("list_du", (list_du_func_t_1)&xRBD::list_du);
     cls.def("list_du", (list_du_func_t_2)&xRBD::list_du);
@@ -861,10 +747,6 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def("list_info_v2", (list_info_v2_func_t_2)&xRBD::list_info_v2);
     cls.def("list_info_v3", (list_info_v3_func_t_1)&xRBD::list_info_v3);
     cls.def("list_info_v3", (list_info_v3_func_t_2)&xRBD::list_info_v3);
-    cls.def("list_info_v4", (list_info_v4_func_t_1)&xRBD::list_info_v4);
-    cls.def("list_info_v4", (list_info_v4_func_t_2)&xRBD::list_info_v4);
-    cls.def("list_info_v5", (list_info_v5_func_t_1)&xRBD::list_info_v5);
-    cls.def("list_info_v5", (list_info_v5_func_t_2)&xRBD::list_info_v5);
 
     cls.def("child_list", &xRBD::child_list);
     cls.def("trash_list", &xRBD::trash_list);
