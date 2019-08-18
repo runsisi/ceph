@@ -135,23 +135,6 @@ struct xDuInfo {
   uint64_t du;
 };
 
-struct xImageInfo {
-  std::string id;
-  std::string name;
-  uint8_t order = 0;
-  uint64_t size = 0;
-  uint64_t stripe_unit = 0;
-  uint64_t stripe_count = 0;
-  uint64_t features = 0;
-  uint64_t flags = 0;
-  SnapContext snapc;
-  ParentInfo parent;
-  utime_t timestamp;
-  int64_t data_pool_id = -1;
-  std::vector<obj_watch_t> watchers;
-  std::map<std::string, std::string> kvs;
-};
-
 // do not default initialize the fields
 // https://stackoverflow.com/questions/37776823/could-not-convert-from-brace-enclosed-initializer-list-to-struct
 struct xSnapInfo {
@@ -178,7 +161,25 @@ struct xSnapInfo_v2 {
   uint64_t du;
 };
 
-// image info v1 + snaps v1
+struct xImageInfo {
+  std::string id;
+  std::string name;
+  uint8_t order = 0;
+  uint64_t size = 0;
+  uint64_t stripe_unit = 0;
+  uint64_t stripe_count = 0;
+  uint64_t features = 0;
+  uint64_t flags = 0;
+  SnapContext snapc;
+  std::map<snapid_t, xSnapInfo> snaps;
+  ParentInfo parent;
+  utime_t timestamp;
+  int64_t data_pool_id = -1;
+  std::vector<obj_watch_t> watchers;
+  std::map<std::string, std::string> kvs;
+};
+
+// image info v1 + disk usage
 struct xImageInfo_v2 {
   std::string id;
   std::string name;
@@ -194,10 +195,10 @@ struct xImageInfo_v2 {
   int64_t data_pool_id = -1;
   std::vector<obj_watch_t> watchers;
   std::map<std::string, std::string> kvs;
-  std::map<snapid_t, xSnapInfo> snaps;
+  uint64_t du;
 };
 
-// image info v1 + disk usage
+// image info v2 + disk usage + snaps v2
 struct xImageInfo_v3 {
   std::string id;
   std::string name;
@@ -208,52 +209,13 @@ struct xImageInfo_v3 {
   uint64_t features = 0;
   uint64_t flags = 0;
   SnapContext snapc;
-  ParentInfo parent;
-  utime_t timestamp;
-  int64_t data_pool_id = -1;
-  std::vector<obj_watch_t> watchers;
-  std::map<std::string, std::string> kvs;
-  uint64_t du;
-};
-
-// image info v2 + disk usage + snaps v1
-struct xImageInfo_v4 {
-  std::string id;
-  std::string name;
-  uint8_t order = 0;
-  uint64_t size = 0;
-  uint64_t stripe_unit = 0;
-  uint64_t stripe_count = 0;
-  uint64_t features = 0;
-  uint64_t flags = 0;
-  SnapContext snapc;
-  ParentInfo parent;
-  utime_t timestamp;
-  int64_t data_pool_id = -1;
-  std::vector<obj_watch_t> watchers;
-  std::map<std::string, std::string> kvs;
-  uint64_t du;
-  std::map<snapid_t, xSnapInfo> snaps;
-};
-
-// image info v2 + disk usage + snaps v2
-struct xImageInfo_v5 {
-  std::string id;
-  std::string name;
-  uint8_t order = 0;
-  uint64_t size = 0;
-  uint64_t stripe_unit = 0;
-  uint64_t stripe_count = 0;
-  uint64_t features = 0;
-  uint64_t flags = 0;
-  SnapContext snapc;
-  ParentInfo parent;
-  utime_t timestamp;
-  int64_t data_pool_id = -1;
-  std::vector<obj_watch_t> watchers;
-  std::map<std::string, std::string> kvs;
-  uint64_t du;
   std::map<snapid_t, xSnapInfo_v2> snaps;
+  ParentInfo parent;
+  utime_t timestamp;
+  int64_t data_pool_id = -1;
+  std::vector<obj_watch_t> watchers;
+  std::map<std::string, std::string> kvs;
+  uint64_t du;
 };
 
 struct xTrashInfo {

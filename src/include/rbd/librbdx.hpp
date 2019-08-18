@@ -158,6 +158,7 @@ typedef struct {
   uint64_t features;
   uint64_t flags;
   snapc_t snapc;
+  std::map<uint64_t, snap_info_t> snaps;
   parent_info_t parent;
   timespec timestamp;
   int64_t data_pool_id;
@@ -175,12 +176,13 @@ typedef struct {
   uint64_t features;
   uint64_t flags;
   snapc_t snapc;
+  std::map<uint64_t, snap_info_t> snaps;
   parent_info_t parent;
   timespec timestamp;
   int64_t data_pool_id;
   std::vector<std::string> watchers;
   qos_t qos;
-  std::map<uint64_t, snap_info_t> snaps;
+  uint64_t du;
 } image_info_v2_t;
 
 typedef struct {
@@ -193,6 +195,7 @@ typedef struct {
   uint64_t features;
   uint64_t flags;
   snapc_t snapc;
+  std::map<uint64_t, snap_info_v2_t> snaps;
   parent_info_t parent;
   timespec timestamp;
   int64_t data_pool_id;
@@ -200,44 +203,6 @@ typedef struct {
   qos_t qos;
   uint64_t du;
 } image_info_v3_t;
-
-typedef struct {
-  std::string id;
-  std::string name;
-  uint8_t order;
-  uint64_t size;
-  uint64_t stripe_unit;
-  uint64_t stripe_count;
-  uint64_t features;
-  uint64_t flags;
-  snapc_t snapc;
-  parent_info_t parent;
-  timespec timestamp;
-  int64_t data_pool_id;
-  std::vector<std::string> watchers;
-  qos_t qos;
-  uint64_t du;
-  std::map<uint64_t, snap_info_t> snaps;
-} image_info_v4_t;
-
-typedef struct {
-  std::string id;
-  std::string name;
-  uint8_t order;
-  uint64_t size;
-  uint64_t stripe_unit;
-  uint64_t stripe_count;
-  uint64_t features;
-  uint64_t flags;
-  snapc_t snapc;
-  parent_info_t parent;
-  timespec timestamp;
-  int64_t data_pool_id;
-  std::vector<std::string> watchers;
-  qos_t qos;
-  uint64_t du;
-  std::map<uint64_t, snap_info_v2_t> snaps;
-} image_info_v5_t;
 
 typedef struct {
   std::string id;
@@ -276,10 +241,6 @@ public:
       const std::string& image_id, image_info_v2_t* info);
   int get_info_v3(librados::IoCtx& ioctx,
       const std::string& image_id, image_info_v3_t* info);
-  int get_info_v4(librados::IoCtx& ioctx,
-      const std::string& image_id, image_info_v4_t* info);
-  int get_info_v5(librados::IoCtx& ioctx,
-      const std::string& image_id, image_info_v5_t* info);
 
   int list_du(librados::IoCtx& ioctx,
       std::map<std::string, std::pair<du_info_t, int>>* infos);
@@ -312,18 +273,6 @@ public:
   int list_info_v3(librados::IoCtx& ioctx,
       const std::vector<std::string>& image_ids,
       std::map<std::string, std::pair<image_info_v3_t, int>>* infos);
-
-  int list_info_v4(librados::IoCtx& ioctx,
-      std::map<std::string, std::pair<image_info_v4_t, int>>* infos);
-  int list_info_v4(librados::IoCtx& ioctx,
-      const std::vector<std::string>& image_ids,
-      std::map<std::string, std::pair<image_info_v4_t, int>>* infos);
-
-  int list_info_v5(librados::IoCtx& ioctx,
-      std::map<std::string, std::pair<image_info_v5_t, int>>* infos);
-  int list_info_v5(librados::IoCtx& ioctx,
-      const std::vector<std::string>& image_ids,
-      std::map<std::string, std::pair<image_info_v5_t, int>>* infos);
 
   //
   // xChild

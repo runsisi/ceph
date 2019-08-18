@@ -780,6 +780,7 @@ private:
   librados::IoCtx& m_io_ctx;
   Context* m_on_finish;
   bufferlist m_out_bl;
+  std::map<snapid_t, cls::rbd::xSnapInfo> m_cls_snaps;
 
   // [in]
   const std::string m_image_id;
@@ -833,119 +834,6 @@ private:
 
     auto it = m_out_bl.begin();
     r = librbd::cls_client::x_image_get_finish(&it, order, size,
-        stripe_unit, stripe_count,
-        features, flags,
-        snapc, parent, timestamp,
-        data_pool_id,
-        watchers);
-    if (r < 0) {
-      lderr(m_cct) << "failed to decode image metadata: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
-    }
-    r = librbd::cls_client::x_metadata_list_finish(&it, kvs);
-    if (r < 0) {
-      lderr(m_cct) << "failed to decode image qos kvs: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
-    }
-
-    finish(0);
-  }
-};
-
-#undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::xImage::InfoRequest_v6: " \
-                           << __func__ << " " << this << ": " \
-                           << "(id=" << m_image_id << "): "
-
-template <typename I>
-class InfoRequest_v6 {
-public:
-  InfoRequest_v6(librados::IoCtx& ioctx, Context* on_finish,
-      const std::string& image_id,
-      librbd::xImageInfo_v2* info)
-    : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
-      m_io_ctx(ioctx), m_on_finish(on_finish),
-      m_image_id(image_id),
-      m_info(info) {
-    // NOTE: image name is not set
-    m_info->id = m_image_id;
-  }
-
-  void send() {
-    get_head();
-  }
-
-private:
-  void finish(int r) {
-    m_on_finish->complete(r);
-    delete this;
-  }
-
-private:
-  CephContext* m_cct;
-  librados::IoCtx& m_io_ctx;
-  Context* m_on_finish;
-  bufferlist m_out_bl;
-  std::map<snapid_t, cls::rbd::xSnapInfo> m_cls_snaps;
-
-  // [in]
-  const std::string m_image_id;
-
-  // [out]
-  librbd::xImageInfo_v2* m_info;
-
-  void get_head() {
-    ldout(m_cct, 10) << dendl;
-
-    librados::ObjectReadOperation op;
-    librbd::cls_client::x_image_get_start_v2(&op);
-    librbd::cls_client::metadata_list_start(&op, RBD_QOS_PREFIX,
-        MAX_METADATA_ITEMS);
-
-    using klass = InfoRequest<I>;
-    auto comp = librbd::util::create_rados_callback<klass,
-        &klass::handle_get_head>(this);
-    m_out_bl.clear();
-    int r = m_io_ctx.aio_operate(librbd::util::header_name(m_image_id),
-        comp, &op, &m_out_bl);
-    ceph_assert(r == 0);
-    comp->release();
-  }
-
-  void handle_get_head(int r) {
-    ldout(m_cct, 10) << "r=" << r << dendl;
-
-    if (r < 0) {
-      if (r != -ENOENT) {
-        lderr(m_cct) << "failed to get image head: "
-                     << cpp_strerror(r)
-                     << dendl;
-      }
-      finish(r);
-      return;
-    }
-
-    auto order = &m_info->order;
-    auto size = &m_info->size;
-    auto stripe_unit = &m_info->stripe_unit;
-    auto stripe_count = &m_info->stripe_count;
-    auto features = &m_info->features;
-    auto flags = &m_info->flags;
-    auto snapc = &m_info->snapc;
-    auto parent = &m_info->parent;
-    auto timestamp = &m_info->timestamp;
-    auto data_pool_id = &m_info->data_pool_id;
-    auto watchers = &m_info->watchers;
-    auto kvs = &m_info->kvs;
-
-    auto it = m_out_bl.begin();
-    r = librbd::cls_client::x_image_get_finish_v2(&it, order, size,
         stripe_unit, stripe_count,
         features, flags,
         snapc, &m_cls_snaps,
@@ -1020,6 +908,7 @@ private:
   librados::IoCtx& m_io_ctx;
   Context* m_on_finish;
   bufferlist m_out_bl;
+  std::map<snapid_t, cls::rbd::xSnapInfo> m_cls_snaps;
 
   // [in]
   const std::string m_image_id;
@@ -1094,84 +983,54 @@ private:
       return;
     }
 
-    if (!snapc->is_valid()) {
-      lderr(m_cct) << "snap context is invalid" << dendl;
-      finish(-EINVAL);
-      return;
-    }
-
-    get_snaps();
-  }
-
-  void get_snaps() {
-    if (m_info->snapc.snaps.empty()) {
-      finish(0);
-      return;
-    }
-
-    ldout(m_cct, 10) << dendl;
-    librados::ObjectReadOperation op;
-    for (auto snap_id : m_info->snapc.snaps) {
-      librbd::cls_client::x_snap_get_start(&op, snap_id);
-    }
-
-    using klass = InfoRequest_v2<I>;
-    auto comp = librbd::util::create_rados_callback<klass,
-        &klass::handle_get_snaps>(this);
-    m_out_bl.clear();
-    int r = m_io_ctx.aio_operate(librbd::util::header_name(m_image_id),
-        comp, &op, &m_out_bl);
-    ceph_assert(r == 0);
-    comp->release();
-  }
-
-  void handle_get_snaps(int r) {
-    ldout(m_cct, 10) << "r=" << r << dendl;
-
-    if (r == -ENOENT) {
-      ldout(m_cct, 5) << "out-of-sync snapshots" << dendl;
-      get_head();
-    } else if (r < 0) {
-      lderr(m_cct) << "failed to retrieve snapshots: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
-    }
-
     auto& snaps = m_info->snaps;
-
-    auto it = m_out_bl.begin();
-    for (auto snap_id : m_info->snapc.snaps) {
-      cls::rbd::xclsSnapInfo cls_snap_info;
-      r = librbd::cls_client::x_snap_get_finish(&it, &cls_snap_info);
-      if (r < 0) {
-        break;
-      }
-
-      librbd::xSnapInfo snap = {
-        .id = snap_id,
-        .name = cls_snap_info.name,
-        .snap_ns_type = cls_snap_info.snapshot_namespace.get_namespace_type(),
-        .size = cls_snap_info.image_size,
-        .features = cls_snap_info.features,
-        .flags = cls_snap_info.flags,
-        .protection_status = cls_snap_info.protection_status,
-        .timestamp = cls_snap_info.timestamp,
-      };
-      snaps.insert({snap_id, snap});
+    for (auto& it : m_cls_snaps) {
+      snaps.emplace(it.first, {
+          .id = it.second.id,
+          .name = it.second.name,
+          .snap_ns_type = it.second.snapshot_namespace.get_namespace_type(),
+          .size = it.second.image_size,
+          .features = it.second.features,
+          .flags = it.second.flags,
+          .protection_status = it.second.protection_status,
+          .timestamp = it.second.timestamp,
+      });
     }
 
+    get_du();
+  }
+
+  void get_du() {
+    Context *on_finish = librbd::util::create_context_callback<InfoRequest_v2<I>,
+        &InfoRequest_v2<I>::handle_get_du>(this);
+    auto& du = m_info->du;
+    librbd::xSizeInfo size_info = {
+      .image_id = m_image_id,
+      .snap_id = CEPH_NOSNAP,
+      .order = m_info->order,
+      .size = m_info->size,
+      .stripe_unit = m_info->stripe_unit,
+      .stripe_count = m_info->stripe_count,
+      .features = m_info->features,
+      .flags = m_info->flags,
+    };
+    auto request = new DuRequest_v3<I>(m_io_ctx, on_finish,
+        size_info, &du);
+    request->send();
+  }
+
+  void handle_get_du(int r) {
     if (r < 0) {
-      lderr(m_cct) << "failed to decode snapshots: "
-                   << cpp_strerror(r)
-                   << dendl;
+      if (r != -ENOENT) {
+        lderr(m_cct) << "failed to get image du: "
+                     << cpp_strerror(r)
+                     << dendl;
+      }
       finish(r);
       return;
     }
 
     finish(0);
-    return;
   }
 };
 
@@ -1189,6 +1048,9 @@ public:
     : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
       m_io_ctx(ioctx), m_on_finish(on_finish),
       m_image_id(image_id),
+      m_lock(image_id),
+      m_pending_count(0),
+      m_r(0),
       m_info(info) {
     // NOTE: image name is not set
     m_info->id = m_image_id;
@@ -1204,17 +1066,22 @@ private:
     delete this;
   }
 
-private:
-  CephContext* m_cct;
-  librados::IoCtx& m_io_ctx;
-  Context* m_on_finish;
-  bufferlist m_out_bl;
+  void complete_request(int r) {
+    m_lock.Lock();
+    if (m_r >= 0) {
+      if (r < 0 && r != -ENOENT) {
+        m_r = r;
+      }
+    }
 
-  // [in]
-  const std::string m_image_id;
+    assert(m_pending_count > 0);
+    int count = --m_pending_count;
+    m_lock.Unlock();
 
-  // [out]
-  librbd::xImageInfo_v3* m_info;
+    if (count == 0) {
+      finish(m_r);
+    }
+  }
 
   void get_head() {
     ldout(m_cct, 10) << dendl;
@@ -1283,456 +1150,23 @@ private:
       return;
     }
 
-    get_du();
-  }
-
-  void get_du() {
-    Context *on_finish = librbd::util::create_context_callback<InfoRequest_v3<I>,
-        &InfoRequest_v3<I>::handle_get_du>(this);
-    auto& du = m_info->du;
-    librbd::xSizeInfo size_info = {
-      .image_id = m_image_id,
-      .snap_id = CEPH_NOSNAP,
-      .order = m_info->order,
-      .size = m_info->size,
-      .stripe_unit = m_info->stripe_unit,
-      .stripe_count = m_info->stripe_count,
-      .features = m_info->features,
-      .flags = m_info->flags,
-    };
-    auto request = new DuRequest_v3<I>(m_io_ctx, on_finish,
-        size_info, &du);
-    request->send();
-  }
-
-  void handle_get_du(int r) {
-    if (r < 0) {
-      if (r != -ENOENT) {
-        lderr(m_cct) << "failed to get image du: "
-                     << cpp_strerror(r)
-                     << dendl;
-      }
-      finish(r);
-      return;
-    }
-
-    finish(0);
-  }
-};
-
-#undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::xImage::InfoRequest_v4: " \
-                           << __func__ << " " << this << ": " \
-                           << "(id=" << m_image_id << "): "
-
-template <typename I>
-class InfoRequest_v4 {
-public:
-  InfoRequest_v4(librados::IoCtx& ioctx, Context* on_finish,
-      const std::string& image_id,
-      librbd::xImageInfo_v4* info)
-    : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
-      m_io_ctx(ioctx), m_on_finish(on_finish),
-      m_image_id(image_id),
-      m_lock(image_id),
-      m_info(info) {
-    // NOTE: image name is not set
-    m_info->id = m_image_id;
-  }
-
-  void send() {
-    get_head();
-  }
-
-private:
-  void finish(int r) {
-    m_on_finish->complete(r);
-    delete this;
-  }
-
-  void get_head() {
-    ldout(m_cct, 10) << dendl;
-
-    librados::ObjectReadOperation op;
-    librbd::cls_client::x_image_get_start(&op);
-    librbd::cls_client::metadata_list_start(&op, RBD_QOS_PREFIX,
-        MAX_METADATA_ITEMS);
-
-    using klass = InfoRequest_v4<I>;
-    auto comp = librbd::util::create_rados_callback<klass,
-        &klass::handle_get_head>(this);
-    m_out_bl.clear();
-    int r = m_io_ctx.aio_operate(librbd::util::header_name(m_image_id),
-        comp, &op, &m_out_bl);
-    ceph_assert(r == 0);
-    comp->release();
-  }
-
-  void handle_get_head(int r) {
-    ldout(m_cct, 10) << "r=" << r << dendl;
-
-    if (r < 0) {
-      if (r != -ENOENT) {
-        lderr(m_cct) << "failed to get image head: "
-                     << cpp_strerror(r)
-                     << dendl;
-      }
-      finish(r);
-      return;
-    }
-
-    auto order = &m_info->order;
-    auto size = &m_info->size;
-    auto stripe_unit = &m_info->stripe_unit;
-    auto stripe_count = &m_info->stripe_count;
-    auto features = &m_info->features;
-    auto flags = &m_info->flags;
-    auto snapc = &m_info->snapc;
-    auto parent = &m_info->parent;
-    auto timestamp = &m_info->timestamp;
-    auto data_pool_id = &m_info->data_pool_id;
-    auto watchers = &m_info->watchers;
-    auto kvs = &m_info->kvs;
-
-    auto it = m_out_bl.begin();
-    r = librbd::cls_client::x_image_get_finish(&it, order, size,
-        stripe_unit, stripe_count,
-        features, flags,
-        snapc, parent, timestamp,
-        data_pool_id,
-        watchers);
-    if (r < 0) {
-      lderr(m_cct) << "failed to decode image metadata: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
-    }
-    r = librbd::cls_client::x_metadata_list_finish(&it, kvs);
-    if (r < 0) {
-      lderr(m_cct) << "failed to decode image qos kvs: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
+    auto& snaps = m_info->snaps;
+    for (auto& it : m_cls_snaps) {
+      snaps.emplace(it.first, {
+          .id = it.second.id,
+          .name = it.second.name,
+          .snap_ns_type = it.second.snapshot_namespace.get_namespace_type(),
+          .size = it.second.image_size,
+          .features = it.second.features,
+          .flags = it.second.flags,
+          .protection_status = it.second.protection_status,
+          .timestamp = it.second.timestamp,
+      });
     }
 
     if (!snapc->is_valid()) {
       lderr(m_cct) << "snap context is invalid" << dendl;
       finish(-EINVAL);
-      return;
-    }
-
-    get_snaps();
-  }
-
-  void get_snaps() {
-    if (m_info->snapc.snaps.empty()) {
-      finish(0);
-      return;
-    }
-
-    ldout(m_cct, 10) << dendl;
-    librados::ObjectReadOperation op;
-    for (auto snap_id : m_info->snapc.snaps) {
-      librbd::cls_client::x_snap_get_start(&op, snap_id);
-    }
-
-    using klass = InfoRequest_v4<I>;
-    auto comp = librbd::util::create_rados_callback<klass,
-        &klass::handle_get_snaps>(this);
-    m_out_bl.clear();
-    int r = m_io_ctx.aio_operate(librbd::util::header_name(m_image_id),
-        comp, &op, &m_out_bl);
-    ceph_assert(r == 0);
-    comp->release();
-  }
-
-  void handle_get_snaps(int r) {
-    ldout(m_cct, 10) << "r=" << r << dendl;
-
-    if (r == -ENOENT) {
-      ldout(m_cct, 5) << "out-of-sync snapshots" << dendl;
-      get_head();
-    } else if (r < 0) {
-      lderr(m_cct) << "failed to retrieve snapshots: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
-    }
-
-    auto& snaps = m_info->snaps;
-
-    auto it = m_out_bl.begin();
-    for (auto snap_id : m_info->snapc.snaps) {
-      cls::rbd::xclsSnapInfo cls_snap_info;
-      r = librbd::cls_client::x_snap_get_finish(&it, &cls_snap_info);
-      if (r < 0) {
-        break;
-      }
-
-      librbd::xSnapInfo snap = {
-        .id = snap_id,
-        .name = cls_snap_info.name,
-        .snap_ns_type = cls_snap_info.snapshot_namespace.get_namespace_type(),
-        .size = cls_snap_info.image_size,
-        .features = cls_snap_info.features,
-        .flags = cls_snap_info.flags,
-        .protection_status = cls_snap_info.protection_status,
-        .timestamp = cls_snap_info.timestamp,
-      };
-      snaps.insert({snap_id, snap});
-    }
-
-    if (r < 0) {
-      lderr(m_cct) << "failed to decode snapshots: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
-    }
-
-    get_du();
-  }
-
-  void get_du() {
-    Context *on_finish = librbd::util::create_context_callback<InfoRequest_v4<I>,
-        &InfoRequest_v4<I>::handle_get_du>(this);
-    auto& du = m_info->du;
-    librbd::xSizeInfo size_info = {
-      .image_id = m_image_id,
-      .snap_id = CEPH_NOSNAP,
-      .order = m_info->order,
-      .size = m_info->size,
-      .stripe_unit = m_info->stripe_unit,
-      .stripe_count = m_info->stripe_count,
-      .features = m_info->features,
-      .flags = m_info->flags,
-    };
-    auto request = new DuRequest_v3<I>(m_io_ctx, on_finish,
-        size_info, &du);
-    request->send();
-  }
-
-  void handle_get_du(int r) {
-    if (r < 0) {
-      if (r != -ENOENT) {
-        lderr(m_cct) << "failed to get image du: "
-                     << cpp_strerror(r)
-                     << dendl;
-      }
-      finish(r);
-      return;
-    }
-
-    finish(0);
-  }
-
-private:
-  CephContext* m_cct;
-  librados::IoCtx& m_io_ctx;
-  Context* m_on_finish;
-  bufferlist m_out_bl;
-
-  // [in]
-  const std::string m_image_id;
-
-  // [out]
-  Mutex m_lock;
-  librbd::xImageInfo_v4* m_info;
-};
-
-#undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::xImage::InfoRequest_v5: " \
-                           << __func__ << " " << this << ": " \
-                           << "(id=" << m_image_id << "): "
-
-template <typename I>
-class InfoRequest_v5 {
-public:
-  InfoRequest_v5(librados::IoCtx& ioctx, Context* on_finish,
-      const std::string& image_id,
-      librbd::xImageInfo_v5* info)
-    : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
-      m_io_ctx(ioctx), m_on_finish(on_finish),
-      m_image_id(image_id),
-      m_lock(image_id),
-      m_pending_count(0),
-      m_r(0),
-      m_info(info) {
-    // NOTE: image name is not set
-    m_info->id = m_image_id;
-  }
-
-  void send() {
-    get_head();
-  }
-
-private:
-  void finish(int r) {
-    m_on_finish->complete(r);
-    delete this;
-  }
-
-  void complete_request(int r) {
-    m_lock.Lock();
-    if (m_r >= 0) {
-      if (r < 0 && r != -ENOENT) {
-        m_r = r;
-      }
-    }
-
-    assert(m_pending_count > 0);
-    int count = --m_pending_count;
-    m_lock.Unlock();
-
-    if (count == 0) {
-      finish(m_r);
-    }
-  }
-
-  void get_head() {
-    ldout(m_cct, 10) << dendl;
-
-    librados::ObjectReadOperation op;
-    librbd::cls_client::x_image_get_start(&op);
-    librbd::cls_client::metadata_list_start(&op, RBD_QOS_PREFIX,
-        MAX_METADATA_ITEMS);
-
-    using klass = InfoRequest_v5<I>;
-    auto comp = librbd::util::create_rados_callback<klass,
-        &klass::handle_get_head>(this);
-    m_out_bl.clear();
-    int r = m_io_ctx.aio_operate(librbd::util::header_name(m_image_id),
-        comp, &op, &m_out_bl);
-    ceph_assert(r == 0);
-    comp->release();
-  }
-
-  void handle_get_head(int r) {
-    ldout(m_cct, 10) << "r=" << r << dendl;
-
-    if (r < 0) {
-      if (r != -ENOENT) {
-        lderr(m_cct) << "failed to get image head: "
-                     << cpp_strerror(r)
-                     << dendl;
-      }
-      finish(r);
-      return;
-    }
-
-    auto order = &m_info->order;
-    auto size = &m_info->size;
-    auto stripe_unit = &m_info->stripe_unit;
-    auto stripe_count = &m_info->stripe_count;
-    auto features = &m_info->features;
-    auto flags = &m_info->flags;
-    auto snapc = &m_info->snapc;
-    auto parent = &m_info->parent;
-    auto timestamp = &m_info->timestamp;
-    auto data_pool_id = &m_info->data_pool_id;
-    auto watchers = &m_info->watchers;
-    auto kvs = &m_info->kvs;
-
-    auto it = m_out_bl.begin();
-    r = librbd::cls_client::x_image_get_finish(&it, order, size,
-        stripe_unit, stripe_count,
-        features, flags,
-        snapc, parent, timestamp,
-        data_pool_id,
-        watchers);
-    if (r < 0) {
-      lderr(m_cct) << "failed to decode image metadata: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
-    }
-    r = librbd::cls_client::x_metadata_list_finish(&it, kvs);
-    if (r < 0) {
-      lderr(m_cct) << "failed to decode image qos kvs: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
-    }
-
-    if (!snapc->is_valid()) {
-      lderr(m_cct) << "snap context is invalid" << dendl;
-      finish(-EINVAL);
-      return;
-    }
-
-    get_snaps();
-  }
-
-  void get_snaps() {
-    if (m_info->snapc.snaps.empty()) {
-      finish(0);
-      return;
-    }
-
-    ldout(m_cct, 10) << dendl;
-    librados::ObjectReadOperation op;
-    for (auto snap_id : m_info->snapc.snaps) {
-      librbd::cls_client::x_snap_get_start(&op, snap_id);
-    }
-
-    using klass = InfoRequest_v5<I>;
-    auto comp = librbd::util::create_rados_callback<klass,
-        &klass::handle_get_snaps>(this);
-    m_out_bl.clear();
-    int r = m_io_ctx.aio_operate(librbd::util::header_name(m_image_id),
-        comp, &op, &m_out_bl);
-    ceph_assert(r == 0);
-    comp->release();
-  }
-
-  void handle_get_snaps(int r) {
-    ldout(m_cct, 10) << "r=" << r << dendl;
-
-    if (r == -ENOENT) {
-      ldout(m_cct, 5) << "out-of-sync snapshots" << dendl;
-      get_head();
-    } else if (r < 0) {
-      lderr(m_cct) << "failed to retrieve snapshots: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
-    }
-
-    auto& snaps = m_info->snaps;
-
-    auto it = m_out_bl.begin();
-    for (auto snap_id : m_info->snapc.snaps) {
-      cls::rbd::xclsSnapInfo cls_snap_info;
-      r = librbd::cls_client::x_snap_get_finish(&it, &cls_snap_info);
-      if (r < 0) {
-        break;
-      }
-
-      librbd::xSnapInfo_v2 snap = {
-        .id = snap_id,
-        .name = cls_snap_info.name,
-        .snap_ns_type = cls_snap_info.snapshot_namespace.get_namespace_type(),
-        .size = cls_snap_info.image_size,
-        .features = cls_snap_info.features,
-        .flags = cls_snap_info.flags,
-        .protection_status = cls_snap_info.protection_status,
-        .timestamp = cls_snap_info.timestamp,
-        .du = 0,
-      };
-      snaps.insert({snap_id, snap});
-    }
-
-    if (r < 0) {
-      lderr(m_cct) << "failed to decode snapshots: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
       return;
     }
 
@@ -1749,7 +1183,7 @@ private:
     snaps.insert(snaps.end(), m_info->snapc.snaps.begin(), m_info->snapc.snaps.end());
 
     for (auto snap : snaps) {
-      Context *on_finish = librbd::util::create_context_callback<InfoRequest_v5<I>,
+      Context *on_finish = librbd::util::create_context_callback<InfoRequest_v3<I>,
           &InfoRequest_v5<I>::complete_request>(this);
       auto du = &m_info->du;
       if (snap != CEPH_NOSNAP) {
@@ -1776,6 +1210,7 @@ private:
   librados::IoCtx& m_io_ctx;
   Context* m_on_finish;
   bufferlist m_out_bl;
+  std::map<snapid_t, cls::rbd::xSnapInfo> m_cls_snaps;
 
   // [in]
   const std::string m_image_id;
@@ -1784,7 +1219,7 @@ private:
   Mutex m_lock;
   int m_pending_count;
   int m_r;
-  librbd::xImageInfo_v5* m_info;
+  librbd::xImageInfo_v3* m_info;
 };
 
 #undef dout_prefix
@@ -2032,104 +1467,6 @@ private:
   int* m_r;
 };
 
-#undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::xImage::ThrottledInfoRequest_v4: " \
-                           << __func__ << " " << this << ": " \
-                           << "(id=" << m_image_id << "): "
-
-template <typename I>
-class ThrottledInfoRequest_v4 {
-public:
-  ThrottledInfoRequest_v4(librados::IoCtx& ioctx, SimpleThrottle& throttle,
-      const std::string& image_id,
-      librbd::xImageInfo_v4* info, int* r)
-    : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
-      m_throttle(throttle),
-      m_image_id(image_id),
-      m_r(r) {
-    Context* on_finish = librbd::util::create_context_callback<ThrottledInfoRequest_v4<I>,
-        &ThrottledInfoRequest_v4<I>::finish>(this);
-    m_request = new InfoRequest_v4<I>(ioctx, on_finish, image_id, info);
-    m_throttle.start_op();
-  }
-
-  void send() {
-    m_request->send();
-  }
-
-private:
-  void finish(int r) {
-    ldout(m_cct, 10) << "r=" << r << dendl;
-
-    *m_r = r;
-    // ignore errors so throttle can continue
-    r = 0;
-    m_throttle.end_op(r);
-
-    delete this;
-  }
-
-private:
-  CephContext* m_cct;
-  SimpleThrottle& m_throttle;
-  InfoRequest_v4<I>* m_request;
-
-  // [in]
-  const std::string m_image_id;
-
-  // [out]
-  int* m_r;
-};
-
-#undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::xImage::ThrottledInfoRequest_v5: " \
-                           << __func__ << " " << this << ": " \
-                           << "(id=" << m_image_id << "): "
-
-template <typename I>
-class ThrottledInfoRequest_v5 {
-public:
-  ThrottledInfoRequest_v5(librados::IoCtx& ioctx, SimpleThrottle& throttle,
-      const std::string& image_id,
-      librbd::xImageInfo_v5* info, int* r)
-    : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
-      m_throttle(throttle),
-      m_image_id(image_id),
-      m_r(r) {
-    Context* on_finish = librbd::util::create_context_callback<ThrottledInfoRequest_v5<I>,
-        &ThrottledInfoRequest_v5<I>::finish>(this);
-    m_request = new InfoRequest_v5<I>(ioctx, on_finish, image_id, info);
-    m_throttle.start_op();
-  }
-
-  void send() {
-    m_request->send();
-  }
-
-private:
-  void finish(int r) {
-    ldout(m_cct, 10) << "r=" << r << dendl;
-
-    *m_r = r;
-    // ignore errors so throttle can continue
-    r = 0;
-    m_throttle.end_op(r);
-
-    delete this;
-  }
-
-private:
-  CephContext* m_cct;
-  SimpleThrottle& m_throttle;
-  InfoRequest_v5<I>* m_request;
-
-  // [in]
-  const std::string m_image_id;
-
-  // [out]
-  int* m_r;
-};
-
 } // anonymous namespace
 
 #define dout_subsys ceph_subsys_rbd
@@ -2335,52 +1672,6 @@ int xImage<I>::get_info_v3(librados::IoCtx& ioctx,
   C_SaferCond cond;
 
   auto req = new InfoRequest_v3<I>(ioctx, &cond, image_id, info);
-  req->send();
-
-  int r = cond.wait();
-
-  latency = ceph_clock_now() - latency;
-  ldout(cct, 7) << "latency: "
-                << latency.sec() << "s/"
-                << latency.usec() << "us" << dendl;
-
-  return r;
-}
-
-template <typename I>
-int xImage<I>::get_info_v4(librados::IoCtx& ioctx,
-    const std::string& image_id, xImageInfo_v4* info) {
-  CephContext* cct = (CephContext*)ioctx.cct();
-  ldout(cct, 20) << "ioctx=" << &ioctx << dendl;
-
-  utime_t latency = ceph_clock_now();
-
-  C_SaferCond cond;
-
-  auto req = new InfoRequest_v4<I>(ioctx, &cond, image_id, info);
-  req->send();
-
-  int r = cond.wait();
-
-  latency = ceph_clock_now() - latency;
-  ldout(cct, 7) << "latency: "
-                << latency.sec() << "s/"
-                << latency.usec() << "us" << dendl;
-
-  return r;
-}
-
-template <typename I>
-int xImage<I>::get_info_v5(librados::IoCtx& ioctx,
-    const std::string& image_id, xImageInfo_v5* info) {
-  CephContext* cct = (CephContext*)ioctx.cct();
-  ldout(cct, 20) << "ioctx=" << &ioctx << dendl;
-
-  utime_t latency = ceph_clock_now();
-
-  C_SaferCond cond;
-
-  auto req = new InfoRequest_v5<I>(ioctx, &cond, image_id, info);
   req->send();
 
   int r = cond.wait();
@@ -2844,174 +2135,6 @@ int xImage<I>::list_info_v3(librados::IoCtx& ioctx,
     auto& info = (*infos)[id].first;
     auto& r = (*infos)[id].second;
     auto req = new ThrottledInfoRequest_v3<I>(ioctx, throttle, id, &info, &r);
-    req->send();
-  }
-
-  int r = throttle.wait_for_ret();
-
-  latency = ceph_clock_now() - latency;
-  ldout(cct, 7) << "latency: "
-                << latency.sec() << "s/"
-                << latency.usec() << "us" << dendl;
-
-  return r;
-}
-
-template <typename I>
-int xImage<I>::list_info_v4(librados::IoCtx& ioctx,
-    std::map<std::string, std::pair<xImageInfo_v4, int>>* infos) {
-  CephContext* cct = (CephContext*)ioctx.cct();
-  ldout(cct, 20) << "ioctx=" << &ioctx << dendl;
-
-  utime_t latency = ceph_clock_now();
-
-  // map<id, name>
-  std::map<std::string, std::string> images;
-  int r = xImage<I>::list(ioctx, &images);
-  if (r < 0) {
-    return r;
-  }
-
-  // images are moved to trash when removing, since Nautilus
-//  std::map<std::string, xTrashInfo> trashes;
-//  int r = xTrash<I>::list(ioctx, &trashes);
-//  if (r < 0 && r != -EOPNOTSUPP) {
-//    return r;
-//  }
-//  for (auto& it : trashes) {
-//    if (it.second.source == cls::rbd::TRASH_IMAGE_SOURCE_REMOVING) {
-//      images.insert({it.first, it.second.name});
-//    }
-//  }
-
-  auto ops = cct->_conf->get_val<int64_t>("rbd_concurrent_management_ops");
-  SimpleThrottle throttle(ops, true);
-  for (const auto& image : images) {
-    if (throttle.pending_error()) {
-      break;
-    }
-
-    auto& id = image.first;
-
-    auto& info = (*infos)[id].first;
-    auto& r = (*infos)[id].second;
-    auto req = new ThrottledInfoRequest_v4<I>(ioctx, throttle, id, &info, &r);
-    req->send();
-  }
-
-  r = throttle.wait_for_ret();
-
-  latency = ceph_clock_now() - latency;
-  ldout(cct, 7) << "latency: "
-                << latency.sec() << "s/"
-                << latency.usec() << "us" << dendl;
-
-  return r;
-}
-
-template <typename I>
-int xImage<I>::list_info_v4(librados::IoCtx& ioctx,
-    const std::vector<std::string>& image_ids,
-    std::map<std::string, std::pair<xImageInfo_v4, int>>* infos) {
-  CephContext* cct = (CephContext*)ioctx.cct();
-  ldout(cct, 20) << "ioctx=" << &ioctx << dendl;
-
-  utime_t latency = ceph_clock_now();
-
-  auto ops = cct->_conf->get_val<int64_t>("rbd_concurrent_management_ops");
-  SimpleThrottle throttle(ops, true);
-  for (const auto& id : image_ids) {
-    if (throttle.pending_error()) {
-      break;
-    }
-
-    auto& info = (*infos)[id].first;
-    auto& r = (*infos)[id].second;
-    auto req = new ThrottledInfoRequest_v4<I>(ioctx, throttle, id, &info, &r);
-    req->send();
-  }
-
-  int r = throttle.wait_for_ret();
-
-  latency = ceph_clock_now() - latency;
-  ldout(cct, 7) << "latency: "
-                << latency.sec() << "s/"
-                << latency.usec() << "us" << dendl;
-
-  return r;
-}
-
-template <typename I>
-int xImage<I>::list_info_v5(librados::IoCtx& ioctx,
-    std::map<std::string, std::pair<xImageInfo_v5, int>>* infos) {
-  CephContext* cct = (CephContext*)ioctx.cct();
-  ldout(cct, 20) << "ioctx=" << &ioctx << dendl;
-
-  utime_t latency = ceph_clock_now();
-
-  // map<id, name>
-  std::map<std::string, std::string> images;
-  int r = xImage<I>::list(ioctx, &images);
-  if (r < 0) {
-    return r;
-  }
-
-  // images are moved to trash when removing, since Nautilus
-//  std::map<std::string, xTrashInfo> trashes;
-//  int r = xTrash<I>::list(ioctx, &trashes);
-//  if (r < 0 && r != -EOPNOTSUPP) {
-//    return r;
-//  }
-//  for (auto& it : trashes) {
-//    if (it.second.source == cls::rbd::TRASH_IMAGE_SOURCE_REMOVING) {
-//      images.insert({it.first, it.second.name});
-//    }
-//  }
-
-  auto ops = cct->_conf->get_val<int64_t>("rbd_concurrent_management_ops");
-  SimpleThrottle throttle(ops, true);
-  for (const auto& image : images) {
-    if (throttle.pending_error()) {
-      break;
-    }
-
-    auto& id = image.first;
-
-    auto& info = (*infos)[id].first;
-    auto& r = (*infos)[id].second;
-    auto req = new ThrottledInfoRequest_v5<I>(ioctx, throttle, id, &info, &r);
-    req->send();
-  }
-
-  r = throttle.wait_for_ret();
-
-  latency = ceph_clock_now() - latency;
-  ldout(cct, 7) << "latency: "
-                << latency.sec() << "s/"
-                << latency.usec() << "us" << dendl;
-
-  return r;
-}
-
-template <typename I>
-int xImage<I>::list_info_v5(librados::IoCtx& ioctx,
-    const std::vector<std::string>& image_ids,
-    std::map<std::string, std::pair<xImageInfo_v5, int>>* infos) {
-  CephContext* cct = (CephContext*)ioctx.cct();
-  ldout(cct, 20) << "ioctx=" << &ioctx << dendl;
-
-  utime_t latency = ceph_clock_now();
-
-  auto ops = cct->_conf->get_val<int64_t>("rbd_concurrent_management_ops");
-  SimpleThrottle throttle(ops, true);
-  for (const auto& id : image_ids) {
-    if (throttle.pending_error()) {
-      break;
-    }
-
-    auto& info = (*infos)[id].first;
-    auto& r = (*infos)[id].second;
-    auto req = new ThrottledInfoRequest_v5<I>(ioctx, throttle, id, &info, &r);
     req->send();
   }
 

@@ -57,7 +57,7 @@ namespace {
     out->du = in.du;
   }
 
-  void cvt_image_info(librbd::xImageInfo& in, librbdx::image_info_t* out) {
+  void cvt_image_info(librbd::xImageInfo_v2& in, librbdx::image_info_t* out) {
     out->id = std::move(in.id);
     out->name = std::move(in.name);
     out->order = in.order;
@@ -69,6 +69,12 @@ namespace {
     out->snapc.seq = in.snapc.seq;
     for (auto& s : in.snapc.snaps) {
       out->snapc.snaps.push_back(s);
+    }
+    for (auto& it : in.snaps) {
+      auto& snap = out->snaps[it.first];
+      auto& tsnap = in.snaps[it.first];
+
+      cvt_snap_info(tsnap, &snap);
     }
     out->parent.spec.pool_id = in.parent.spec.pool_id;
     out->parent.spec.image_id = std::move(in.parent.spec.image_id);
@@ -101,6 +107,12 @@ namespace {
     for (auto& s : in.snapc.snaps) {
       out->snapc.snaps.push_back(s);
     }
+    for (auto& it : in.snaps) {
+      auto& snap = out->snaps[it.first];
+      auto& tsnap = in.snaps[it.first];
+
+      cvt_snap_info(tsnap, &snap);
+    }
     out->parent.spec.pool_id = in.parent.spec.pool_id;
     out->parent.spec.image_id = std::move(in.parent.spec.image_id);
     out->parent.spec.snap_id = in.parent.spec.snap_id;
@@ -117,12 +129,7 @@ namespace {
         out->qos.bps = std::atoll(kv.second.c_str());
       }
     }
-    for (auto& it : in.snaps) {
-      auto& snap = out->snaps[it.first];
-      auto& tsnap = in.snaps[it.first];
-
-      cvt_snap_info(tsnap, &snap);
-    }
+    out->du = in.du;
   }
 
   void cvt_image_info_v3(librbd::xImageInfo_v3& in, librbdx::image_info_v3_t* out) {
@@ -138,99 +145,29 @@ namespace {
     for (auto& s : in.snapc.snaps) {
       out->snapc.snaps.push_back(s);
     }
-    out->parent.spec.pool_id = in.parent.spec.pool_id;
-    out->parent.spec.image_id = std::move(in.parent.spec.image_id);
-    out->parent.spec.snap_id = in.parent.spec.snap_id;
-    out->parent.overlap = in.parent.overlap;
-    in.timestamp.to_timespec(&out->timestamp);
-    out->data_pool_id = in.data_pool_id;
-    for (auto& w : in.watchers) {
-      out->watchers.emplace_back(std::move(w.addr));
-    }
-    for (auto& kv : in.kvs) {
-      if (kv.first == conf_qos_iops_str) {
-        out->qos.iops = std::atoll(kv.second.c_str());
-      } else if (kv.first == conf_qos_bps_str) {
-        out->qos.bps = std::atoll(kv.second.c_str());
-      }
-    }
-    out->du = in.du;
-  }
-
-  void cvt_image_info_v4(librbd::xImageInfo_v4& in, librbdx::image_info_v4_t* out) {
-    out->id = std::move(in.id);
-    out->name = std::move(in.name);
-    out->order = in.order;
-    out->size = in.size;
-    out->stripe_unit = in.stripe_unit;
-    out->stripe_count = in.stripe_count;
-    out->features = in.features;
-    out->flags = in.flags;
-    out->snapc.seq = in.snapc.seq;
-    for (auto& s : in.snapc.snaps) {
-      out->snapc.snaps.push_back(s);
-    }
-    out->parent.spec.pool_id = in.parent.spec.pool_id;
-    out->parent.spec.image_id = std::move(in.parent.spec.image_id);
-    out->parent.spec.snap_id = in.parent.spec.snap_id;
-    out->parent.overlap = in.parent.overlap;
-    in.timestamp.to_timespec(&out->timestamp);
-    out->data_pool_id = in.data_pool_id;
-    for (auto& w : in.watchers) {
-      out->watchers.emplace_back(std::move(w.addr));
-    }
-    for (auto& kv : in.kvs) {
-      if (kv.first == conf_qos_iops_str) {
-        out->qos.iops = std::atoll(kv.second.c_str());
-      } else if (kv.first == conf_qos_bps_str) {
-        out->qos.bps = std::atoll(kv.second.c_str());
-      }
-    }
-    out->du = in.du;
-    for (auto& it : in.snaps) {
-      auto& snap = out->snaps[it.first];
-      auto& tsnap = in.snaps[it.first];
-
-      cvt_snap_info(tsnap, &snap);
-    }
-  }
-
-  void cvt_image_info_v5(librbd::xImageInfo_v5& in, librbdx::image_info_v5_t* out) {
-    out->id = std::move(in.id);
-    out->name = std::move(in.name);
-    out->order = in.order;
-    out->size = in.size;
-    out->stripe_unit = in.stripe_unit;
-    out->stripe_count = in.stripe_count;
-    out->features = in.features;
-    out->flags = in.flags;
-    out->snapc.seq = in.snapc.seq;
-    for (auto& s : in.snapc.snaps) {
-      out->snapc.snaps.push_back(s);
-    }
-    out->parent.spec.pool_id = in.parent.spec.pool_id;
-    out->parent.spec.image_id = std::move(in.parent.spec.image_id);
-    out->parent.spec.snap_id = in.parent.spec.snap_id;
-    out->parent.overlap = in.parent.overlap;
-    in.timestamp.to_timespec(&out->timestamp);
-    out->data_pool_id = in.data_pool_id;
-    for (auto& w : in.watchers) {
-      out->watchers.emplace_back(std::move(w.addr));
-    }
-    for (auto& kv : in.kvs) {
-      if (kv.first == conf_qos_iops_str) {
-        out->qos.iops = std::atoll(kv.second.c_str());
-      } else if (kv.first == conf_qos_bps_str) {
-        out->qos.bps = std::atoll(kv.second.c_str());
-      }
-    }
-    out->du = in.du;
     for (auto& it : in.snaps) {
       auto& snap = out->snaps[it.first];
       auto& tsnap = in.snaps[it.first];
 
       cvt_snap_info_v2(tsnap, &snap);
     }
+    out->parent.spec.pool_id = in.parent.spec.pool_id;
+    out->parent.spec.image_id = std::move(in.parent.spec.image_id);
+    out->parent.spec.snap_id = in.parent.spec.snap_id;
+    out->parent.overlap = in.parent.overlap;
+    in.timestamp.to_timespec(&out->timestamp);
+    out->data_pool_id = in.data_pool_id;
+    for (auto& w : in.watchers) {
+      out->watchers.emplace_back(std::move(w.addr));
+    }
+    for (auto& kv : in.kvs) {
+      if (kv.first == conf_qos_iops_str) {
+        out->qos.iops = std::atoll(kv.second.c_str());
+      } else if (kv.first == conf_qos_bps_str) {
+        out->qos.bps = std::atoll(kv.second.c_str());
+      }
+    }
+    out->du = in.du;
   }
 
   void cvt_trash_info(librbd::xTrashInfo& in, librbdx::trash_info_t* out) {
@@ -351,30 +288,6 @@ int xRBD::get_info_v3(librados::IoCtx& ioctx,
     return r;
   }
   cvt_image_info_v3(tinfo, info);
-  return r;
-}
-
-int xRBD::get_info_v4(librados::IoCtx& ioctx,
-    const std::string& image_id, image_info_v4_t* info) {
-  int r = 0;
-  librbd::xImageInfo_v4 tinfo;
-  r = librbd::api::xImage<>::get_info_v4(ioctx, image_id, &tinfo);
-  if (r < 0) {
-    return r;
-  }
-  cvt_image_info_v4(tinfo, info);
-  return r;
-}
-
-int xRBD::get_info_v5(librados::IoCtx& ioctx,
-    const std::string& image_id, image_info_v5_t* info) {
-  int r = 0;
-  librbd::xImageInfo_v5 tinfo;
-  r = librbd::api::xImage<>::get_info_v5(ioctx, image_id, &tinfo);
-  if (r < 0) {
-    return r;
-  }
-  cvt_image_info_v5(tinfo, info);
   return r;
 }
 
@@ -635,104 +548,6 @@ int xRBD::list_info_v3(librados::IoCtx& ioctx,
 
     // info
     cvt_image_info_v3(tinfo, &info);
-    // error code
-    r = tr;
-  }
-  return r;
-}
-
-int xRBD::list_info_v4(librados::IoCtx& ioctx,
-    std::map<std::string, std::pair<image_info_v4_t, int>>* infos) {
-  int r = 0;
-  infos->clear();
-  std::map<std::string, std::pair<librbd::xImageInfo_v4, int>> tinfos;
-  r = librbd::api::xImage<>::list_info_v4(ioctx, &tinfos);
-  if (r < 0) {
-    return r;
-  }
-  for (auto& it : tinfos) {
-    auto& info = (*infos)[it.first].first;
-    auto& r = (*infos)[it.first].second;
-
-    auto& tinfo = it.second.first;
-    auto& tr = it.second.second;
-
-    // info
-    cvt_image_info_v4(tinfo, &info);
-    // error code
-    r = tr;
-  }
-  return r;
-}
-
-int xRBD::list_info_v4(librados::IoCtx& ioctx,
-    const std::vector<std::string>& image_ids,
-    std::map<std::string, std::pair<image_info_v4_t, int>>* infos) {
-  int r = 0;
-  infos->clear();
-  std::map<std::string, std::pair<librbd::xImageInfo_v4, int>> tinfos;
-  r = librbd::api::xImage<>::list_info_v4(ioctx, image_ids, &tinfos);
-  if (r < 0) {
-    return r;
-  }
-  for (auto& it : tinfos) {
-    auto& info = (*infos)[it.first].first;
-    auto& r = (*infos)[it.first].second;
-
-    auto& tinfo = it.second.first;
-    auto& tr = it.second.second;
-
-    // info
-    cvt_image_info_v4(tinfo, &info);
-    // error code
-    r = tr;
-  }
-  return r;
-}
-
-int xRBD::list_info_v5(librados::IoCtx& ioctx,
-    std::map<std::string, std::pair<image_info_v5_t, int>>* infos) {
-  int r = 0;
-  infos->clear();
-  std::map<std::string, std::pair<librbd::xImageInfo_v5, int>> tinfos;
-  r = librbd::api::xImage<>::list_info_v5(ioctx, &tinfos);
-  if (r < 0) {
-    return r;
-  }
-  for (auto& it : tinfos) {
-    auto& info = (*infos)[it.first].first;
-    auto& r = (*infos)[it.first].second;
-
-    auto& tinfo = it.second.first;
-    auto& tr = it.second.second;
-
-    // info
-    cvt_image_info_v5(tinfo, &info);
-    // error code
-    r = tr;
-  }
-  return r;
-}
-
-int xRBD::list_info_v5(librados::IoCtx& ioctx,
-    const std::vector<std::string>& image_ids,
-    std::map<std::string, std::pair<image_info_v5_t, int>>* infos) {
-  int r = 0;
-  infos->clear();
-  std::map<std::string, std::pair<librbd::xImageInfo_v5, int>> tinfos;
-  r = librbd::api::xImage<>::list_info_v5(ioctx, image_ids, &tinfos);
-  if (r < 0) {
-    return r;
-  }
-  for (auto& it : tinfos) {
-    auto& info = (*infos)[it.first].first;
-    auto& r = (*infos)[it.first].second;
-
-    auto& tinfo = it.second.first;
-    auto& tr = it.second.second;
-
-    // info
-    cvt_image_info_v5(tinfo, &info);
     // error code
     r = tr;
   }
