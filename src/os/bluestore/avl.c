@@ -99,6 +99,7 @@
  */
 
 #include <assert.h>
+#include <stddef.h>
 #include <sys/types.h>
 #include <sys/param.h>
 #include "avl.h"

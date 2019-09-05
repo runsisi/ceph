@@ -31,6 +31,11 @@ if(POLICY CMP0051)
   # the old behavior now.
   cmake_policy(SET CMP0051 OLD)
 endif()
+
+if(POLICY CMP0075)
+  cmake_policy(SET CMP0075 OLD)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules/")
 
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")

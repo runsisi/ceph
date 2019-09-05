@@ -15,15 +15,7 @@ namespace librbd {
 namespace api {
 
 namespace {
-  std::string parent_key(uint64_t pool_id, std::string image_id,
-      snapid_t snap_id) {
-    bufferlist key_bl;
-    ::encode(pool_id, key_bl);
-    ::encode(image_id, key_bl);
-    ::encode(snap_id, key_bl);
-    return std::string(key_bl.c_str(), key_bl.length());
-  }
-
+  // see parent_key from cls_rbd.cc
   ParentSpec parent_from_key(string key) {
     ParentSpec parent;
     bufferlist bl;

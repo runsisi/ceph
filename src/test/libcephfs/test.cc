@@ -34,6 +34,10 @@
 #include <vector>
 #include <thread>
 
+#ifndef ALLPERMS
+#define ALLPERMS (S_ISUID|S_ISGID|S_ISVTX|S_IRWXU|S_IRWXG|S_IRWXO)
+#endif
+
 TEST(LibCephFS, OpenEmptyComponent) {
 
   pid_t mypid = getpid();

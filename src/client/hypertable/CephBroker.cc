@@ -46,11 +46,21 @@ std::atomic<int> CephBroker::ms_next_fd{0};
 /* A thread-safe version of strerror */
 static std::string cpp_strerror(int err)
 {
-  char buf[128];
   if (err < 0)
     err = -err;
   std::ostringstream oss;
-  oss << strerror_r(err, buf, sizeof(buf));
+  char error_buf[128] = "unkown error";
+  char *p;
+#ifdef STRERROR_R_CHAR_P
+  p = strerror_r(err, error_buf, sizeof(error_buf));
+#else
+  if (strerror_r(err, error_buf, sizeof(error_buf)) < 0) {
+    p = "unkown error";
+  } else {
+    p = error_buf;
+  }
+#endif
+  oss << p;
   return oss.str();
 }
 
@@ -515,12 +525,19 @@ void CephBroker::debug(ResponseCallback *cb, int32_t command,
 }
 
 void CephBroker::report_error(ResponseCallback *cb, int error) {
-  char errbuf[128];
-  errbuf[0] = 0;
+  char error_buf[128] = "unkown error";
+  char *p;
+#ifdef STRERROR_R_CHAR_P
+  p = strerror_r(error, error_buf, sizeof(error_buf));
+#else
+  if (strerror_r(error, error_buf, sizeof(error_buf)) < 0) {
+    p = "unkown error";
+  } else {
+    p = error_buf;
+  }
+#endif
 
-  strerror_r(error, errbuf, 128);
-
-  cb->error(Error::DFSBROKER_IO_ERROR, errbuf);
+  cb->error(Error::DFSBROKER_IO_ERROR, p);
 }
 
 

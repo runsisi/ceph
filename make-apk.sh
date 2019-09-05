@@ -22,5 +22,5 @@ source .abuild/abuild.conf
 # package it
 #
 cd alpine
-abuild checksum && JOBS=$(expr $(nproc) / 2) SRCDEST=$(pwd) REPODEST=$(pwd) PACKAGER_PRIVKEY=$PACKAGER_PRIVKEY abuild -r
+abuild checksum && JOBS=$(expr $(nproc)) SRCDEST=$(pwd) REPODEST=$(pwd) PACKAGER_PRIVKEY=$PACKAGER_PRIVKEY abuild -r
 cd ..

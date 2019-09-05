@@ -57,7 +57,7 @@ namespace crimson {
       return std::make_pair(osd, shard);
     }
 
-    std::string format_time(const Time& time, uint modulo = 1000);
+    std::string format_time(const Time& time, unsigned int modulo = 1000);
 
     void debugger();
 

@@ -41,15 +41,19 @@ static int run_command(const char *command)
 		return WEXITSTATUS(status);
 
 	if (status < 0) {
-		char error_buf[80];
+	        char error_buf[128] = "unkown error";
+	        char *p;
 #ifdef STRERROR_R_CHAR_P
-		char* dummy = strerror_r(errno, error_buf, sizeof(error_buf));
-		(void)dummy;
+	        p = strerror_r(errno, error_buf, sizeof(error_buf));
 #else
-		strerror_r(errno, error_buf, sizeof(error_buf));
+	        if (strerror_r(errno, error_buf, sizeof(error_buf)) < 0) {
+	          p = "unkown error";
+	        } else {
+	          p = error_buf;
+	        }
 #endif
 		fprintf(stderr, "couldn't run '%s': %s\n", command,
-			error_buf);
+			p);
 	} else if (WIFSIGNALED(status)) {
 		fprintf(stderr, "'%s' killed by signal %d\n", command,
 			WTERMSIG(status));

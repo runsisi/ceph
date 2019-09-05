@@ -18,6 +18,7 @@
 #include <chrono>
 
 #include "include/encoding.h"
+#include <sys/time.h>
 
 #if defined(DARWIN)
 #include <sys/_types/_timespec.h>

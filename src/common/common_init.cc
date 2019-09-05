@@ -23,6 +23,10 @@
 #define _STR(x) #x
 #define STRINGIFY(x) _STR(x)
 
+#ifndef ACCESSPERMS
+#define ACCESSPERMS (S_IRWXU|S_IRWXG|S_IRWXO)
+#endif
+
 CephContext *common_preinit(const CephInitParameters &iparams,
 			    enum code_environment_t code_env, int flags)
 {
