@@ -90,8 +90,8 @@ subpackages="
 	$pkgname-mon
 	$pkgname-fuse:ceph_fuse
 	$pkgname-osd
-	$pkgname-bash-completion:bash_completion
 	$pkgname-dev
+	rbd-nbd:rbd_nbd
 	librbd
 	libcephfs
 	librados
@@ -228,25 +228,9 @@ common() {
 	install="$pkgname-common.pre-install"
 
 	_pkg $_bindir ceph \
-		ceph-authtool \
-		ceph-conf \
-		ceph-dencoder \
-		ceph-rbdnamer \
-		ceph-syn \
-		ceph-crush-location \
-		cephfs-data-scan \
-		cephfs-journal-tool \
-		cephfs-table-tool \
 		rados \
-		rbd \
-		rbd-replay \
-		rbd-replay-many \
-		rbdmap \
-		ceph-post-file
+		rbd
 	_pkg $_syssbindir mount.ceph
-	_pkg $_datadir/ceph known_hosts_drop.ceph.com \
-		id_rsa_drop.ceph.com \
-		id_rsa_drop.ceph.com.pub
 	_pkg $_sysconfdir/ceph rbdmap
 
 	_pkg "$(_py2_sitelib)" ceph_argparse.py* ceph_daemon.py*
@@ -283,6 +267,15 @@ ceph_fuse() {
 	depends=
 	_pkg $_bindir ceph-fuse
 	_pkg $_syssbindir mount.fuse.ceph
+}
+
+rbd_nbd() {
+	pkgdesc="NBD based client to map Ceph rbd images to local device."
+	depends="
+		librados=$pkgver-r$pkgrel
+		librbd=$pkgver-r$pkgrel
+	"
+	_pkg $_bindir rbd-nbd
 }
 
 osd() {
@@ -382,13 +375,6 @@ ceph_test() {
 		ceph-debugpack
 
 	_pkg $_libdir ceph/ceph-monstore-update-crush.sh
-}
-
-bash_completion() {
-	pkgdesc="Bash completions for Ceph"
-	depends=
-	install_if="ceph=$pkgver-r$pkgrel bash-completion"
-	_pkg $_sysconfdir/bash_completion.d '*'
 }
 
 mgr() {
