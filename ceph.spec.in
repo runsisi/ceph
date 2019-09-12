@@ -255,7 +255,6 @@ BuildRequires:  openldap2-devel
 BuildRequires:  cunit-devel
 BuildRequires:	python%{_python_buildid}-setuptools
 BuildRequires:	python%{_python_buildid}-Cython
-BuildRequires:	python%{_python_buildid}-PrettyTable
 BuildRequires:	python%{_python_buildid}-Sphinx
 BuildRequires:  rdma-core-devel
 BuildRequires:	liblz4-devel >= 1.7
@@ -284,7 +283,6 @@ BuildRequires:	python%{python3_version_nodots}-Cython
 %else
 BuildRequires:	python%{python3_pkgversion}-Cython
 %endif
-BuildRequires:	python%{_python_buildid}-prettytable
 BuildRequires:	python%{_python_buildid}-sphinx
 BuildRequires:	lz4-devel >= 1.7
 %endif
@@ -402,10 +400,8 @@ Requires:	python%{_python_buildid}-rgw = %{_epoch_prefix}%{version}-%{release}
 Requires:	python%{_python_buildid}-ceph-argparse = %{_epoch_prefix}%{version}-%{release}
 Requires:	python%{_python_buildid}-requests
 %if 0%{?fedora} || 0%{?rhel}
-Requires:	python%{_python_buildid}-prettytable
 %endif
 %if 0%{?suse_version}
-Requires:	python%{_python_buildid}-PrettyTable
 %endif
 %if 0%{with libradosstriper}
 Requires:	libradosstriper1 = %{_epoch_prefix}%{version}-%{release}
