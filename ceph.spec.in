@@ -2150,6 +2150,7 @@ fi
 %files -n python-ceph-argparse
 %{python_sitelib}/ceph_argparse.py*
 %{python_sitelib}/ceph_daemon.py*
+%{python_sitelib}/ceph_prettytable.py*
 %endif
 
 %files -n python%{python3_pkgversion}-ceph-argparse
@@ -2157,6 +2158,8 @@ fi
 %{python3_sitelib}/__pycache__/ceph_argparse.cpython*.py*
 %{python3_sitelib}/ceph_daemon.py
 %{python3_sitelib}/__pycache__/ceph_daemon.cpython*.py*
+%{python3_sitelib}/ceph_prettytable.py
+%{python3_sitelib}/__pycache__/ceph_prettytable.cpython*.py*
 
 %if 0%{with cephfs_shell}
 %files -n cephfs-shell

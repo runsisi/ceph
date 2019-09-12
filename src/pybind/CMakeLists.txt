@@ -57,6 +57,7 @@ foreach(python_version ${py_vers})
   install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/ceph_argparse.py
     ${CMAKE_CURRENT_SOURCE_DIR}/ceph_daemon.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/ceph_prettytable.py
     ${CMAKE_CURRENT_SOURCE_DIR}/ceph_volume_client.py
     DESTINATION ${PYTHON${PYTHON_VERSION}_INSTDIR})
 endforeach()
