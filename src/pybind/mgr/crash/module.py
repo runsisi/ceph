@@ -3,7 +3,7 @@ import datetime
 import errno
 import json
 from collections import defaultdict
-from prettytable import PrettyTable
+from ceph_prettytable import PrettyTable
 from threading import Event
 
 

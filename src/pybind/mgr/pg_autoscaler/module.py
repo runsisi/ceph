@@ -9,7 +9,7 @@ import threading
 import uuid
 from six import itervalues, iteritems
 from collections import defaultdict
-from prettytable import PrettyTable, PLAIN_COLUMNS
+from ceph_prettytable import PrettyTable, PLAIN_COLUMNS
 
 from mgr_module import MgrModule
 

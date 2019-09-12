@@ -6,7 +6,7 @@ osd_perf_query module
 from itertools import groupby
 from time import time
 import errno
-import prettytable
+import ceph_prettytable as prettytable
 
 from mgr_module import MgrModule
 
