@@ -154,6 +154,7 @@ tar cvf $outfile.version.tar $outfile/src/.git_version $outfile/ceph.spec $outfi
 # at the three URLs referenced below (may involve uploading to download.ceph.com)
 boost_version=1.72.0
 download_boost $boost_version 59c9b274bc451cf91a9ba1dd2c7fdcaf5d60b1b3aa83f2c9fa143417cc660722 \
+               http://192.168.5.4/qa \
                https://dl.bintray.com/boostorg/release/$boost_version/source \
                https://downloads.sourceforge.net/project/boost/boost/$boost_version \
                https://download.ceph.com/qa
