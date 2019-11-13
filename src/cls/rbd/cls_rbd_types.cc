@@ -902,5 +902,55 @@ std::ostream& operator<<(std::ostream& os, const AssertSnapcSeqState& state) {
   return os;
 }
 
+void xclsSnapInfo::encode(bufferlist& bl) const {
+  ENCODE_START(1, 1, bl);
+  encode(id, bl);
+  encode(snapshot_namespace, bl);
+  encode(name, bl);
+  encode(image_size, bl);
+  encode(flags, bl);
+  encode(protection_status, bl);
+  encode(timestamp, bl);
+  encode(children, bl);
+  ENCODE_FINISH(bl);
+}
+
+void xclsSnapInfo::decode(bufferlist::const_iterator& it) {
+  DECODE_START(1, it);
+  decode(id, it);
+  decode(snapshot_namespace, it);
+  decode(name, it);
+  decode(image_size, it);
+  decode(flags, it);
+  decode(protection_status, it);
+  decode(timestamp, it);
+  decode(children, it);
+  DECODE_FINISH(it);
+}
+
+void xclsSnapInfo::dump(Formatter *f) const {
+  f->dump_unsigned("id", id);
+  f->open_object_section("namespace");
+  snapshot_namespace.dump(f);
+  f->close_section();
+  f->dump_string("name", name);
+  f->dump_unsigned("image_size", image_size);
+  f->dump_unsigned("flags", flags);
+  f->dump_unsigned("protection_status", protection_status);
+  f->dump_int("timestamp", timestamp);
+  f->open_array_section("children");
+  for (auto& c : children) {
+    c.dump(f);
+  }
+  f->close_section();
+}
+
+void xclsSnapInfo::generate_test_instances(std::list<xclsSnapInfo*> &o) {
+  o.push_back(new xclsSnapInfo(1ULL,
+      UserSnapshotNamespace{}, "snap1",
+      123, 128, RBD_PROTECTION_STATUS_UNPROTECTED,
+      123456, {{1, "", "image_id"}}));
+}
+
 } // namespace rbd
 } // namespace cls
