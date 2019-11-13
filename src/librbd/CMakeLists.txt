@@ -35,6 +35,9 @@ set(librbd_internal_srcs
   api/PoolMetadata.cc
   api/Snapshot.cc
   api/Trash.cc
+  api/xChild.cc
+  api/xImage.cc
+  api/xTrash.cc
   cache/ImageWriteback.cc
   cache/ObjectCacherObjectDispatch.cc
   cache/PassthroughImageCache.cc
@@ -139,7 +142,7 @@ set(librbd_internal_srcs
   watcher/RewatchRequest.cc
   ${CMAKE_SOURCE_DIR}/src/common/ContextCompletion.cc)
 
-add_library(rbd_api STATIC librbd.cc)
+add_library(rbd_api STATIC librbd.cc librbdx.cc)
 add_library(rbd_internal STATIC
   ${librbd_internal_srcs}
   $<TARGET_OBJECTS:rados_snap_set_diff_obj>)
@@ -156,7 +159,7 @@ target_link_libraries(rbd_internal PRIVATE
   osdc)
 
 add_library(librbd ${CEPH_SHARED}
-  librbd.cc)
+  librbd.cc librbdx.cc)
 if(WITH_LTTNG)
   add_dependencies(librbd librbd-tp)
 endif()

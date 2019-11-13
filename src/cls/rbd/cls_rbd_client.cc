@@ -8,6 +8,7 @@
 #include "include/rbd_types.h"
 #include "include/rados/librados.hpp"
 #include "common/bit_vector.hpp"
+#include "osd/osd_types.h"
 
 #include <errno.h>
 
@@ -2801,6 +2802,202 @@ int sparsify(librados::IoCtx *ioctx, const std::string &oid, size_t sparse_size,
   sparsify(&op, sparse_size, remove_empty);
 
   return ioctx->operate(oid, &op);
+}
+
+int x_metadata_list_finish(bufferlist::const_iterator *it,
+        std::map<std::string, std::string> *kvs)
+{
+  ceph_assert(kvs);
+  std::map<std::string, bufferlist> raw;
+  try {
+    decode(raw, *it);
+  } catch (const buffer::error &err) {
+    return -EBADMSG;
+  }
+
+  for (auto &it : raw) {
+    std::string val(it.second.c_str(), it.second.length());
+    kvs->insert({it.first, val});
+  }
+  return 0;
+}
+
+void x_size_get_start(librados::ObjectReadOperation *op,
+    snapid_t snap_id) {
+  bufferlist snap_bl;
+  encode(snap_id, snap_bl);
+  op->exec("rbd", "x_size_get", snap_bl);
+}
+
+int x_size_get_finish(bufferlist::const_iterator *it,
+    uint8_t *order, uint64_t *size,
+    uint64_t *stripe_unit, uint64_t *stripe_count,
+    uint64_t *features, uint64_t *flags) {
+  ceph_assert(order);
+  ceph_assert(size);
+  ceph_assert(stripe_unit);
+  ceph_assert(stripe_count);
+  ceph_assert(features);
+  ceph_assert(flags);
+
+  try {
+    decode(*order, *it);
+    decode(*size, *it);
+    decode(*stripe_unit, *it);
+    decode(*stripe_count, *it);
+    decode(*features, *it);
+    decode(*flags, *it);
+  } catch (const buffer::error &err) {
+    return -EBADMSG;
+  }
+  return 0;
+}
+
+void x_snapc_get_start(librados::ObjectReadOperation *op) {
+  bufferlist empty_bl;
+  op->exec("rbd", "get_snapcontext", empty_bl);
+}
+
+int x_snapc_get_finish(bufferlist::const_iterator *it,
+    ::SnapContext *snapc) {
+  ceph_assert(snapc);
+
+  try {
+    decode(*snapc, *it);
+  } catch (const buffer::error &err) {
+    return -EBADMSG;
+  }
+  return 0;
+}
+
+void x_image_get_start(librados::ObjectReadOperation *op) {
+  bufferlist empty_bl;
+  op->exec("rbd", "x_image_get", empty_bl);
+  op->list_watchers();
+}
+
+int x_image_get_finish(bufferlist::const_iterator *it,
+    uint8_t *order,
+    uint64_t *size,
+    uint64_t *stripe_unit,
+    uint64_t *stripe_count,
+    uint64_t *features,
+    uint64_t *flags,
+    ::SnapContext *snapc,
+    std::map<snapid_t, cls::rbd::xclsSnapInfo> *snaps,
+    librbd::ParentImageInfo *parent,
+    utime_t *timestamp,
+    int64_t *data_pool_id,
+    std::vector<obj_watch_t> *watchers) {
+  ceph_assert(order);
+  ceph_assert(size);
+  ceph_assert(stripe_unit);
+  ceph_assert(stripe_count);
+  ceph_assert(features);
+  ceph_assert(flags);
+  ceph_assert(snapc);
+  ceph_assert(snaps);
+  ceph_assert(parent);
+  ceph_assert(timestamp);
+  ceph_assert(data_pool_id);
+  ceph_assert(watchers);
+
+  snapc->clear();
+  snaps->clear();
+  watchers->clear();
+
+  try {
+    // x_image_get
+    decode(*order, *it);
+    decode(*size, *it);
+    decode(*stripe_unit, *it);
+    decode(*stripe_count, *it);
+    decode(*features, *it);
+    decode(*flags, *it);
+    decode(*snapc, *it);
+    decode(*snaps, *it);
+    decode(parent->spec, *it);
+    std::optional<uint64_t> parent_overlap;
+    decode(parent_overlap, *it);
+    if (parent_overlap) {
+      parent->overlap = *parent_overlap;
+    }
+    decode(*timestamp, *it);
+    decode(*data_pool_id, *it);
+    // list_watchers
+    obj_list_watch_response_t resp;
+    decode(resp, *it);
+    for (list<watch_item_t>::iterator i = resp.entries.begin() ;
+	 i != resp.entries.end() ; ++i) {
+      obj_watch_t ow;
+      ostringstream sa;
+      sa << i->addr;
+      strncpy(ow.addr, sa.str().c_str(), sizeof(ow.addr) - 1);
+      ow.addr[sizeof(ow.addr) - 1] = '\0';
+      ow.watcher_id = i->name.num();
+      ow.cookie = i->cookie;
+      ow.timeout_seconds = i->timeout_seconds;
+      watchers->push_back(ow);
+    }
+  } catch (const buffer::error &err) {
+    return -EBADMSG;
+  }
+  return 0;
+}
+
+void x_snap_get_start(librados::ObjectReadOperation *op,
+    snapid_t snap_id) {
+  bufferlist bl;
+  encode(snap_id, bl);
+  op->exec("rbd", "x_snap_get", bl);
+}
+
+int x_snap_get_finish(bufferlist::const_iterator* it,
+    cls::rbd::xclsSnapInfo* snap_info) {
+  try {
+    decode(*snap_info, *it);
+  } catch (const buffer::error &err) {
+    return -EBADMSG;
+  }
+  return 0;
+}
+
+void x_child_list_start(librados::ObjectReadOperation *op,
+    const std::string &start, uint64_t max_return)
+{
+  bufferlist in_bl;
+  encode(start, in_bl);
+  encode(max_return, in_bl);
+
+  op->exec("rbd", "x_child_list", in_bl);
+}
+
+int x_child_list_finish(bufferlist::const_iterator *it,
+    map<string, set<string>> *images)
+{
+  try {
+    decode(*images, *it);
+  } catch (const buffer::error &err) {
+    return -EBADMSG;
+  }
+  return 0;
+}
+
+int x_child_list(librados::IoCtx *ioctx,
+    const std::string &start, uint64_t max_return,
+    map<string, set<string>> *images)
+{
+  librados::ObjectReadOperation op;
+  x_child_list_start(&op, start, max_return);
+
+  bufferlist out_bl;
+  int r = ioctx->operate(RBD_CHILDREN, &op, &out_bl);
+  if (r < 0) {
+    return r;
+  }
+
+  auto iter = out_bl.cbegin();
+  return x_child_list_finish(&iter, images);
 }
 
 } // namespace cls_client

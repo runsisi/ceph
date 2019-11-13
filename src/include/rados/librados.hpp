@@ -642,6 +642,8 @@ inline namespace v14_2_0 {
      */
     void list_watchers(std::list<obj_watch_t> *out_watchers, int *prval);
 
+    void list_watchers();
+
     /**
      * list snapshot clones associated with a logical object
      *

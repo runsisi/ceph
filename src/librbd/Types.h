@@ -5,6 +5,8 @@
 #define LIBRBD_TYPES_H
 
 #include "include/types.h"
+#include "include/rados/rados_types.hpp"
+#include "common/snap_types.h"
 #include "cls/rbd/cls_rbd_types.h"
 #include "deep_copy/Types.h"
 #include <map>
@@ -117,6 +119,115 @@ struct MigrationInfo {
   bool empty() const {
     return pool_id == -1;
   }
+};
+
+struct xSizeInfo {
+  std::string image_id;
+  snapid_t snap_id;
+  uint8_t order;
+  uint64_t size;
+  uint64_t stripe_unit;
+  uint64_t stripe_count;
+  uint64_t features;
+  uint64_t flags;
+};
+
+struct xDuInfo {
+  uint64_t size;
+  uint64_t du;
+  // if fast-diff is disabled then `dirty` equals `du`
+  uint64_t dirty;       // only available for snap
+};
+
+// do not default initialize the fields
+// https://stackoverflow.com/questions/37776823/could-not-convert-from-brace-enclosed-initializer-list-to-struct
+struct xSnapInfo {
+  snapid_t id;
+  std::string name;
+  cls::rbd::SnapshotNamespaceType snap_ns_type;
+  uint64_t size;
+  uint64_t flags;
+  uint8_t protection_status;
+  utime_t timestamp;
+};
+
+// snap info v1 + disk usage
+struct xSnapInfo_v2 {
+  snapid_t id;
+  std::string name;
+  cls::rbd::SnapshotNamespaceType snap_ns_type;
+  uint64_t size;
+  uint64_t flags;
+  uint8_t protection_status;
+  utime_t timestamp;
+  uint64_t du;
+  uint64_t dirty;       // if fast-diff is disabled then `dirty` equals `du`
+};
+
+struct xImageInfo {
+  std::string id;
+  std::string name;
+  uint8_t order = 0;
+  uint64_t size = 0;
+  uint64_t stripe_unit = 0;
+  uint64_t stripe_count = 0;
+  uint64_t features = 0;
+  uint64_t flags = 0;
+  SnapContext snapc;
+  std::map<snapid_t, xSnapInfo> snaps;
+  ParentImageInfo parent;
+  utime_t timestamp;
+  int64_t data_pool_id = -1;
+  std::vector<obj_watch_t> watchers;
+  std::map<std::string, std::string> kvs;
+};
+
+// image info v1 + disk usage
+struct xImageInfo_v2 {
+  std::string id;
+  std::string name;
+  uint8_t order = 0;
+  uint64_t size = 0;
+  uint64_t stripe_unit = 0;
+  uint64_t stripe_count = 0;
+  uint64_t features = 0;
+  uint64_t flags = 0;
+  SnapContext snapc;
+  std::map<snapid_t, xSnapInfo> snaps;
+  ParentImageInfo parent;
+  utime_t timestamp;
+  int64_t data_pool_id = -1;
+  std::vector<obj_watch_t> watchers;
+  std::map<std::string, std::string> kvs;
+  uint64_t du;
+};
+
+// image info v2 + disk usage + snaps v2
+struct xImageInfo_v3 {
+  std::string id;
+  std::string name;
+  uint8_t order = 0;
+  uint64_t size = 0;
+  uint64_t stripe_unit = 0;
+  uint64_t stripe_count = 0;
+  uint64_t features = 0;
+  uint64_t flags = 0;
+  SnapContext snapc;
+  std::map<snapid_t, xSnapInfo_v2> snaps;
+  ParentImageInfo parent;
+  utime_t timestamp;
+  int64_t data_pool_id = -1;
+  std::vector<obj_watch_t> watchers;
+  std::map<std::string, std::string> kvs;
+  uint64_t du;
+};
+
+struct xTrashInfo {
+  std::string id;
+  std::string name;
+  cls::rbd::TrashImageSource source;
+  utime_t deletion_time;
+  utime_t deferment_end_time;
 };
 
 } // namespace librbd

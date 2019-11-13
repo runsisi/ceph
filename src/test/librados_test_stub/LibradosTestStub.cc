@@ -1320,6 +1320,29 @@ int cls_cxx_map_get_val(cls_method_context_t hctx, const string &key,
   return 0;
 }
 
+int cls_cxx_map_get_vals(cls_method_context_t hctx, const std::set<string> &keys,
+                         std::map<string, bufferlist> *vals)
+{
+  librados::TestClassHandler::MethodContext *ctx =
+    reinterpret_cast<librados::TestClassHandler::MethodContext*>(hctx);
+
+  for (auto& key: keys) {
+    std::map<string, bufferlist> vals_;
+    int r = ctx->io_ctx_impl->omap_get_vals(ctx->oid, "", key, 1024, &vals_);
+    if (r < 0) {
+      return r;
+    }
+
+    std::map<string, bufferlist>::iterator it = vals_.find(key);
+    if (it == vals_.end()) {
+      vals->insert({key, bufferlist{}});
+    } else {
+      vals->insert({key, it->second});
+    }
+  }
+  return 0;
+}
+
 int cls_cxx_map_get_vals(cls_method_context_t hctx, const string &start_obj,
                          const string &filter_prefix, uint64_t max_to_get,
                          std::map<string, bufferlist> *vals, bool *more) {
