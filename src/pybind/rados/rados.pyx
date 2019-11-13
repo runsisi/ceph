@@ -128,6 +128,7 @@ cdef extern from "rados/librados.h" nogil:
     int rados_create2(rados_t *pcluster, const char *const clustername,
                       const char * const name, uint64_t flags)
     int rados_create_with_context(rados_t *cluster, rados_config_t cct)
+    rados_config_t rados_cct(rados_t cluster)
     int rados_connect(rados_t cluster)
     void rados_shutdown(rados_t cluster)
     uint64_t rados_get_instance_id(rados_t cluster)
@@ -706,6 +707,14 @@ Rados object in state %s." % self.state)
     def __exit__(self, type_, value, traceback):
         self.shutdown()
         return False
+
+    def cct(self):
+        self.require_state("configuring", "connected")
+
+        cdef rados_config_t cct
+        with nogil:
+            cct = rados_cct(self.cluster)
+        return PyCapsule_New(<void *>cct, NULL, NULL)
 
     def version(self):
         """

@@ -2803,5 +2803,97 @@ int sparsify(librados::IoCtx *ioctx, const std::string &oid, size_t sparse_size,
   return ioctx->operate(oid, &op);
 }
 
+void x_image_get_start(librados::ObjectReadOperation* op) {
+  bufferlist empty_bl;
+  op->exec("rbd", "x_image_get", empty_bl);
+}
+
+int x_image_get_finish(bufferlist::const_iterator* it,
+    uint8_t* order,
+    uint64_t* size,
+    uint64_t* features,
+    uint64_t* op_features,
+    uint64_t* flags,
+    std::map<snapid_t, cls::rbd::xclsSnapInfo>* snaps,
+    cls::rbd::ParentImageSpec* parent,
+    int64_t* create_timestamp,
+    int64_t* access_timestamp,
+    int64_t* modify_timestamp,
+    int64_t* data_pool_id,
+    std::vector<std::string>* watchers) {
+  ceph_assert(order);
+  ceph_assert(size);
+  ceph_assert(features);
+  ceph_assert(op_features);
+  ceph_assert(flags);
+  ceph_assert(snaps);
+  ceph_assert(parent);
+  ceph_assert(create_timestamp);
+  ceph_assert(access_timestamp);
+  ceph_assert(modify_timestamp);
+  ceph_assert(data_pool_id);
+  ceph_assert(watchers);
+
+  snaps->clear();
+  watchers->clear();
+
+  try {
+    // x_image_get
+    decode(*order, *it);
+    decode(*size, *it);
+    decode(*features, *it);
+    decode(*op_features, *it);
+    decode(*flags, *it);
+    decode(*snaps, *it);
+    decode(*parent, *it);
+    decode(*create_timestamp, *it);
+    decode(*access_timestamp, *it);
+    decode(*modify_timestamp, *it);
+    decode(*data_pool_id, *it);
+    decode(*watchers, *it);
+  } catch (const buffer::error& err) {
+    return -EBADMSG;
+  }
+  return 0;
+}
+
+void x_child_list_start(librados::ObjectReadOperation *op,
+    const std::string &start, uint64_t max_return)
+{
+  bufferlist in_bl;
+  encode(start, in_bl);
+  encode(max_return, in_bl);
+
+  op->exec("rbd", "x_child_list", in_bl);
+}
+
+int x_child_list_finish(bufferlist::const_iterator *it,
+    map<string, set<string>> *images)
+{
+  try {
+    decode(*images, *it);
+  } catch (const buffer::error &err) {
+    return -EBADMSG;
+  }
+  return 0;
+}
+
+int x_child_list(librados::IoCtx *ioctx,
+    const std::string &start, uint64_t max_return,
+    map<string, set<string>> *images)
+{
+  librados::ObjectReadOperation op;
+  x_child_list_start(&op, start, max_return);
+
+  bufferlist out_bl;
+  int r = ioctx->operate(RBD_CHILDREN, &op, &out_bl);
+  if (r < 0) {
+    return r;
+  }
+
+  auto iter = out_bl.cbegin();
+  return x_child_list_finish(&iter, images);
+}
+
 } // namespace cls_client
 } // namespace librbd

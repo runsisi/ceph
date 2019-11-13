@@ -5,6 +5,7 @@
 #define LIBRBD_TYPES_H
 
 #include "include/types.h"
+#include "common/snap_types.h"
 #include "cls/rbd/cls_rbd_types.h"
 #include "deep_copy/Types.h"
 #include <map>
