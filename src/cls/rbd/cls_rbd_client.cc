@@ -2803,5 +2803,59 @@ int sparsify(librados::IoCtx *ioctx, const std::string &oid, size_t sparse_size,
   return ioctx->operate(oid, &op);
 }
 
+void x_image_get_start(librados::ObjectReadOperation* op) {
+  bufferlist empty_bl;
+  op->exec("rbd", "x_image_get", empty_bl);
+}
+
+int x_image_get_finish(bufferlist::const_iterator* it,
+    uint8_t* order,
+    uint64_t* size,
+    uint64_t* features,
+    uint64_t* op_features,
+    uint64_t* flags,
+    std::map<snapid_t, cls::rbd::xclsSnapInfo>* snaps,
+    cls::rbd::ParentImageSpec* parent,
+    int64_t* create_timestamp,
+    int64_t* access_timestamp,
+    int64_t* modify_timestamp,
+    int64_t* data_pool_id,
+    std::vector<std::string>* watchers) {
+  ceph_assert(order);
+  ceph_assert(size);
+  ceph_assert(features);
+  ceph_assert(op_features);
+  ceph_assert(flags);
+  ceph_assert(snaps);
+  ceph_assert(parent);
+  ceph_assert(create_timestamp);
+  ceph_assert(access_timestamp);
+  ceph_assert(modify_timestamp);
+  ceph_assert(data_pool_id);
+  ceph_assert(watchers);
+
+  snaps->clear();
+  watchers->clear();
+
+  try {
+    // x_image_get
+    decode(*order, *it);
+    decode(*size, *it);
+    decode(*features, *it);
+    decode(*op_features, *it);
+    decode(*flags, *it);
+    decode(*snaps, *it);
+    decode(*parent, *it);
+    decode(*create_timestamp, *it);
+    decode(*access_timestamp, *it);
+    decode(*modify_timestamp, *it);
+    decode(*data_pool_id, *it);
+    decode(*watchers, *it);
+  } catch (const buffer::error& err) {
+    return -EBADMSG;
+  }
+  return 0;
+}
+
 } // namespace cls_client
 } // namespace librbd

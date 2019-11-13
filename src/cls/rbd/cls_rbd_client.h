@@ -604,6 +604,21 @@ void sparsify(librados::ObjectWriteOperation *op, size_t sparse_size,
 int sparsify(librados::IoCtx *ioctx, const std::string &oid, size_t sparse_size,
              bool remove_empty);
 
+void x_image_get_start(librados::ObjectReadOperation* op);
+int x_image_get_finish(bufferlist::const_iterator* it,
+    uint8_t* order,
+    uint64_t* size,
+    uint64_t* features,
+    uint64_t* op_features,
+    uint64_t* flags,
+    std::map<snapid_t, cls::rbd::xclsSnapInfo>* snaps,
+    cls::rbd::ParentImageSpec* parent,
+    int64_t* create_timestamp,
+    int64_t* access_timestamp,
+    int64_t* modify_timestamp,
+    int64_t* data_pool_id,
+    std::vector<std::string>* watchers);
+
 } // namespace cls_client
 } // namespace librbd
 
