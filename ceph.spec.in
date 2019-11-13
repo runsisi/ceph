@@ -409,7 +409,6 @@ Requires:	python%{_python_buildid}-rbd = %{_epoch_prefix}%{version}-%{release}
 Requires:	python%{_python_buildid}-cephfs = %{_epoch_prefix}%{version}-%{release}
 Requires:	python%{_python_buildid}-rgw = %{_epoch_prefix}%{version}-%{release}
 Requires:	python%{_python_buildid}-ceph-argparse = %{_epoch_prefix}%{version}-%{release}
-Requires:	python%{_python_buildid}-requests
 %if 0%{?fedora} || 0%{?rhel}
 %endif
 %if 0%{?suse_version}
