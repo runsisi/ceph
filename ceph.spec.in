@@ -1479,7 +1479,7 @@ fi
 %{_unitdir}/rbdmap.service
 %dir %{_udevrulesdir}
 %{_udevrulesdir}/50-rbd.rules
-%attr(3770,ceph,ceph) %dir %{_localstatedir}/log/ceph/
+%attr(3777,ceph,ceph) %dir %{_localstatedir}/log/ceph/
 %attr(750,ceph,ceph) %dir %{_localstatedir}/lib/ceph/
 
 %pre common
