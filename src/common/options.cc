@@ -448,13 +448,14 @@ std::vector<Option> get_global_options() {
     .add_see_also("admin_socket"),
 
     Option("admin_socket", Option::TYPE_STR, Option::LEVEL_ADVANCED)
-    .set_default("")
+    .set_default("$run_dir/$cluster-$name.$pid.$cctid.casok")
     .set_daemon_default("$run_dir/$cluster-$name.asok")
     .set_flag(Option::FLAG_STARTUP)
     .set_description("path for the runtime control socket file, used by the 'ceph daemon' command")
     .add_service("common"),
 
     Option("admin_socket_mode", Option::TYPE_STR, Option::LEVEL_ADVANCED)
+    .set_default("0777")
     .set_description("file mode to set for the admin socket file, e.g, '0755'")
     .set_flag(Option::FLAG_STARTUP)
     .add_service("common")
