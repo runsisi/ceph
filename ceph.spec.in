@@ -29,6 +29,7 @@
 %bcond_without tcmalloc
 %endif
 %if 0%{?fedora} || 0%{?rhel}
+%bcond_without libceph_selinux
 %bcond_without selinux
 %bcond_without cephfs_java
 %bcond_with lttng
@@ -77,7 +78,11 @@
 %global _defined_if_python2_absent 1
 %endif
 
-%if %{with selinux}
+%if 0%{?fedora} || 0%{?suse_version} || 0%{?rhel} >= 8
+%global weak_deps 1
+%endif
+
+%if %{with selinux} || %{with libceph_selinux}
 # get selinux policy version
 %{!?_selinux_policy_version: %global _selinux_policy_version 0.0.0}
 %if 0%{?rhel} == 7
@@ -140,7 +145,7 @@ Requires(post):	binutils
 BuildRequires:	java-devel
 BuildRequires:	sharutils
 %endif
-%if 0%{with selinux}
+%if 0%{with selinux} || 0%{with libceph_selinux}
 BuildRequires:	checkpolicy
 BuildRequires:	selinux-policy-devel
 %endif
@@ -408,6 +413,11 @@ Requires:	libradosstriper1 = %{_epoch_prefix}%{version}-%{release}
 %{?systemd_requires}
 %if 0%{?suse_version}
 Requires(pre):	pwdutils
+%endif
+%if ! 0%{?weak_deps}
+Requires:	ceph-libceph-selinux
+%else
+Recommends:	ceph-libceph-selinux
 %endif
 %description -n ceph-common
 Common utilities to mount and interact with a ceph storage cluster.
@@ -1063,6 +1073,21 @@ populated file-systems.
 
 %endif
 
+%if 0%{with libceph_selinux}
+
+%package libceph-selinux
+Summary:    SELinux support for Ceph Clients
+%if 0%{?suse_version}
+Group:      System/Filesystems
+%endif
+Requires:   policycoreutils
+Requires(post): selinux-policy-base, policycoreutils,
+Requires(postun): policycoreutils
+%description libceph-selinux
+This package contains SELinux support for Ceph Clients.
+
+%endif
+
 %if 0%{with python2}
 %package -n python-ceph-compat
 Summary:	Compatibility package for Cephs python libraries
@@ -1193,6 +1218,9 @@ ${CMAKE} .. \
 %endif
 %if 0%{with selinux}
     -DWITH_SELINUX=ON \
+%endif
+%if 0%{with libceph_selinux}
+    -DWITH_LIBCEPH_SELINUX=ON \
 %endif
 %if %{with lttng}
     -DWITH_LTTNG=ON \
@@ -2276,6 +2304,25 @@ fi
 exit 0
 
 %endif # with selinux
+
+%if 0%{with libceph_selinux}
+%files libceph-selinux
+%attr(0600,root,root) %{_datadir}/selinux/packages/libceph.pp
+
+%post libceph-selinux
+# Install the policy
+/usr/sbin/semodule -i %{_datadir}/selinux/packages/libceph.pp
+
+exit 0
+
+%postun libceph-selinux
+if [ $1 -eq 0 ]; then
+    # Remove the module
+    /usr/sbin/semodule -n -r libceph > /dev/null 2>&1
+fi
+exit 0
+
+%endif # with libceph_selinux
 
 %if 0%{with python2}
 %files -n python-ceph-compat
