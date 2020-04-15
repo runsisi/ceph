@@ -341,6 +341,10 @@ BuildRequires:  libnuma-devel
 %endif
 %endif
 
+%if 0%{without python2}
+BuildRequires:	/usr/bin/pathfix.py
+%endif
+
 %description
 Ceph is a massively scalable, open-source, distributed storage system that runs
 on commodity hardware and delivers object, block and file system storage.
@@ -1284,6 +1288,13 @@ install -m 644 -D monitoring/prometheus/alerts/ceph_default_alerts.yml %{buildro
 
 %if 0%{?rhel} == 8
 %py_byte_compile %{__python3} %{buildroot}%{python3_sitelib}
+%endif
+
+%if 0%{without python2}
+pathfix.py -pni "%{__python3}" \
+        %{buildroot}%{python3_sitearch} \
+        %{buildroot}%{python3_sitelib} \
+        %{buildroot}%{_bindir}/* %{buildroot}%{_sbindir}/*
 %endif
 
 %clean
