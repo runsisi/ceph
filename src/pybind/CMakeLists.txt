@@ -15,7 +15,7 @@ endif()
 
 foreach(python_version ${py_vers})
   if(${python_version} EQUAL 2)
-    set(PYTHON_VERSION "")
+    set(PYTHON_VERSION ${python_version})
   else(${python_version} EQUAL 2)
     set(PYTHON_VERSION ${python_version})
   endif(${python_version} EQUAL 2)
