@@ -80,6 +80,12 @@
 %if %{with selinux}
 # get selinux policy version
 %{!?_selinux_policy_version: %global _selinux_policy_version 0.0.0}
+%if 0%{?rhel} == 7
+%global _selinux_policy_version 3.13.1-60.el7
+%endif
+%if 0%{?rhel} == 8
+%global _selinux_policy_version 3.14.3-20.el8
+%endif
 %endif
 
 %{!?_udevrulesdir: %global _udevrulesdir /lib/udev/rules.d}
