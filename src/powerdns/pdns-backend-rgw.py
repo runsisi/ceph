@@ -98,7 +98,7 @@ def do_rgw_request(uri, params=None, data=None, headers=None):
 
     query = None
     if params != None:
-        query = '&'.join("%s=%s" % (key,val) for (key,val) in params.iteritems())
+        query = '&'.join("%s=%s" % (key, val) for (key, val) in params.items())
 
     c = pycurl.Curl()
     b = StringIO.StringIO()
