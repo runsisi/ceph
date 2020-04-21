@@ -3791,8 +3791,8 @@ def main_activate(args):
                 raise Error('%s is not a multipath block device' %
                             args.path)
 
-            # clear the stale mount path before activate 
-	    if not args.dmcrypt:
+            # clear the stale mount path before activate
+            if not args.dmcrypt:
                 clean_stale_mount(args.path)
 
             (cluster, osd_id) = mount_activate(
@@ -4838,17 +4838,16 @@ def get_stale_mount_list(osd_mount_path):
                 stale_dev_list = []
                 break
 
-            # this line is a stale mount, add the dev into return list 
+            # this line is a stale mount, add the dev into return list
             stale_dev_list.append(mount_dev)
-            
+
     return stale_dev_list
-    
+
 
 def clean_mounts(mount_dev_list):
     for mount_dev in mount_dev_list:
         command_check_call(['umount', '-l', mount_dev])
         LOG.info("clean mount: " + str(mount_dev))
-    
 
 '''
 this function is called to remove stale mount when disk name changed in
@@ -4860,11 +4859,11 @@ def clean_stale_mount(dev):
     # get osd information
     (cluster, osd_id) = get_cluster_and_osd_id(osd_dev)
     if not osd_id:
-        return 
-  
+        return
+
     # generate osd_mount_path according to osd information
     osd_mount_path = STATEDIR + '/osd/{cluster}-{osd_id}'.format(
-                             cluster=cluster, 
+                             cluster=cluster,
                              osd_id=osd_id)
 
     # get the stale mount list
@@ -4874,7 +4873,7 @@ def clean_stale_mount(dev):
     if len(stale_dev_list) == 0:
         return
 
-    # try to remove XFS mount point before umount stale path. This is because if not invoke 
+    # try to remove XFS mount point before umount stale path. This is because if not invoke
     # the xfs_io manually, the sys call of umount will be hanged sometimes(maybe XFS bug?)
     try:
         command_check_call(['xfs_io',
@@ -4884,7 +4883,7 @@ def clean_stale_mount(dev):
                             osd_mount_path])
     except:
         LOG.info("failed to remove xfs mount before clean stale mount, path: " + str(osd_mount_path))
-        
+
     # clean stale mounts lazily
     clean_mounts(stale_dev_list)
 
