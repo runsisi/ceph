@@ -30,7 +30,11 @@
 %endif
 %if 0%{?fedora} || 0%{?rhel}
 %bcond_without libceph_selinux
+%if 0%{?rhel} >= 8
+%bcond_with selinux
+%else
 %bcond_without selinux
+%endif
 %bcond_without cephfs_java
 %bcond_with lttng
 %bcond_without libradosstriper
