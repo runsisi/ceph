@@ -145,6 +145,8 @@ class CherryPyConfig(object):
             'tools.json_in.force': False,
             'tools.plugin_hooks_filter_request.on': True,
             'log.screen': False,
+            'tools.response_headers.on': True,
+            'tools.response_headers.headers': [("Server", "ce")],
         }
 
         if ssl:
