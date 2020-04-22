@@ -12,6 +12,7 @@ ifneq (,$(findstring WITH_STATIC_LIBSTDCXX,$(CEPH_EXTRA_CMAKE_ARGS)))
   export DEB_LDFLAGS_MAINT_STRIP = -Wl,-Bsymbolic-functions
 endif
 
+extraopts += -DWITH_RDMA=OFF -DWITH_LEVELDB=OFF
 extraopts += -DWITH_OCF=ON -DWITH_LTTNG=ON
 extraopts += -DWITH_PYTHON3=ON -DWITH_MGR_DASHBOARD_FRONTEND=OFF
 extraopts += -DWITH_CEPHFS_JAVA=ON
