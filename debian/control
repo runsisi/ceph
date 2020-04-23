@@ -183,7 +183,6 @@ Package: ceph-mgr
 Architecture: linux-any
 Depends: ceph-base (= ${binary:Version}),
          python-cherrypy3,
-         python-jwt,
          python-openssl,
          python-bcrypt,
          ${misc:Depends},
