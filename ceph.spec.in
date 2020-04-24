@@ -31,7 +31,7 @@
 %if 0%{?fedora} || 0%{?rhel}
 %bcond_without selinux
 %bcond_without cephfs_java
-%bcond_without lttng
+%bcond_with lttng
 %bcond_without libradosstriper
 %bcond_without ocf
 %bcond_without amqp_endpoint
