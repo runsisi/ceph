@@ -1359,9 +1359,7 @@ rm -rf %{buildroot}
 %{python3_sitelib}/ceph_volume-*
 %endif
 %{_mandir}/man8/ceph-deploy.8*
-%{_mandir}/man8/ceph-detect-init.8*
 %{_mandir}/man8/ceph-create-keys.8*
-%{_mandir}/man8/ceph-disk.8*
 %{_mandir}/man8/ceph-run.8*
 %{_mandir}/man8/crushtool.8*
 %{_mandir}/man8/osdmaptool.8*
