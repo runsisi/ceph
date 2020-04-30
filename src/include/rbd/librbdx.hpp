@@ -80,17 +80,6 @@ inline std::string to_str(const trash_source_t& o) {
 }
 
 typedef struct {
-  std::string image_id;
-  uint64_t snap_id;
-  uint8_t order;
-  uint64_t size;
-  uint64_t stripe_unit;
-  uint64_t stripe_count;
-  uint64_t features;
-  uint64_t flags;
-} size_info_t;
-
-typedef struct {
   uint64_t size;
   // if fast-diff is disabled then `dirty` equals `du`
   uint64_t du;          // OBJECT_EXISTS + OBJECT_EXISTS_CLEAN
@@ -235,24 +224,6 @@ public:
   //
   // xImage
   //
-  int get_name(librados::IoCtx& ioctx,
-      const std::string& image_id, std::string* name);
-  int get_id(librados::IoCtx& ioctx,
-      const std::string& image_name, std::string* id);
-
-  int get_size(librados::IoCtx& ioctx,
-      const std::string& image_id, uint64_t snap_id, size_info_t* info);
-
-  int get_du(librados::IoCtx& ioctx,
-      const std::string& image_id, uint64_t snap_id,
-      du_info_t* info);
-  int get_du_v2(librados::IoCtx& ioctx,
-      const std::string& image_id,
-      std::map<uint64_t, du_info_t>* infos);
-  int get_du_sync(librados::IoCtx& ioctx,
-      const std::string& image_id, uint64_t snap_id,
-      du_info_t* info);
-
   int get_info(librados::IoCtx& ioctx,
       const std::string& image_id, image_info_t* info);
   int get_info_v2(librados::IoCtx& ioctx,
@@ -293,16 +264,17 @@ public:
       std::map<std::string, std::pair<image_info_v3_t, int>>* infos);
 
   //
-  // xChild
-  //
-  int child_list(librados::IoCtx& ioctx,
-      std::map<parent_spec_t, std::vector<std::string>>* children);
-
-  //
   // xTrash
   //
   int trash_list(librados::IoCtx& ioctx,
       std::map<std::string, trash_info_t>* trashes);
+
+  //
+  // xChild, for legacy clone v1 only
+  //
+  int child_list(librados::IoCtx& ioctx,
+      std::map<parent_spec_t, std::vector<std::string>>* children);
+
 };
 
 }

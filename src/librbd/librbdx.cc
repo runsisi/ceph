@@ -16,56 +16,6 @@
 
 namespace librbdx {
 
-//
-// xImage
-//
-int xRBD::get_name(librados::IoCtx& ioctx,
-    const std::string& image_id, std::string* name) {
-  int r = 0;
-  r = librbd::api::xImage<>::get_name(ioctx, image_id, name);
-  return r;
-}
-
-int xRBD::get_id(librados::IoCtx& ioctx,
-    const std::string& image_name, std::string* id) {
-  int r = 0;
-  r = librbd::api::xImage<>::get_id(ioctx, image_name, id);
-  return r;
-}
-
-int xRBD::get_size(librados::IoCtx& ioctx,
-    const std::string& image_id, uint64_t snap_id, size_info_t* info) {
-  int r = 0;
-  librbd::xSizeInfo tinfo; // t prefix means temp
-  r = librbd::api::xImage<>::get_size(ioctx, image_id, snap_id, info);
-  return r;
-}
-
-int xRBD::get_du(librados::IoCtx& ioctx,
-    const std::string& image_id, uint64_t snap_id,
-    du_info_t* info) {
-  int r = 0;
-  r = librbd::api::xImage<>::get_du(ioctx, image_id, snap_id, info);
-  return r;
-}
-
-int xRBD::get_du_v2(librados::IoCtx& ioctx,
-    const std::string& image_id,
-    std::map<uint64_t, du_info_t>* infos) {
-  int r = 0;
-  infos->clear();
-  r = librbd::api::xImage<>::get_du_v2(ioctx, image_id, infos);
-  return r;
-}
-
-int xRBD::get_du_sync(librados::IoCtx& ioctx,
-    const std::string& image_id, uint64_t snap_id,
-    du_info_t* info) {
-  int r = 0;
-  r = librbd::api::xImage<>::get_du_sync(ioctx, image_id, snap_id, info);
-  return r;
-}
-
 int xRBD::get_info(librados::IoCtx& ioctx,
     const std::string& image_id, image_info_t* info) {
   int r = 0;
@@ -181,17 +131,6 @@ int xRBD::list_info_v3(librados::IoCtx& ioctx,
 }
 
 //
-// xChild
-//
-int xRBD::child_list(librados::IoCtx& ioctx,
-    std::map<parent_spec_t, std::vector<std::string>>* children) {
-  int r = 0;
-  children->clear();
-  r = librbd::api::xChild<>::list(ioctx, children);
-  return r;
-}
-
-//
 // xTrash
 //
 int xRBD::trash_list(librados::IoCtx& ioctx,
@@ -199,6 +138,17 @@ int xRBD::trash_list(librados::IoCtx& ioctx,
   int r = 0;
   trashes->clear();
   r = librbd::api::xTrash<>::list(ioctx, trashes);
+  return r;
+}
+
+//
+// xChild, for legacy clone v1 only
+//
+int xRBD::child_list(librados::IoCtx& ioctx,
+    std::map<parent_spec_t, std::vector<std::string>>* children) {
+  int r = 0;
+  children->clear();
+  r = librbd::api::xChild<>::list(ioctx, children);
   return r;
 }
 

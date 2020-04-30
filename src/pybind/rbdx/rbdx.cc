@@ -122,7 +122,6 @@ template <typename K, typename V, typename... Ts,
 json json_fmt(const std::map<K, V, Ts...>& o);
 
 json json_fmt(const timespec& o);
-json json_fmt(const size_info_t& o);
 json json_fmt(const du_info_t& o);
 json json_fmt(const snapc_t& o);
 json json_fmt(const parent_spec_t& o);
@@ -214,19 +213,6 @@ json json_fmt(const timespec& o) {
   json j = json::object({});
   j["tv_sec"] = json_fmt(o.tv_sec);
   j["tv_nsec"] = json_fmt(o.tv_nsec);
-  return std::move(j);
-}
-
-json json_fmt(const size_info_t& o) {
-  json j = json::object({});
-  j["image_id"] = json_fmt(o.image_id);
-  j["snap_id"] = json_fmt(o.snap_id);
-  j["order"] = json_fmt(o.order);
-  j["size"] = json_fmt(o.size);
-  j["stripe_unit"] = json_fmt(o.stripe_unit);
-  j["stripe_count"] = json_fmt(o.stripe_count);
-  j["features"] = json_fmt(o.features);
-  j["flags"] = json_fmt(o.flags);
   return std::move(j);
 }
 
@@ -489,22 +475,6 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def_readonly("tv_nsec", &timespec::tv_nsec);
     cls.def("__repr__", [](const timespec& self) {
        return json_fmt(self).dump(json_indent);
-    });
-  }
-
-  {
-    py::class_<size_info_t> cls(m, "size_info_t");
-    cls.def(py::init<>());
-    cls.def_readonly("image_id", &size_info_t::image_id);
-    cls.def_readonly("snap_id", &size_info_t::snap_id);
-    cls.def_readonly("order", &size_info_t::order);
-    cls.def_readonly("size", &size_info_t::size);
-    cls.def_readonly("stripe_unit", &size_info_t::stripe_unit);
-    cls.def_readonly("stripe_count", &size_info_t::stripe_count);
-    cls.def_readonly("features", &size_info_t::features);
-    cls.def_readonly("flags", &size_info_t::flags);
-    cls.def("__repr__", [](const size_info_t& self) {
-      return json_fmt(self).dump(json_indent);
     });
   }
 

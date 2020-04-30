@@ -21,23 +21,6 @@ namespace api {
 template <typename ImageCtxT = librbd::ImageCtx>
 struct xImage {
 
-  static int get_name(librados::IoCtx& ioctx,
-      const std::string& image_id, std::string* name);
-  static int get_id(librados::IoCtx& ioctx,
-      const std::string& image_name, std::string* id);
-
-  static int get_size(librados::IoCtx& ioctx,
-      const std::string& image_id, uint64_t snap_id, librbdx::size_info_t* info);
-
-  static int get_du(librados::IoCtx& ioctx,
-      const std::string& image_id, uint64_t snap_id, librbdx::du_info_t* info);
-  static int get_du_v2(librados::IoCtx& ioctx,
-      const std::string& image_id,
-      std::map<uint64_t, librbdx::du_info_t>* infos);
-  static int get_du_sync(librados::IoCtx& ioctx,
-      const std::string& image_id, uint64_t snap_id,
-      librbdx::du_info_t* info);
-
   static int get_info(librados::IoCtx& ioctx,
       const std::string& image_id, librbdx::image_info_t* info);
   static int get_info_v2(librados::IoCtx& ioctx,
