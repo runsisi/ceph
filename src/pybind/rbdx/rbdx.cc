@@ -690,24 +690,6 @@ PYBIND11_MODULE(rbdx, m) {
     py::class_<xRBD> cls(m, "xRBD");
     cls.def(py::init<>());
 
-    cls.def("get_name", [](xRBD& self, librados::IoCtx& ioctx,
-        const std::string& image_id) {
-      std::string name;
-      int r = self.get_name(ioctx, image_id, &name);
-      return std::make_tuple(name, r);
-    });
-    cls.def("get_id", [](xRBD& self, librados::IoCtx& ioctx,
-        const std::string& image_name) {
-      std::string id;
-      int r = self.get_id(ioctx, image_name, &id);
-      return std::make_tuple(id, r);
-    });
-
-    cls.def("get_size", &xRBD::get_size);
-    cls.def("get_du", &xRBD::get_du);
-    cls.def("get_du_v2", &xRBD::get_du_v2);
-    cls.def("get_du_sync", &xRBD::get_du_sync);
-
     cls.def("get_info", &xRBD::get_info);
     cls.def("get_info_v2", &xRBD::get_info_v2);
     cls.def("get_info_v3", &xRBD::get_info_v3);
@@ -725,8 +707,10 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def("list_info_v3", (list_info_v3_func_t_1)&xRBD::list_info_v3);
     cls.def("list_info_v3", (list_info_v3_func_t_2)&xRBD::list_info_v3);
 
-    cls.def("child_list", &xRBD::child_list);
     cls.def("trash_list", &xRBD::trash_list);
+
+    // for legacy clone v1 only
+    cls.def("child_list", &xRBD::child_list);
   }
 
 } // PYBIND11_MODULE(rbdx, m)
