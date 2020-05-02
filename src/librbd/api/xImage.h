@@ -23,20 +23,14 @@ struct xImage {
 
   static int get_info(librados::IoCtx& ioctx,
       const std::string& image_id, librbdx::image_info_t* info);
-  static int get_info_v3(librados::IoCtx& ioctx,
-      const std::string& image_id, librbdx::image_info_v3_t* info);
+  static int get_info_v2(librados::IoCtx& ioctx,
+      const std::string& image_id, librbdx::image_info_v2_t* info);
 
   static int list_du(librados::IoCtx& ioctx,
       std::map<std::string, std::pair<librbdx::du_info_t, int>>* infos);
   static int list_du(librados::IoCtx& ioctx,
       const std::vector<std::string>& images_ids,
       std::map<std::string, std::pair<librbdx::du_info_t, int>>* infos);
-
-  static int list_du_v2(librados::IoCtx& ioctx,
-      std::map<std::string, std::pair<std::map<uint64_t, librbdx::du_info_t>, int>>* infos);
-  static int list_du_v2(librados::IoCtx& ioctx,
-      const std::vector<std::string>& image_ids,
-      std::map<std::string, std::pair<std::map<uint64_t, librbdx::du_info_t>, int>>* infos);
 
   static int list(librados::IoCtx& ioctx,
       std::map<std::string, std::string>* images);
@@ -47,11 +41,11 @@ struct xImage {
       const std::vector<std::string>& image_ids,
       std::map<std::string, std::pair<librbdx::image_info_t, int>>* infos);
 
-  static int list_info_v3(librados::IoCtx& ioctx,
-      std::map<std::string, std::pair<librbdx::image_info_v3_t, int>>* infos);
-  static int list_info_v3(librados::IoCtx& ioctx,
+  static int list_info_v2(librados::IoCtx& ioctx,
+      std::map<std::string, std::pair<librbdx::image_info_v2_t, int>>* infos);
+  static int list_info_v2(librados::IoCtx& ioctx,
       const std::vector<std::string>& image_ids,
-      std::map<std::string, std::pair<librbdx::image_info_v3_t, int>>* infos);
+      std::map<std::string, std::pair<librbdx::image_info_v2_t, int>>* infos);
 
 };
 

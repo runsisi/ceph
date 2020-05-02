@@ -191,7 +191,7 @@ typedef struct {
   std::vector<std::string> watchers;
   qos_t qos;
   uint64_t du;
-} image_info_v3_t;
+} image_info_v2_t;
 
 typedef struct {
   std::string id;
@@ -210,19 +210,12 @@ public:
       const std::string& image_id, image_info_t* info);
   int get_info_v2(librados::IoCtx& ioctx,
       const std::string& image_id, image_info_v2_t* info);
-  int get_info_v3(librados::IoCtx& ioctx,
-      const std::string& image_id, image_info_v3_t* info);
 
   int list_du(librados::IoCtx& ioctx,
       std::map<std::string, std::pair<du_info_t, int>>* infos);
   int list_du(librados::IoCtx& ioctx,
       const std::vector<std::string>& image_ids,
       std::map<std::string, std::pair<du_info_t, int>>* infos);
-  int list_du_v2(librados::IoCtx& ioctx,
-      std::map<std::string, std::pair<std::map<uint64_t, du_info_t>, int>>* infos);
-  int list_du_v2(librados::IoCtx& ioctx,
-      const std::vector<std::string>& image_ids,
-      std::map<std::string, std::pair<std::map<uint64_t, du_info_t>, int>>* infos);
 
   int list(librados::IoCtx& ioctx,
       std::map<std::string, std::string>* images);
@@ -238,12 +231,6 @@ public:
   int list_info_v2(librados::IoCtx& ioctx,
       const std::vector<std::string>& image_ids,
       std::map<std::string, std::pair<image_info_v2_t, int>>* infos);
-
-  int list_info_v3(librados::IoCtx& ioctx,
-      std::map<std::string, std::pair<image_info_v3_t, int>>* infos);
-  int list_info_v3(librados::IoCtx& ioctx,
-      const std::vector<std::string>& image_ids,
-      std::map<std::string, std::pair<image_info_v3_t, int>>* infos);
 
   //
   // xTrash

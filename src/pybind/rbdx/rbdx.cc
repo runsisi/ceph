@@ -14,35 +14,36 @@
 
 namespace py = pybind11;
 
-using Vector_uint64_t = std::vector<uint64_t>;
 using Vector_string = std::vector<std::string>;
-using Map_uint64_t_2_snap_info_t = std::map<uint64_t, librbdx::snap_info_t>;
-using Map_uint64_t_2_du_info_t = std::map<uint64_t, librbdx::du_info_t>;
 
+// list_du
 using Map_string_2_pair_du_info_t_int = std::map<std::string, std::pair<librbdx::du_info_t, int>>;
-using Map_string_2_pair_map_uint64_t_2_du_info_t_int = std::map<std::string, std::pair<std::map<uint64_t, librbdx::du_info_t>, int>>;
-
+// list
 using Map_string_2_string = std::map<std::string, std::string>;
+// list_info
 using Map_string_2_pair_image_info_t_int = std::map<std::string, std::pair<librbdx::image_info_t, int>>;
+// list_info_v2
 using Map_string_2_pair_image_info_v3_t_int = std::map<std::string, std::pair<librbdx::image_info_v3_t, int>>;
-
-using Map_parent_spec_t_2_vector_string = std::map<librbdx::parent_spec_t, std::vector<std::string>>;
+// trash_list
 using Map_string_2_trash_info_t = std::map<std::string, librbdx::trash_info_t>;
+// clove v1 child_list
+using Map_parent_spec_t_2_vector_string = std::map<librbdx::parent_spec_t, std::vector<std::string>>;
 
-PYBIND11_MAKE_OPAQUE(Vector_uint64_t);
+
 PYBIND11_MAKE_OPAQUE(Vector_string);
-PYBIND11_MAKE_OPAQUE(Map_uint64_t_2_snap_info_t);
-PYBIND11_MAKE_OPAQUE(Map_uint64_t_2_du_info_t);
 
+// list_du
 PYBIND11_MAKE_OPAQUE(Map_string_2_pair_du_info_t_int);
-PYBIND11_MAKE_OPAQUE(Map_string_2_pair_map_uint64_t_2_du_info_t_int);
-
+// list
 PYBIND11_MAKE_OPAQUE(Map_string_2_string);
+// list_info
 PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_t_int);
+// list_info_v2
 PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_v3_t_int);
-
-PYBIND11_MAKE_OPAQUE(Map_parent_spec_t_2_vector_string);
+// trash_list
 PYBIND11_MAKE_OPAQUE(Map_string_2_trash_info_t);
+// clone v1 child_list
+PYBIND11_MAKE_OPAQUE(Map_parent_spec_t_2_vector_string);
 
 namespace {
 
@@ -347,20 +348,8 @@ constexpr int json_indent = 4;
 PYBIND11_MODULE(rbdx, m) {
 
   {
-    auto b = py::bind_vector<Vector_uint64_t>(m, "Vector_uint64_t");
-    b.def("__repr__", [](const Vector_uint64_t& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-  {
     auto b = py::bind_vector<Vector_string>(m, "Vector_string");
     b.def("__repr__", [](const Vector_string& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-  {
-    auto b = py::bind_map<Map_uint64_t_2_snap_info_t>(m, "Map_uint64_t_2_snap_info_t");
-    b.def("__repr__", [](const Map_uint64_t_2_snap_info_t& self) {
       return json_fmt(self).dump(json_indent);
     });
   }
@@ -377,6 +366,12 @@ PYBIND11_MODULE(rbdx, m) {
     });
   }
   {
+    auto b = py::bind_map<Map_string_2_pair_du_info_t_int>(m, "Map_string_2_pair_du_info_t_int");
+    b.def("__repr__", [](const Map_string_2_pair_du_info_t_int& self) {
+      return json_fmt(self).dump(json_indent);
+    });
+  }
+  {
     auto b = py::bind_map<Map_string_2_pair_image_info_t_int>(m, "Map_string_2_pair_image_info_t_int");
     b.def("__repr__", [](const Map_string_2_pair_image_info_t_int& self) {
       return json_fmt(self).dump(json_indent);
@@ -389,26 +384,14 @@ PYBIND11_MODULE(rbdx, m) {
     });
   }
   {
-    auto b = py::bind_map<Map_string_2_pair_du_info_t_int>(m, "Map_string_2_pair_du_info_t_int");
-    b.def("__repr__", [](const Map_string_2_pair_du_info_t_int& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-  {
-    auto b = py::bind_map<Map_string_2_pair_map_uint64_t_2_du_info_t_int>(m, "Map_string_2_pair_map_uint64_t_2_du_info_t_int");
-    b.def("__repr__", [](const Map_string_2_pair_map_uint64_t_2_du_info_t_int& self) {
+    auto b = py::bind_map<Map_string_2_trash_info_t>(m, "Map_string_2_trash_info_t");
+    b.def("__repr__", [](const Map_string_2_trash_info_t& self) {
       return json_fmt(self).dump(json_indent);
     });
   }
   {
     auto b = py::bind_map<Map_parent_spec_t_2_vector_string>(m, "Map_parent_spec_t_2_vector_string");
     b.def("__repr__", [](const Map_parent_spec_t_2_vector_string& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-  {
-    auto b = py::bind_map<Map_string_2_trash_info_t>(m, "Map_string_2_trash_info_t");
-    b.def("__repr__", [](const Map_string_2_trash_info_t& self) {
       return json_fmt(self).dump(json_indent);
     });
   }
@@ -446,6 +429,17 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def_readonly("tv_nsec", &timespec::tv_nsec);
     cls.def("__repr__", [](const timespec& self) {
        return json_fmt(self).dump(json_indent);
+    });
+  }
+
+  {
+    py::class_<du_info_t> cls(m, "du_info_t");
+    cls.def(py::init<>());
+    cls.def_readonly("size", &du_info_t::size);
+    cls.def_readonly("du", &du_info_t::du);
+    cls.def_readonly("dirty", &du_info_t::dirty);
+    cls.def("__repr__", [](const du_info_t& self) {
+      return json_fmt(self).dump(json_indent);
     });
   }
 
@@ -593,17 +587,6 @@ PYBIND11_MODULE(rbdx, m) {
     });
   }
 
-  {
-    py::class_<du_info_t> cls(m, "du_info_t");
-    cls.def(py::init<>());
-    cls.def_readonly("size", &du_info_t::size);
-    cls.def_readonly("du", &du_info_t::du);
-    cls.def_readonly("dirty", &du_info_t::dirty);
-    cls.def("__repr__", [](const du_info_t& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-
   //
   // xRBD
   //
@@ -613,40 +596,34 @@ PYBIND11_MODULE(rbdx, m) {
     using list_du_func_t_2 = int (xRBD::*)(librados::IoCtx&,
         const std::vector<std::string>&,
         std::map<std::string, std::pair<du_info_t, int>>*);
-    using list_du_v2_func_t_1 = int (xRBD::*)(librados::IoCtx&,
-        std::map<std::string, std::pair<std::map<uint64_t, du_info_t>, int>>*);
-    using list_du_v2_func_t_2 = int (xRBD::*)(librados::IoCtx&,
-        const std::vector<std::string>&,
-        std::map<std::string, std::pair<std::map<uint64_t, du_info_t>, int>>*);
 
     using list_info_func_t_1 = int (xRBD::*)(librados::IoCtx&,
         std::map<std::string, std::pair<image_info_t, int>>*);
     using list_info_func_t_2 = int (xRBD::*)(librados::IoCtx&,
         const std::vector<std::string>&,
         std::map<std::string, std::pair<image_info_t, int>>*);
-    using list_info_v3_func_t_1 = int (xRBD::*)(librados::IoCtx&,
-        std::map<std::string, std::pair<image_info_v3_t, int>>*);
-    using list_info_v3_func_t_2 = int (xRBD::*)(librados::IoCtx&,
+
+    using list_info_v2_func_t_1 = int (xRBD::*)(librados::IoCtx&,
+        std::map<std::string, std::pair<image_info_v2_t, int>>*);
+    using list_info_v2_func_t_2 = int (xRBD::*)(librados::IoCtx&,
         const std::vector<std::string>&,
-        std::map<std::string, std::pair<image_info_v3_t, int>>*);
+        std::map<std::string, std::pair<image_info_v2_t, int>>*);
 
     py::class_<xRBD> cls(m, "xRBD");
     cls.def(py::init<>());
 
     cls.def("get_info", &xRBD::get_info);
     cls.def("get_info_v2", &xRBD::get_info_v2);
-    cls.def("get_info_v3", &xRBD::get_info_v3);
 
     cls.def("list_du", (list_du_func_t_1)&xRBD::list_du);
     cls.def("list_du", (list_du_func_t_2)&xRBD::list_du);
-    cls.def("list_du_v2", (list_du_v2_func_t_1)&xRBD::list_du_v2);
-    cls.def("list_du_v2", (list_du_v2_func_t_2)&xRBD::list_du_v2);
 
     cls.def("list", &xRBD::list);
+
     cls.def("list_info", (list_info_func_t_1)&xRBD::list_info);
     cls.def("list_info", (list_info_func_t_2)&xRBD::list_info);
-    cls.def("list_info_v3", (list_info_v3_func_t_1)&xRBD::list_info_v3);
-    cls.def("list_info_v3", (list_info_v3_func_t_2)&xRBD::list_info_v3);
+    cls.def("list_info_v2", (list_info_v2_func_t_1)&xRBD::list_info_v2);
+    cls.def("list_info_v2", (list_info_v2_func_t_2)&xRBD::list_info_v2);
 
     cls.def("trash_list", &xRBD::trash_list);
 
