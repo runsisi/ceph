@@ -1484,7 +1484,7 @@ int xImage<I>::list_du(librados::IoCtx& ioctx,
 //    }
 //  }
 
-  auto ops = cct->_conf.get_val<int64_t>("rbd_concurrent_management_ops");
+  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
   SimpleThrottle throttle(ops, true);
   for (const auto& image : images) {
     if (throttle.pending_error()) {
@@ -1518,7 +1518,7 @@ int xImage<I>::list_du(librados::IoCtx& ioctx,
 
   utime_t latency = ceph_clock_now();
 
-  auto ops = cct->_conf.get_val<int64_t>("rbd_concurrent_management_ops");
+  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
   SimpleThrottle throttle(ops, true);
   for (const auto& id : image_ids) {
     if (throttle.pending_error()) {
@@ -1568,7 +1568,7 @@ int xImage<I>::list_du_v2(librados::IoCtx& ioctx,
 //    }
 //  }
 
-  auto ops = cct->_conf.get_val<int64_t>("rbd_concurrent_management_ops");
+  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
   SimpleThrottle throttle(ops, true);
   for (const auto& image : images) {
     if (throttle.pending_error()) {
@@ -1602,7 +1602,7 @@ int xImage<I>::list_du_v2(librados::IoCtx& ioctx,
 
   utime_t latency = ceph_clock_now();
 
-  auto ops = cct->_conf.get_val<int64_t>("rbd_concurrent_management_ops");
+  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
   SimpleThrottle throttle(ops, true);
   for (const auto& id : image_ids) {
     if (throttle.pending_error()) {
@@ -1696,7 +1696,7 @@ int xImage<I>::list_info(librados::IoCtx& ioctx,
 //    }
 //  }
 
-  auto ops = cct->_conf.get_val<int64_t>("rbd_concurrent_management_ops");
+  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
   SimpleThrottle throttle(ops, true);
   for (const auto& image : images) {
     if (throttle.pending_error()) {
@@ -1730,7 +1730,7 @@ int xImage<I>::list_info(librados::IoCtx& ioctx,
 
   utime_t latency = ceph_clock_now();
 
-  auto ops = cct->_conf.get_val<int64_t>("rbd_concurrent_management_ops");
+  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
   SimpleThrottle throttle(ops, true);
   for (const auto& id : image_ids) {
     if (throttle.pending_error()) {
@@ -1780,7 +1780,7 @@ int xImage<I>::list_info_v2(librados::IoCtx& ioctx,
 //    }
 //  }
 
-  auto ops = cct->_conf.get_val<int64_t>("rbd_concurrent_management_ops");
+  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
   SimpleThrottle throttle(ops, true);
   for (const auto& image : images) {
     if (throttle.pending_error()) {
@@ -1814,7 +1814,7 @@ int xImage<I>::list_info_v2(librados::IoCtx& ioctx,
 
   utime_t latency = ceph_clock_now();
 
-  auto ops = cct->_conf.get_val<int64_t>("rbd_concurrent_management_ops");
+  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
   SimpleThrottle throttle(ops, true);
   for (const auto& id : image_ids) {
     if (throttle.pending_error()) {
@@ -1864,7 +1864,7 @@ int xImage<I>::list_info_v3(librados::IoCtx& ioctx,
 //    }
 //  }
 
-  auto ops = cct->_conf.get_val<int64_t>("rbd_concurrent_management_ops");
+  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
   SimpleThrottle throttle(ops, true);
   for (const auto& image : images) {
     if (throttle.pending_error()) {
@@ -1898,7 +1898,7 @@ int xImage<I>::list_info_v3(librados::IoCtx& ioctx,
 
   utime_t latency = ceph_clock_now();
 
-  auto ops = cct->_conf.get_val<int64_t>("rbd_concurrent_management_ops");
+  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
   SimpleThrottle throttle(ops, true);
   for (const auto& id : image_ids) {
     if (throttle.pending_error()) {
