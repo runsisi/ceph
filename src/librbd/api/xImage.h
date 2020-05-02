@@ -23,8 +23,6 @@ struct xImage {
 
   static int get_info(librados::IoCtx& ioctx,
       const std::string& image_id, librbdx::image_info_t* info);
-  static int get_info_v2(librados::IoCtx& ioctx,
-      const std::string& image_id, librbdx::image_info_v2_t* info);
   static int get_info_v3(librados::IoCtx& ioctx,
       const std::string& image_id, librbdx::image_info_v3_t* info);
 
@@ -48,12 +46,6 @@ struct xImage {
   static int list_info(librados::IoCtx& ioctx,
       const std::vector<std::string>& image_ids,
       std::map<std::string, std::pair<librbdx::image_info_t, int>>* infos);
-
-  static int list_info_v2(librados::IoCtx& ioctx,
-      std::map<std::string, std::pair<librbdx::image_info_v2_t, int>>* infos);
-  static int list_info_v2(librados::IoCtx& ioctx,
-      const std::vector<std::string>& image_ids,
-      std::map<std::string, std::pair<librbdx::image_info_v2_t, int>>* infos);
 
   static int list_info_v3(librados::IoCtx& ioctx,
       std::map<std::string, std::pair<librbdx::image_info_v3_t, int>>* infos);

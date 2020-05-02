@@ -164,26 +164,8 @@ struct xSnapInfo_v2 {
   uint64_t dirty;       // if fast-diff is disabled then `dirty` equals `du`
 };
 
+// image info + disk usage
 struct xImageInfo {
-  std::string id;
-  std::string name;
-  uint8_t order = 0;
-  uint64_t size = 0;
-  uint64_t stripe_unit = 0;
-  uint64_t stripe_count = 0;
-  uint64_t features = 0;
-  uint64_t flags = 0;
-  SnapContext snapc;
-  std::map<snapid_t, xSnapInfo> snaps;
-  ParentImageInfo parent;
-  utime_t timestamp;
-  int64_t data_pool_id = -1;
-  std::vector<obj_watch_t> watchers;
-  std::map<std::string, std::string> kvs;
-};
-
-// image info v1 + disk usage
-struct xImageInfo_v2 {
   std::string id;
   std::string name;
   uint8_t order = 0;

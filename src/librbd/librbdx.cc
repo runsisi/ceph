@@ -23,13 +23,6 @@ int xRBD::get_info(librados::IoCtx& ioctx,
   return r;
 }
 
-int xRBD::get_info_v2(librados::IoCtx& ioctx,
-    const std::string& image_id, image_info_v2_t* info) {
-  int r = 0;
-  r = librbd::api::xImage<>::get_info_v2(ioctx, image_id, info);
-  return r;
-}
-
 int xRBD::get_info_v3(librados::IoCtx& ioctx,
     const std::string& image_id, image_info_v3_t* info) {
   int r = 0;
@@ -93,23 +86,6 @@ int xRBD::list_info(librados::IoCtx& ioctx,
   int r = 0;
   infos->clear();
   r = librbd::api::xImage<>::list_info(ioctx, image_ids, infos);
-  return r;
-}
-
-int xRBD::list_info_v2(librados::IoCtx& ioctx,
-    std::map<std::string, std::pair<image_info_v2_t, int>>* infos) {
-  int r = 0;
-  infos->clear();
-  r = librbd::api::xImage<>::list_info_v2(ioctx, infos);
-  return r;
-}
-
-int xRBD::list_info_v2(librados::IoCtx& ioctx,
-    const std::vector<std::string>& image_ids,
-    std::map<std::string, std::pair<image_info_v2_t, int>>* infos) {
-  int r = 0;
-  infos->clear();
-  r = librbd::api::xImage<>::list_info_v2(ioctx, image_ids, infos);
   return r;
 }
 

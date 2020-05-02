@@ -171,26 +171,8 @@ typedef struct {
   int64_t data_pool_id;
   std::vector<std::string> watchers;
   qos_t qos;
-} image_info_t;
-
-typedef struct {
-  std::string id;
-  std::string name;
-  uint8_t order;
-  uint64_t size;
-  uint64_t stripe_unit;
-  uint64_t stripe_count;
-  uint64_t features;
-  uint64_t flags;
-  snapc_t snapc;
-  std::map<uint64_t, snap_info_t> snaps;
-  parent_info_t parent;
-  timespec timestamp;
-  int64_t data_pool_id;
-  std::vector<std::string> watchers;
-  qos_t qos;
   uint64_t du;
-} image_info_v2_t;
+} image_info_t;
 
 typedef struct {
   std::string id;

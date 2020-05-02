@@ -7640,8 +7640,6 @@ int x_image_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return r;
   }
 
-  encode(snap_seq, *out);
-
   // snap context and snaps
   {
     std::map<snapid_t, cls::rbd::xclsSnapInfo> snaps;
@@ -7670,7 +7668,11 @@ int x_image_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     // snap_ids must be descending in a snap context
     std::reverse(snap_ids.begin(), snap_ids.end());
 
-    encode(snap_ids, *out);
+    SnapContext snapc;
+    snapc.seq = snap_seq;
+    snapc.snaps = std::move(snap_ids);
+
+    encode(snapc, *out);
     encode(snaps, *out);
   }
 

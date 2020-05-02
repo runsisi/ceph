@@ -24,7 +24,6 @@ using Map_string_2_pair_map_uint64_t_2_du_info_t_int = std::map<std::string, std
 
 using Map_string_2_string = std::map<std::string, std::string>;
 using Map_string_2_pair_image_info_t_int = std::map<std::string, std::pair<librbdx::image_info_t, int>>;
-using Map_string_2_pair_image_info_v2_t_int = std::map<std::string, std::pair<librbdx::image_info_v2_t, int>>;
 using Map_string_2_pair_image_info_v3_t_int = std::map<std::string, std::pair<librbdx::image_info_v3_t, int>>;
 
 using Map_parent_spec_t_2_vector_string = std::map<librbdx::parent_spec_t, std::vector<std::string>>;
@@ -40,7 +39,6 @@ PYBIND11_MAKE_OPAQUE(Map_string_2_pair_map_uint64_t_2_du_info_t_int);
 
 PYBIND11_MAKE_OPAQUE(Map_string_2_string);
 PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_t_int);
-PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_v2_t_int);
 PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_v3_t_int);
 
 PYBIND11_MAKE_OPAQUE(Map_parent_spec_t_2_vector_string);
@@ -131,7 +129,6 @@ json json_fmt(const qos_t& o);
 json json_fmt(const snap_info_t& o);
 json json_fmt(const snap_info_v2_t& o);
 json json_fmt(const image_info_t& o);
-json json_fmt(const image_info_v2_t& o);
 json json_fmt(const image_info_v3_t& o);
 json json_fmt(const trash_info_t& o);
 
@@ -303,26 +300,6 @@ json json_fmt(const image_info_t& o) {
   j["data_pool_id"] = json_fmt(o.data_pool_id);
   j["watchers"] = json_fmt(o.watchers);
   j["qos"] = json_fmt(o.qos);
-  return std::move(j);
-}
-
-json json_fmt(const image_info_v2_t& o) {
-  json j = json::object({});
-  j["id"] = json_fmt(o.id);
-  j["name"] = json_fmt(o.name);
-  j["order"] = json_fmt(o.order);
-  j["size"] = json_fmt(o.size);
-  j["stripe_unit"] = json_fmt(o.stripe_unit);
-  j["stripe_count"] = json_fmt(o.stripe_count);
-  j["features"] = json_fmt(o.features);
-  j["flags"] = json_fmt(o.flags);
-  j["snapc"] = json_fmt(o.snapc);
-  j["snaps"] = json_fmt(o.snaps);
-  j["parent"] = json_fmt(o.parent);
-  j["timestamp"] = json_fmt(o.timestamp);
-  j["data_pool_id"] = json_fmt(o.data_pool_id);
-  j["watchers"] = json_fmt(o.watchers);
-  j["qos"] = json_fmt(o.qos);
   j["du"] = json_fmt(o.du);
   return std::move(j);
 }
@@ -402,12 +379,6 @@ PYBIND11_MODULE(rbdx, m) {
   {
     auto b = py::bind_map<Map_string_2_pair_image_info_t_int>(m, "Map_string_2_pair_image_info_t_int");
     b.def("__repr__", [](const Map_string_2_pair_image_info_t_int& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-  {
-    auto b = py::bind_map<Map_string_2_pair_image_info_v2_t_int>(m, "Map_string_2_pair_image_info_v2_t_int");
-    b.def("__repr__", [](const Map_string_2_pair_image_info_v2_t_int& self) {
       return json_fmt(self).dump(json_indent);
     });
   }
@@ -564,29 +535,6 @@ PYBIND11_MODULE(rbdx, m) {
   {
     py::class_<image_info_t> cls(m, "image_info_t");
     cls.def(py::init<>());
-    cls.def_readonly("id", &image_info_t::id);
-    cls.def_readonly("name", &image_info_t::name);
-    cls.def_readonly("order", &image_info_t::order);
-    cls.def_readonly("size", &image_info_t::size);
-    cls.def_readonly("stripe_unit", &image_info_t::stripe_unit);
-    cls.def_readonly("stripe_count", &image_info_t::stripe_count);
-    cls.def_readonly("features", &image_info_t::features);
-    cls.def_readonly("flags", &image_info_t::flags);
-    cls.def_readonly("snapc", &image_info_t::snapc);
-    cls.def_readonly("snaps", &image_info_t::snaps);
-    cls.def_readonly("parent", &image_info_t::parent);
-    cls.def_readonly("timestamp", &image_info_t::timestamp);
-    cls.def_readonly("data_pool_id", &image_info_t::data_pool_id);
-    cls.def_readonly("watchers", &image_info_t::watchers);
-    cls.def_readonly("qos", &image_info_t::qos);
-    cls.def("__repr__", [](const image_info_t& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-
-  {
-    py::class_<image_info_v2_t> cls(m, "image_info_v2_t");
-    cls.def(py::init<>());
     cls.def_readonly("id", &image_info_v2_t::id);
     cls.def_readonly("name", &image_info_v2_t::name);
     cls.def_readonly("order", &image_info_v2_t::order);
@@ -676,11 +624,6 @@ PYBIND11_MODULE(rbdx, m) {
     using list_info_func_t_2 = int (xRBD::*)(librados::IoCtx&,
         const std::vector<std::string>&,
         std::map<std::string, std::pair<image_info_t, int>>*);
-    using list_info_v2_func_t_1 = int (xRBD::*)(librados::IoCtx&,
-        std::map<std::string, std::pair<image_info_v2_t, int>>*);
-    using list_info_v2_func_t_2 = int (xRBD::*)(librados::IoCtx&,
-        const std::vector<std::string>&,
-        std::map<std::string, std::pair<image_info_v2_t, int>>*);
     using list_info_v3_func_t_1 = int (xRBD::*)(librados::IoCtx&,
         std::map<std::string, std::pair<image_info_v3_t, int>>*);
     using list_info_v3_func_t_2 = int (xRBD::*)(librados::IoCtx&,
@@ -702,8 +645,6 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def("list", &xRBD::list);
     cls.def("list_info", (list_info_func_t_1)&xRBD::list_info);
     cls.def("list_info", (list_info_func_t_2)&xRBD::list_info);
-    cls.def("list_info_v2", (list_info_v2_func_t_1)&xRBD::list_info_v2);
-    cls.def("list_info_v2", (list_info_v2_func_t_2)&xRBD::list_info_v2);
     cls.def("list_info_v3", (list_info_v3_func_t_1)&xRBD::list_info_v3);
     cls.def("list_info_v3", (list_info_v3_func_t_2)&xRBD::list_info_v3);
 
