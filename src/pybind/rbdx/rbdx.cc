@@ -127,6 +127,7 @@ json json_fmt(const qos_t& o);
 json json_fmt(const snap_info_t& o);
 json json_fmt(const snap_info_v2_t& o);
 json json_fmt(const image_info_t& o);
+json json_fmt(const image_info_v2_t& o);
 json json_fmt(const trash_info_t& o);
 
 template <typename T,
