@@ -184,8 +184,8 @@ struct xImageInfo {
   uint64_t du;
 };
 
-// image info v2 + disk usage + snaps v2
-struct xImageInfo_v3 {
+// image info + snaps v2
+struct xImageInfo_v2 {
   std::string id;
   std::string name;
   uint8_t order = 0;

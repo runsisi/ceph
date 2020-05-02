@@ -23,7 +23,7 @@ using Map_string_2_string = std::map<std::string, std::string>;
 // list_info
 using Map_string_2_pair_image_info_t_int = std::map<std::string, std::pair<librbdx::image_info_t, int>>;
 // list_info_v2
-using Map_string_2_pair_image_info_v3_t_int = std::map<std::string, std::pair<librbdx::image_info_v2_t, int>>;
+using Map_string_2_pair_image_info_v2_t_int = std::map<std::string, std::pair<librbdx::image_info_v2_t, int>>;
 // trash_list
 using Map_string_2_trash_info_t = std::map<std::string, librbdx::trash_info_t>;
 // clove v1 child_list
@@ -39,7 +39,7 @@ PYBIND11_MAKE_OPAQUE(Map_string_2_string);
 // list_info
 PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_t_int);
 // list_info_v2
-PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_v3_t_int);
+PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_v2_t_int);
 // trash_list
 PYBIND11_MAKE_OPAQUE(Map_string_2_trash_info_t);
 // clone v1 child_list
@@ -363,7 +363,7 @@ PYBIND11_MODULE(rbdx, m) {
   }
   {
     auto b = py::bind_map<Map_string_2_pair_image_info_v2_t_int>(m, "Map_string_2_pair_image_info_v2_t_int");
-    b.def("__repr__", [](const Map_string_2_pair_image_info_v3_t_int& self) {
+    b.def("__repr__", [](const Map_string_2_pair_image_info_v2_t_int& self) {
       return json_fmt(self).dump(json_indent);
     });
   }

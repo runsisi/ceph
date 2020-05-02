@@ -19,12 +19,6 @@ namespace {
 constexpr const char* conf_qos_iops_str = "conf_rbd_client_qos_limit";
 constexpr const char* conf_qos_bps_str = "conf_rbd_client_qos_bandwidth";
 
-void cvt_du_info(librbd::xDuInfo& in, librbdx::du_info_t* out) {
-  out->size = in.size;
-  out->du = in.du;
-  out->dirty = in.dirty;
-}
-
 void cvt_snap_info(librbd::xSnapInfo& in, librbdx::snap_info_t* out) {
   out->id = in.id;
   out->name = std::move(in.name);
@@ -92,7 +86,7 @@ void cvt_image_info(librbd::xImageInfo& in, librbdx::image_info_t* out) {
   out->du = in.du;
 }
 
-void cvt_image_info_v3(librbd::xImageInfo_v3& in, librbdx::image_info_v3_t* out) {
+void cvt_image_info_v2(librbd::xImageInfo_v2& in, librbdx::image_info_v2_t* out) {
   out->snapc.snaps.clear();
   out->snaps.clear();
   out->watchers.clear();
@@ -172,178 +166,6 @@ std::pair<uint64_t, uint64_t> calc_du(BitVector<2>& object_map,
 #undef dout_prefix
 #define dout_prefix *_dout << "librbd::api::xImage::DuRequest: " \
                            << __func__ << " " << this << ": " \
-                           << "(id=" << m_image_id << "): "
-
-/*
- * get head image/snap's du info
- */
-template <typename I>
-class DuRequest {
-public:
-  DuRequest(librados::IoCtx& ioctx, Context* on_finish,
-      const std::string& image_id,
-      uint64_t snap_id,
-      librbdx::du_info_t* info)
-    : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
-      m_io_ctx(ioctx), m_on_finish(on_finish),
-      m_image_id(image_id),
-      m_snap_id(snap_id),
-      m_info(info) {
-    m_size_info.image_id = m_image_id;
-    m_size_info.snap_id = m_snap_id;
-
-    m_info->size = 0;
-    m_info->du = 0;
-    m_info->dirty = 0;
-  }
-
-  void send() {
-    get_size();
-  }
-
-private:
-  void finish(int r) {
-    if (r == 0) {
-      cvt_du_info(m_x_info, m_info);
-    }
-
-    m_on_finish->complete(r);
-    delete this;
-  }
-
-  void get_size() {
-    ldout(m_cct, 10) << dendl;
-
-    librados::ObjectReadOperation op;
-    librbd::cls_client::x_size_get_start(&op, m_snap_id);
-
-    using klass = DuRequest<I>;
-    auto comp = librbd::util::create_rados_callback<klass,
-        &klass::handle_get_size>(this);
-    m_out_bl.clear();
-    int r = m_io_ctx.aio_operate(librbd::util::header_name(m_image_id),
-        comp, &op, &m_out_bl);
-    ceph_assert(r == 0);
-    comp->release();
-  }
-
-  void handle_get_size(int r) {
-    ldout(m_cct, 10) << "r=" << r << dendl;
-
-    if (r < 0) {
-      if (r != -ENOENT) {
-        lderr(m_cct) << "failed to get image size info: "
-                     << cpp_strerror(r)
-                     << dendl;
-      }
-      finish(r);
-      return;
-    }
-
-    auto order = &m_size_info.order;
-    auto size = &m_size_info.size;
-    auto stripe_unit = &m_size_info.stripe_unit;
-    auto stripe_count = &m_size_info.stripe_count;
-    auto features = &m_size_info.features;
-    auto flags = &m_size_info.flags;
-
-    auto it = m_out_bl.cbegin();
-    r = librbd::cls_client::x_size_get_finish(&it, order, size,
-        stripe_unit, stripe_count, features, flags);
-    if (r < 0) {
-      lderr(m_cct) << "failed to decode image size: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
-    }
-
-    get_du();
-  }
-
-  void get_du() {
-    if ((m_size_info.features & RBD_FEATURE_OBJECT_MAP) &&
-        !(m_size_info.flags & RBD_FLAG_OBJECT_MAP_INVALID)) {
-      load_object_map(m_snap_id);
-    } else {
-      // todo: fallback to iterate image objects
-      m_x_info.size = m_size_info.size;
-      m_x_info.du = 0;
-      m_x_info.dirty = 0;
-
-      finish(0);
-    }
-  }
-
-  void load_object_map(uint64_t snap_id) {
-    ldout(m_cct, 10) << dendl;
-
-    librados::ObjectReadOperation op;
-    librbd::cls_client::object_map_load_start(&op);
-
-    using klass = DuRequest<I>;
-    auto comp = librbd::util::create_rados_callback<klass,
-        &klass::handle_load_object_map>(this);
-    m_out_bl.clear();
-    std::string oid(librbd::ObjectMap<>::object_map_name(m_image_id, snap_id));
-    int r = m_io_ctx.aio_operate(oid,
-        comp, &op, &m_out_bl);
-    ceph_assert(r == 0);
-    comp->release();
-  }
-
-  void handle_load_object_map(int r) {
-    ldout(m_cct, 10) << "r=" << r << dendl;
-
-    if (r < 0) {
-      if (r != -ENOENT) {
-        lderr(m_cct) << "failed to load object map: "
-                     << cpp_strerror(r)
-                     << dendl;
-      }
-      finish(r);
-      return;
-    }
-
-    BitVector<2> object_map;
-    auto it = m_out_bl.cbegin();
-    r = librbd::cls_client::object_map_load_finish(&it, &object_map);
-    if (r < 0) {
-      lderr(m_cct) << "failed to decode object map: "
-                   << cpp_strerror(r)
-                   << dendl;
-      finish(r);
-      return;
-    }
-
-    auto du = calc_du(object_map, m_size_info.size, m_size_info.order);
-
-    m_x_info.size = m_size_info.size;
-    m_x_info.du = du.first;
-    m_x_info.dirty = du.second;
-
-    finish(0);
-  }
-
-private:
-  CephContext* m_cct;
-  librados::IoCtx& m_io_ctx;
-  Context* m_on_finish;
-  bufferlist m_out_bl;
-  librbd::xSizeInfo m_size_info;
-  librbd::xDuInfo m_x_info;
-
-  // [in]
-  const std::string m_image_id;
-  uint64_t m_snap_id;
-
-  // [out]
-  librbdx::du_info_t* m_info;
-};
-
-#undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::xImage::DuRequest_v3: " \
-                           << __func__ << " " << this << ": " \
                            << "(id=" << m_size_info.image_id << "): "
 
 /*
@@ -351,9 +173,9 @@ private:
  * provided size info
  */
 template <typename I>
-class DuRequest_v3 {
+class DuRequest {
 public:
-  DuRequest_v3(librados::IoCtx& ioctx, Context* on_finish,
+  DuRequest(librados::IoCtx& ioctx, Context* on_finish,
       librbd::xSizeInfo& size_info,
       uint64_t* du, uint64_t* dirty)
     : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
@@ -398,7 +220,7 @@ private:
     librados::ObjectReadOperation op;
     librbd::cls_client::object_map_load_start(&op);
 
-    using klass = DuRequest_v3<I>;
+    using klass = DuRequest<I>;
     auto comp = librbd::util::create_rados_callback<klass,
         &klass::handle_load_object_map>(this);
     m_out_bl.clear();
@@ -484,7 +306,7 @@ public:
 private:
   void finish(int r) {
     if (r == 0) {
-      cvt_image_info_v2(m_x_info, m_info);
+      cvt_image_info(m_x_info, m_info);
     }
 
     m_on_finish->complete(r);
@@ -589,7 +411,7 @@ private:
       .features = m_x_info.features,
       .flags = m_x_info.flags,
     };
-    auto request = new DuRequest_v3<I>(m_io_ctx, on_finish,
+    auto request = new DuRequest<I>(m_io_ctx, on_finish,
         size_info, &du, nullptr);
     request->send();
   }
@@ -614,13 +436,13 @@ private:
   Context* m_on_finish;
   bufferlist m_out_bl;
   std::map<snapid_t, cls::rbd::xclsSnapInfo> m_cls_snaps;
-  librbd::xImageInfo_v2 m_x_info;
+  librbd::xImageInfo m_x_info;
 
   // [in]
   const std::string m_image_id;
 
   // [out]
-  librbdx::image_info_v2_t* m_info;
+  librbdx::image_info_t* m_info;
 };
 
 #undef dout_prefix
@@ -633,7 +455,7 @@ class InfoRequest_v2 {
 public:
   InfoRequest_v2(librados::IoCtx& ioctx, Context* on_finish,
       const std::string& image_id,
-      librbdx::image_info_v3_t* info)
+      librbdx::image_info_v2_t* info)
     : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
       m_io_ctx(ioctx), m_on_finish(on_finish),
       m_image_id(image_id),
@@ -652,7 +474,7 @@ public:
 private:
   void finish(int r) {
     if (r == 0) {
-      cvt_image_info_v3(m_x_info, m_info);
+      cvt_image_info_v2(m_x_info, m_info);
     }
 
     m_on_finish->complete(r);
@@ -795,7 +617,7 @@ private:
         .features = m_x_info.features,
         .flags = m_x_info.flags,
       };
-      auto request = new DuRequest_v3<I>(m_io_ctx, on_finish,
+      auto request = new DuRequest<I>(m_io_ctx, on_finish,
           size_info, du, dirty);
       request->send();
     }
@@ -807,7 +629,7 @@ private:
   Context* m_on_finish;
   bufferlist m_out_bl;
   std::map<snapid_t, cls::rbd::xclsSnapInfo> m_cls_snaps;
-  librbd::xImageInfo_v3 m_x_info;
+  librbd::xImageInfo_v2 m_x_info;
 
   // [in]
   const std::string m_image_id;
@@ -816,57 +638,8 @@ private:
   int m_pending_count;
 
   // [out]
-  librbdx::image_info_v3_t* m_info;
+  librbdx::image_info_v2_t* m_info;
   int m_r;
-};
-
-#undef dout_prefix
-#define dout_prefix *_dout << "librbd::api::xImage::ThrottledDuRequest: " \
-                           << __func__ << " " << this << ": " \
-                           << "(id=" << m_image_id << "): "
-
-template <typename I>
-class ThrottledDuRequest {
-public:
-  ThrottledDuRequest(librados::IoCtx& ioctx, SimpleThrottle& throttle,
-      const std::string& image_id,
-      librbdx::du_info_t* info, int* r)
-    : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
-      m_throttle(throttle),
-      m_image_id(image_id),
-      m_r(r) {
-    Context* on_finish = librbd::util::create_context_callback<ThrottledDuRequest<I>,
-        &ThrottledDuRequest<I>::finish>(this);
-    m_request = new DuRequest<I>(ioctx, on_finish, image_id, CEPH_NOSNAP, info);
-    m_throttle.start_op();
-  }
-
-  void send() {
-    m_request->send();
-  }
-
-private:
-  void finish(int r) {
-    ldout(m_cct, 10) << "r=" << r << dendl;
-
-    *m_r = r;
-    // ignore errors so throttle can continue
-    r = 0;
-    m_throttle.end_op(r);
-
-    delete this;
-  }
-
-private:
-  CephContext* m_cct;
-  DuRequest<I>* m_request;
-  SimpleThrottle& m_throttle;
-
-  // [in]
-  const std::string m_image_id;
-
-  // [out]
-  int* m_r;
 };
 
 #undef dout_prefix
@@ -928,7 +701,7 @@ class ThrottledInfoRequest_v2 {
 public:
   ThrottledInfoRequest_v2(librados::IoCtx& ioctx, SimpleThrottle& throttle,
       const std::string& image_id,
-      librbdx::image_info_v3_t* info, int* r)
+      librbdx::image_info_v2_t* info, int* r)
     : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
       m_throttle(throttle),
       m_image_id(image_id),
@@ -1013,90 +786,6 @@ int xImage<I>::get_info_v2(librados::IoCtx& ioctx,
   req->send();
 
   int r = cond.wait();
-
-  latency = ceph_clock_now() - latency;
-  ldout(cct, 7) << "latency: "
-                << latency.sec() << "s/"
-                << latency.usec() << "us" << dendl;
-
-  return r;
-}
-
-template <typename I>
-int xImage<I>::list_du(librados::IoCtx& ioctx,
-    std::map<std::string, std::pair<librbdx::du_info_t, int>>* infos) {
-  CephContext* cct = (CephContext*)ioctx.cct();
-  ldout(cct, 20) << "ioctx=" << &ioctx << dendl;
-
-  utime_t latency = ceph_clock_now();
-
-  // map<id, name>
-  std::map<std::string, std::string> images;
-  int r = xImage<I>::list(ioctx, &images);
-  if (r < 0) {
-    return r;
-  }
-
-  // images are moved to trash when removing, since Nautilus
-//  std::map<std::string, xTrashInfo> trashes;
-//  int r = xTrash<I>::list(ioctx, &trashes);
-//  if (r < 0 && r != -EOPNOTSUPP) {
-//    return r;
-//  }
-//  for (auto& it : trashes) {
-//    if (it.second.source == cls::rbd::TRASH_IMAGE_SOURCE_REMOVING) {
-//      images.insert({it.first, it.second.name});
-//    }
-//  }
-
-  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
-  SimpleThrottle throttle(ops, true);
-  for (const auto& image : images) {
-    if (throttle.pending_error()) {
-      break;
-    }
-
-    auto& id = image.first;
-
-    auto& info = (*infos)[id].first;
-    auto& r = (*infos)[id].second;
-    auto req = new ThrottledDuRequest<I>(ioctx, throttle, id, &info, &r);
-    req->send();
-  }
-
-  r = throttle.wait_for_ret();
-
-  latency = ceph_clock_now() - latency;
-  ldout(cct, 7) << "latency: "
-                << latency.sec() << "s/"
-                << latency.usec() << "us" << dendl;
-
-  return r;
-}
-
-template <typename I>
-int xImage<I>::list_du(librados::IoCtx& ioctx,
-    const std::vector<std::string>& image_ids,
-    std::map<std::string, std::pair<librbdx::du_info_t, int>>* infos) {
-  CephContext* cct = (CephContext*)ioctx.cct();
-  ldout(cct, 20) << "ioctx=" << &ioctx << dendl;
-
-  utime_t latency = ceph_clock_now();
-
-  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
-  SimpleThrottle throttle(ops, true);
-  for (const auto& id : image_ids) {
-    if (throttle.pending_error()) {
-      break;
-    }
-
-    auto& info = (*infos)[id].first;
-    auto& r = (*infos)[id].second;
-    auto req = new ThrottledDuRequest<I>(ioctx, throttle, id, &info, &r);
-    req->send();
-  }
-
-  int r = throttle.wait_for_ret();
 
   latency = ceph_clock_now() - latency;
   ldout(cct, 7) << "latency: "
