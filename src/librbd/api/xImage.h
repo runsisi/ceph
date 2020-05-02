@@ -26,12 +26,6 @@ struct xImage {
   static int get_info_v2(librados::IoCtx& ioctx,
       const std::string& image_id, librbdx::image_info_v2_t* info);
 
-  static int list_du(librados::IoCtx& ioctx,
-      std::map<std::string, std::pair<librbdx::du_info_t, int>>* infos);
-  static int list_du(librados::IoCtx& ioctx,
-      const std::vector<std::string>& images_ids,
-      std::map<std::string, std::pair<librbdx::du_info_t, int>>* infos);
-
   static int list(librados::IoCtx& ioctx,
       std::map<std::string, std::string>* images);
 
