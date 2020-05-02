@@ -80,13 +80,6 @@ inline std::string to_str(const trash_source_t& o) {
 }
 
 typedef struct {
-  uint64_t size;
-  // if fast-diff is disabled then `dirty` equals `du`
-  uint64_t du;          // OBJECT_EXISTS + OBJECT_EXISTS_CLEAN
-  uint64_t dirty;       // OBJECT_EXISTS
-} du_info_t;
-
-typedef struct {
   uint64_t seq;
   std::vector<uint64_t> snaps;
 } snapc_t;
@@ -174,6 +167,8 @@ typedef struct {
   uint64_t du;
 } image_info_t;
 
+using du_info_t = image_info_t;
+
 typedef struct {
   std::string id;
   std::string name;
@@ -211,14 +206,14 @@ public:
   int get_info_v2(librados::IoCtx& ioctx,
       const std::string& image_id, image_info_v2_t* info);
 
-  int list_du(librados::IoCtx& ioctx,
-      std::map<std::string, std::pair<du_info_t, int>>* infos);
-  int list_du(librados::IoCtx& ioctx,
-      const std::vector<std::string>& image_ids,
-      std::map<std::string, std::pair<du_info_t, int>>* infos);
-
   int list(librados::IoCtx& ioctx,
       std::map<std::string, std::string>* images);
+
+  int list_du(librados::IoCtx& ioctx,
+      std::map<std::string, std::pair<image_info_t, int>>* infos);
+  int list_du(librados::IoCtx& ioctx,
+      const std::vector<std::string>& image_ids,
+      std::map<std::string, std::pair<image_info_t, int>>* infos);
 
   int list_info(librados::IoCtx& ioctx,
       std::map<std::string, std::pair<image_info_t, int>>* infos);

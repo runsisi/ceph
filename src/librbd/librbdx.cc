@@ -30,28 +30,28 @@ int xRBD::get_info_v2(librados::IoCtx& ioctx,
   return r;
 }
 
-int xRBD::list_du(librados::IoCtx& ioctx,
-    std::map<std::string, std::pair<du_info_t, int>>* infos) {
-  int r = 0;
-  infos->clear();
-  r = librbd::api::xImage<>::list_du(ioctx, infos);
-  return r;
-}
-
-int xRBD::list_du(librados::IoCtx& ioctx,
-    const std::vector<std::string>& image_ids,
-    std::map<std::string, std::pair<du_info_t, int>>* infos) {
-  int r = 0;
-  infos->clear();
-  r = librbd::api::xImage<>::list_du(ioctx, image_ids, infos);
-  return r;
-}
-
 int xRBD::list(librados::IoCtx& ioctx,
     std::map<std::string, std::string>* images) {
   int r = 0;
   images->clear();
   r = librbd::api::xImage<>::list(ioctx, images);
+  return r;
+}
+
+int xRBD::list_du(librados::IoCtx& ioctx,
+    std::map<std::string, std::pair<image_info_t, int>>* infos) {
+  int r = 0;
+  infos->clear();
+  r = librbd::api::xImage<>::list_info(ioctx, infos);
+  return r;
+}
+
+int xRBD::list_du(librados::IoCtx& ioctx,
+    const std::vector<std::string>& image_ids,
+    std::map<std::string, std::pair<image_info_t, int>>* infos) {
+  int r = 0;
+  infos->clear();
+  r = librbd::api::xImage<>::list_info(ioctx, image_ids, infos);
   return r;
 }
 

@@ -16,14 +16,14 @@ namespace py = pybind11;
 
 using Vector_string = std::vector<std::string>;
 
-// list_du
-using Map_string_2_pair_du_info_t_int = std::map<std::string, std::pair<librbdx::du_info_t, int>>;
+// list_du, reuse of list_info
+using Map_string_2_pair_du_info_t_int = std::map<std::string, std::pair<librbdx::image_info_t, int>>;
 // list
 using Map_string_2_string = std::map<std::string, std::string>;
 // list_info
 using Map_string_2_pair_image_info_t_int = std::map<std::string, std::pair<librbdx::image_info_t, int>>;
 // list_info_v2
-using Map_string_2_pair_image_info_v3_t_int = std::map<std::string, std::pair<librbdx::image_info_v3_t, int>>;
+using Map_string_2_pair_image_info_v3_t_int = std::map<std::string, std::pair<librbdx::image_info_v2_t, int>>;
 // trash_list
 using Map_string_2_trash_info_t = std::map<std::string, librbdx::trash_info_t>;
 // clove v1 child_list
@@ -121,7 +121,6 @@ template <typename K, typename V, typename... Ts,
 json json_fmt(const std::map<K, V, Ts...>& o);
 
 json json_fmt(const timespec& o);
-json json_fmt(const du_info_t& o);
 json json_fmt(const snapc_t& o);
 json json_fmt(const parent_spec_t& o);
 json json_fmt(const parent_info_t& o);
@@ -130,7 +129,6 @@ json json_fmt(const qos_t& o);
 json json_fmt(const snap_info_t& o);
 json json_fmt(const snap_info_v2_t& o);
 json json_fmt(const image_info_t& o);
-json json_fmt(const image_info_v3_t& o);
 json json_fmt(const trash_info_t& o);
 
 template <typename T,
@@ -211,14 +209,6 @@ json json_fmt(const timespec& o) {
   json j = json::object({});
   j["tv_sec"] = json_fmt(o.tv_sec);
   j["tv_nsec"] = json_fmt(o.tv_nsec);
-  return std::move(j);
-}
-
-json json_fmt(const du_info_t& o) {
-  json j = json::object({});
-  j["size"] = json_fmt(o.size);
-  j["du"] = json_fmt(o.du);
-  j["dirty"] = json_fmt(o.dirty);
   return std::move(j);
 }
 
@@ -305,7 +295,7 @@ json json_fmt(const image_info_t& o) {
   return std::move(j);
 }
 
-json json_fmt(const image_info_v3_t& o) {
+json json_fmt(const image_info_v2_t& o) {
   json j = json::object({});
   j["id"] = json_fmt(o.id);
   j["name"] = json_fmt(o.name);
@@ -354,12 +344,6 @@ PYBIND11_MODULE(rbdx, m) {
     });
   }
   {
-    auto b = py::bind_map<Map_uint64_t_2_du_info_t>(m, "Map_uint64_t_2_du_info_t");
-    b.def("__repr__", [](const Map_uint64_t_2_du_info_t& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-  {
     auto b = py::bind_map<Map_string_2_string>(m, "Map_string_2_string");
     b.def("__repr__", [](const Map_string_2_string& self) {
       return json_fmt(self).dump(json_indent);
@@ -378,7 +362,7 @@ PYBIND11_MODULE(rbdx, m) {
     });
   }
   {
-    auto b = py::bind_map<Map_string_2_pair_image_info_v3_t_int>(m, "Map_string_2_pair_image_info_v3_t_int");
+    auto b = py::bind_map<Map_string_2_pair_image_info_v2_t_int>(m, "Map_string_2_pair_image_info_v2_t_int");
     b.def("__repr__", [](const Map_string_2_pair_image_info_v3_t_int& self) {
       return json_fmt(self).dump(json_indent);
     });
@@ -429,17 +413,6 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def_readonly("tv_nsec", &timespec::tv_nsec);
     cls.def("__repr__", [](const timespec& self) {
        return json_fmt(self).dump(json_indent);
-    });
-  }
-
-  {
-    py::class_<du_info_t> cls(m, "du_info_t");
-    cls.def(py::init<>());
-    cls.def_readonly("size", &du_info_t::size);
-    cls.def_readonly("du", &du_info_t::du);
-    cls.def_readonly("dirty", &du_info_t::dirty);
-    cls.def("__repr__", [](const du_info_t& self) {
-      return json_fmt(self).dump(json_indent);
     });
   }
 
@@ -529,6 +502,30 @@ PYBIND11_MODULE(rbdx, m) {
   {
     py::class_<image_info_t> cls(m, "image_info_t");
     cls.def(py::init<>());
+    cls.def_readonly("id", &image_info_t::id);
+    cls.def_readonly("name", &image_info_t::name);
+    cls.def_readonly("order", &image_info_t::order);
+    cls.def_readonly("size", &image_info_t::size);
+    cls.def_readonly("stripe_unit", &image_info_t::stripe_unit);
+    cls.def_readonly("stripe_count", &image_info_t::stripe_count);
+    cls.def_readonly("features", &image_info_t::features);
+    cls.def_readonly("flags", &image_info_t::flags);
+    cls.def_readonly("snapc", &image_info_t::snapc);
+    cls.def_readonly("snaps", &image_info_t::snaps);
+    cls.def_readonly("parent", &image_info_t::parent);
+    cls.def_readonly("timestamp", &image_info_t::timestamp);
+    cls.def_readonly("data_pool_id", &image_info_t::data_pool_id);
+    cls.def_readonly("watchers", &image_info_t::watchers);
+    cls.def_readonly("qos", &image_info_t::qos);
+    cls.def_readonly("du", &image_info_t::du);
+    cls.def("__repr__", [](const image_info_t& self) {
+      return json_fmt(self).dump(json_indent);
+    });
+  }
+
+  {
+    py::class_<image_info_v2_t> cls(m, "image_info_v2_t");
+    cls.def(py::init<>());
     cls.def_readonly("id", &image_info_v2_t::id);
     cls.def_readonly("name", &image_info_v2_t::name);
     cls.def_readonly("order", &image_info_v2_t::order);
@@ -538,38 +535,14 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def_readonly("features", &image_info_v2_t::features);
     cls.def_readonly("flags", &image_info_v2_t::flags);
     cls.def_readonly("snapc", &image_info_v2_t::snapc);
-    cls.def_readonly("snaps", &image_info_v2_t::snaps);
     cls.def_readonly("parent", &image_info_v2_t::parent);
     cls.def_readonly("timestamp", &image_info_v2_t::timestamp);
     cls.def_readonly("data_pool_id", &image_info_v2_t::data_pool_id);
     cls.def_readonly("watchers", &image_info_v2_t::watchers);
     cls.def_readonly("qos", &image_info_v2_t::qos);
     cls.def_readonly("du", &image_info_v2_t::du);
+    cls.def_readonly("snaps", &image_info_v2_t::snaps);
     cls.def("__repr__", [](const image_info_v2_t& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-
-  {
-    py::class_<image_info_v3_t> cls(m, "image_info_v3_t");
-    cls.def(py::init<>());
-    cls.def_readonly("id", &image_info_v3_t::id);
-    cls.def_readonly("name", &image_info_v3_t::name);
-    cls.def_readonly("order", &image_info_v3_t::order);
-    cls.def_readonly("size", &image_info_v3_t::size);
-    cls.def_readonly("stripe_unit", &image_info_v3_t::stripe_unit);
-    cls.def_readonly("stripe_count", &image_info_v3_t::stripe_count);
-    cls.def_readonly("features", &image_info_v3_t::features);
-    cls.def_readonly("flags", &image_info_v3_t::flags);
-    cls.def_readonly("snapc", &image_info_v3_t::snapc);
-    cls.def_readonly("parent", &image_info_v3_t::parent);
-    cls.def_readonly("timestamp", &image_info_v3_t::timestamp);
-    cls.def_readonly("data_pool_id", &image_info_v3_t::data_pool_id);
-    cls.def_readonly("watchers", &image_info_v3_t::watchers);
-    cls.def_readonly("qos", &image_info_v3_t::qos);
-    cls.def_readonly("du", &image_info_v3_t::du);
-    cls.def_readonly("snaps", &image_info_v3_t::snaps);
-    cls.def("__repr__", [](const image_info_v3_t& self) {
       return json_fmt(self).dump(json_indent);
     });
   }
@@ -592,10 +565,10 @@ PYBIND11_MODULE(rbdx, m) {
   //
   {
     using list_du_func_t_1 = int (xRBD::*)(librados::IoCtx&,
-        std::map<std::string, std::pair<du_info_t, int>>*);
+        std::map<std::string, std::pair<image_info_t, int>>*);
     using list_du_func_t_2 = int (xRBD::*)(librados::IoCtx&,
         const std::vector<std::string>&,
-        std::map<std::string, std::pair<du_info_t, int>>*);
+        std::map<std::string, std::pair<image_info_t, int>>*);
 
     using list_info_func_t_1 = int (xRBD::*)(librados::IoCtx&,
         std::map<std::string, std::pair<image_info_t, int>>*);
@@ -615,10 +588,10 @@ PYBIND11_MODULE(rbdx, m) {
     cls.def("get_info", &xRBD::get_info);
     cls.def("get_info_v2", &xRBD::get_info_v2);
 
+    cls.def("list", &xRBD::list);
+
     cls.def("list_du", (list_du_func_t_1)&xRBD::list_du);
     cls.def("list_du", (list_du_func_t_2)&xRBD::list_du);
-
-    cls.def("list", &xRBD::list);
 
     cls.def("list_info", (list_info_func_t_1)&xRBD::list_info);
     cls.def("list_info", (list_info_func_t_2)&xRBD::list_info);
