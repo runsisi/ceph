@@ -16,8 +16,6 @@ namespace py = pybind11;
 
 using Vector_string = std::vector<std::string>;
 
-// list_du, reuse of list_info
-using Map_string_2_pair_du_info_t_int = std::map<std::string, std::pair<librbdx::image_info_t, int>>;
 // list
 using Map_string_2_string = std::map<std::string, std::string>;
 // list_info
@@ -29,11 +27,11 @@ using Map_string_2_trash_info_t = std::map<std::string, librbdx::trash_info_t>;
 // clove v1 child_list
 using Map_parent_spec_t_2_vector_string = std::map<librbdx::parent_spec_t, std::vector<std::string>>;
 
+using Map_string_2_pair_du_info_t_int = Map_string_2_pair_image_info_t_int;
+
 
 PYBIND11_MAKE_OPAQUE(Vector_string);
 
-// list_du
-PYBIND11_MAKE_OPAQUE(Map_string_2_pair_du_info_t_int);
 // list
 PYBIND11_MAKE_OPAQUE(Map_string_2_string);
 // list_info
@@ -346,12 +344,6 @@ PYBIND11_MODULE(rbdx, m) {
   {
     auto b = py::bind_map<Map_string_2_string>(m, "Map_string_2_string");
     b.def("__repr__", [](const Map_string_2_string& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-  {
-    auto b = py::bind_map<Map_string_2_pair_du_info_t_int>(m, "Map_string_2_pair_du_info_t_int");
-    b.def("__repr__", [](const Map_string_2_pair_du_info_t_int& self) {
       return json_fmt(self).dump(json_indent);
     });
   }
