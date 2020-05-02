@@ -7597,19 +7597,6 @@ int x_image_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   encode(order, *out);
   encode(size, *out);
 
-  uint64_t features = 0;
-  uint64_t flags = 0;
-  r = x_get_val(vals, "features", &features);
-  if (r < 0) {
-    CLS_ERR("failed to read the features off of disk: %s", cpp_strerror(r).c_str());
-    return r;
-  }
-  r = x_get_val(vals, "flags", &flags);
-  if (r < 0 && r != -ENOENT) {
-    CLS_ERR("failed to read the flags off of disk: %s", cpp_strerror(r).c_str());
-    return r;
-  }
-
   uint64_t stripe_unit = 0;
   uint64_t stripe_count = 0;
   r = x_get_val(vals, "stripe_unit", &stripe_unit);
@@ -7630,67 +7617,59 @@ int x_image_get(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   encode(stripe_unit, *out);
   encode(stripe_count, *out);
 
+  uint64_t features = 0;
+  uint64_t flags = 0;
+  r = x_get_val(vals, "features", &features);
+  if (r < 0) {
+    CLS_ERR("failed to read the features off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+  r = x_get_val(vals, "flags", &flags);
+  if (r < 0 && r != -ENOENT) {
+    CLS_ERR("failed to read the flags off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
   encode(features, *out);
   encode(flags, *out);
+
+  uint64_t snap_seq = 0;
+  r = x_get_val(vals, "snap_seq", &snap_seq);
+  if (r < 0) {
+    CLS_ERR("could not read the image's snap_seq off disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
+  encode(snap_seq, *out);
 
   // snap context and snaps
   {
     std::map<snapid_t, cls::rbd::xclsSnapInfo> snaps;
     vector<snapid_t> snap_ids;
 
-    int r = 0;
-    int max_read = RBD_MAX_KEYS_READ;
-    std::string last_read = RBD_SNAP_KEY_PREFIX;
-    bool more = true;
+    auto func = [&snaps, &snap_ids](const cls_rbd_snap& snap) {
+      snap_ids.push_back(snap.id);
 
-    while (more) {
-      std::map<std::string, bufferlist> vals;
-      r = cls_cxx_map_get_vals(hctx, last_read, RBD_SNAP_KEY_PREFIX,
-          max_read, &vals, &more);
-      if (r < 0) {
-        CLS_ERR("error reading snaps: %s", cpp_strerror(r).c_str());
-        return r;
-      }
+      snaps.insert({snap.id, cls::rbd::xclsSnapInfo{
+          snap.id,
+          snap.snapshot_namespace,
+          snap.name,
+          snap.image_size,
+          snap.flags,
+          snap.protection_status,
+          snap.timestamp,
+      }});
+      return 0;
+    };
 
-      for (auto& it : vals) {
-        try {
-          auto bl_it = it.second.cbegin();
-
-          cls_rbd_snap snap;
-          decode(snap, bl_it);
-
-          snaps.insert({snap.id, cls::rbd::xclsSnapInfo{
-              snap.id,
-              snap.snapshot_namespace,
-              snap.name,
-              snap.image_size,
-              snap.flags,
-              snap.protection_status,
-              snap.timestamp,
-          }});
-          snap_ids.push_back(snap.id);
-        } catch (const buffer::error &err) {
-          CLS_ERR("could not decode snap '%s'", it.first.c_str());
-          return -EIO;
-        }
-      }
-
-      if (!vals.empty()) {
-        last_read = vals.rbegin()->first;
-      }
-    }
-
-    uint64_t snap_seq;
-    r = x_get_val(vals, "snap_seq", &snap_seq);
+    r = image::snapshot::iterate(hctx, func);
     if (r < 0) {
-      CLS_ERR("could not read the image's snap_seq off disk: %s", cpp_strerror(r).c_str());
       return r;
     }
 
     // snap_ids must be descending in a snap context
     std::reverse(snap_ids.begin(), snap_ids.end());
 
-    encode(snap_seq, *out);
     encode(snap_ids, *out);
     encode(snaps, *out);
   }

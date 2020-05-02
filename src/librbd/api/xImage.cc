@@ -58,7 +58,7 @@ void cvt_image_info(librbd::xImageInfo& in, librbdx::image_info_t* out) {
   out->size = in.size;
   out->stripe_unit = in.stripe_unit;
   out->stripe_count = in.stripe_count;
-  out->features = 0;
+  out->features = in.features;
   out->flags = in.flags;
   out->snapc.seq = in.snapc.seq;
   for (auto& s : in.snapc.snaps) {
