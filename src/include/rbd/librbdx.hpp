@@ -167,8 +167,6 @@ typedef struct {
   uint64_t du;
 } image_info_t;
 
-using du_info_t = image_info_t;
-
 typedef struct {
   std::string id;
   std::string name;

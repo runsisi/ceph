@@ -290,7 +290,7 @@ class InfoRequest {
 public:
   InfoRequest(librados::IoCtx& ioctx, Context* on_finish,
       const std::string& image_id,
-      librbdx::image_info_v2_t* info)
+      librbdx::image_info_t* info)
     : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
       m_io_ctx(ioctx), m_on_finish(on_finish),
       m_image_id(image_id),
