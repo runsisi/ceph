@@ -1,5 +1,4 @@
 #include <pybind11/pybind11.h>
-#include <pybind11/stl_bind.h>
 
 #include "rados/librados.hpp"
 
@@ -10,17 +9,12 @@
 
 namespace py = pybind11;
 
-using Vector_string = std::vector<std::string>;
-using Vector_pair_int64_t_string = std::vector<std::pair<int64_t, std::string>>;
-
-PYBIND11_MAKE_OPAQUE(Vector_string);
-PYBIND11_MAKE_OPAQUE(Vector_pair_int64_t_string);
-
 namespace radosx {
 
 using namespace librados;
 
-constexpr uint64_t CEPH_NOSNAP = ((uint64_t)(-2));
+// it is defined as uint64_t in ceph C++ code
+constexpr int64_t CEPH_NOSNAP = ((int64_t)(-2));
 
 class xRados : public Rados {
 public:
@@ -110,8 +104,6 @@ private:
 };
 
 PYBIND11_MODULE(radosx, m) {
-  py::bind_vector<Vector_string>(m, "Vector_string");
-  py::bind_vector<Vector_pair_int64_t_string>(m, "Vector_pair_int64_t_string");
 
   m.attr("CEPH_NOSNAP") = py::int_(CEPH_NOSNAP);
 
@@ -121,12 +113,17 @@ PYBIND11_MODULE(radosx, m) {
   {
     py::class_<xRados> cls(m, "xRados");
     cls.def(py::init<>());
+    cls.def("from_rados", [](xRados& self, py::handle h_rados) {
+      auto* ptr = h_rados.ptr();
+      auto* c_rados = reinterpret_cast<rados_t*>(PyCapsule_GetPointer(ptr, nullptr));
+      Rados::from_rados_t(c_rados, self);
+    });
     cls.def("init", &xRados::init);
     cls.def("init2", &xRados::init2);
-    cls.def("init_with_context", [](xRados& self, py::handle h) {
-      auto* ptr = h.ptr();
-      auto* cct = reinterpret_cast<rados_config_t*>(PyCapsule_GetPointer(ptr, nullptr));
-      return self.init_with_context(reinterpret_cast<config_t*>(cct));
+    cls.def("init_with_context", [](xRados& self, py::handle h_rados_cct) {
+      auto* ptr = h_rados_cct.ptr();
+      auto* c_cct = reinterpret_cast<config_t*>(PyCapsule_GetPointer(ptr, nullptr));
+      return self.init_with_context(c_cct);
     });
     cls.def("cct", [](xRados& self) {
       auto cct = self.cct();
@@ -147,19 +144,44 @@ PYBIND11_MODULE(radosx, m) {
   {
     py::class_<IoCtx> cls(m, "xIoCtx");
     cls.def(py::init<>());
+    cls.def("from_rados_ioctx", [](IoCtx& self, py::handle h_rados_ioctx) {
+      if (self.is_valid()) {
+        return -EEXIST;
+      }
+      auto* ptr = h_rados_ioctx.ptr();
+      auto* c_ioctx = reinterpret_cast<rados_ioctx_t*>(PyCapsule_GetPointer(ptr, nullptr));
+      IoCtx::from_rados_ioctx_t(c_ioctx, self);
+      return 0;
+    });
+    cls.def("cct", [](IoCtx& self) {
+      if (!self.is_valid()) {
+        return py::cast(nullptr);
+      }
+      auto cct = self.cct();
+      return py::cast(cct);
+    }, py::return_value_policy::reference);
+    cls.def("set_namespace", [](IoCtx& self, const std::string nspace) {
+      if (!self.is_valid()) {
+        return -EBADF;
+      }
+      self.set_namespace(nspace);
+      return 0;
+    });
+    cls.def("get_namespace", [](const IoCtx& self) {
+      if (!self.is_valid()) {
+        return py::cast(nullptr);
+      }
+      auto nspace = self.get_namespace();
+      return py::cast(nspace);
+    });
     cls.def("get_id", [](IoCtx& self) {
       if (!self.is_valid()) {
         return int64_t(-1);
       }
       return self.get_id();
     });
-    cls.def("cct", [](IoCtx& self) {
-      if (!self.is_valid()) {
-        return py::cast(nullptr);
-      }
-      return py::cast(self.cct());
-    });
   }
+
 } // PYBIND11_MODULE(radosx, m)
 
 } // namespace radosx

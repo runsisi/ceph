@@ -34,7 +34,7 @@ int xRBD::list_info(librados::IoCtx& ioctx,
 }
 
 int xRBD::list_info(librados::IoCtx& ioctx,
-    std::map<std::string, std::string>& images,
+    const std::map<std::string, std::string>& images,
     std::map<std::string, std::pair<image_info_t, int>>* infos) {
   int r = 0;
   infos->clear();

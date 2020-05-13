@@ -1,4 +1,5 @@
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <pybind11/stl_bind.h>
 
 #include "rados/librados.hpp"
@@ -14,14 +15,7 @@
 
 namespace py = pybind11;
 
-// list
-using Map_string_2_string = std::map<std::string, std::string>;
-// list_info
 using Map_string_2_pair_image_info_t_int = std::map<std::string, std::pair<librbdx::image_info_t, int>>;
-
-// list
-PYBIND11_MAKE_OPAQUE(Map_string_2_string);
-// list_info
 PYBIND11_MAKE_OPAQUE(Map_string_2_pair_image_info_t_int);
 
 namespace {
@@ -222,12 +216,6 @@ constexpr int json_indent = 4;
 PYBIND11_MODULE(rbdx, m) {
 
   {
-    auto b = py::bind_map<Map_string_2_string>(m, "Map_string_2_string");
-    b.def("__repr__", [](const Map_string_2_string& self) {
-      return json_fmt(self).dump(json_indent);
-    });
-  }
-  {
     auto b = py::bind_map<Map_string_2_pair_image_info_t_int>(m, "Map_string_2_pair_image_info_t_int");
     b.def("__repr__", [](const Map_string_2_pair_image_info_t_int& self) {
       return json_fmt(self).dump(json_indent);
@@ -320,7 +308,7 @@ PYBIND11_MODULE(rbdx, m) {
     using list_info_func_t_1 = int (xRBD::*)(librados::IoCtx&,
         std::map<std::string, std::pair<image_info_t, int>>*);
     using list_info_func_t_2 = int (xRBD::*)(librados::IoCtx&,
-        std::map<std::string, std::string>&,
+        const std::map<std::string, std::string>&,
         std::map<std::string, std::pair<image_info_t, int>>*);
 
     py::class_<xRBD> cls(m, "xRBD");

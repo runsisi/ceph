@@ -11,24 +11,28 @@
 #include "librbd/ObjectMap.h"
 #include "cls/rbd/cls_rbd_client.h"
 
+#include <stdexcept>
+
 #define dout_subsys ceph_subsys_rbd
 
 namespace {
 
 const uint64_t MAX_METADATA_ITEMS = 128;
 
-std::pair<uint64_t, uint64_t> calc_du(BitVector<2>& object_map,
-    uint64_t size, uint8_t order) {
-  uint64_t used = 0;
-  uint64_t dirty = 0;
+using children_t = std::map<librbdx::parent_t, std::set<librbdx::child_t>>;
 
-  uint64_t left = size;
-  uint64_t object_size = (1ull << order);
+std::pair<int64_t, int64_t> calc_du(BitVector<2>& object_map,
+    uint64_t size, uint8_t order) {
+  int64_t used = 0;
+  int64_t dirty = 0;
+
+  int64_t left = size;
+  int64_t object_size = (1ull << order);
 
   auto it = object_map.begin();
   auto end_it = object_map.end();
   while (it != end_it) {
-    uint64_t len = min(object_size, left);
+    int64_t len = min(object_size, left);
     if (*it == OBJECT_EXISTS) { // if fast-diff is disabled then `used` equals `dirty`
       used += len;
       dirty += len;
@@ -42,11 +46,149 @@ std::pair<uint64_t, uint64_t> calc_du(BitVector<2>& object_map,
   return std::make_pair(used, dirty);
 }
 
+// refer to parent_key in cls_rbd.cc
+librbdx::parent_t parent_from_key(string key) {
+  librbdx::parent_t parent;
+  bufferlist bl;
+  bl.push_back(buffer::copy(key.c_str(), key.length()));
+  auto it = bl.cbegin();
+  decode(parent.pool_id, it);
+  // cross namespace clone is disabled for clone v1
+  // so parent.pool_namespace has to be derived from its children
+  decode(parent.image_id, it);
+  decode(parent.snap_id, it);
+  return parent;
+}
+
+#undef dout_prefix
+#define dout_prefix *_dout << "librbd::api::xImage::children: " \
+    << __func__ << ": "
+
+int list_children_per_pool(librados::IoCtx& ioctx, children_t* out_children) {
+  CephContext* cct((CephContext*)ioctx.cct());
+  ldout(cct, 20) << "ioctx=" << &ioctx << dendl;
+
+  auto pool_id = ioctx.get_id();
+  auto pool_namespace = ioctx.get_namespace();
+
+  bool more_entries;
+  uint64_t max_read = 512;
+  std::string last_read = "";
+  do {
+    std::map<std::string, bufferlist> entries;
+    int r = ioctx.omap_get_vals(RBD_CHILDREN, last_read, max_read, &entries);
+    if (r < 0 && r != -ENOENT) {
+      lderr(cct) << "error listing " << ioctx.get_id()
+          << "/RBD_CHILDREN omap entries: "
+          << cpp_strerror(r)
+          << dendl;
+      return r;
+    } else if (r == -ENOENT) {
+      break;
+    }
+    if (entries.empty()) {
+      break;
+    }
+
+    for (const auto& entry : entries) {
+      // decode to parent
+      auto parent = parent_from_key(entry.first);
+      // cross namespace clone is disabled for clone v1
+      // set parent namespace from its children
+      parent.pool_namespace = pool_namespace;
+
+      auto& children = (*out_children)[parent];
+
+      std::set<std::string> children_ids;
+      decode(children_ids, entry.second);
+      for (auto& cid : children_ids) {
+        children.insert({
+          .pool_id = pool_id,
+          .pool_namespace = pool_namespace,
+          .image_id = std::move(cid),
+        });
+      }
+    }
+
+    last_read = entries.rbegin()->first;
+    more_entries = (entries.size() >= max_read);
+  } while (more_entries);
+  return 0;
+}
+
+//
+// list legacy clone v1 children for all pools
+//
+int list_children(librados::IoCtx& ioctx, children_t* out_children) {
+  CephContext* cct = (CephContext*)ioctx.cct();
+  ldout(cct, 20) << "ioctx=" << &ioctx << dendl;
+
+  librados::Rados rados(ioctx);
+
+  // search all pools to list clone v1 children
+  std::list<std::pair<int64_t, std::string>> pools;
+  int r = rados.pool_list2(pools);
+  if (r < 0) {
+    lderr(cct) << "error listing pools: " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  // pool_id -> pool specific children, for merging
+  std::map<int64_t, children_t> all_children;
+
+  for (auto& it : pools) {
+    int64_t base_tier;
+    r = rados.pool_get_base_tier(it.first, &base_tier);
+    if (r == -ENOENT) {
+      ldout(cct, 1) << "pool " << it.second << " no longer exists" << dendl;
+      continue;
+    } else if (r < 0) {
+      lderr(cct) << "error retrieving base tier for pool " << it.second
+          << dendl;
+      return r;
+    }
+    if (it.first != base_tier) {
+      // pool is a cache; skip it
+      continue;
+    }
+
+    librados::IoCtx c_ioctx;
+    // pool namespace inherited, clone v1 child has the same pool_namespace
+    // with its parent
+    r = librbd::util::create_ioctx(ioctx, it.second, it.first, {}, &c_ioctx);
+    if (r == -ENOENT) {
+      continue;
+    } else if (r < 0) {
+      return r;
+    }
+
+    r = list_children_per_pool(c_ioctx, &all_children[c_ioctx.get_id()]);
+    if (r < 0 && r != -ENOENT) {
+      lderr(cct) << "error reading list of children from pool "
+          << it.second
+          << dendl;
+      return r;
+    }
+  }
+
+  // merge per pool children
+  for (auto& it : all_children) {
+    auto& pool_children = it.second; // per pool children
+
+    for (auto& it2 : pool_children) {
+      auto& parent = it2.first;
+      auto& children = it2.second;
+
+      (*out_children)[parent].insert(children.begin(), children.end());
+    }
+  }
+  return 0;
+}
+
 #undef dout_prefix
 #define dout_prefix *_dout << "librbd::api::xImage::DuRequest: " \
-                           << __func__ << " " << this << ": " \
-                           << "(id=" << m_info->id \
-                           << ", snap_id=" << m_snap_id << "): "
+    << __func__ << " " << this << ": " \
+    << "(id=" << m_info->id << ", snap_id=" << m_snap_id << "): "
 
 /*
  * get `du` and `dirty` for a given head image/snap with explicitly
@@ -57,9 +199,9 @@ class DuRequest {
 public:
   DuRequest(librados::IoCtx& ioctx, Context* on_finish,
       const librbdx::image_info_t* x_info, snapid_t snap_id,
-      uint64_t* du, uint64_t* dirty)
+      int64_t* du, int64_t* dirty)
     : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
-      m_io_ctx(ioctx), m_on_finish(on_finish),
+      m_ioctx(ioctx), m_on_finish(on_finish),
       m_info(x_info), m_snap_id(snap_id),
       m_du(du), m_dirty(dirty) {
     *m_du = 0;
@@ -84,9 +226,9 @@ private:
       load_object_map();
     } else {
       // todo: fallback to iterate image objects
-      *m_du = 0;
+      *m_du = -1;
       if (m_dirty != nullptr) {
-        *m_dirty = 0;
+        *m_dirty = -1;
       }
 
       complete(0);
@@ -105,7 +247,7 @@ private:
     m_out_bl.clear();
     std::string oid(librbd::ObjectMap<>::object_map_name(
         m_info->id, m_snap_id));
-    int r = m_io_ctx.aio_operate(oid,
+    int r = m_ioctx.aio_operate(oid,
         comp, &op, &m_out_bl);
     ceph_assert(r == 0);
     comp->release();
@@ -117,8 +259,8 @@ private:
     if (r < 0) {
       if (r != -ENOENT) {
         lderr(m_cct) << "failed to load object map: "
-                     << cpp_strerror(r)
-                     << dendl;
+            << cpp_strerror(r)
+            << dendl;
       }
       complete(r);
       return;
@@ -129,8 +271,8 @@ private:
     r = librbd::cls_client::object_map_load_finish(&it, &object_map);
     if (r < 0) {
       lderr(m_cct) << "failed to decode object map: "
-                   << cpp_strerror(r)
-                   << dendl;
+          << cpp_strerror(r)
+          << dendl;
       complete(r);
       return;
     }
@@ -147,7 +289,7 @@ private:
 
 private:
   CephContext* m_cct;
-  librados::IoCtx& m_io_ctx;
+  librados::IoCtx& m_ioctx;
   Context* m_on_finish;
   bufferlist m_out_bl;
 
@@ -156,14 +298,14 @@ private:
   const snapid_t m_snap_id;
 
   // [out]
-  uint64_t* m_du;
-  uint64_t* m_dirty;
+  int64_t* m_du;
+  int64_t* m_dirty;
 };
 
 #undef dout_prefix
 #define dout_prefix *_dout << "librbd::api::xImage::InfoRequest: " \
-                           << __func__ << " " << this << ": " \
-                           << "(id=" << m_image_id << "): "
+    << __func__ << " " << this << ": " \
+    << "(id=" << m_image_id << "): "
 
 template <typename I>
 class InfoRequest : public std::enable_shared_from_this<InfoRequest<I>> {
@@ -185,11 +327,13 @@ public:
 private:
   InfoRequest(librados::IoCtx& ioctx, std::function<void(int)> on_finish,
       const std::string& image_id,
+      children_t& children,
       librbdx::image_info_t* info)
     : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
-      m_io_ctx(ioctx),
+      m_ioctx(ioctx),
       m_on_finish(on_finish),
       m_image_id(image_id),
+      m_children(children),
       m_lock(image_id),
       m_pending_count(0),
       m_info(info),
@@ -245,7 +389,7 @@ private:
     auto comp = librbd::util::create_rados_callback<klass,
         &klass::handle_get_info>(this);
     m_out_bl.clear();
-    int r = m_io_ctx.aio_operate(librbd::util::header_name(m_image_id),
+    int r = m_ioctx.aio_operate(librbd::util::header_name(m_image_id),
         comp, &op, &m_out_bl);
     ceph_assert(r == 0);
     comp->release();
@@ -256,9 +400,9 @@ private:
 
     if (r < 0) {
       if (r != -ENOENT) {
-        lderr(m_cct) << "failed to get image head: "
-                     << cpp_strerror(r)
-                     << dendl;
+        lderr(m_cct) << "failed to get image info: "
+            << cpp_strerror(r)
+            << dendl;
       }
       complete(r);
       return;
@@ -290,8 +434,8 @@ private:
         watchers);
     if (r < 0) {
       lderr(m_cct) << "failed to decode image info: "
-                   << cpp_strerror(r)
-                   << dendl;
+          << cpp_strerror(r)
+          << dendl;
       complete(r);
       return;
     }
@@ -302,11 +446,31 @@ private:
     parent.image_id = std::move(cls_parent.image_id);
     parent.snap_id = cls_parent.snap_id;
 
+    auto pool_id = m_ioctx.get_id();
+    auto pool_namespace = m_ioctx.get_namespace();
+
     auto& snaps = m_info->snaps;
     for (auto& it : cls_snaps) {
-      std::vector<librbdx::child_t> children;
+      std::set<librbdx::child_t> children;
+
+      // clone v1
+      librbdx::parent_t parent_ = {
+        .pool_id = pool_id,
+        .pool_namespace = pool_namespace,
+        .image_id = m_image_id,
+        .snap_id = uint64_t(it.first),
+      };
+
+      try {
+//        auto children_ = m_children.at(parent_);
+//        children.swap(children_);
+      } catch (const std::out_of_range&) {
+        // pass
+      }
+
+      // clone v2
       for (auto& c : it.second.children) {
-        children.push_back({
+        children.insert({
           .pool_id = c.pool_id,
           .pool_namespace = std::move(c.pool_namespace),
           .image_id = std::move(c.image_id),
@@ -323,7 +487,6 @@ private:
           .protection_status = static_cast<librbdx::snap_protection_status_t>(
               it.second.protection_status),
           .timestamp = it.second.timestamp,
-          // clone v2 children, will be populated later for clone v1 children
           .children = std::move(children),
           // .du and .dirty will be populated by get_dus()
       });
@@ -333,8 +496,8 @@ private:
     r = librbd::cls_client::metadata_list_finish(&it, &raw_metas);
     if (r < 0) {
       lderr(m_cct) << "failed to decode image metas: "
-                   << cpp_strerror(r)
-                   << dendl;
+          << cpp_strerror(r)
+          << dendl;
       complete(r);
       return;
     }
@@ -365,7 +528,7 @@ private:
     auto comp = librbd::util::create_rados_callback<klass,
         &klass::handle_get_metas>(this);
     m_out_bl.clear();
-    int r = m_io_ctx.aio_operate(librbd::util::header_name(m_image_id),
+    int r = m_ioctx.aio_operate(librbd::util::header_name(m_image_id),
         comp, &op, &m_out_bl);
     ceph_assert(r == 0);
     comp->release();
@@ -376,9 +539,9 @@ private:
 
     if (r < 0) {
       if (r != -ENOENT) {
-        lderr(m_cct) << "failed to get image head: "
-                     << cpp_strerror(r)
-                     << dendl;
+        lderr(m_cct) << "failed to get image metas: "
+            << cpp_strerror(r)
+            << dendl;
       }
       complete(r);
       return;
@@ -391,8 +554,8 @@ private:
     r = librbd::cls_client::metadata_list_finish(&it, &raw_metas);
     if (r < 0) {
       lderr(m_cct) << "failed to decode image metas: "
-                   << cpp_strerror(r)
-                   << dendl;
+          << cpp_strerror(r)
+          << dendl;
       complete(r);
       return;
     }
@@ -426,13 +589,13 @@ private:
       Context *on_finish = librbd::util::create_context_callback<klass,
           &klass::complete_request>(this);
       auto du = &m_info->du;
-      uint64_t* dirty = nullptr;
+      int64_t* dirty = nullptr;
       if (snap != CEPH_NOSNAP) {
         du = &m_info->snaps[snap].du;
         dirty = &m_info->snaps[snap].dirty;
       }
 
-      auto request = new DuRequest<I>(m_io_ctx, on_finish,
+      auto request = new DuRequest<I>(m_ioctx, on_finish,
           m_info, snap, du, dirty);
       request->send();
     }
@@ -440,13 +603,15 @@ private:
 
 private:
   CephContext* m_cct;
-  librados::IoCtx& m_io_ctx;
+  librados::IoCtx& m_ioctx;
   std::function<void(int)> m_on_finish; // user callback
   bufferlist m_out_bl;
   std::string m_last_meta_key;
 
   // [in]
   const std::string m_image_id;
+  // https://timsong-cpp.github.io/cppwp/n4861/container.requirements.dataraces#2
+  const children_t& m_children;
 
   // put after m_image_id to prevent compiler warning
   Mutex m_lock;
@@ -459,7 +624,6 @@ private:
 
 } // anonymous namespace
 
-#define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
 #define dout_prefix *_dout << "librbd::api::xImage: " << __func__ << ": "
 
@@ -474,20 +638,28 @@ int xImage<I>::get_info(librados::IoCtx& ioctx,
 
   utime_t latency = ceph_clock_now();
 
+  children_t children;
+  int r = list_children(ioctx, &children);
+  if (r < 0) {
+    return r;
+  }
+
+
+
   C_SaferCond cond;
   auto on_finish = [&cond](int r) {
     cond.complete(r);
   };
 
-  auto req = InfoRequest<I>::create(ioctx, on_finish, image_id, info);
+  auto req = InfoRequest<I>::create(ioctx, on_finish, image_id, children, info);
   req->send();
 
-  int r = cond.wait();
+  r = cond.wait();
 
   latency = ceph_clock_now() - latency;
   ldout(cct, 8) << "latency: "
-                << latency.sec() << "s/"
-                << latency.usec() << "us" << dendl;
+      << latency.sec() << "s/"
+      << latency.usec() << "us" << dendl;
 
   return r;
 }
@@ -509,8 +681,8 @@ int xImage<I>::list(librados::IoCtx& ioctx,
         last_read, max_read, &page);
     if (r < 0 && r != -ENOENT) {
       lderr(cct) << "error listing rbd image entries: "
-                 << cpp_strerror(r)
-                 << dendl;
+          << cpp_strerror(r)
+          << dendl;
       return r;
     } else if (r == -ENOENT) {
       break;
@@ -530,8 +702,8 @@ int xImage<I>::list(librados::IoCtx& ioctx,
 
   latency = ceph_clock_now() - latency;
   ldout(cct, 8) << "latency: "
-                << latency.sec() << "s/"
-                << latency.usec() << "us" << dendl;
+      << latency.sec() << "s/"
+      << latency.usec() << "us" << dendl;
 
   return 0;
 }
@@ -555,15 +727,21 @@ int xImage<I>::list_info(librados::IoCtx& ioctx,
 
 template <typename I>
 int xImage<I>::list_info(librados::IoCtx& ioctx,
-    std::map<std::string, std::string>& images,
+    const std::map<std::string, std::string>& images,
     std::map<std::string, std::pair<librbdx::image_info_t, int>>* infos) {
   CephContext* cct = (CephContext*)ioctx.cct();
   ldout(cct, 20) << "ioctx=" << &ioctx << dendl;
 
   utime_t latency = ceph_clock_now();
 
-  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_management_ops");
-  SimpleThrottle throttle(ops, true);
+  children_t children;
+  int r = list_children(ioctx, &children);
+  if (r < 0) {
+    return r;
+  }
+
+  auto ops = cct->_conf.get_val<uint64_t>("rbd_concurrent_query_ops");
+  SimpleThrottle throttle(ops, false); // we never error out in throttle
   for (const auto& image : images) {
     auto& id = image.first;
 
@@ -571,27 +749,27 @@ int xImage<I>::list_info(librados::IoCtx& ioctx,
     auto& r = (*infos)[id].second;
 
     // update image name outside of InfoRequest
-    info.name = std::move(image.second);
+    info.name = image.second;
 
     auto on_finish = [&throttle, &r](int r_) {
       r = r_;
       throttle.end_op(0);
     };
-    auto req = InfoRequest<I>::create(ioctx, on_finish, id, &info);
+    auto req = InfoRequest<I>::create(ioctx, on_finish, id, children, &info);
     throttle.start_op();
 
     req->send();
   }
 
-  // should always be 0, we have error code for each image query op
-  int r = throttle.wait_for_ret();
+  // return code should always be 0, we have error code for each op
+  throttle.wait_for_ret();
 
   latency = ceph_clock_now() - latency;
   ldout(cct, 8) << "latency: "
-                << latency.sec() << "s/"
-                << latency.usec() << "us" << dendl;
+      << latency.sec() << "s/"
+      << latency.usec() << "us" << dendl;
 
-  return r;
+  return 0;
 }
 
 } // namespace api

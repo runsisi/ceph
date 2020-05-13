@@ -30,7 +30,7 @@ struct xImage {
   static int list_info(librados::IoCtx& ioctx,
       std::map<std::string, std::pair<librbdx::image_info_t, int>>* infos);
   static int list_info(librados::IoCtx& ioctx,
-      std::map<std::string, std::string>& images,
+      const std::map<std::string, std::string>& images,
       std::map<std::string, std::pair<librbdx::image_info_t, int>>* infos);
 
 };

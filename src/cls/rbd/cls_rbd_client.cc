@@ -2857,43 +2857,5 @@ int x_image_get_finish(bufferlist::const_iterator* it,
   return 0;
 }
 
-void x_child_list_start(librados::ObjectReadOperation *op,
-    const std::string &start, uint64_t max_return)
-{
-  bufferlist in_bl;
-  encode(start, in_bl);
-  encode(max_return, in_bl);
-
-  op->exec("rbd", "x_child_list", in_bl);
-}
-
-int x_child_list_finish(bufferlist::const_iterator *it,
-    map<string, set<string>> *images)
-{
-  try {
-    decode(*images, *it);
-  } catch (const buffer::error &err) {
-    return -EBADMSG;
-  }
-  return 0;
-}
-
-int x_child_list(librados::IoCtx *ioctx,
-    const std::string &start, uint64_t max_return,
-    map<string, set<string>> *images)
-{
-  librados::ObjectReadOperation op;
-  x_child_list_start(&op, start, max_return);
-
-  bufferlist out_bl;
-  int r = ioctx->operate(RBD_CHILDREN, &op, &out_bl);
-  if (r < 0) {
-    return r;
-  }
-
-  auto iter = out_bl.cbegin();
-  return x_child_list_finish(&iter, images);
-}
-
 } // namespace cls_client
 } // namespace librbd

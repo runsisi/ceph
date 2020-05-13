@@ -9,7 +9,9 @@
 #define SRC_INCLUDE_RBD_LIBRBDX_HPP_
 
 #include <map>
+#include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "../rados/librados.hpp"
@@ -62,12 +64,22 @@ struct parent_t {
   std::string pool_namespace;
   std::string image_id;
   uint64_t snap_id;
+
+  bool operator<(const parent_t& rhs) const {
+    return std::tie(pool_id, pool_namespace, image_id, snap_id)
+      < std::tie(rhs.pool_id, rhs.pool_namespace, rhs.image_id, rhs.snap_id);
+  }
 };
 
 struct child_t {
   int64_t pool_id;
   std::string pool_namespace;
   std::string image_id;
+
+  bool operator<(const child_t& rhs) const {
+    return std::tie(pool_id, pool_namespace, image_id)
+      < std::tie(rhs.pool_id, rhs.pool_namespace, rhs.image_id);
+  }
 };
 
 struct snap_info_t {
@@ -78,10 +90,10 @@ struct snap_info_t {
   uint64_t flags;
   snap_protection_status_t protection_status;
   int64_t timestamp;
-  std::vector<child_t> children;
+  std::set<child_t> children;
   // if fast-diff is disabled then `dirty` equals `du`
-  uint64_t du;          // OBJECT_EXISTS + OBJECT_EXISTS_CLEAN
-  uint64_t dirty;       // OBJECT_EXISTS
+  int64_t du;           // OBJECT_EXISTS + OBJECT_EXISTS_CLEAN
+  int64_t dirty;        // OBJECT_EXISTS
 };
 
 struct image_info_t {
@@ -100,7 +112,7 @@ struct image_info_t {
   int64_t data_pool_id;
   std::vector<std::string> watchers;
   std::map<std::string, std::string> metas;
-  uint64_t du;
+  int64_t du;
 };
 
 class CEPH_RBD_API xRBD {
@@ -117,9 +129,8 @@ public:
   int list_info(librados::IoCtx& ioctx,
       std::map<std::string, std::pair<image_info_t, int>>* infos);
   int list_info(librados::IoCtx& ioctx,
-      std::map<std::string, std::string>& images,
+      const std::map<std::string, std::string>& images,
       std::map<std::string, std::pair<image_info_t, int>>* infos);
-
 };
 
 }
