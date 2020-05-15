@@ -2124,6 +2124,14 @@ cdef class Ioctx(object):
     def __dealloc__(self):
         self.close()
 
+    def ioctx(self):
+        self.require_ioctx_open()
+
+        cdef rados_ioctx_t ioctx
+        with nogil:
+            ioctx = self.io
+        return PyCapsule_New(<void *>ioctx, NULL, NULL)
+
     def __track_completion(self, completion_obj):
         if completion_obj.oncomplete:
             with self.lock:
