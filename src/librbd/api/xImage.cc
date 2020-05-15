@@ -462,8 +462,9 @@ private:
       };
 
       try {
-//        auto children_ = m_children.at(parent_);
-//        children.swap(children_);
+        Mutex::Locker locker{m_lock};
+        auto children_ = m_children.at(parent_);
+        children.swap(children_);
       } catch (const std::out_of_range&) {
         // pass
       }
