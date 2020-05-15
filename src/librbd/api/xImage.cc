@@ -327,7 +327,7 @@ public:
 private:
   InfoRequest(librados::IoCtx& ioctx, std::function<void(int)> on_finish,
       const std::string& image_id,
-      children_t& children,
+      const children_t& children,
       librbdx::image_info_t* info)
     : m_cct(reinterpret_cast<CephContext*>(ioctx.cct())),
       m_ioctx(ioctx),
@@ -734,6 +734,7 @@ int xImage<I>::list_info(librados::IoCtx& ioctx,
 
   utime_t latency = ceph_clock_now();
 
+  // std::map<librbdx::parent_t, std::set<librbdx::child_t>>
   children_t children;
   int r = list_children(ioctx, &children);
   if (r < 0) {
