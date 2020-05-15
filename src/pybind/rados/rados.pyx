@@ -716,6 +716,14 @@ Rados object in state %s." % self.state)
             cct = rados_cct(self.cluster)
         return PyCapsule_New(<void *>cct, NULL, NULL)
 
+    def rados(self):
+        self.require_state("configuring", "connected")
+
+        cdef rados_t rados
+        with nogil:
+            rados = self.cluster
+        return PyCapsule_New(<void *>rados, NULL, NULL)
+
     def version(self):
         """
         Get the version number of the ``librados`` C library.
@@ -2132,6 +2140,12 @@ cdef class Ioctx(object):
 
     def __dealloc__(self):
         self.close()
+
+    def ioctx(self):
+        cdef rados_ioctx_t ioctx
+        with nogil:
+            ioctx = self.io
+        return PyCapsule_New(<void *>ioctx, NULL, NULL)
 
     def __track_completion(self, completion_obj):
         if completion_obj.oncomplete:
