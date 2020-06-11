@@ -10,6 +10,7 @@
 #include <string>
 
 extern void register_test_librbd();
+extern void register_test_librbdx();
 #ifdef TEST_LIBRBD_INTERNALS
 extern void register_test_deep_copy();
 extern void register_test_groups();
@@ -30,6 +31,7 @@ int main(int argc, char **argv)
   setenv("RBD_FORCE_ALLOW_V1","1",1);
 
   register_test_librbd();
+  register_test_librbdx();
 #ifdef TEST_LIBRBD_INTERNALS
   register_test_deep_copy();
   register_test_groups();

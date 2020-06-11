@@ -902,5 +902,55 @@ std::ostream& operator<<(std::ostream& os, const AssertSnapcSeqState& state) {
   return os;
 }
 
+void xclsSnapInfo::encode(bufferlist& bl) const {
+  ENCODE_START(2, 2, bl);
+  encode(name, bl);
+  encode(id, bl);
+  encode(snap_type, bl);
+  encode(size, bl);
+  encode(flags, bl);
+  encode(timestamp, bl);
+  encode(children, bl);
+  ENCODE_FINISH(bl);
+}
+
+void xclsSnapInfo::decode(bufferlist::const_iterator& it) {
+  DECODE_START(2, it);
+  decode(name, it);
+  decode(id, it);
+  decode(snap_type, it);
+  decode(size, it);
+  decode(flags, it);
+  decode(timestamp, it);
+  decode(children, it);
+  DECODE_FINISH(it);
+}
+
+void xclsSnapInfo::dump(Formatter *f) const {
+  f->dump_string("name", name);
+  f->dump_unsigned("id", id);
+  f->dump_unsigned("snap_type", snap_type);
+  f->dump_unsigned("size", size);
+  f->dump_unsigned("flags", flags);
+  f->dump_int("timestamp", timestamp);
+  f->open_array_section("children");
+  for (auto& c : children) {
+    c.dump(f);
+  }
+  f->close_section();
+}
+
+void xclsSnapInfo::generate_test_instances(std::list<xclsSnapInfo*> &o) {
+  o.push_back(new xclsSnapInfo(
+      "snap1",  // name
+      1ULL,     // id
+      static_cast<uint32_t>(cls::rbd::SNAPSHOT_NAMESPACE_TYPE_USER), // snap_type
+      123,      // size
+      128,      // flags
+      123456,   // timestamp
+      {{1, "", "image_id"}} // children
+  ));
+}
+
 } // namespace rbd
 } // namespace cls

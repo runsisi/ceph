@@ -7436,6 +7436,233 @@ int sparsify(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
   return 0;
 }
 
+template <typename T>
+int _x_get_val(std::map<std::string, bufferlist>& vals,
+    const std::string& key, T* out) {
+  auto bl = vals[key];
+  auto it = bl.cbegin();
+  if (it == bl.end()) {
+    return -ENOENT;
+  }
+
+  try {
+    decode(*out, it);
+  } catch (const buffer::error& err) {
+    CLS_ERR("error decoding %s", key.c_str());
+    return -EIO;
+  }
+  return 0;
+}
+
+int x_image_get(cls_method_context_t hctx, bufferlist* in, bufferlist* out)
+{
+  CLS_LOG(20, "x_image_get");
+
+  std::set<std::string> keys;
+  keys.insert("order");
+  keys.insert("size");
+  keys.insert("features");
+  keys.insert("op_features");
+  keys.insert("flags");
+  keys.insert("snap_seq");
+  keys.insert("parent");
+  keys.insert("create_timestamp");
+  keys.insert("access_timestamp");
+  keys.insert("modify_timestamp");
+  keys.insert("data_pool_id");
+
+  std::map<std::string, bufferlist> vals;
+  int r = cls_cxx_map_get_vals(hctx, keys, &vals);
+  if (r < 0) {
+    CLS_ERR("failed to read keys off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
+  uint8_t order = 0;
+  uint64_t size = 0;
+  r = _x_get_val(vals, "order", &order);
+  if (r < 0) {
+    CLS_ERR("failed to read the order off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+  r = _x_get_val(vals, "size", &size);
+  if (r < 0) {
+    CLS_ERR("failed to read the size off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
+  encode(order, *out);
+  encode(size, *out);
+
+  uint64_t features = 0;
+  uint64_t op_features = 0;
+  uint64_t flags = 0;
+  r = _x_get_val(vals, "features", &features);
+  if (r < 0) {
+    CLS_ERR("failed to read the features off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+  r = _x_get_val(vals, "op_features", &op_features);
+  if (r < 0 && r != -ENOENT) {
+    CLS_ERR("failed to read the op_features off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+  r = _x_get_val(vals, "flags", &flags);
+  if (r < 0 && r != -ENOENT) {
+    CLS_ERR("failed to read the flags off of disk: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
+  encode(features, *out);
+  encode(op_features, *out);
+  encode(flags, *out);
+
+  // snap context and snaps
+  {
+    std::map<snapid_t, cls::rbd::xclsSnapInfo> snaps;
+    vector<snapid_t> snap_ids;
+
+    auto populate_children = [&hctx](snapid_t snap_id,
+        std::set<cls::rbd::ChildImageSpec>* children) {
+      cls_rbd_snap snap;
+      std::string snapshot_key;
+      key_from_snap_id(snap_id, &snapshot_key);
+      int r = read_key(hctx, snapshot_key, &snap);
+      if (r < 0) {
+        return r;
+      }
+
+      auto children_key = image::snap_children_key_from_snap_id(snap_id);
+      cls::rbd::ChildImageSpecs children_;
+      r = read_key(hctx, children_key, &children_);
+      if (r == -ENOENT) {
+        return 0;
+      } else if (r < 0) {
+        CLS_ERR("error reading snapshot children: %s", cpp_strerror(r).c_str());
+        return r;
+      }
+
+      children->swap(children_);
+      return 0;
+    };
+
+    auto populate_snap = [features, op_features, populate_children,
+                          &snaps, &snap_ids](const cls_rbd_snap& snap) {
+      snap_ids.push_back(snap.id);
+
+      std::set<cls::rbd::ChildImageSpec> children;
+      if ((features & RBD_FEATURE_OPERATIONS)
+          && (op_features & RBD_OPERATION_FEATURE_CLONE_PARENT)) {
+        // this is a clone v2 parent
+        int r = populate_children(snap.id, &children);
+        if (r < 0) {
+          return r;
+        }
+      }
+
+      uint32_t snap_type = static_cast<uint32_t>(
+          cls::rbd::get_snap_namespace_type(snap.snapshot_namespace));
+      snaps.insert({snap.id, cls::rbd::xclsSnapInfo{
+        snap.name,
+        snap.id,
+        snap_type,
+        snap.image_size,
+        snap.flags,
+        snap.timestamp.tv.tv_sec,
+        std::move(children),
+      }});
+      return 0;
+    };
+
+    r = image::snapshot::iterate(hctx, populate_snap);
+    if (r < 0) {
+      return r;
+    }
+
+    // snap_ids must be descending in a snap context
+    std::reverse(snap_ids.begin(), snap_ids.end());
+
+    encode(snaps, *out);
+  }
+
+  // parent
+  {
+    cls_rbd_parent parent_;
+    int r = _x_get_val(vals, "parent", &parent_);
+    if (r < 0 && r != -ENOENT) {
+      return r;
+    }
+
+    cls::rbd::ParentImageSpec parent{
+      parent_.pool_id,
+      parent_.pool_namespace,
+      parent_.image_id,
+      parent_.snap_id,
+    };
+
+    encode(parent, *out);
+  }
+
+  // timestamp
+  {
+    utime_t create_timestamp;
+    utime_t access_timestamp;
+    utime_t modify_timestamp;
+
+    r = _x_get_val(vals, "create_timestamp", &create_timestamp);
+    if (r < 0 && r != -ENOENT) {
+      return r;
+    }
+    r = _x_get_val(vals, "access_timestamp", &access_timestamp);
+    if (r < 0 && r != -ENOENT) {
+      return r;
+    }
+    r = _x_get_val(vals, "modify_timestamp", &modify_timestamp);
+    if (r < 0 && r != -ENOENT) {
+      return r;
+    }
+
+    encode((int64_t)create_timestamp.tv.tv_sec, *out);
+    encode((int64_t)access_timestamp.tv.tv_sec, *out);
+    encode((int64_t)modify_timestamp.tv.tv_sec, *out);
+  }
+
+  // data pool
+  {
+    int64_t data_pool_id = -1;
+    int r = _x_get_val(vals, "data_pool_id", &data_pool_id);
+    if (r == -ENOENT) {
+      data_pool_id = -1;
+    } else if (r < 0) {
+      CLS_ERR("error reading image data pool id: %s", cpp_strerror(r).c_str());
+      return r;
+    }
+
+    encode(data_pool_id, *out);
+  }
+
+  // watchers
+  {
+    obj_list_watch_response_t watchers_;
+    int r = cls_cxx_list_watchers(hctx, &watchers_);
+    if (r < 0 && r != -ENOENT) {
+      CLS_ERR("error listing watchers: %s", cpp_strerror(r).c_str());
+      return r;
+    }
+
+    std::vector<std::string> watchers;
+    for (const auto& w : watchers_.entries) {
+      ostringstream sa;
+      sa << w.addr;
+      watchers.emplace_back(sa.str());
+    }
+
+    encode(watchers, *out);
+  }
+
+  return 0;
+}
+
 CLS_INIT(rbd)
 {
   CLS_LOG(20, "Loaded rbd class!");
@@ -7566,6 +7793,8 @@ CLS_INIT(rbd)
   cls_method_handle_t h_copyup;
   cls_method_handle_t h_assert_snapc_seq;
   cls_method_handle_t h_sparsify;
+
+  cls_method_handle_t h_x_image_get;
 
   cls_register("rbd", &h_class);
   cls_register_cxx_method(h_class, "create",
@@ -7961,4 +8190,8 @@ CLS_INIT(rbd)
   cls_register_cxx_method(h_class, "sparsify",
 			  CLS_METHOD_RD | CLS_METHOD_WR,
 			  sparsify, &h_sparsify);
+
+  cls_register_cxx_method(h_class, "x_image_get",
+                          CLS_METHOD_RD,
+                          x_image_get, &h_x_image_get);
 }

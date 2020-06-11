@@ -784,6 +784,35 @@ inline void decode(AssertSnapcSeqState &state, bufferlist::const_iterator& it) {
 
 std::ostream& operator<<(std::ostream& os, const AssertSnapcSeqState& state);
 
+struct xclsSnapInfo {
+  std::string name;
+  snapid_t id = CEPH_NOSNAP;
+  uint32_t snap_type = static_cast<uint32_t>(cls::rbd::SNAPSHOT_NAMESPACE_TYPE_USER);
+  uint64_t size = 0;
+  uint64_t flags = 0;
+  int64_t timestamp = 0;
+  std::set<cls::rbd::ChildImageSpec> children;
+
+  xclsSnapInfo() {
+  }
+  xclsSnapInfo(const std::string& name, snapid_t id,
+      uint32_t snap_type,
+      uint64_t size,
+      uint64_t flags, int64_t timestamp,
+      std::set<cls::rbd::ChildImageSpec>&& children)
+    : name(name), id(id), snap_type(snap_type),
+      size(size), flags(flags), timestamp(timestamp),
+      children(std::move(children)) {
+  }
+
+  void encode(bufferlist& bl) const;
+  void decode(bufferlist::const_iterator& it);
+  void dump(Formatter *f) const;
+
+  static void generate_test_instances(std::list<xclsSnapInfo*> &o);
+};
+WRITE_CLASS_ENCODER(xclsSnapInfo);
+
 } // namespace rbd
 } // namespace cls
 

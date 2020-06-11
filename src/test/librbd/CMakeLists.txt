@@ -8,6 +8,7 @@ target_link_libraries(rbd_test_support PRIVATE
 set(librbd_test
   test_fixture.cc
   test_librbd.cc
+  test_librbdx.cc
   test_ImageWatcher.cc
   test_internal.cc
   test_mirroring.cc
@@ -43,6 +44,7 @@ target_link_libraries(rbd_test_mock PUBLIC
 set(unittest_librbd_srcs
   test_main.cc
   test_mock_fixture.cc
+  test_mock_xImage.cc
   test_mock_DeepCopyRequest.cc
   test_mock_ExclusiveLock.cc
   test_mock_Journal.cc

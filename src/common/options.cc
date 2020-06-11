@@ -7275,6 +7275,11 @@ static std::vector<Option> get_rbd_options() {
     .set_min(1)
     .set_description("how many operations can be in flight for a management operation like deleting or resizing an image"),
 
+    Option("rbd_concurrent_query_ops", Option::TYPE_UINT, Option::LEVEL_ADVANCED)
+    .set_default(32)
+    .set_min(1)
+    .set_description("how many operations can be in flight for a query operation"),
+
     Option("rbd_balance_snap_reads", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
     .set_default(false)
     .set_description("distribute snap read requests to random OSD"),
